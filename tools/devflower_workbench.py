@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the isolated Development Agent workbench. Never promotes a Stable release."""
+"""Launch the isolated Agent workbench, optionally using an external Stable approval."""
 import argparse
 import sys
 sys.dont_write_bytecode=True
@@ -18,7 +18,7 @@ def main():
         with lease(rt.storage/'workbench-service.lock'):
             server,token=create_server(rt,a.port)
             print(f'http://127.0.0.1:{server.server_port}/#'+token,flush=True)
-            print('Development Agent workbench · no Stable promotion · legacy services unchanged',flush=True)
+            print(rt.release_identity()['channel']+' Agent workbench · legacy services unchanged',flush=True)
             server.serve_forever()
     except (Blocked,OSError,ValueError) as exc:print('BLOCKED: '+str(exc),file=sys.stderr);return 1
     return 0
