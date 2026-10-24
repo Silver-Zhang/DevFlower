@@ -59,11 +59,13 @@ def create_server(runtime,port=0):
                     data=json.loads(self.rfile.read(size))
                     if not isinstance(data,dict):raise Invalid('请求格式错误')
                 if not post:
-                    if path=='/api/status':value=dict(version=3,label='Development · Agent 工作台',candidate=runtime.candidate_sha256,
+                    if path=='/api/status':
+                        release=runtime.release_identity()
+                        value=dict(version=3,label=release['channel']+' · Agent 工作台',candidate=runtime.candidate_sha256,release=release,
                         profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=runtime.flow.list('draft'),
                         external_profiles=[{'id':k,'name':p.get('name',k),'kind':p['kind']} for k,p in runtime.policy.get('external_steps',{}).items()],
                         runs=[{k:v for k,v in r.items() if k in ('id','workspace','state','created_at','task')} for r in runtime.flow.list('run')],
-                        stable_approved=False,examples=examples(runtime.operator['profiles']))
+                        stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
                     elif path=='/api/folders':value=runtime.folder(q.get('path'))
                     elif path=='/api/sessions':value=sessions.listing(q['workspace'],q.get('view','active'),q.get('query',''))
                     elif path=='/api/history':value=sessions.history(q['workspace'],q['handle'],q.get('query',''))

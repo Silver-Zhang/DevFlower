@@ -1,4 +1,4 @@
-"""Development workbench orchestration. Immutable native operator + separate task policy."""
+"""Workbench orchestration with optional externally approved Stable identity."""
 from __future__ import annotations
 import json
 import os
@@ -11,6 +11,7 @@ import time
 from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash
 from orchestration.process import execute, group_alive, stop
 from orchestration.store import alive, process_identity, lease
+from orchestration.trust import TrustedRelease, overlap
 from .agent_sessions import safe_text
 from .graph import Invalid
 from .server import Conflict
@@ -25,6 +26,8 @@ END = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 
 
 class WorkbenchRuntime(SessionRuntime):
+    operator_metadata_fields = frozenset({'stable'})
+
     def __init__(self, operator, operator_sha, candidate_sha, policy, policy_sha):
         self.policy_file, self.policy_sha = Path(clean_path(str(policy))), policy_sha
         with opened(self.policy_file) as fd: raw = os.read(fd, 200001)
@@ -35,18 +38,68 @@ class WorkbenchRuntime(SessionRuntime):
         for profile in self.policy.get('external_steps',{}).values():
             validate_profile(profile)
         super().__init__(operator, operator_sha, candidate_sha)
-        self.protected.append(self.policy_file)
         for profile in self.policy.get('external_steps',{}).values():
-            self.protected.extend(Path(p) for p in [*profile.get('dependencies',{}),*profile.get('dependency_trees',{}),*profile.get('write_paths',[])])
+            self.protected.extend(Path(p) for p in [*profile.get('dependencies',{}),
+                *profile.get('dependency_trees',{}), *profile.get('write_paths',[])])
         self.flow = WorkbenchStore(self.storage / 'workbench.sqlite')
         self.rpc_home = self.native / 'metadata'
 
+    def operator_protected_paths(self):
+        protected = [self.policy_file]
+        self.trust = None
+        if 'stable' in self.operator:
+            binding = self.operator['stable']
+            if (not isinstance(binding, dict) or set(binding) != {'record', 'sha256'} or
+                    not isinstance(binding['record'], str) or not isinstance(binding['sha256'], str)):
+                raise Blocked('Invalid workbench Stable binding')
+            # opened refuses symlink ancestors/hardlinks, including after startup.
+            with opened(clean_path(binding['record'])):
+                pass
+            self.trust = TrustedRelease.bound(binding)
+            if self.trust.data['version'] != 2:
+                raise Blocked('v3 Stable requires version 2 verifiable release provenance')
+            if self.trust.data['candidate_sha256'] != self.candidate_sha256:
+                raise Blocked('Workbench candidate differs from the approved Stable release')
+            for path in [*self.operator['allowed_roots'], self.storage, self.native, *protected]:
+                self.trust.permits(path, self.operator_file)
+            protected.extend(self.trust.protected_paths)
+            # Authority bytes are never native authentication or source mounts.
+            mounts = [src for profile in self.operator['profiles'].values() for src, _ in profile['readonly_files']]
+            mounts += [p for profile in self.operator['profiles'].values() for p in profile['read_paths']]
+            for profile in self.policy.get('external_steps', {}).values():
+                mounts.extend([*profile.get('read_paths', []), *profile.get('dependencies', {}), *profile.get('dependency_trees', {})])
+            if any(overlap(path, evidence) for path in mounts for evidence in
+                    [self.operator_file, self.policy_file, *self.trust.protected_paths]):
+                raise Blocked('Stable provenance cannot be repurposed as native credentials or mounts')
+            # External adapters have explicit write mounts as well as workspaces.
+            for profile in self.policy.get('external_steps',{}).values():
+                for path in profile.get('write_paths',[]):
+                    self.trust.permits(path, self.operator_file)
+                    if any(overlap(path, p) for p in [ROOT, self.operator_file, self.policy_file,
+                            self.trust.record, self.storage, self.native,
+                            *[src for p in self.operator['profiles'].values() for src, _ in p['readonly_files']]]):
+                        raise Blocked('External writer overlaps protected Stable inputs')
+        return protected
+
     def check_operator(self):
         super().check_operator()
+        if self.trust:
+            with opened(clean_path(str(self.trust.record))):
+                pass
+            self.trust.verify()
         with opened(self.policy_file) as fd:
             if digest(os.read(fd, 200001)) != self.policy_sha: raise Blocked('工作台策略已变化')
         for profile in self.policy.get('external_steps',{}).values():
             validate_profile(profile)
+
+    def release_identity(self):
+        """Public identity only; never expose private approval paths or references."""
+        self.check_operator()
+        value = dict(channel='Stable' if self.trust else 'Development',
+                     candidate_sha256=self.candidate_sha256)
+        if self.trust:
+            value.update(git_commit=self.trust.data['git_commit'], git_tree=self.trust.data['git_tree'])
+        return value
 
     def folder(self, path=None):
         """Browse only explicitly approved runtime roots; never follow project symlinks."""
@@ -66,7 +119,7 @@ class WorkbenchRuntime(SessionRuntime):
         except (OSError, ValueError): raise Invalid('没有权限读取这个文件夹，请返回父目录') from None
         parent = str(Path(path).parent)
         return dict(path=path, name=Path(path).name, parent=parent if any(Path(parent).is_relative_to(r) for r in roots) else None,
-                    roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime',
+                    roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime', release=self.release_identity(),
                     recent=self.db.listing('workspace', limit=8))
 
     def source_lock(self, cwd):
@@ -237,6 +290,7 @@ class WorkbenchRuntime(SessionRuntime):
         self.spawn(run);return self.snapshot(run)
 
     def spawn(self, run):
+        self.check_operator()
         child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('workbench_worker.py')),
             '--operator',str(self.operator_file),'--operator-sha256',self.operator_sha256,'--candidate-sha256',self.candidate_sha256,
             '--policy',str(self.policy_file),'--policy-sha256',self.policy_sha,'--run',run],
