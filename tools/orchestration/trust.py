@@ -29,31 +29,46 @@ class TrustedRelease:
             raise Blocked("Stable approval changed")
         self.sha256 = expected_sha256
         self.data = json.loads(raw)
-        if set(self.data) != {"version", "root", "git_commit", "git_tree", "candidate_sha256",
-                             "files", "review_verdict", "review_receipt_sha256", "approval_ref"}:
+        fields = {"version", "root", "git_commit", "git_tree", "candidate_sha256", "files"}
+        version = self.data.get('version')
+        extra = {'provenance'} if version == 2 else {'review_verdict', 'review_receipt_sha256', 'approval_ref'}
+        if type(version) is not int or version not in (1, 2) or set(self.data) != fields | extra:
             raise Blocked("Unexpected Stable approval fields")
-        if self.data["version"] != 1 or self.data["review_verdict"] != "ACCEPT":
+        if version == 1 and self.data["review_verdict"] != "ACCEPT":
             raise Blocked("Stable requires an externally accepted release")
-        if not self.data["approval_ref"] or len(self.data["review_receipt_sha256"]) != 64:
+        if version == 1 and (not self.data["approval_ref"] or len(self.data["review_receipt_sha256"]) != 64):
             raise Blocked("External release approval evidence is required")
         self.root = Path(self.data["root"]).resolve()
         if self.root != Path(__file__).resolve().parents[2] or overlap(self.root, self.record):
             raise Blocked("This process is not running the separately approved Stable release")
+        self.provenance = None
+        if version == 2:
+            from .release_provenance import ReleaseProvenance
+            self.provenance = ReleaseProvenance(self)
         self.verify()
 
     def verify(self):
-        if hashlib.sha256(self.record.read_bytes()).hexdigest() != self.sha256:
+        if self.provenance:
+            self.provenance.read(dict(path=str(self.record), sha256=self.sha256), as_json=False)
+        elif hashlib.sha256(self.record.read_bytes()).hexdigest() != self.sha256:
             raise Blocked("Stable approval changed after startup")
         entries = manifest(self.root)
         if any(entry["mode"] == "120000" for entry in entries):
             raise Blocked("Stable cannot load code through symlinks outside its frozen file bytes")
         if entries != self.data["files"] or hashlib.sha256(canonical(entries)).hexdigest() != self.data["candidate_sha256"]:
             raise Blocked("Stable code differs from the externally reviewed release")
+        if self.provenance:
+            self.provenance.verify(entries)
+
+    @property
+    def protected_paths(self):
+        return (self.record, *(Path(p) for p in self.provenance.paths)) if self.provenance else (self.record,)
 
     def permits(self, source, authority):
         self.verify()
         for path in (source, authority):
-            if overlap(self.root, path) or overlap(self.record, path):
+            code = self.provenance.code_paths if self.provenance else ()
+            if overlap(self.root, path) or any(overlap(p, path) for p in (*self.protected_paths, *code)):
                 raise Blocked("Stable, Development and authority must be disjoint")
         if overlap(source, authority):
             raise Blocked("Development cannot contain runtime authority")

@@ -1,11 +1,13 @@
 # 当前状态
 
-当前任务20261024_06_main-stable-integration：按用户明确决定完成PR15/17人工集成、分支收尾、main同步和固定日常版启用。当前使用指南见本任务使用指南.md；历史任务05/04不改写。
+任务 [20261025_01_stable-promotion](tasks/2026-10/20261025_01_stable-promotion/README.md) 已完成：PR18 普通合并、正式 Stable 晋升及实际运行验证。
 
-main=bedee3229e0c4420c9112a5b62eac9a0e81d6458，tree=2e3c444f036e6f2e02bfcddd8301a5f0b1cd8e79，CF=7b0c0b3bcc95235e02eadb74b71dd5f50d3d9c88da178b4787ff2090d1978210/175文件。本地只保留main 和 project/devflower，云端另保留project/codeweave，开发分支已删、原worktree/会话不删。records已普通merge采用main并更新framework_base。
+main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`，tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039`，候选 `cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe` /183 文件。本地主源码 main 与远端一致；开发临时分支已清理，历史 worktree/会话 cwd 保留。
 
-本轮重跑547Python、6host、165ChromiumHTTP、20JS及baseline/6语法均0FAIL/ERROR/SKIP。最终main与实际测试head27864fc的完整tree/CF相同；在main另跑baseline和6host通过。
+同候选 589 Python、6 宿主隔离、169 Chromium/HTTP、20 JS 全部 exit0、0 FAIL/ERROR/SKIP；前端重建、Baseline/语法、合并后专项通过。真实顺序/汇合/循环/生命周期完成；实际正式安装再次顺序和并发汇合通过。
 
-日常入口：python3 /home/workspace/DevFlower/.local/open-devflower.py；固定副本stable/main-7b0c0b3bcc95，实际HTTP200，原storage/native路径不变。旧open-stable/open-workbench/open-model-admission入口转同一入口，原脚本和旧Stable5816留本地备份。
+独立 R1/R2 原始 NEEDS_CORRECTION 保留；R3 硬 ACCEPT，SP01–SP10 PASS，3项P1 CLOSED；固定旧 Gate exit0/ACCEPT。原任务的历史 BLOCKED 与预算不改。
 
-重要边界：人工合并不改写技术裁决。原Claude/Gate仍BLOCKED（两个P1 CLOSED，真实顺序超时、汇合未补证）。v3仍显示Development/可信Stable标记false；没有伪造ACCEPT或正式晋升TrustedRelease。当前自动业务交付配置为空，用户本人UX验收未进行。
+唯一入口：`python3 /home/workspace/DevFlower/.local/open-devflower.py`。正式包 `stable/accepted-cfea19cac598`，实际 `stable_approved=true`，版本即最新 main。旧安装、SQLite备份、原生会话及全局认证保留。
+
+剩余边界：用户本人 UX 待确认；通用 Studio→project 自动归档未实现；生产自动业务 GitHub 交付未配置。研发记录仍按时间整理至 project/devflower，原始大日志/截图/会话仅本地。

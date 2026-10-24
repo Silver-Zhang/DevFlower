@@ -78,6 +78,7 @@ jobs:
           node --check tools/studio/static/usable_sessions.js
           node --check tests/session_browser.cjs
           node --check tests/workbench_browser.cjs
+          node --check tests/workbench_stable_browser.cjs
           node --input-type=module --check < tools/studio/static/workbench.js
       - name: Canvas editing rules
         shell: bash
@@ -121,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser; do
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser; do
             if ! python3 "tests/$suite.py" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
               status=1
             fi
@@ -148,5 +149,7 @@ jobs:
             ${{ runner.temp }}/session_browser/*.png
             ${{ runner.temp }}/workbench_browser/*results.json
             ${{ runner.temp }}/workbench_browser/*.png
+            ${{ runner.temp }}/workbench_stable_browser/*results.json
+            ${{ runner.temp }}/workbench_stable_browser/*.png
           retention-days: 7
           if-no-files-found: error

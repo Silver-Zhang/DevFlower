@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class SessionRuntime:
     session_only = True
+    operator_metadata_fields = frozenset()
+
+    def operator_protected_paths(self):
+        """Subclass metadata must be validated before any runtime storage is made."""
+        return []
 
     def __init__(self, operator_file, expected_sha256, candidate_sha256):
         self.operator_file = Path(clean_path(str(operator_file)))
@@ -34,7 +39,7 @@ class SessionRuntime:
             raise Blocked('Operator configuration or Development candidate identity differs')
         self.operator = json.loads(raw)
         required = {'version', 'kind', 'storage', 'native', 'allowed_roots', 'profiles', 'dependencies'}
-        if set(self.operator) - required - {'dependency_trees', 'session_profiles', 'session_read_roots'} or not required <= set(self.operator):
+        if set(self.operator) - required - {'dependency_trees', 'session_profiles', 'session_read_roots'} - self.operator_metadata_fields or not required <= set(self.operator):
             raise Blocked('Unexpected Development session configuration fields')
         if self.operator['version'] != 1 or self.operator['kind'] != 'development-sessions':
             raise Blocked('This entry point accepts only Development session configurations')
@@ -49,7 +54,7 @@ class SessionRuntime:
         self.authority = self.operator_file  # Protected input, never a writable authority directory.
         self.browser_directory = self.storage
         self.lock, self.children = threading.RLock(), {}
-        protected = [ROOT, self.operator_file]
+        protected = [ROOT, self.operator_file, *self.operator_protected_paths()]
         for p in self.operator['profiles'].values():
             fields = {'provider', 'executable', 'model', 'effort', 'read_paths', 'readonly_files'}
             if not fields <= set(p) or set(p) - fields - {'buffered_tool_transport', 'timeout_seconds'}:

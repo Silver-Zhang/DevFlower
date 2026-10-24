@@ -1,13 +1,13 @@
 # DevFlower 接续入口
 
-当前先读STATUS，再读tasks/2026-10/20261024_06_main-stable-integration的README、使用指南.md、integration.json。旧任务05是清理/指南快照，任务04保存原始审核；不改写历史。
+先读 STATUS，再读 tasks/2026-10/20261025_01_stable-promotion/README.md 和 validation.json。旧任务04/06及旧 BLOCKED 不改写。
 
-2026-10-24用户明确指令所有PR合入main、保留project并更新固定版本，已人工整合PR15/17。main工作树位于/home/workspace/DevFlower/DevFlower，HEADbedee3229e0c4420c9112a5b62eac9a0e81d6458，tree2e3c444f036e6f2e02bfcddd8301a5f0b1cd8e79，CF7b0c0b3bcc95235e02eadb74b71dd5f50d3d9c88da178b4787ff2090d1978210/175文件。两个开发分支已删；历史工作树detached保留。records已普通merge接收main，project.json framework_base同步。project/codeweave不改动。
+源码 main 工作树 /home/workspace/DevFlower/DevFlower，当前 `e0a0f92fed7f94bfef3a01b1298f8465c008023d` /tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` /候选 `cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe`，183 文件。PR18 已普通合并，源码分支清理；development/stable-promotion 目录保留并 detached 最新main，原生 cwd 不搬迁。records 在 project/devflower，通过普通 merge 同步main，不能回流main；project/codeweave不动。
 
-当前唯一推荐入口python3 /home/workspace/DevFlower/.local/open-devflower.py；默认固定包stable/main-7b0c0b3bcc95，指针stable/current.json，私有部署与操作证据archives/devflower-main-stable-integration-20261024。原Stable5816源码、批准记录、旧安装/会话保留；旧启动脚本原文在本任务archive备份。新服务沿用archives/devflower-model-admission-20261024/stage-final-r2的storage/native-homes，停止旧服务前确认无活动工作/PTY并做SQLite备份。不要清理正在使用的archives。
+正式入口：python3 /home/workspace/DevFlower/.local/open-devflower.py；--check 查看批准与身份。只读安装 stable/accepted-cfea19cac598，批准来源与外部Gate/原始报告位于 archives/devflower-stable-promotion-20261025/deployment。原 Stable5816、旧日常包7b0c及旧指针/脚本/DB备份均保留。storage/native-homes 沿用 archives/devflower-model-admission-20261024/stage-final-r2 原路径；禁止清理活跃 archives/原生会话/认证。
 
-本轮新回归547Python、6host、165浏览器、20JS全0，baseline/语法通过；实际测试HEAD27864fc与最终main同完整源码tree/CF。无新模型调用或独立审核。原run77f822033450473d8b1040ab620ef4f3的两个P1均独立CLOSED；R2原始BLOCKED、固定Gateexit2仍保留，真实顺序Claude300秒超时、merge未补证的缺口未消失。人工集成不冒充技术ACCEPT。
+本任务3轮审核，R1/R2 NEEDS_CORRECTION，R3真实Claude硬ACCEPT；基础设施恢复已2/2，用完。固定旧Stable Gate最终exit0。被审源码与当前main完整tree/CF一致，589Python/6宿主/169浏览器/20JS全0失败错误Skip，真实模型流程与正式安装实际顺序/汇合均通过。用户名义体验验收尚未进行。
 
-v3入口硬编码Development和stable_approved=false，当前未伪造TrustedRelease批准或修改门禁；本轮仅人工固定日常版启用。后续正式可信Stable需要解决实际证明/入口能力，不能以文件名或用户批准推导模型审核通过。当前external_steps为空，自动业务交付未启用。原任务预算不得隐式重开。
+按时间项目记录可用，通用Studio结束自动归档project仍未实现；生产external_steps为空，自动业务交付未启用。本次PR来自获准外部监督。当前任务停止在已授权正式晋升，不自动扩展功能。
 
-按时间研发台账在records/project；Studio SQLite/原生HOME保留运行细节。通用Studio运行结束自动归档到project分支仍未实现，应在产品层补齐，不能说已完成。
+原始本地证据 archives/devflower-stable-promotion-20261025。实际CLI模型Codex gpt-6.1-sol/xhigh、Claude claude-opus-5-5[1m]/high；物理后端/实际effort unknown。恢复使用机器摘要所记原HOME/cwd和明确session UUID，先排除双写，不使用--last。不删除旧会话、改写负面结论或以新结论套用旧候选。

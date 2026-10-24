@@ -307,9 +307,12 @@ class SessionCenter:
             return self.operation(op['id'], op['workspace'])
 
     def _spawn(self, key):
+        self.runtime.check_operator()
         return subprocess.Popen([sys.executable, '-B', str(Path(__file__).with_name('session_worker.py')),
             '--operator', str(self.runtime.operator_file), '--sha256', self.runtime.operator_sha256,
-            '--operation', key, *(['--candidate-sha256', self.runtime.candidate_sha256] if getattr(self.runtime, 'session_only', False) else [])], cwd=Path(__file__).resolve().parents[2],
+            '--operation', key, *(['--candidate-sha256', self.runtime.candidate_sha256] if getattr(self.runtime, 'session_only', False) else []),
+            *(['--policy', str(self.runtime.policy_file), '--policy-sha256', self.runtime.policy_sha]
+              if hasattr(self.runtime, 'policy_file') else [])], cwd=Path(__file__).resolve().parents[2],
             env=clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             close_fds=True, start_new_session=True)
 

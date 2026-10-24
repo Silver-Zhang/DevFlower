@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "20261025_01_stable-promotion",
+  "date": "2026-10-25",
+  "mode": "B",
+  "status": "已完成",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "main",
+      "base": "bedee3229e0c4420c9112a5b62eac9a0e81d6458",
+      "head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+      "git_tree": "6c9e39e16bbbe7de95b894e0a58632b1a0f63039",
+      "candidate_sha256": "cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe",
+      "implementation_commit": "20fbc62c412d6ded7517cd581bd77b10a0c10bde",
+      "prs": [
+        "https://github.com/Silver-Zhang/DevFlower/pull/18"
+      ]
+    }
+  ]
+}
