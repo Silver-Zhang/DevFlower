@@ -40,7 +40,7 @@ function headers(key){return {Authorization:'Bearer '+access[key].token}}
    await page.route('**/api/status',async route=>{const r=await route.fetch();const status=await r.json();
     await route.fulfill({response:r,json:{...status,stable_approved:true,label:'Stable',release}})});
    await open(page,'development');assert.equal(await page.locator('.brand span').innerText(),'DEVELOPMENT');
-   await page.unroute('**/api/status');
+   await page.unrouteAll({behavior:'wait'});
   }
  });
  await test('approval-tamper-refuses-queries-starts-and-refresh',async page=>{

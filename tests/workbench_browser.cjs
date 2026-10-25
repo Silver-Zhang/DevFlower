@@ -488,7 +488,7 @@ await test('product-node-selection-does-not-recenter-or-move-nodes',async p=>{
 });
 await test('product-new-chat-selects-agent-and-hides-protocol-details',async p=>{
  await openWorkspace(p);await p.getByRole('button',{name:'新建会话',exact:true}).click();const picker=p.getByLabel('Agent 工具',{exact:true});assert((await picker.innerText()).includes('Claude Code'));assert((await picker.innerText()).includes('Codex'));
- const choices=await picker.innerText();assert(!choices.includes('test-model'));assert(!choices.includes('/ high'));assert.equal(await p.getByRole('button',{name:'验证执行',exact:true}).isVisible(),false);assert(await p.getByRole('button',{name:'刷新模型',exact:true}).isVisible());
+ const choices=await picker.innerText();assert(!choices.includes('test-model'));assert(!choices.includes('/ high'));assert.equal(await p.getByRole('button',{name:'验证执行',exact:true}).isVisible(),false);await p.getByRole('button',{name:'刷新模型',exact:true}).waitFor({state:'visible'});assert(await p.getByRole('button',{name:'刷新模型',exact:true}).isVisible());
  await p.setViewportSize({width:1512,height:1080});await p.screenshot({path:out+'/product-agent-picker.png'});
 });
 await test('product-delete-draft-confirm-cancel-and-reload-preserve-history',async p=>{
