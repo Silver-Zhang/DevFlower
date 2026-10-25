@@ -119,7 +119,7 @@ class NestedRoundTests(unittest.TestCase):
                     model=node['model'],effort=node['effort'],home=str(root/'native'/node['id']),session_id=None))
             rt=SimpleNamespace(flow=store,db=store,storage=root/'storage',check_operator=lambda:None,
                 node_binding=binding,source_lock=lambda cwd:root/'source.lock',recheck_session=lambda chat:None,
-                attachments=lambda cwd,paths:[],native_snapshot=lambda workspace,binding:{})
+                attachments=lambda cwd,paths:[],native_snapshot=lambda workspace,binding:{'native_path':str(Path(binding['home'])/'synthetic-history.jsonl')})
             store.put('run','native',dict(id='native',workspace='test',state='QUEUED',task='nested session reuse',
                 graph=validate_graph(graph),created_at=time.time(),paused=False,cancel_requested=False))
             calls=[];summaries=[]
@@ -128,6 +128,10 @@ class NestedRoundTests(unittest.TestCase):
                     activation=store.get('activation',journal.key)
                     node=activation['node'];sid='session-'+node.replace('/','-')
                     calls.append(dict(node=node,path=activation['iteration_path'],session=binding['session_id'],prompt=prompt))
+                    # A bounded native-history double for the new per-activation
+                    # byte range. No genuine Provider execution is claimed here.
+                    transcript=Path(binding['home'])/'synthetic-history.jsonl';transcript.parent.mkdir(parents=True,exist_ok=True)
+                    with transcript.open('a') as stream:stream.write(json.dumps({'synthetic_turn':activation['id']})+'\n')
                     if node.endswith('/summary'):summaries.append(activation['id'])
                     journal.input_sent(None,len(prompt.encode()),digest(prompt.encode()))
                     return dict(session_id=sid,report=dict(reply=node,summary=node,accepted=True,
@@ -147,6 +151,8 @@ class NestedRoundTests(unittest.TestCase):
                 self.assertEqual(len({a['id'] for a in turns}),4)
                 self.assertEqual([a['initialization_included'] for a in turns],[True,False,False,False])
                 self.assertTrue(chat['initialized'])
+                self.assertTrue(all(a['native_history_end']>a['native_history_offset'] for a in turns))
+                self.assertEqual([a['native_history_offset'] for a in turns][1:],[a['native_history_end'] for a in turns][:-1])
                 self.assertTrue(all(a['receipt']['session_id']==chat['binding']['session_id'] for a in turns))
                 sent=sorted((c for c in calls if c['node']==chat['node']),key=lambda c:c['path'])
                 self.assertEqual([c['session'] for c in sent],[None]+[chat['binding']['session_id']]*3)

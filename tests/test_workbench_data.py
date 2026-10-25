@@ -48,5 +48,55 @@ class PublicHandoffTests(unittest.TestCase):
         self.assertNotIn('INIT', text)
 
 
+
+class DraftWorkspaceOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from studio.workbench_store import WorkbenchStore
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.store=WorkbenchStore(Path(self.tmp.name)/'drafts.sqlite',scoped_drafts=True)
+        self.graph={'version':3,'name':'Legacy graph; owner unknown','nodes':[],'edges':[]}
+        from orchestration.common import canonical,digest
+        self.legacy=dict(id='legacy',revision=digest(canonical(self.graph)),graph=self.graph)
+        # Genuine pre-workspace persisted bytes, not a new unscoped API save.
+        with self.store.tx() as db:
+            raw=canonical(self.legacy).decode()
+            db.execute("INSERT INTO records VALUES('draft',?,?)",('legacy',raw))
+            db.execute('INSERT INTO drafts VALUES(?,?,?)',('legacy',self.legacy['revision'],raw))
+        self.store.put('run','history',dict(id='history',state='COMPLETED',draft_id='legacy'))
+        self.store.put('node-session','native-history',dict(id='native-history',session_id='original-native-session'))
+    def revisions(self):
+        with self.store.tx(read=True) as db:return db.execute('SELECT id,revision,data FROM drafts ORDER BY id,revision').fetchall()
+    def test_neither_workspace_can_delete_or_rebind_legacy_original(self):
+        from studio.server import Conflict
+        original=self.revisions()
+        for workspace in ('workspace-A','workspace-B'):
+            with self.subTest(workspace=workspace):
+                with self.assertRaises(Conflict):self.store.delete_draft('legacy',self.legacy['revision'],workspace)
+                with self.assertRaises(Conflict):self.store.save('legacy',self.graph,self.legacy['revision'],workspace)
+                self.assertEqual(self.store.get('draft','legacy'),self.legacy)
+                self.assertEqual(self.revisions(),original)
+        for call in (lambda:self.store.delete_draft('legacy',self.legacy['revision']),lambda:self.store.save('legacy',self.graph,self.legacy['revision'])):
+            with self.assertRaises(Invalid):call()
+        self.assertEqual(self.store.get('run','history')['state'],'COMPLETED')
+        self.assertEqual(self.store.get('node-session','native-history')['session_id'],'original-native-session')
+    def test_explicit_new_copies_have_distinct_ownership_and_preserve_legacy_revisions(self):
+        from studio.server import Conflict
+        old=self.revisions()
+        a=self.store.save('copy-A',self.graph,None,'workspace-A');b=self.store.save('copy-B',self.graph,None,'workspace-B')
+        self.assertEqual(a['workspace'],'workspace-A');self.assertEqual(b['workspace'],'workspace-B')
+        with self.assertRaises(Conflict):self.store.save('copy-A',self.graph,a['revision'],'workspace-B')
+        with self.assertRaises(Conflict):self.store.delete_draft('copy-A',a['revision'],'workspace-B')
+        with self.assertRaises(Invalid):self.store.save('copy-A',self.graph,a['revision'])
+        self.store.delete_draft('copy-A',a['revision'],'workspace-A')
+        self.assertEqual(self.store.get('draft','copy-B'),b)
+        self.assertEqual(self.store.get('draft','legacy'),self.legacy)
+        self.assertEqual([r for r in self.revisions() if r[0]=='legacy'],old)
+        self.assertEqual(len(self.revisions()),3,'Deleting a copy must retain every immutable revision')
+    def test_workspace_api_store_never_creates_unassigned_drafts(self):
+        for workspace in (None,'',[],{}):
+            with self.subTest(workspace=workspace),self.assertRaises(Invalid):self.store.save('new',self.graph,None,workspace)
+        self.assertEqual(self.store.list('draft'),[self.legacy])
+
 if __name__ == '__main__':
     unittest.main()

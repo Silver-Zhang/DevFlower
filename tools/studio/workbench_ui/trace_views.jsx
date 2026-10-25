@@ -1,6 +1,8 @@
 import React,{useState} from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {ReadableContent} from './ConversationView.jsx';
+import {handoffDeliveries} from './handoff_deliveries.mjs';
 
 const names = {answer:'最终回答', summary:'摘要', result:'结构化结果', artifacts:'产物引用', evidence:'验证与审核证据',
   issues:'未解决问题', next:'下一步', sources:'来源', accepted:'满足条件', reference:'文件引用', accessible:'可访问',
@@ -46,18 +48,16 @@ function handoffRound(path, activation) {
 }
 
 export function HandoffTrace({edge, prefix, events, snapshot}) {
-  const matches = events.filter(e=>e.edge===edge.id && e.source===prefix+edge.source && e.node===prefix+edge.target &&
-    e.run===snapshot?.run.id && ['handoff-ready','handoff-sent','handoff-received'].includes(e.kind));
-  const groups = new Map();
-  for(const event of matches) groups.set(JSON.stringify([event.edge,event.activation,event.target_activation,event.node,event.target_round||event.iteration_path,event.attempt]),event);
-  if(!groups.size)return <p className="hint">尚无本运行、本连线的实际交接记录。配置预览不代表已经发送。</p>;
-  return <div data-testid="handoff-trace">{[...groups.values()].map(event=>{
+  const matches = handoffDeliveries(events,snapshot?.run.id).filter(e=>e.edge===edge.id && e.source===prefix+edge.source && e.node===prefix+edge.target);
+  if(!matches.length)return <p className="hint">尚无本运行、本连线的实际交接记录。配置预览不代表已经发送。</p>;
+  return <div data-testid="handoff-trace">{matches.map(event=>{
     const source=snapshot.nodes.find(a=>a.id===event.activation);
-    const target=event.target_activation?snapshot.nodes.find(a=>a.id===event.target_activation):snapshot.nodes.find(a=>a.node===event.node && a.inputs?.some(i=>i.edge===event.edge&&i.activation===event.activation&&i.run===event.run) && JSON.stringify(a.iteration_path||[])===JSON.stringify(event.iteration_path||[]) && (event.attempt===undefined||a.attempt===event.attempt));
+    // A shared node/round/input does not prove which activation received it.
+    const target=event.target_activation?snapshot.nodes.find(a=>a.id===event.target_activation&&a.node===event.node):undefined;
     const state=event.kind==='handoff-sent'?'已完整发送到原生工具输入':event.kind==='handoff-received'?'确定性节点已接收':'内容已固定，等待发送';
     return <details key={event.seq} open><summary>第 {(event.iteration_path?.length?event.iteration_path:[event.iteration||1]).join(' / ')} 轮 · {state}</summary>
-      <dl className="handoff-facts"><dt>来源</dt><dd>{source?.name||event.source}</dd><dt>目标</dt><dd>{target?.name||event.node}</dd><dt>传递字段</dt><dd>{edge.transfer==='field'?edge.field:names[edge.transfer||'result']||edge.transfer}</dd><dt>接收状态</dt><dd>{state}</dd><dt>来源轮次</dt><dd>{handoffRound(event.source_round,source)}</dd><dt>目标轮次</dt><dd>{handoffRound(event.target_round,target)}</dd><dt>内容 SHA-256</dt><dd>{event.content_sha256||'历史记录未提供'}</dd><dt>首次接收时间</dt><dd>{event.received_at?new Date(event.received_at*1000).toLocaleString('zh-CN'):'unknown'}</dd><dt>记录时间</dt><dd>{event.at?new Date(event.at*1000).toLocaleString('zh-CN'):'unknown'}</dd></dl>
-      <DataValue value={event.content}/><details><summary>运行与产物身份</summary><dl className="handoff-facts"><dt>运行</dt><dd>{event.run}</dd><dt>来源Activation</dt><dd>{event.activation}</dd><dt>目标Activation</dt><dd>{target?.id||'尚无对应激活'}</dd><dt>调用前源码</dt><dd>{source?.source_at_request?.sha256||'此确定性来源没有模型源码回执'}</dd><dt>工作台候选</dt><dd>{snapshot.run.candidate_sha256||'历史记录未提供'}</dd></dl></details>
+      <p className="handoff-route"><b>{source?.name||event.source_name||event.source}</b> → <b>{target?.name||event.target_name||event.node}</b></p><small>{edge.transfer==='field'?edge.field:names[edge.transfer||'result']||edge.transfer} · 第 {handoffRound(event.source_round,source)} 轮 → 第 {handoffRound(event.target_round,target)} 轮</small>
+      <div className="handoff-readable"><ReadableContent value={event.content}/></div><details><summary>高级：字段、时间与运行身份</summary><DataValue value={event.content}/><dl className="handoff-facts"><dt>接收状态</dt><dd>{state}</dd><dt>来源轮次</dt><dd>{handoffRound(event.source_round,source)}</dd><dt>目标轮次</dt><dd>{handoffRound(event.target_round,target)}</dd><dt>内容 SHA-256</dt><dd>{event.content_sha256||'历史记录未提供'}</dd><dt>首次接收时间</dt><dd>{event.received_at?new Date(event.received_at*1000).toLocaleString('zh-CN'):'unknown'}</dd><dt>记录时间</dt><dd>{event.at?new Date(event.at*1000).toLocaleString('zh-CN'):'unknown'}</dd><dt>运行</dt><dd>{event.run}</dd><dt>来源Activation</dt><dd>{event.activation}</dd><dt>目标Activation</dt><dd>{target?.id||'尚无对应激活'}</dd><dt>调用前源码</dt><dd>{source?.source_at_request?.sha256||'此确定性来源没有模型源码回执'}</dd><dt>工作台候选</dt><dd>{snapshot.run.candidate_sha256||'历史记录未提供'}</dd></dl></details>
     </details>;
   })}</div>;
 }

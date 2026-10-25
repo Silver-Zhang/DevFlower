@@ -1,9 +1,15 @@
 import React,{useState} from 'react';
-import {FolderOpen,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2} from 'lucide-react';
+import {FolderOpen,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2,Trash2} from 'lucide-react';
 
 // DevFlower workspace navigation around the existing runtime.
 // Licensed Sim interaction hooks are separately attributed under vendor/sim.
-export function WorkspaceNavigation({workspace,drafts,current,onFolder,onChat,onWorkflows,onDocument}) {
+export function LegacyDraftCopies({drafts,onCopy}) {
+ if(!drafts.length)return null;
+ return <details className="legacy-drafts"><summary>未分配的旧工作流（仅可新建副本）</summary><p>尚未证明工作区归属。原件与历史保持不变，不能在此删除或接管。</p>{drafts.map(d=><button key={d.id} aria-label={'在当前工作区新建副本 '+d.graph.name} onClick={()=>onCopy(d)}>{d.graph.name} · 在当前工作区新建副本</button>)}</details>;
+}
+
+export function WorkspaceNavigation({workspace,drafts,legacy=[],current,onFolder,onChat,onWorkflows,onDocument,onDelete}) {
+ const owned=drafts.filter(d=>d.workspace===workspace?.id&&d.workspace);
  return <>
   <nav className="workspace-navigation" aria-label="工作空间导航">
    <button onClick={onChat}><MessageSquare size={15}/>开始对话</button>
@@ -12,7 +18,8 @@ export function WorkspaceNavigation({workspace,drafts,current,onFolder,onChat,on
   </nav>
   <section className="workspace-workflows" aria-label="工作流快捷列表">
    <div className="workspace-section-title"><span>工作流</span><button aria-label="查看所有工作流" onClick={onWorkflows}><Plus size={14}/></button></div>
-   {!workspace?<p>打开文件夹以开始工作</p>:!drafts.length?<p>从空白画布开始，或选择示例</p>:drafts.slice(0,5).map(d=><button key={d.id} aria-label={'切换至工作流 '+d.graph.name} aria-current={d.id===current?'page':undefined} onClick={()=>onDocument(d)}><Workflow size={13}/><span>{d.graph.name}</span></button>)}
+   {!workspace?<p>打开文件夹以开始工作</p>:!owned.length?<p>从空白画布开始，或选择示例</p>:owned.slice(0,5).map(d=><div className="workflow-list-row" key={d.id}><button aria-label={'切换至工作流 '+d.graph.name} aria-current={d.id===current?'page':undefined} onClick={()=>onDocument(d)}><Workflow size={13}/><span>{d.graph.name}</span></button><button className="delete-workflow" aria-label={'删除工作流 '+d.graph.name} title="删除工作流草稿" onClick={()=>onDelete(d)}><Trash2 size={14}/></button></div>)}
+   {workspace&&<LegacyDraftCopies drafts={legacy} onCopy={onDocument}/>}
   </section>
  </>;
 }

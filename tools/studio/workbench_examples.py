@@ -8,7 +8,7 @@ def examples(profiles):
         return node(key,'agent',name,x,y,provider=p['provider'],profile=profile,model=p['model'],effort=p['effort'],
             role='通用 Agent',responsibility=name,mode='Ask',session='new',subagents='disabled',timeout=300,
             initial_prompt='理解本次工作流的目标和已授权边界。',round_prompt='完成当前任务，参考上游提供的结果。',
-            handoff_prompt='提供主要回答、简短摘要、证据、未解决问题及后续建议；不要虚构工具执行。')
+            handoff_prompt='提供简明回答。摘要只写要点，产物、依据和未解决问题仅在适用时填写；避免重复长文，不虚构工具执行。')
     def edges(pairs):return [dict(id='edge'+str(i),source=s,target=t,transfer='result') for i,(s,t) in enumerate(pairs)]
     def graph(name,nodes,pairs):return dict(version=3,name=name,nodes=nodes,edges=edges(pairs),budget={'calls':24,'seconds':3600})
     sequential=graph('两 Agent 顺序分析',[node('start','start','任务输入',50,180),agent('analyze','分析任务',first,320,180),
@@ -35,4 +35,5 @@ def examples(profiles):
         *[('route',k) for k in ('code','research','writing','default')],*[ (k,'result') for k in ('code','research','writing','default')]])
     for edge in routing['edges']:
         if edge['source']=='route':edge['route']=edge['target']
-    return [sequential,parallel,loop,routing]
+    single=graph('单 Agent 快速任务',[node('start','start','任务输入',50,180),agent('agent','处理任务',first,350,180),node('result','result','结果',650,180)],[('start','agent'),('agent','result')])
+    return [sequential,parallel,loop,routing,single]

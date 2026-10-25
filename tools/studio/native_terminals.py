@@ -40,19 +40,21 @@ class NativeTerminals:
         atexit.register(self.shutdown)
 
     def prepare(self, data):
-        if set(data) != {'workspace', 'handle'}: raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
+        if not {'workspace','handle'} <= set(data) or set(data)-{'workspace','handle','auto_verify'} or type(data.get('auto_verify',False)) is not bool: raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
         project, row = self.rt.session_center.resolve(data['workspace'], data['handle'])
         binding, reason = self.rt.session_center._binding(row, project)
         if not binding or binding['provider'] not in ('codex', 'claude'):
             raise Blocked(reason or '该 Provider 尚未支持原生终端')
         if self.sessions.busy(binding, row['native']['session_id']): raise Blocked('此会话已有写入者，请先停止原回合或连接已有终端')
         selected=self.rt.node_binding(data['workspace'],dict(profile=binding['runtime_profile'],
-            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read'))
+            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read'),admission=not data.get('auto_verify',False))
+        from .model_admission import ModelAdmission
+        check = ModelAdmission(self.rt).pending_check(selected,include_valid=True) if data.get('auto_verify') else None
         value = dict(purpose='native-terminal', workspace=data['workspace'], handle=data['handle'],
             provider=binding['provider'], model=binding['model'], effort=binding['effort'],
             cwd=row['native']['cwd'], session_id=row['native']['session_id'], native_sha256=row['native']['sha256'],
             home=binding['home'], source_sha256=tree_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
-            execution_binding=selected['binding'],
+            execution_binding=selected['binding'],admission_checks=[check] if check else [],
             operator_sha256=self.rt.operator_sha256, policy_sha256=self.rt.policy_sha,
             human_questions=['在原生只读CLI中打开此明确会话；使用原目录和HOME，并独占该会话写入锁。'])
         return self.rt.db.prepare(value)
@@ -99,7 +101,8 @@ class NativeTerminals:
                     workspace=value['workspace'], handle=value['handle']).items():
                 argv += ['--' + name.replace('_', '-'), item]
             env = clean_env(); env.update(TERM='xterm-256color', COLORTERM='truecolor',
-                                         DEVFLOWER_TERMINAL_PARENT_PID=str(os.getpid()))
+                                         DEVFLOWER_TERMINAL_PARENT_PID=str(os.getpid()),
+                                         DEVFLOWER_TERMINAL_PARENT_START=process_identity(os.getpid())['start'])
             try:
                 process = subprocess.Popen(argv, cwd=value['cwd'], env=env, stdin=slave, stdout=slave, stderr=slave,
                                            start_new_session=True, close_fds=True)

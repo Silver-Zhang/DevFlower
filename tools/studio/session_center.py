@@ -210,7 +210,7 @@ class SessionCenter:
             raise Blocked('Transcript cwd is outside the approved workspace mapping')
         return project, current
 
-    def history(self, workspace, handle, query='', limit=100):
+    def history(self, workspace, handle, query='', limit=100, *, start_offset=0, end_offset=None, include_metadata=False):
         self.runtime.check_operator()
         _, row = self.resolve(workspace, handle)
         p = row['profile']
@@ -221,7 +221,7 @@ class SessionCenter:
                   for src, _ in profile.get('readonly_files', [])]
         secrets_found = credentials(p['home'] or p['config_root'], extra, read_file=credential_bytes)
         messages = conversation(p['provider'], row['native']['path'], limit, query,
-                                expected_sha256=row['native']['sha256'], secrets=secrets_found)
+                                expected_sha256=row['native']['sha256'], secrets=secrets_found,start_offset=start_offset,end_offset=end_offset,include_metadata=include_metadata)
         return dict(workspace_id=workspace, handle=handle, messages=messages)
 
     def visibility(self, workspace, handle, hidden):
@@ -234,7 +234,7 @@ class SessionCenter:
 
     def prepare(self, request):
         self.runtime.check_operator()
-        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
+        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
             raise Invalid('Expected workspace, session handle or new, approved profile, prompt and permission')
         project = self.runtime.project(request['workspace'])
         source = self.runtime.validate_source(project['path'])
@@ -243,10 +243,12 @@ class SessionCenter:
         if not isinstance(request['prompt'], str) or not request['prompt'].strip() or len(request['prompt']) > 60000:
             raise Invalid('A bounded nonempty user message is required')
         selected=None
+        automatic = request.get('auto_verify', False)
+        if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         if hasattr(self.runtime,'node_binding'):
             profile=self.runtime.operator['profiles'].get(request['profile'])
             if not profile:raise Invalid('请选择已登记的执行配置')
-            selected=self.runtime.node_binding(project['id'],dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission']))
+            selected=self.runtime.node_binding(project['id'],dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission']),admission=not automatic)
         handle, native_sha, cwd = request['handle'], None, project['path']
         if handle == 'new':
             p = self.runtime.operator['profiles'].get(request['profile'])
@@ -278,12 +280,19 @@ class SessionCenter:
         if 'mode' in request:
             mode=request['mode'];prompt=prompt+'\n\n工作方式：'+mode+'。'+('只读制定计划，不执行修改。' if mode=='Plan' else '只读回答，不执行修改。' if mode=='Ask' else '仅在已授权工作区和工具范围内执行。')
         value = dict(workspace=project['id'], source=source, source_sha256=tree_hash(source['root']),
-                     binding=binding, cwd=cwd, prompt=prompt, permission=request['permission'],
+                     binding=binding, cwd=cwd, prompt=prompt, user_prompt=request['prompt'], permission=request['permission'],
                      handle=handle, native_sha256=native_sha, profile=request['profile'],
                      mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),
                      operator_sha256=self.runtime.operator_sha256,
                      human_questions=['确认此消息、精确会话、模型、原 HOME/cwd 和本次工具权限。'])
-        return self.db.prepare(dict(value, purpose='native-session'))
+        checks = []
+        if automatic and selected:
+            from .model_admission import ModelAdmission
+            check = ModelAdmission(self.runtime).pending_check(selected,include_valid=True)
+            if check: checks.append(check)
+        if checks:
+            value['human_questions'][0]+=' 发送前将自动检查当前连接，至多一次只读原生诊断调用，不发送任务或源码；失败不发送消息。'
+        return self.db.prepare(dict(value, purpose='native-session',admission_checks=checks))
 
     def launch(self, permit, expected, answer):
         with self.runtime.lock:
@@ -341,6 +350,14 @@ class SessionCenter:
         process = row.get('process') or next((x['data'].get('process') for x in self.db.listing('session-step',
                         filters={'operation': key, 'kind': 'PROCESS'})), None)
         state = row['state']
+        extra=[src for profile in self.runtime.operator['profiles'].values() for src,_ in profile.get('readonly_files',[])]
+        from orchestration.privacy import redact
+        secret=credentials(b['home'],extra,read_file=credential_bytes)
+        reply=safe_text(redact(row['reply'],secret)) if isinstance(row.get('reply'),str) else None
+        receipt=row.get('receipt')
+        if isinstance(receipt,dict):
+            from .usage import public_usage
+            receipt=dict(receipt,usage=public_usage(receipt.get('usage')))
         if state not in TERMINAL and not alive(row.get('worker')) and time.time() - row['created_at'] > 3:
             state = 'RECOVERY_REQUIRED'
         return dict(id=key, workspace_id=workspace, state=state, provider=b['provider'],
@@ -349,7 +366,8 @@ class SessionCenter:
                     model=b['model'], effort=b['effort'], cwd=display(row['cwd']), permission=row['permission'],
                     process=process, alive=alive(process), worker_alive=alive(row.get('worker')),
                     reason=row.get('reason'), error_category=row.get('error_category'),
-                    process_result=row.get('process_result'), receipt=row.get('receipt'), reply=row.get('reply'))
+                    process_result=row.get('process_result'), receipt=receipt, reply=reply,
+                    user_message=safe_text(redact(row.get('user_prompt',row.get('prompt','')),secret)))
 
     def cancel(self, workspace, key):
         self.runtime.check_operator()
@@ -410,11 +428,13 @@ class SessionCenter:
 
 class SessionJournal:
     """Adapter process journal backed only by private Studio storage."""
-    def __init__(self, db, operation):
-        self.db, self.operation = db, operation
+    def __init__(self, db, operation, *, cancelled=None):
+        self.db, self.operation,self.cancelled = db, operation,cancelled
 
     def get(self, run):
-        return dict(data=self.db.get('session-operation', self.operation))
+        data=self.db.get('session-operation', self.operation)
+        if self.cancelled is not None:data=dict(data,cancel_requested=data.get('cancel_requested',False) or self.cancelled())
+        return dict(data=data)
 
     def intent(self, run, kind, data):
         key = secrets.token_hex(16)
@@ -437,14 +457,14 @@ class SessionJournal:
         row = self.db.get('session-step', key)
         self.db.update('session-step', key, dict(status=status, data=dict(row['data'], **updates)))
         if row['kind'] == 'PROCESS' and status == 'RUNNING':
-            self.db.update('session-operation', self.operation, dict(state='RUNNING', process=updates.get('process')))
+            self.db.update('session-operation', self.operation, dict(state='RUNNING', process=updates.get('process'),native_started_at=time.time()))
             operation = self.db.get('session-operation', self.operation)
             if operation['binding']['provider'] == 'claude' and operation.get('requested_session'):
                 # Claude preassigns an exact UUID. It becomes resumable only if
                 # that same UUID is also found in its native transcript.
                 self.bind_session(operation['requested_session'])
         elif row['kind'] == 'PROCESS' and status == 'EXITED':
-            self.db.update('session-operation', self.operation, dict(process_result=updates))
+            self.db.update('session-operation', self.operation, dict(process_result=updates,native_finished_at=time.time()))
         elif row['kind'] == 'AGENT_REQUEST' and updates.get('actual_session'):
             self.db.update('session-operation', self.operation, dict(native_session=updates['actual_session']))
             self.bind_session(updates['actual_session'])

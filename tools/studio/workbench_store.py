@@ -10,7 +10,10 @@ from .server import Conflict
 
 
 class WorkbenchStore:
-    def __init__(self, path):
+    def __init__(self, path, *, scoped_drafts=False):
+        # The workspace API requires explicit ownership. The default retains
+        # the offline legacy store's unscoped revision/CAS compatibility.
+        self.scoped_drafts = scoped_drafts
         self.path = Path(path)
         for p in (self.path, *(Path(str(self.path)+suffix) for suffix in ('-wal','-shm','-journal'))):
             if p.is_symlink() or p.exists() and (not p.is_file() or p.stat().st_nlink != 1):
@@ -76,12 +79,37 @@ class WorkbenchStore:
             rows = db.execute('SELECT seq,data FROM events WHERE run=? AND seq>? ORDER BY seq LIMIT 1000', (run, after)).fetchall()
         return [dict(json.loads(data), seq=seq) for seq, data in rows]
 
-    def save(self, key, graph, expected):
+    def save(self, key, graph, expected, workspace=None):
+        if (workspace is not None and (not isinstance(workspace,str) or not workspace.strip()) or
+                self.scoped_drafts and workspace is None):
+            raise Invalid('保存需要明确的工作区；未分配的旧工作流只能新建工作区副本')
         revision = digest(canonical(graph)); value = dict(id=key, revision=revision, graph=graph)
+        if workspace is not None: value['workspace'] = workspace
         with self.tx() as db:
             old = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (key,)).fetchone()
             if (json.loads(old[0])['revision'] if old else None) != expected:
                 raise Conflict('工作流已由另一处保存；请重新加载后比较')
+            if old and json.loads(old[0]).get('workspace') != workspace:
+                raise Conflict('工作流归属未匹配；未分配的旧工作流只能新建副本，不能接管原件')
             db.execute('INSERT OR IGNORE INTO drafts VALUES(?,?,?)', (key, revision, canonical(value).decode()))
             db.execute("INSERT OR REPLACE INTO records VALUES('draft',?,?)", (key, canonical(value).decode()))
         return value
+
+    def delete_draft(self, key, expected, workspace=None):
+        """Delete the current draft with CAS; immutable revisions/runs remain."""
+        if not isinstance(key, str) or not isinstance(expected, str):
+            raise Invalid('删除工作流需要明确的草稿和版本')
+        if not isinstance(workspace,str) or not workspace.strip():
+            raise Invalid('删除工作流需要明确的所属工作区；不能全局删除旧草稿')
+        with self.tx() as db:
+            row = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (key,)).fetchone()
+            if not row or json.loads(row[0])['revision'] != expected:
+                raise Conflict('工作流版本已变化，请刷新后重新确认删除')
+            if json.loads(row[0]).get('workspace') != workspace:
+                raise Conflict('工作流归属未匹配；不能删除其他工作区或未分配的旧草稿')
+            for raw, in db.execute("SELECT data FROM records WHERE kind='run'"):
+                run = json.loads(raw)
+                if (run.get('draft_id') == key or not run.get('draft_id') and run.get('graph_sha256')==expected) and run['state'] not in {'COMPLETED','FAILED','CANCELLED'}:
+                    raise Conflict('此工作流仍有运行或待核验任务，请先处理运行')
+            db.execute("DELETE FROM records WHERE kind='draft' AND id=?", (key,))
+        return dict(id=key, deleted=True, history_preserved=True)

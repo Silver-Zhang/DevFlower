@@ -8,7 +8,7 @@ async function test(name,fn){
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  try{await fn(page,context);assert.deepEqual(errors,[]);results.push({name,passed:true})}
  catch(e){results.push({name,passed:false,error:String(e)});await page.screenshot({path:out+'/'+name+'-failure.png'})}
- finally{await context.close()}
+ finally{await page.unrouteAll({behavior:'ignoreErrors'});await context.close()}
 }
 async function open(page,key){const x=access[key];await page.goto(x.url+'/#'+x.token);await page.locator('.brand').waitFor()}
 function headers(key){return {Authorization:'Bearer '+access[key].token}}

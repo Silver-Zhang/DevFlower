@@ -57,7 +57,11 @@ def main():
         if method=='claude/auth-status':return dict(logged_in=True,auth_method='synthetic fixture',service_verified=False)
         return original_rpc(manager,binding,cwd,method,params)
     metadata_patch=patch.object(WorkbenchSessions,'rpc',metadata);metadata_patch.start();owner.addCleanup(metadata_patch.stop)
-    server,token=create_server(rt);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    server,token=create_server(rt)
+    # Drain real in-flight history requests before deleting the fixture DBs.
+    # Browser disconnect does not itself end the server's request thread.
+    server.daemon_threads=False
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     access=out/'access.json';access.write_text(json.dumps(dict(url='http://127.0.0.1:'+str(server.server_port),token=token,workspace=workspace,path=str(base.source),sessions=session_rows,lost_run=lost)))
     access.chmod(0o600)
     try:return subprocess.run([a.node,str(Path(__file__).with_suffix('.cjs')),str(out)],timeout=180,env=dict(os.environ,CHROMIUM=a.chromium,PLAYWRIGHT_MODULE=a.playwright_module)).returncode

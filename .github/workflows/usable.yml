@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
+          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs tests/workbench_user_experience.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
       - name: Real host isolation probes
         shell: bash
         run: |

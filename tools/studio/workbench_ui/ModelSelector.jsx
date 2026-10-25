@@ -26,15 +26,19 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
  return <section className="model-picker" aria-label="模型发现">
   <label className="field"><span>模型</span><select aria-label="模型" disabled={disabled||pending} value={model||''} onChange={e=>{const m=models.find(x=>x.id===e.target.value);onChange({model:m.id,effort:m.efforts.includes(effort)?effort:m.efforts[0]||''})}}>
    {!selected&&<option value={model||''}>{model||'请选择模型'}（目录尚未确认）</option>}
-   {models.map(m=><option key={m.id} value={m.id} disabled={!m.operator_registered}>{m.name||m.id}{m.operator_registered?'（已登记）':'（已发现 · 未授权）'}</option>)}
+   {models.map(m=><option key={m.id} value={m.id} disabled={!m.operator_registered}>{m.name||m.id}{m.operator_registered?'':'（本机未配置）'}</option>)}
   </select></label>
   <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending} value={effort||''} onChange={e=>onChange({model,effort:e.target.value})}>{!selected?.efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{(selected?.efforts||[]).map(x=><option key={x}>{x}</option>)}</select></label>
+  <p className="connection-hint">{selected?.operator_registered?'发送或开始时自动检查连接':'此模型由服务返回，但尚未允许在本机执行。'}</p>
+  <button type="button" className="refresh-models" disabled={pending||disabled} onClick={()=>load(true)}>{pending?'正在读取…':'刷新模型'}</button>
+  {(error||current?.error)&&<p role="alert">{error||current.error}</p>}
+  <details className="model-connection-details"><summary>连接详情与手动检查</summary><p>已登记：操作者允许选择的配置；已发现未授权：服务返回但本机未配置。两者都不代表本次模型调用已成功。</p>
   <div className="admission-status" aria-label="执行准入">
    <p role="status">{admission?.execution_allowed&&admission.expires_at*1000>Date.now()?`当前配置已通过原生执行验证 · 有效至 ${new Date(admission.expires_at*1000).toLocaleTimeString()}`:'当前配置执行能力待验证；模型目录和登记不会授予执行权限。'}</p>
    <button ref={verifyButton} type="button" disabled={disabled||checking||!workspace?.id||!selected?.operator_registered} onClick={prepareCheck}>{checking?'原生验证中…':'验证执行'}</button>
    {permit&&<section data-local-escape aria-label="确认执行验证" onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();cancelCheck()}}}><p>{permit.data.human_questions[0]} 当前配置：{profile.id} · {model} / {effort} · {mode}。只验证此配置，有效 5 分钟。</p><label>验证确认意见<input autoFocus aria-label="执行验证确认意见" value={answer} onChange={e=>setAnswer(e.target.value)}/></label><button type="button" disabled={!answer.trim()||checking} onClick={verify}>确认并验证执行</button><button type="button" onClick={cancelCheck}>{checking?'关闭验证视图（调用继续）':'取消验证'}</button></section>}
   </div>
-  <div className="catalog-meta"><button type="button" disabled={pending||disabled} onClick={()=>load(true)}>{pending?'正在读取…':'刷新模型'}</button><span role="status">{current?.refresh_pending?'另一个刷新正在进行，请稍后再读':current?.stale?'旧数据／未发现实时目录':'目录已获取'} · {current?.source||'尚未查询'}</span><small>更新：{current?.updated_at?new Date(current.updated_at*1000).toLocaleString('zh-CN'):'尚无成功查询'}</small>
-  {(error||current?.error)&&<p role="alert">{error||current.error}</p>}<small>目录不是调用成功证明。实际物理后端与生效 effort：unknown；以原生回合回执分别核对。</small></div>
- </section>
+  <div className="catalog-meta"><span role="status">{current?.refresh_pending?'另一个刷新正在进行，请稍后再读':current?.stale?'旧数据／未发现实时目录':'目录已获取'} · {current?.source||'尚未查询'}</span><small>更新：{current?.updated_at?new Date(current.updated_at*1000).toLocaleString('zh-CN'):'尚无成功查询'}</small>
+  <small>目录不是调用成功证明。实际物理后端与生效 effort：unknown；以原生回合回执分别核对。</small></div>
+ </details></section>
 }

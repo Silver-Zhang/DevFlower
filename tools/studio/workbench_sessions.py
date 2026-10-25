@@ -18,6 +18,69 @@ from .session_sources import opened
 class WorkbenchSessions:
     def __init__(self, runtime): self.rt=runtime;self.db=runtime.flow
 
+    def operation_session(self, workspace, operation):
+        op=self.rt.session_center.operation(operation,workspace)
+        matches=[]
+        for session in self.listing(workspace)['sessions']:
+            internal=self.rt.db.get('session-handle',session['handle'])
+            if self.matching_operation(workspace,internal,op):matches.append(session)
+        if len(matches)>1:raise Blocked('原生会话身份不唯一，未自动打开')
+        return dict(session=matches[0] if matches else None)
+
+    def node_conversation(self, workspace, run, activation):
+        """Read a scoped native conversation; never start/resume an Agent."""
+        from orchestration.process import group_alive
+        from orchestration.privacy import credentials, redact
+        flow = self.db.get('run', run); item = self.db.get('activation', activation)
+        if flow['workspace'] != workspace or item['run'] != run or item.get('kind') != 'agent':
+            raise Blocked('对话不属于当前工作区、运行或Agent节点')
+        if not item.get('chat_key'):
+            extra=[src for p in self.rt.operator['profiles'].values() for src,_ in p.get('readonly_files',[])]
+            secret=credentials(self.rt.native,extra)
+            return dict(workspace=workspace,run=run,activation=activation,node=item['node'],
+                iteration_path=item.get('iteration_path',[]),state='UNKNOWN' if self.rt.snapshot(run)['state']=='RECOVERY_REQUIRED' else item['state'],
+                task=safe_text(redact(flow['task'],secret)),process_alive=False,connection_check=False,
+                request_sections=[],messages=[],activity=[],summaries=[],session=None,history_status='waiting')
+        chat = self.db.get('node-session', item['chat_key']); binding = chat['binding']
+        secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
+        snapshot = self.rt.snapshot(run)
+        state = item['state']
+        if snapshot['state'] == 'RECOVERY_REQUIRED' or state == 'RUNNING' and not group_alive(item.get('process')):
+            state = 'UNKNOWN'
+        value = dict(workspace=workspace, run=run, activation=activation, node=item['node'],
+            iteration_path=item.get('iteration_path', []), state=state,
+            process_alive=group_alive(item.get('process')), task=safe_text(redact(flow['task'],secret)),
+            connection_check=bool(item.get('connection_check')),
+            request_sections=redact(item.get('request_sections', []), secret),
+            messages=[],activity=[],summaries=[],session=None,history_status='waiting')
+        try:
+            offset=item.get('native_history_offset');end=item.get('native_history_end')
+            if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
+                raise Invalid('此历史运行没有记录可核验的本轮原生范围')
+            session = self.activation_session(workspace,run,activation)
+            _,native=self.rt.session_center.resolve(workspace,session['handle'])
+            if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
+                raise Blocked('原生历史路径与本轮绑定不一致')
+            history = self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
+            current=self.db.get('activation',activation)
+            if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
+                raise Invalid('本轮记录正在提交，下一次读取核验')
+            value.update(session=session,history_status='available',
+                **{k:history.get(k,[]) for k in ('messages','activity','summaries')})
+        except (Invalid,Blocked,ValueError,OSError):
+            # Growing/unflushed native records may not yet have a stable readable
+            # snapshot. Absence is not evidence of model thinking or success.
+            value['history_status'] = 'waiting' if state in ('STARTING','RUNNING') else 'unavailable'
+        if state != 'UNKNOWN':
+            output=item.get('output',{}); receipt=output.get('receipt',{}); proc=receipt.get('process',{})
+            if (state=='COMPLETED' and receipt.get('session_id')==binding.get('session_id') and
+                ('receipt' not in item or item['receipt']==receipt) and
+                receipt.get('requested_model')==binding['model'] and receipt.get('requested_effort')==binding['effort'] and
+                proc.get('exit')==0 and all(proc.get(k) is False for k in ('timeout','cancelled','overflow')) and
+                isinstance(output.get('answer'),str)):
+                value['saved_answer']=safe_text(redact(output['answer'],secret))
+        return value
+
     def activation_session(self, workspace, run, activation):
         flow = self.db.get('run', run); item = self.db.get('activation', activation)
         if flow['workspace'] != workspace or item['run'] != run:
@@ -41,7 +104,7 @@ class WorkbenchSessions:
             c['binding'].get('project',workspace)==workspace}
 
     def matching_operation(self,workspace,row,operation):
-        if not row or not row['profile'].get('home') or row.get('ambiguous'):return False
+        if not row or not row['profile'].get('home') or row.get('ambiguous') or not row.get('authorized_read',True):return False
         try:stored=self.rt.db.get('session-operation',operation['id'])
         except Invalid:return False
         p,native=row['profile'],row['native'];binding=stored['binding']
@@ -214,7 +277,7 @@ class WorkbenchSessions:
                 continue
         return False
 
-    def history(self,workspace,handle,query=''):
+    def history(self,workspace,handle,query='',*,start_offset=0,end_offset=None,include_turns=True):
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta={}
         if meta.get('native_archived'):
@@ -238,9 +301,9 @@ class WorkbenchSessions:
             if len(records)!=1:raise Blocked('原生归档记录不能唯一核验；请先恢复后查看')
             row=dict(profile=dict(binding,config_root=str(Path(binding['home'])/'.codex')),native=records[0])
             secret=credentials(binding['home'],[x[0] for x in binding.get('readonly_files',[])],read_file=credential_bytes)
-            result=dict(workspace_id=workspace,handle=handle,messages=conversation('codex',records[0]['path'],200,query,expected_sha256=records[0]['sha256'],secrets=secret))
+            result=dict(workspace_id=workspace,handle=handle,messages=conversation('codex',records[0]['path'],200,query,expected_sha256=records[0]['sha256'],secrets=secret,start_offset=start_offset,end_offset=end_offset,include_metadata=True))
         else:
-            result=self.rt.session_center.history(workspace,handle,query,200)
+            result=self.rt.session_center.history(workspace,handle,query,200,start_offset=start_offset,end_offset=end_offset,include_metadata=True)
             _,row=self.rt.session_center.resolve(workspace,handle)
         messages=[]
         for m in result['messages']:
@@ -276,11 +339,12 @@ class WorkbenchSessions:
         activity=[];summaries=[];activity_omitted=False
         with opened(row['native']['path']) as fd:
             with os.fdopen(os.dup(fd),'rb') as stream:
-                total=0
+                stream.seek(start_offset);total=start_offset
                 while True:
+                    if end_offset is not None and total>=end_offset:break
                     raw=stream.readline(1048577);total+=len(raw)
                     if not raw:break
-                    if len(raw)>1048576 or total>16*1024*1024:raise Invalid('工具活动超过读取预算')
+                    if len(raw)>1048576 or total>16*1024*1024 or end_offset is not None and total>end_offset:raise Invalid('工具活动超过本轮读取预算')
                     obj=json.loads(raw);items=[]
                     if row['profile']['provider']=='claude' and obj.get('type') in ('user','assistant') and not obj.get('isMeta') and not obj.get('isSidechain'):
                         content=obj.get('message',{}).get('content',[])
@@ -314,7 +378,10 @@ class WorkbenchSessions:
         activity=group_tools(activity)
         if activity_omitted and activity:activity[0]['history_truncated']=True
         # No thinking/reasoning payloads or full protocol envelopes cross this boundary.
-        return dict(result,messages=messages,execution_results=execution_results,groups=groups,activity=activity,summaries=summaries)
+        from .conversation_projection import conversation_turns
+        turns=conversation_turns(self,workspace,row,related,messages,secrets,original_messages=result['messages']) if include_turns else []
+        messages=[{k:m[k] for k in ('role','text')} for m in messages]
+        return dict(result,messages=messages,execution_results=execution_results,groups=groups,activity=activity,summaries=summaries,conversation_turns=turns)
 
     def change(self,workspace,handle,action,*,name='',answer=''):
         self.rt.check_operator()

@@ -41,7 +41,7 @@ class WorkbenchRuntime(SessionRuntime):
         for profile in self.policy.get('external_steps',{}).values():
             self.protected.extend(Path(p) for p in [*profile.get('dependencies',{}),
                 *profile.get('dependency_trees',{}), *profile.get('write_paths',[])])
-        self.flow = WorkbenchStore(self.storage / 'workbench.sqlite')
+        self.flow = WorkbenchStore(self.storage / 'workbench.sqlite', scoped_drafts=True)
         self.rpc_home = self.native / 'metadata'
 
     def operator_protected_paths(self):
@@ -247,6 +247,8 @@ class WorkbenchRuntime(SessionRuntime):
 
     def prepare_flow(self, request):
         self.check_operator();workspace=request['workspace'];project=self.session_center.workspace(workspace)
+        automatic = request.get('auto_verify', False)
+        if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         graph=validate_graph(request['graph']);task=request.get('task', '')
         if not isinstance(task,str) or not 1 <= len(task.strip()) <= 50000: raise Invalid('请填写本次任务')
         bindings={}
@@ -254,17 +256,31 @@ class WorkbenchRuntime(SessionRuntime):
             for n in g['nodes']:
                 if n['kind']=='agent' or n['kind']=='router' and n.get('classifier'):
                     from .routing import classifier_node
-                    try:bindings[prefix+n['id']]=self.node_binding(workspace,classifier_node(n) if n['kind']=='router' else n)
+                    try:bindings[prefix+n['id']]=self.node_binding(workspace,classifier_node(n) if n['kind']=='router' else n,admission=not automatic)
                     except (Invalid,Blocked) as exc:
                         exc.node=prefix+n['id'];raise
                 if n['kind']=='loop': inspect(n['body'],prefix+n['id']+'/')
                 if n['kind'] in ('verify','delivery') and n.get('profile') not in self.policy.get('external_steps',{}):
                     raise Invalid('请为验证/交付节点选择固定外部执行配置：'+n['name'])
         inspect(graph)
+        from .model_admission import ModelAdmission
+        checks = {}
+        if automatic:
+            for selected in bindings.values():
+                check = ModelAdmission(self).pending_check(selected,include_valid=True)
+                if check: checks[check['key']] = check
+        draft_id = request.get('draft_id')
+        if draft_id is not None:
+            current = self.flow.get('draft', draft_id)
+            if current.get('workspace') != workspace:
+                raise Conflict('工作流不属于此工作区；未分配的旧工作流请先新建工作区副本')
+            if current['graph'] != graph: raise Conflict('运行图和已保存草稿不一致，请先保存')
         return self.db.prepare(dict(purpose='workbench-v3',workspace=workspace,graph=graph,task=task,bindings=bindings,
+            draft_id=draft_id,admission_checks=list(checks.values()),automatic_admission=automatic,
             graph_sha256=digest(canonical(graph)),candidate_sha256=self.candidate_sha256,operator_sha256=self.operator_sha256,
             policy_sha256=self.policy_sha,source_sha256=tree_hash(project['path']),
-            human_questions=['确认本次目标、外部模型使用、各节点权限与调用预算。']))
+            human_questions=['确认本次目标、外部模型使用、各节点权限与调用预算。'+
+                (f' 将检查 {len(checks)} 个连接；已有有效结果会复用，未验证或过期配置至多进行一次只读原生诊断，不发送源码。长运行中已通过的连接如过期，会在节点执行前检查，额外调用计入本次运行预算；失败/撤销不自动重试。' if checks else '')]))
 
     def launch_flow(self, key, expected, answer):
         self.check_operator()
@@ -284,6 +300,11 @@ class WorkbenchRuntime(SessionRuntime):
         run=secrets.token_hex(16);row=dict(value,id=run,run=run,state='QUEUED',calls=0,paused=False,cancel_requested=False,
                                         created_at=time.time(),authorization=receipt)
         with self.flow.tx() as db:
+            if value.get('draft_id'):
+                current=db.execute("SELECT data FROM records WHERE kind='draft' AND id=?",(value['draft_id'],)).fetchone()
+                if (not current or json.loads(current[0])['revision']!=value['graph_sha256'] or
+                        json.loads(current[0]).get('workspace')!=value['workspace']):
+                    raise Conflict('工作流草稿已删除或更新，请重新选择后运行')
             db.execute('INSERT INTO records VALUES(?,?,?)',('run',run,canonical(row).decode()))
             db.execute('INSERT INTO records VALUES(?,?,?)',('permit',key,canonical({'run':run,'sha256':expected}).decode()))
         self.flow.event(run,'run-authorized',graph_sha256=value['graph_sha256'])
