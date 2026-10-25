@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "20261025_03_workbench-user-experience",
+  "date": "2026-10-25",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/workbench-user-experience",
+      "base": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+      "candidate_sha256": "dae3b9a7f9fbddfcc6f5fdd6dba332b17c82ffafa9b60c6cac06c533991581d8",
+      "git_tree": "d96c9e0240ff97713f2613559a6c9d8d8c06baf2",
+      "commit": "cecbed3878702dcc0e8aa0ce7d25fe99cc0dcb1c",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/19"
+    }
+  ]
+}

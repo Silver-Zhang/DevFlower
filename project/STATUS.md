@@ -1,15 +1,5 @@
 # 当前状态
 
-任务 [20261025_01_stable-promotion](tasks/2026-10/20261025_01_stable-promotion/README.md) 已完成：PR18 普通合并、正式 Stable 晋升及实际运行验证。
+用户截图整改任务 `20261025_03_workbench-user-experience`：Draft PR #19，HEAD cecbed387870、CF dae3b9a7f9fb。650 Python/6隔离/185 Chromium/56 JS及双Provider真实顺序/新聊天/终端通过，云端CI全成功。原始R1 NEEDS_CORRECTION、R2/R3有限接受及旧Gate拒绝保留；新候选R4 ACCEPT_WITH_LIMITATIONS，固定旧Gate BLOCKED。正式技术验收仍因非硬ACCEPT而阻塞，不能把合同PASS推导为Gate通过。
 
-main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`，tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039`，候选 `cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe` /183 文件。本地主源码 main 与远端一致；开发临时分支已清理，历史 worktree/会话 cwd 保留。
-
-同候选 589 Python、6 宿主隔离、169 Chromium/HTTP、20 JS 全部 exit0、0 FAIL/ERROR/SKIP；前端重建、Baseline/语法、合并后专项通过。真实顺序/汇合/循环/生命周期完成；实际正式安装再次顺序和并发汇合通过。
-
-独立 R1/R2 原始 NEEDS_CORRECTION 保留；R3 硬 ACCEPT，SP01–SP10 PASS，3项P1 CLOSED；固定旧 Gate exit0/ACCEPT。原任务的历史 BLOCKED 与预算不改。
-
-唯一入口：`python3 /home/workspace/DevFlower/.local/open-devflower.py`。正式包 `stable/accepted-cfea19cac598`，实际 `stable_approved=true`，版本即最新 main。旧安装、SQLite备份和全局认证保留。晋升后用户另行授权清理工作台7个旧会话原生历史，见下条。
-
-剩余边界：用户本人 UX 待确认；通用 Studio→project 自动归档未实现；生产自动业务 GitHub 交付未配置。研发记录仍按时间整理至 project/devflower，原始大日志/截图/会话仅本地。
-
-最新维护 [20261025_02_session-cleanup-selftest](tasks/2026-10/20261025_02_session-cleanup-selftest/README.md) 已完成：删除工作台7个旧会话对应原生历史/专用索引；两工作区各会话分类均0，Stable原地址重启并核验。当前Codex聊天、其他项目、独立审核记录、运行档案和认证保留。用户自测待进行，步骤在该任务README第4节。
+main仍e0a0f92，正式Stable仍accepted-cfea19cac598，未替换。新UX仅独立Development；用户本人体验待确认。日志/截图/原生会话留本地，研发摘要归project/devflower；每次Studio运行自动提交project仍未实现。
