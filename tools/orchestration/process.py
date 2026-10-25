@@ -109,9 +109,26 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True, close_fds=True, preexec_fn=setup)
-    record = process_identity(proc.pid)
-    if store:
-        store.finish(op, 'RUNNING', process=record)
+    try:
+        # Record the physical spawn before any fallible journal publication.
+        # This optional in-memory flag never grants execution authority.
+        if store is not None and hasattr(store, 'process_started'):
+            store.process_started = True
+        record = process_identity(proc.pid)
+        if store:
+            store.finish(op, 'RUNNING', process=record)
+    except BaseException:
+        # Popen owns this unreaped child and its newly created session. Its
+        # PID cannot be reused before wait(), even if no record was published.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=3)
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                pipe.close()
+        raise
     # Input is bounded and nonblocking too: no prompt-vs-output pipe deadlock.
     pending = memoryview(input_text.encode())
     sent_bytes = 0

@@ -267,28 +267,39 @@ class WorkbenchSessions:
         return self.rt.session_center._busy(binding['home']) or self.native_process_busy(binding['home'],sid)
 
     def native_process_busy(self,home,sid):
-        """Inspect native writers even while this caller holds its own HOME lease."""
-        # External native terminals need not honour our lock; check their actual HOME/explicit session.
+        """Inspect actual native writers, including version-named/renamed CLIs."""
+        profiles=getattr(getattr(self,'rt',None),'operator',{}).get('profiles',{})
+        programs={str(value) for p in profiles.values() if p.get('provider') in ('codex','claude')
+                  for value in (p.get('executable'),) if value}
+        programs|={str(Path(p).resolve()) for p in programs}
+        names={Path(p).name for p in programs}
         for p in Path('/proc').glob('[0-9]*'):
-            comm=''
+            comm='';possible=False
             try:
                 comm=(p/'comm').read_text().strip()
-                if not any(x in comm for x in ('codex','claude')):continue
+                possible=any(x in comm for x in ('codex','claude')) or comm in names
+                if not possible:
+                    try:possible=str((p/'exe').resolve(strict=True)) in programs
+                    except OSError:pass
                 argv=(p/'cmdline').read_bytes().split(b'\0')
+                explicit=bool(sid and sid.encode() in argv)
+                possible=possible or explicit or any(a.decode(errors='replace') in programs for a in argv)
+                if not possible:continue
+                identity=process_identity(int(p.name))
+                if identity and identity.get('state')=='Z':continue
+                if identity is None and not p.exists():continue
                 env=dict(x.split(b'=',1) for x in (p/'environ').read_bytes().split(b'\0') if b'=' in x)
-                if sid.encode() in argv or env.get(b'HOME')==home.encode():return True
+                if explicit or env.get(b'HOME')==str(home).encode():return True
             except (OSError,ValueError):
-                if any(x in comm for x in ('codex','claude')):
-                    # A process can disappear between /proc reads. Only a
-                    # demonstrably dead process is harmless; an opaque live
-                    # writer still blocks access to protect native history.
+                if possible:
+                    # A disappearing PID is harmless; an opaque live native
+                    # writer cannot be declared safe for a second writer.
                     try:
                         identity=process_identity(int(p.name))
                         if identity and identity.get('state')=='Z':continue
                         if identity is None and not p.exists():continue
                     except (OSError,ValueError):pass
                     return True
-                continue
         return False
 
     def history(self,workspace,handle,query='',*,start_offset=0,end_offset=None,include_turns=True):

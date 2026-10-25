@@ -291,6 +291,36 @@ class ProcessOccupancyTests(unittest.TestCase):
  def test_live_uninspectable_process_still_fails_closed(self):self.assertTrue(self.probe(True,dict(state='R')))
  def test_zombie_cannot_be_a_native_writer(self):self.assertFalse(self.probe(True,dict(state='Z')))
 
+
+ def native_fixture(self,comm,argv,home,*,identity=None,opaque=False):
+  from types import SimpleNamespace
+  root=self.base.root/'proc-fixture'/'987654321';root.mkdir(parents=True);(root/'comm').write_text(comm);(root/'cmdline').write_bytes(b'\0'.join(a.encode() for a in argv)+b'\0');(root/'environ').write_bytes(b'HOME='+str(home).encode()+b'\0');(root/'exe').symlink_to('/synthetic/claude/2.1.303');self.rt.operator['profiles']['default-claude']['executable']='/synthetic/claude/2.1.303'
+  if opaque:
+   class Opaque:
+    name='987654321'
+    def __truediv__(self,key):
+     def fail():raise PermissionError('Synthetic opaque live version-named CLI')
+     return SimpleNamespace(read_text=lambda:comm,read_bytes=fail)
+    def exists(self):return True
+   proc=Opaque()
+  else:proc=root
+  with patch('studio.workbench_sessions.Path.glob',return_value=[proc]),patch('studio.workbench_sessions.process_identity',return_value=identity or dict(state='S')):
+   return self.manager.native_process_busy(str(self.rt.native/'target'),'10000000-0000-4000-8000-000000000001')
+ def test_version_named_claude_home_is_busy(self):
+  self.assertTrue(self.native_fixture('2.1.303',['/synthetic/claude/2.1.303','--resume'],self.rt.native/'target'))
+ def test_renamed_cli_explicit_session_is_busy(self):
+  self.assertTrue(self.native_fixture('worker',['unrecognised-alias','--resume','10000000-0000-4000-8000-000000000001'],self.rt.native/'elsewhere'))
+ def test_interpreter_cli_script_and_home_are_busy(self):
+  self.rt.operator['profiles']['default-codex']['executable']='/synthetic/bin/codex.js';self.assertTrue(self.native_fixture('node',['/usr/bin/node','/synthetic/bin/codex.js'],self.rt.native/'target'))
+ def test_version_named_other_home_is_not_busy(self):
+  self.assertFalse(self.native_fixture('2.1.303',['/synthetic/claude/2.1.303'],self.rt.native/'elsewhere'))
+ def test_version_named_opaque_live_cli_fails_closed(self):
+  self.assertTrue(self.native_fixture('2.1.303',[],self.rt.native/'target',opaque=True))
+ def test_version_named_zombie_is_not_writer(self):
+  self.assertFalse(self.native_fixture('2.1.303',['/synthetic/claude/2.1.303'],self.rt.native/'target',identity=dict(state='Z')))
+ def test_unrelated_executable_and_home_are_not_writer(self):
+  self.assertFalse(self.native_fixture('ordinary-worker',['/usr/bin/ordinary-worker'],self.rt.native/'elsewhere'))
+
 class AtomicConfigurationDispatchTests(unittest.TestCase):
  def setUp(self):
   self.helper=ConfigurationTests();self.helper.setUp();self.addCleanup(self.helper.doCleanups);self.rt=self.helper.rt;self.ai=self.helper.ai
@@ -380,3 +410,43 @@ class AtomicConfigurationDispatchTests(unittest.TestCase):
    args[-2].process_started=True;self.rt.db.update('session-operation',key,dict(cancel_requested=True));raise Blocked('Synthetic owned process cancelled after start')
   with patch('studio.configuration_assistant.CLI.start',side_effect=cancelled_started):self.ai.execute(key)
   self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k)['state'],'FAILED')
+
+class PhysicalSpawnBoundaryTests(unittest.TestCase):
+ setUp=AtomicConfigurationDispatchTests.setUp
+ certificate=AtomicConfigurationDispatchTests.certificate
+ # Use the candidate process helper and a real harmless child. Fault only the
+ # journal read; no nested provider call or manual started flag is involved.
+ def physical_failure(self,cancel,failed_spawn=False):
+  import os,signal,subprocess,tempfile
+  from orchestration import process as native_process
+  from studio.usable_store import Storage
+  key=self.helper.generation();gate,k=self.certificate(key);before=gate.db.get('model-admission',k);row=self.rt.db.get('session-operation',key);other=Storage(self.rt.db.path.parent);original=native_process.subprocess.Popen;children=[];journals=[]
+  def start(*args,**kw):
+   journal=args[-2];journals.append(journal);get=journal.db.get;armed=[True]
+   def fail_get(kind,item):
+    if armed[0] and kind=='session-step':armed[0]=False;raise OSError('Synthetic physical post-spawn journal read failure')
+    return get(kind,item)
+   def popen(*a,**kw):
+    if failed_spawn:raise OSError('Synthetic Popen did not create a child')
+    child=original(*a,**kw);children.append(child);return child
+   try:
+    with tempfile.TemporaryDirectory() as scratch,patch.object(journal.db,'get',side_effect=fail_get),patch.object(native_process.subprocess,'Popen',side_effect=popen):
+     native_process._execute(['/bin/sh','-c','sleep 20'],row['cwd'],row['binding']['home'],(),(),5,1024,journal,key,'',None,False,'landlock',None,(),scratch,None)
+   except OSError:
+    if cancel:other.update('session-operation',key,dict(cancel_requested=True))
+    raise
+  try:
+   with patch('studio.configuration_assistant.CLI.start',side_effect=start):self.ai.execute(key)
+   self.assertEqual(journals[0].process_started,not failed_spawn)
+   for child in children:self.assertIsNotNone(child.poll(),'Journal failure must leave no live owned child')
+   self.assertEqual(self.rt.db.get('session-operation',key)['state'],'CANCELLED' if cancel else 'FAILED')
+   self.assertIsNone(self.ai.status(self.helper.w,key)['graph'])
+   if failed_spawn:self.assertEqual(gate.db.get('model-admission',k),before)
+   else:self.assertEqual(gate.db.get('model-admission',k)['state'],'FAILED')
+  finally:
+   for child in children:
+    if child.poll() is None:
+     os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
+ def test_physical_spawn_journal_failure_then_cancel_revokes_and_kills_owned_child(self):self.physical_failure(True)
+ def test_physical_spawn_journal_failure_without_cancel_revokes_and_kills_owned_child(self):self.physical_failure(False)
+ def test_failed_popen_then_cancel_preserves_certificate(self):self.physical_failure(True,True)
