@@ -55,7 +55,8 @@ def native_cli_argv(binding,sid):
         # it does not grant filesystem writes outside HOME/private scratch.
         return [binding['executable'],'resume',sid,'--model',binding['model'],'--no-alt-screen',
                 '--sandbox','danger-full-access','--ask-for-approval','never',
-                '-c','features.multi_agent=false','-c','model_reasoning_effort='+json.dumps(binding['effort'])]
+                '-c','features.multi_agent=false','-c','check_for_update_on_startup=false',
+                '-c','model_reasoning_effort='+json.dumps(binding['effort'])]
     if binding['provider']=='claude':
         return [binding['executable'],'--resume',sid,'--model',binding['model'],'--effort',binding['effort'],
                 '--permission-mode','plan','--tools','Read,Glob,Grep','--setting-sources','user',

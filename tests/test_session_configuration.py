@@ -46,6 +46,15 @@ class NativePresentationTests(unittest.TestCase):
  def test_actual_cr_only_prompt_clears_dismissed_permission_offer(self):
   text='❯ \n high /effort\nMakeautomodeyourdefaultpermissionmode?\n❯Yes,setautomodeasmydefaultpermissionmode\nNo,keepmanualmode\r----\r❯\u00a0 \r----\r⏸ plan mode on (shift+tab to cycle) ● high /effort\r'
   self.assertEqual(terminal_phase('claude',text,True)['phase'],'ready')
+ def test_codex_native_terminal_pins_version_without_startup_update(self):
+  from devflower_native_terminal import native_cli_argv
+  argv=native_cli_argv(dict(provider='codex',executable='/synthetic/codex',model='synthetic',effort='xhigh'),'10000000-0000-4000-8000-000000000001');self.assertIn('check_for_update_on_startup=false',argv);self.assertEqual(argv[argv.index('--model')+1],'synthetic')
+ def test_actual_codex_upgrade_menu_is_not_agent_ready(self):
+  text='loading Resuming session… ›AskCodextodoanything Updateavailable ›1.Updatenow(runs`npm install -g @openai/codex`) 2.Skip 3.Skipuntilnextversion entercontinue·escskip'
+  self.assertEqual(terminal_phase('codex',text,True)['phase'],'update')
+ def test_codex_actual_prompt_supersedes_dismissed_upgrade_menu(self):
+  text='Updatenow(runs`npm install -g @openai/codex`) 3.Skipuntilnextversion\r›AskCodextodoanything'
+  self.assertEqual(terminal_phase('codex',text,True)['phase'],'ready')
  def test_actual_ink_workspace_trust_screen_is_not_output_or_ready(self):
   self.assertEqual(terminal_phase('claude','Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\r\n❯No,exit\r\nYes,Itrustthisfolder\r\nEntertoconfirm·Esctocancel',True)['phase'],'trust')
  def test_actual_later_prompt_supersedes_setup(self):self.assertEqual(terminal_phase('claude','Choose the text style\n❯ \n high /effort',True)['phase'],'ready')
@@ -229,3 +238,18 @@ class ConfigurationTests(unittest.TestCase):
   newer=dict(id='newer-after-queued',state='VERIFIED',verified_at=time.time(),scope=g.scope(s['binding'],s['cwd']));self.rt.db.put('model-admission',k,newer);(self.base.source/'README.md').write_text('User edited after preview')
   with patch('studio.session_center.CLI.start',side_effect=AssertionError('Must not call native agent')) as call:self.rt.session_center.execute('preflight')
   call.assert_not_called();self.assertEqual(self.rt.db.get('session-operation','preflight')['state'],'FAILED');self.assertEqual(self.rt.db.get('model-admission',k),newer)
+
+class ProcessOccupancyTests(unittest.TestCase):
+ def setUp(self):self.base,self.rt=fixture(self);self.manager=WorkbenchSessions(self.rt)
+ def probe(self,exists,identity):
+  from types import SimpleNamespace
+  class Gone:
+   name='99999999'
+   def __truediv__(self,key):
+    def missing():raise FileNotFoundError('Synthetic process exited between proc reads')
+    return SimpleNamespace(read_text=lambda:'codex',read_bytes=missing)
+   def exists(self):return exists
+  with patch.object(self.rt.session_center,'_busy',return_value=False),patch('studio.workbench_sessions.Path.glob',return_value=[Gone()]),patch('studio.workbench_sessions.process_identity',return_value=identity,create=True):return self.manager.busy(dict(home=str(self.rt.native/'test-scope')),'10000000-0000-4000-8000-000000000001')
+ def test_exited_unrelated_process_cannot_make_every_session_busy(self):self.assertFalse(self.probe(False,None))
+ def test_live_uninspectable_process_still_fails_closed(self):self.assertTrue(self.probe(True,dict(state='R')))
+ def test_zombie_cannot_be_a_native_writer(self):self.assertFalse(self.probe(True,dict(state='Z')))

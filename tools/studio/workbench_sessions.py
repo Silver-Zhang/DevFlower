@@ -9,7 +9,7 @@ import sys
 import time
 from orchestration.common import Blocked, canonical, digest
 from orchestration.process import execute
-from orchestration.store import lease
+from orchestration.store import lease, process_identity
 from .agent_sessions import _visible, safe_text
 from .graph import Invalid
 from .session_sources import opened
@@ -275,7 +275,16 @@ class WorkbenchSessions:
                 env=dict(x.split(b'=',1) for x in (p/'environ').read_bytes().split(b'\0') if b'=' in x)
                 if sid.encode() in argv or env.get(b'HOME')==binding['home'].encode():return True
             except (OSError,ValueError):
-                if 'comm' in locals() and any(x in comm for x in ('codex','claude')):return True
+                if any(x in comm for x in ('codex','claude')):
+                    # A process can disappear between /proc reads. Only a
+                    # demonstrably dead process is harmless; an opaque live
+                    # writer still blocks access to protect native history.
+                    try:
+                        identity=process_identity(int(p.name))
+                        if identity and identity.get('state')=='Z':continue
+                        if identity is None and not p.exists():continue
+                    except (OSError,ValueError):pass
+                    return True
                 continue
         return False
 
