@@ -1,0 +1,25 @@
+{
+  "completed": true,
+  "session_count": 7,
+  "providers": {
+    "codex": 4,
+    "claude": 3
+  },
+  "deleted_native_jsonl": 7,
+  "deleted_files": 79,
+  "remaining_sessions": {
+    "7b8bc21bb74ec70a20b192b64fcbc812:active": 0,
+    "7b8bc21bb74ec70a20b192b64fcbc812:archived": 0,
+    "7b8bc21bb74ec70a20b192b64fcbc812:trash": 0,
+    "8425d02c677847fade1874439cb94595:active": 0,
+    "8425d02c677847fade1874439cb94595:archived": 0,
+    "8425d02c677847fade1874439cb94595:trash": 0
+  },
+  "stable_approved": true,
+  "source_commit": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+  "authentication_unchanged": true,
+  "independent_audit_and_run_archives_retained": true,
+  "all_drafts_and_run_events_preserved": true,
+  "service_base_url": "http://127.0.0.1:46645",
+  "current_codex_chat_untouched": true
+}

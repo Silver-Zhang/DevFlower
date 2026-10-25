@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "20261025_02_session-cleanup-selftest",
+  "date": "2026-10-25",
+  "mode": "A",
+  "status": "已完成",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "main",
+      "head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+      "note": "Only externally authorized local session maintenance; no source changes"
+    }
+  ]
+}

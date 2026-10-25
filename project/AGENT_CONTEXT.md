@@ -11,3 +11,5 @@
 按时间项目记录可用，通用Studio结束自动归档project仍未实现；生产external_steps为空，自动业务交付未启用。本次PR来自获准外部监督。当前任务停止在已授权正式晋升，不自动扩展功能。
 
 原始本地证据 archives/devflower-stable-promotion-20261025。实际CLI模型Codex gpt-6.1-sol/xhigh、Claude claude-opus-5-5[1m]/high；物理后端/实际effort unknown。恢复使用机器摘要所记原HOME/cwd和明确session UUID，先排除双写，不使用--last。不删除旧会话、改写负面结论或以新结论套用旧候选。
+
+2026-10-25 后续维护：用户明确要求连原生历史也删除，任务20261025_02已清理当前工作台7个旧业务会话（4Codex/3Claude）的JSONL及专用索引，业务会话列表为空；不是全机删除。旧晋升任务保留原文，不能据旧manifest声称这些后来获准删除的7份仍存在。独立审核会话、验收档案/运行记录、全局认证及当前Codex聊天未删。用户自测步骤见任务02 README第4节，尚未用户验收。

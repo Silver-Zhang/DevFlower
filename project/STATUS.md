@@ -8,6 +8,8 @@ main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`，tree `6c9e39e16bbbe7de95b894e0
 
 独立 R1/R2 原始 NEEDS_CORRECTION 保留；R3 硬 ACCEPT，SP01–SP10 PASS，3项P1 CLOSED；固定旧 Gate exit0/ACCEPT。原任务的历史 BLOCKED 与预算不改。
 
-唯一入口：`python3 /home/workspace/DevFlower/.local/open-devflower.py`。正式包 `stable/accepted-cfea19cac598`，实际 `stable_approved=true`，版本即最新 main。旧安装、SQLite备份、原生会话及全局认证保留。
+唯一入口：`python3 /home/workspace/DevFlower/.local/open-devflower.py`。正式包 `stable/accepted-cfea19cac598`，实际 `stable_approved=true`，版本即最新 main。旧安装、SQLite备份和全局认证保留。晋升后用户另行授权清理工作台7个旧会话原生历史，见下条。
 
 剩余边界：用户本人 UX 待确认；通用 Studio→project 自动归档未实现；生产自动业务 GitHub 交付未配置。研发记录仍按时间整理至 project/devflower，原始大日志/截图/会话仅本地。
+
+最新维护 [20261025_02_session-cleanup-selftest](tasks/2026-10/20261025_02_session-cleanup-selftest/README.md) 已完成：删除工作台7个旧会话对应原生历史/专用索引；两工作区各会话分类均0，Stable原地址重启并核验。当前Codex聊天、其他项目、独立审核记录、运行档案和认证保留。用户自测待进行，步骤在该任务README第4节。
