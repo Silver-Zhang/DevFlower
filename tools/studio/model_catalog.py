@@ -95,27 +95,29 @@ class ModelCatalog:
     def __init__(self, manager):
         self.manager, self.rt, self.db = manager, manager.rt, manager.db
 
-    def get(self, name, profile, refresh=False):
+    def get(self, name, profile, refresh=False, workspace=None):
         now = time.time()
         # Profile identity + configured credential sources. Do not share a cached
         # directory across two gateways using the same Provider name.
         key = name
         identity = digest(json.dumps(profile, sort_keys=True).encode())
+        from .model_registration import profile_identity
+        environment=profile_identity(profile)
         try: cached = self.db.get('model-discovery', key)
         except Invalid: cached = None
-        if cached and cached.get('profile_sha256') != identity: cached = None
+        if cached and (cached.get('profile_sha256') != identity or cached.get('environment_sha256') != environment): cached = None
         error = cached.get('error') if cached else None
         if refresh:
             try:
                 if profile['provider'] == 'codex':
                     rows = codex_models(self.manager.rpc, profile, self.rt.rpc_home/name, self.rt.storage)
                 else: rows = proxy_models(profile)
-                cached = dict(id=key, profile_sha256=identity, models=rows, at=now, attempted_at=now,
+                cached = dict(id=key, profile_sha256=identity, environment_sha256=environment, models=rows, at=now, attempted_at=now,
                               source=rows[0]['source'], error=None)
                 error = None
             except (Blocked, Invalid, OSError, ValueError, KeyError) as exc:
                 error = safe_text(str(exc))
-                cached = dict(cached or {}, id=key, profile_sha256=identity, attempted_at=now, error=error)
+                cached = dict(cached or {}, id=key, profile_sha256=identity, environment_sha256=environment, attempted_at=now, error=error)
             self.db.put('model-discovery', key, cached)
             try:
                 auth=self.manager.rpc(dict(profile,home=str(self.rt.rpc_home/name)),str(self.rt.storage),
@@ -140,6 +142,9 @@ class ModelCatalog:
                 source = '预登记配置（不是完整模型列表）'
         approved = {m['id']: m.get('efforts', []) for m in self.rt.policy.get('models', {}).get(profile['provider'], [])}
         approved.setdefault(profile['model'], [profile['effort']])
+        if workspace:
+            from .model_registration import ModelRegistration
+            for model,r in ModelRegistration(self.rt).choices(workspace,name).items():approved[model]=[r['effort']]
         # Registration remains visible, without inventing a discovery row or
         # promoting a configured effort to native capability evidence.
         rows = list(rows)

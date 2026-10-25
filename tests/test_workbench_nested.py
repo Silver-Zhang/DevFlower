@@ -138,7 +138,7 @@ class NestedRoundTests(unittest.TestCase):
                         result_json=json.dumps(dict(score=len(summaries),inner_round=activation['iteration'])),
                         artifacts=[],evidence=[],issues=[],next=''))
                 return SimpleNamespace(start=start)
-            with patch('studio.workbench_scheduler.CLI',side_effect=native_cli), patch('studio.model_admission.ModelAdmission.require'):
+            with patch('studio.workbench_scheduler.CLI',side_effect=native_cli), patch('studio.model_admission.ModelAdmission.require',return_value=dict(key='0'*64,verification_id='synthetic-nested-certificate')):
                 Scheduler(rt,'native').run_graph()
             result=store.get('run','native')
             self.assertEqual(result['state'],'COMPLETED',result.get('reason'))

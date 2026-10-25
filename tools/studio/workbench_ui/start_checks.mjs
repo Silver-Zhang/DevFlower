@@ -14,7 +14,7 @@ export async function checkConnections(api,permit,answer,onProgress=()=>{},isCur
  for(const check of checks){
   if(seen.has(check.key))continue;seen.add(check.key);
   if(!isCurrent())throw Error('操作已取消，未启动任务');
-  onProgress(`正在连接 ${check.agent||'Agent'} · ${check.selection.model}（${seen.size}/${checks.length}）…`);
+  onProgress(`正在连接 ${check.agent||'Agent'}…`);
   const status=await api('/api/model-admission/status',check.selection);
   if(!isCurrent())throw Error('操作已取消，未启动任务');
   const manual=retry?.key===check.key;

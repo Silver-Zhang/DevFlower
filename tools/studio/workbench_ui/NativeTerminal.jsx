@@ -4,6 +4,7 @@ import {FitAddon} from '@xterm/addon-fit';
 import {Terminal,Play,Square,RefreshCw} from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import {statusInfo} from './runtime_projection.mjs';
+import {ConversationTimeline} from './ConversationView.jsx';
 import {checkConnections} from './start_checks.mjs';
 
 // An explicit terminal-tab click may check and open a new PTY; the optional
@@ -13,6 +14,7 @@ export function NativeTerminal({api,workspace,session,onChanged,onClose,intent=0
   const host=useRef(null),terminal=useRef(null),fit=useRef(null),current=useRef(null),version=useRef(0);
   const request=useRef(0);
   const sequence=useRef(0),pending=useRef(Promise.resolve()),uncertain=useRef(false),cursor=useRef(0);
+  const [history,setHistory]=useState(null);
   const [row,setRow]=useState(null),[preview,setPreview]=useState(null),[error,setError]=useState(''),[connected,setConnected]=useState(false);
   const [loading,setLoading]=useState(false);
   const [revision,setRevision]=useState(0);
@@ -20,6 +22,7 @@ export function NativeTerminal({api,workspace,session,onChanged,onClose,intent=0
   const [retry,setRetry]=useState(null),[hasOutput,setHasOutput]=useState(false);
   const consumedIntent=useRef(null);
   const scope=workspace.id+':'+session.handle;
+  useEffect(()=>{let active=true;setHistory(null);api('/api/history?workspace='+workspace.id+'&handle='+session.handle).then(v=>{if(active)setHistory(v)}).catch(()=>{});return()=>{active=false}},[scope]);
   useLayoutEffect(()=>{
     const term=new XTerm({cursorBlink:true,convertEol:false,fontSize:12,fontFamily:'ui-monospace,monospace',
       scrollback:2000,allowProposedApi:false,disableStdin:true,theme:{background:'#111923',foreground:'#dae7fa'}});
@@ -105,10 +108,12 @@ export function NativeTerminal({api,workspace,session,onChanged,onClose,intent=0
     await api('/api/terminal/close',{workspace:workspace.id,id:active.id});if(reply!==request.current)return;
     terminal.current.options.disableStdin=true;setConnected(false);onChanged?.();
   }catch(e){if(reply===request.current)setError(e.message)}finally{if(reply===request.current)setLoading(false)}}
-  return <div className="native-terminal"><button type="button" onClick={onClose} aria-label="关闭终端视图">关闭终端视图（保持进程）</button><header><div><Terminal size={17}/><b>{session.title}</b><span>{row?statusInfo(row.state)[0]:'尚未打开'} · {row?.process_alive?'会话由此终端独占':'接管前核验占用'} · 原生只读</span></div><div>
+  return <div className="native-terminal"><button type="button" onClick={onClose} aria-label="关闭终端视图">关闭终端视图（保持进程）</button><header><div><Terminal size={17}/><b>{session.title}</b><span>{row?.label|| (row?statusInfo(row.state)[0]:'尚未打开')} · {row?.process_alive?'会话由此终端独占':'接管前核验占用'} · 原生只读</span></div><div>
     <button onClick={attach} disabled={loading} aria-label="重新连接终端"><RefreshCw size={14}/>重新连接</button>
     {row?.process_alive?<button onClick={close} disabled={loading}><Square size={14}/>关闭此终端</button>:retry?<button onClick={retryOpen} disabled={loading}><Play size={14}/>重试连接并打开</button>:<button onClick={()=>prepare(Boolean(intent))} disabled={loading||session.choices?.resume===false}><Play size={14}/>{intent?'重新检查并打开':'打开同一原生会话'}</button>}
   </div></header><p className="hint">原CLI、目录与会话身份；与工作流共用写入锁。工作区和认证文件由外层强制只读。必要时自动进行一次只读连接检查，不发送源码。关闭视图只断开显示，关闭终端才停止进程；原生历史保留。</p>
+    {session.provider==='claude'&&history?.conversation_turns?.some(t=>t.answer&&t.answer_source==='saved-runtime-result')&&<section className="native-saved-replies" aria-label="此前保存的回答"><h4>此前的 Agent 回答</h4><small>此会话的结构化回答由工作台保存，原生 CLI 可能不回放它。以下来自真实完成回执，未改写原生记录。</small><ConversationTimeline turns={history.conversation_turns.filter(t=>t.answer&&t.answer_source==='saved-runtime-result').slice(-2)}/></section>}
+    {['theme','trust','authentication','permissions'].includes(row?.phase)&&<section className="terminal-onboarding" role="status"><b>{row.label}</b><p>{row.phase==='theme'?'仅首次需要选择显示样式；已有完成的原生显示设置会安全复用。':row.phase==='permissions'?'原生工具正在显示权限设置；该终端强制只读，请核对后继续，不会代为启用自动批准。':row.phase==='trust'?'请核对目录后在原生工具中亲自确认；工作台不会代为信任。':'请在原生工具中完成认证；不会复制或覆盖全局认证。'}</p><button onClick={()=>terminal.current?.focus()}>继续原生设置</button></section>}
     <details className="terminal-settings"><summary>高级连接设置</summary><label><input type="checkbox" defaultChecked={localStorage.getItem('devflower-terminal-auto-open')!=='false'} onChange={e=>localStorage.setItem('devflower-terminal-auto-open',String(e.target.checked))}/>点击终端标签时自动检查并打开（仅本浏览器）</label></details>
     {error&&<p role="alert" className="terminal-error">{error}</p>}
     {retry&&<p className="connection-notice">仅重试已失败的精确配置；将实际发起一次只读 nonce 检查（可能计费），成功后打开此会话。</p>}

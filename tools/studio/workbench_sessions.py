@@ -223,6 +223,8 @@ class WorkbenchSessions:
                 if not title or title.startswith(('## 本次运行初始化','# AGENTS.md instructions','Role:')):
                     title=next((c.get('name') for c in related if c.get('name')),None) or next((a.get('name') for a in actual if a.get('name')),None) or self.title(row)
                     self.db.put('session-title',handle,{'id':handle,'title':title,'binding':title_binding})
+            managed=next((o for o in reversed(operations) if not o.get('diagnostic') and self.matching_operation(workspace,internal,o) and o.get('user_prompt')),None)
+            if managed and not meta.get('alias'):title=safe_text(managed['user_prompt'].splitlines()[0])[:70]
             title=title or '新对话'
             running=next((o for o in operations if o['state'] not in ('COMPLETED','FAILED','CANCELLED') and self.matching_operation(workspace,internal,o)),None)
             busy=False
@@ -243,7 +245,7 @@ class WorkbenchSessions:
             if latest:
                 workflow = self.db.get('run', latest['run'])
                 named.update(workflow=workflow.get('graph', {}).get('name', '未命名工作流'),
-                             workflow_id=latest['run'], node_name=latest.get('name', latest['node']))
+                             workflow_id=latest['run'], workflow_group_id=('draft:'+workflow['draft_id']) if workflow.get('draft_id') else 'run:'+latest['run'], node_name=latest.get('name', latest['node']))
             # Show the session's actual bound request configuration, never the
             # default profile selected for a different/new conversation.
             bound = related[0]['binding'] if related else next((c['binding'] for c in
@@ -476,20 +478,20 @@ class WorkbenchSessions:
 
     _catalog_locks={}
 
-    def capabilities(self,refresh=False,selected=None):
-        if not refresh:return self._capabilities(False,selected)
+    def capabilities(self,refresh=False,selected=None,workspace=None):
+        if not refresh:return self._capabilities(False,selected,workspace)
         if selected is None:
-            rows=[self.capabilities(True,name)[0] for name in self.rt.operator['profiles']]
+            rows=[self.capabilities(True,name,workspace)[0] for name in self.rt.operator['profiles']]
             return rows+[dict(id='copilot',provider='copilot',available=False,reason='认证、原生会话与隔离能力尚未验证')]
         if selected not in self.rt.operator['profiles']:raise Invalid('请选择已登记的 Provider 配置')
         import threading
         lock=self._catalog_locks.setdefault((str(self.rt.storage),selected),threading.Lock())
         if not lock.acquire(blocking=False):
-            return [dict(self._capabilities(False,selected)[0],refresh_pending=True)]
-        try:return self._capabilities(True,selected)
+            return [dict(self._capabilities(False,selected,workspace)[0],refresh_pending=True)]
+        try:return self._capabilities(True,selected,workspace)
         finally:lock.release()
 
-    def _capabilities(self,refresh=False,selected=None):
+    def _capabilities(self,refresh=False,selected=None,workspace=None):
         from .model_catalog import ModelCatalog
         result=[]
         for name,profile in self.rt.operator['profiles'].items():
@@ -502,7 +504,7 @@ class WorkbenchSessions:
             else:
                 try:cli=self.db.get('cli-probe',name)
                 except Invalid:cli={'available':Path(profile['executable']).is_file(),'status':'registered; native capability refresh not yet performed'}
-            catalog=ModelCatalog(self).get(name,profile,refresh)
+            catalog=ModelCatalog(self).get(name,profile,refresh,workspace)
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
                 inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan','Agent'],skills=[],subagents=False,
                 model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))

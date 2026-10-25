@@ -75,6 +75,12 @@ def create_server(runtime,port=0):
                     elif path=='/api/terminals':value={'terminals':terminals.listing(q['workspace'])}
                     elif path=='/api/terminal/output':value=terminals.snapshot(q['workspace'],q['id'],int(q.get('after','0')))
                     elif path=='/api/run':value=runtime.snapshot(q['run'],int(q.get('after','0')))
+                    elif path=='/api/config-assistant/schema':
+                        from .configuration_assistant import ConfigurationAssistant,schema
+                        value=schema(ConfigurationAssistant(runtime).choices(q['workspace']))
+                    elif path=='/api/config-assistant/job':
+                        from .configuration_assistant import ConfigurationAssistant
+                        value=ConfigurationAssistant(runtime).status(q['workspace'],q['id'])
                     elif path=='/api/chat':value=runtime.session_center.operation(q['id'],q['workspace'])
                     elif path=='/api/chat-session':value=sessions.operation_session(q['workspace'],q['id'])
                     else:raise Invalid('没有这个工作台接口')
@@ -82,7 +88,13 @@ def create_server(runtime,port=0):
                 elif path=='/api/capabilities':value=sessions.capabilities(True)
                 elif path=='/api/models':
                     if type(data.get('refresh',True)) is not bool:raise Invalid('刷新标记必须是布尔值')
-                    value=sessions.capabilities(data.get('refresh',True),data['profile'])[0]
+                    value=sessions.capabilities(data.get('refresh',True),data['profile'],data.get('workspace'))[0]
+                elif path=='/api/model-registration/prepare':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).prepare(data)
+                elif path=='/api/model-registration/confirm':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).confirm(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/model-admission/prepare':
                     from .model_admission import ModelAdmission
                     value=ModelAdmission(runtime).prepare(data)
@@ -107,6 +119,21 @@ def create_server(runtime,port=0):
                     if row['run']!=data['run'] or row['state']!='WAITING_CONFIRMATION' or not isinstance(data.get('answer'),str) or not data['answer'].strip():
                         raise Invalid('确认必须属于当前等待的节点')
                     value=runtime.flow.change('activation',row['id'],{'state':'PENDING','human_answer':data['answer'][:4000]},event={'kind':'human-confirmed'})
+                elif path=='/api/sessions/trash/prepare':
+                    from .session_batch import SessionBatch
+                    value=SessionBatch(sessions).prepare(data)
+                elif path=='/api/sessions/trash/confirm':
+                    from .session_batch import SessionBatch
+                    value=SessionBatch(sessions).confirm(data['id'],data['sha256'],data['answer'])
+                elif path.startswith('/api/config-assistant/'):
+                    from .configuration_assistant import ConfigurationAssistant
+                    assistant=ConfigurationAssistant(runtime);action=path.rsplit('/',1)[1]
+                    if action=='prepare':value=assistant.prepare(data)
+                    elif action=='start':value=assistant.start(data['id'],data['sha256'],data['answer'])
+                    elif action=='proposals':value=assistant.external(data)
+                    elif action=='apply':value=assistant.apply(data)
+                    elif action=='cancel':value=assistant.cancel(data['workspace'],data['id'])
+                    else:raise Invalid('配置助手接口不存在')
                 elif path=='/api/session/action':value=sessions.change(data['workspace'],data['handle'],data['action'],name=data.get('name',''),answer=data.get('answer',''))
                 elif path=='/api/terminal/prepare':value=terminals.prepare(data)
                 elif path=='/api/terminal/start':value=terminals.start(data)

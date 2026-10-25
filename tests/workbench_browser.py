@@ -52,7 +52,7 @@ def main():
     original_rpc=WorkbenchSessions.rpc
     def metadata(manager,binding,cwd,method,params):
         if method=='cli/probe':return dict(available=True,machine_output=True,version='synthetic metadata fixture',resume=True)
-        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])])])
+        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])]),dict(model='synthetic-configurable-model',supportedReasoningEfforts=[dict(reasoningEffort='high')])])
         if method=='account/read':return dict(account={'type':'synthetic fixture'})
         if method=='claude/auth-status':return dict(logged_in=True,auth_method='synthetic fixture',service_verified=False)
         return original_rpc(manager,binding,cwd,method,params)

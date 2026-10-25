@@ -308,7 +308,7 @@ class Scheduler:
             except Invalid: chat = None
             if chat:
                 from .model_admission import ModelAdmission
-                ModelAdmission(self.rt).invalidate(chat['binding'], chat['cwd'])
+                ModelAdmission(self.rt).invalidate_verification(chat['binding'],chat['cwd'],self.db.get('activation',key).get('admission_verification'))
             raise
 
     def _native_turn(self, node, key, inputs, prefix, iteration):
@@ -377,6 +377,7 @@ class Scheduler:
             from .model_admission import ModelAdmission
             admission = ModelAdmission(self.rt)
             verification=admission.ensure_for_node(chat,self.run,key) if run.get('automatic_admission') else admission.require(binding,cwd)
+            self.db.change('activation',key,{'admission_verification':verification})
             receipt = CLI(binding['provider'], binding, dict(step_timeout_seconds=node.get('timeout', 300), max_log_bytes=4_000_000)).start(
                 prompt, cwd, artifacts, schema, journal, self.run)
             if not write and tree_hash(cwd) != before: raise Blocked('只读执行后源码身份发生变化')

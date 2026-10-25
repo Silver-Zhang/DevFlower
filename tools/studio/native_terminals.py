@@ -79,7 +79,7 @@ class NativeTerminals:
                     value['home'], value['cwd'], value['session_id'], value['native_sha256']): raise Conflict('原生身份或历史在确认后变化')
             if tree_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
             from .model_admission import ModelAdmission
-            ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
+            verification=ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
             if any(e['home'] == binding['home'] and e['proc'].poll() is None for e in self.entries.values()): raise Blocked('同一HOME已有终端')
             if sum(e['proc'].poll() is None for e in self.entries.values()) >= 4: raise Blocked('已达到本机4个原生终端的上限')
             for old in list(self.entries):
@@ -113,7 +113,7 @@ class NativeTerminals:
             identity = process_identity(process.pid)
             secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
             entry = dict(proc=process, master=master, process=identity, home=binding['home'], text='', first=0, next=0,
-                execution_binding=value['execution_binding'], cwd=value['cwd'],
+                execution_binding=value['execution_binding'], cwd=value['cwd'], admission_verification=verification,
                 total=0, filter=TerminalText(secret), inputs={}, deadline=time.monotonic()+1800, state='RUNNING')
             self.entries[key] = entry
             self.rt.flow.change('terminal', key, {'state': 'RUNNING', 'process': identity})
@@ -151,7 +151,7 @@ class NativeTerminals:
                 entry['state'] = state
                 if state in ('FAILED','RECOVERY_REQUIRED'):
                     from .model_admission import ModelAdmission
-                    ModelAdmission(self.rt).invalidate(entry['execution_binding'],entry['cwd'])
+                    ModelAdmission(self.rt).invalidate_verification(entry['execution_binding'],entry['cwd'],entry.get('admission_verification'))
                 self.rt.flow.change('terminal', key, {'state': state, 'exit': code, 'reason': reason,
                     'finished_at': time.time(), 'output_bytes': entry['total']})
         except BaseException:
@@ -173,8 +173,9 @@ class NativeTerminals:
                             output='', next=after, reset=False, process_alive=group_alive(row.get('process')))
             reset = after < entry['first'] or after > entry['next']
             start = entry['first'] if reset else after
+            from .terminal_phase import terminal_phase
             return dict(row, state=entry['state'], output=entry['text'][start-entry['first']:], next=entry['next'], reset=reset,
-                        process_alive=entry['proc'].poll() is None)
+                        process_alive=entry['proc'].poll() is None, **terminal_phase(row['provider'],entry['text'],entry['proc'].poll() is None))
 
     def listing(self, workspace):
         self.rt.session_center.workspace(workspace)

@@ -140,7 +140,11 @@ class WorkbenchRuntime(SessionRuntime):
         if cli and (not cli['available'] or not cli.get('machine_output')):
             raise Blocked('该原生CLI尚未通过当前版本接口探测，不能只修改界面字段执行')
         model, effort = node.get('model', profile['model']), node.get('effort', profile['effort'])
+        from .model_registration import ModelRegistration
+        registry=ModelRegistration(self)
+        registration=registry.choices(workspace,node['profile']).get(model)
         known = self.policy.get('models', {}).get(profile['provider'], [])
+        if registration:known=[*known,dict(id=model,efforts=[registration['effort']])]
         if not any(v['id'] == model and effort in v.get('efforts', []) for v in known) and (model, effort) != (profile['model'], profile['effort']):
             raise Invalid('模型/强度尚未发现或显式登记，请刷新能力或选择已批准配置')
         handle = node.get('session', 'new');native_sha = None;cwd = project['path']
@@ -171,6 +175,8 @@ class WorkbenchRuntime(SessionRuntime):
             responsibility=node.get('responsibility') or node.get('role', '通用 Agent'), tools=['native'] if profile['provider'] == 'codex' else tools,
             timeout_seconds=node.get('timeout', 300), execution_mode=node.get('mode','Ask'),
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
+        if registration:
+            binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
         if admission:
             from .model_admission import ModelAdmission
             ModelAdmission(self).require(binding, cwd)

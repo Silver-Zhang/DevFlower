@@ -54,7 +54,7 @@ class CatalogTests(unittest.TestCase):
   with self.assertRaises(Invalid):self.rt.node_binding(self.base.project['id'],dict(node,mode='Ask',model='unapproved'))
  def test_new_chat_selected_model_mode_bound_in_permit(self):
   value=self.rt.session_center.prepare(dict(workspace=self.base.project['id'],handle='new',profile='default-codex',model=self.profile['model'],effort=self.profile['effort'],mode='Plan',permission='read',prompt='make plan'))
-  self.assertEqual(value['data']['binding']['model'],self.profile['model']);self.assertIn('只读制定计划',value['data']['prompt']);self.assertTrue(value['data']['prompt'].startswith('make plan'))
+  self.assertEqual(value['data']['binding']['model'],self.profile['model']);self.assertEqual(value['data']['prompt'],'make plan');self.assertEqual(value['data']['permission'],'read');self.assertEqual(value['data']['binding']['role'],'reviewer')
  def test_failed_validation_leaves_no_session(self):
   with self.assertRaises(Invalid):self.rt.session_center.prepare(dict(workspace=self.base.project['id'],handle='new',profile='missing',mode='Ask',permission='read',prompt='test'))
   self.assertEqual(self.rt.db.listing('session-operation'),[])

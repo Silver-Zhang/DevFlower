@@ -59,6 +59,7 @@ def native_cli_argv(binding,sid):
     if binding['provider']=='claude':
         return [binding['executable'],'--resume',sid,'--model',binding['model'],'--effort',binding['effort'],
                 '--permission-mode','plan','--tools','Read,Glob,Grep','--setting-sources','user',
+                '--settings','{"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}',
                 '--strict-mcp-config','--mcp-config','{"mcpServers":{}}']
     raise Blocked('此 Provider 尚不支持原生终端')
 
@@ -103,12 +104,14 @@ def main():
         # private temporary directory are writable. No PTY is attached in HTTP.
         rt.check_operator();rt.session_center.resolve(a.workspace,a.handle)
         from studio.model_admission import ModelAdmission
-        ModelAdmission(rt).require(selected['binding'],cwd)
+        verification=ModelAdmission(rt).require(selected['binding'],cwd)
+        from studio.native_preferences import inherit_claude_display
+        inherit_claude_display(binding,rt.native)
         wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra])
         env=clean_env(home);env['TMPDIR']=scratch;env['TERM']=os.environ.get('TERM','xterm-256color')
         code=subprocess.call(wrapped,cwd=cwd,env=env)
         if code:
-            ModelAdmission(rt).invalidate(selected['binding'],cwd)
+            ModelAdmission(rt).invalidate_verification(selected['binding'],cwd,verification)
         return code
 
 

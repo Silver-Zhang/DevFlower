@@ -277,7 +277,7 @@ class SessionCenter:
                        tools=['native'] if binding['provider'] == 'codex' else
                        ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if request['permission'] == 'workspace-write' else ['Read', 'Glob', 'Grep'])
         prompt=request['prompt']
-        if 'mode' in request:
+        if 'mode' in request and not hasattr(self.runtime, 'policy'):
             mode=request['mode'];prompt=prompt+'\n\n工作方式：'+mode+'。'+('只读制定计划，不执行修改。' if mode=='Plan' else '只读回答，不执行修改。' if mode=='Ask' else '仅在已授权工作区和工具范围内执行。')
         value = dict(workspace=project['id'], source=source, source_sha256=tree_hash(source['root']),
                      binding=binding, cwd=cwd, prompt=prompt, user_prompt=request['prompt'], permission=request['permission'],
@@ -384,6 +384,7 @@ class SessionCenter:
         """Detached worker entry; no Controller state or Stable approval writes."""
         value = self.db.update('session-operation', key, dict(state='STARTING'), states={'QUEUED'})
         journal = SessionJournal(self.db, key)
+        verification=None
         try:
             self.runtime.check_operator()
             self._recheck(value)
@@ -401,13 +402,14 @@ class SessionCenter:
                 schema = artifacts / 'reply.schema.json'
                 schema.write_bytes(canonical(REPLY_SCHEMA))
                 limits = dict(step_timeout_seconds=b.get('timeout_seconds', 1800), max_log_bytes=8_000_000)
-                verification=None
                 if b.get('admission_policy'):
                     from .model_admission import ModelAdmission
                     verification=ModelAdmission(self.runtime).require(b,value['cwd'])
-                reply = CLI(b['provider'], b, limits).start(value['prompt'] +
+                natural = hasattr(self.runtime, 'policy') and not value.get('diagnostic')
+                chat_binding = dict(b, conversation_format='text') if natural else b
+                reply = CLI(b['provider'], chat_binding, limits).start(value['prompt'] if natural else value['prompt'] +
                     '\nReturn a JSON object with your visible answer in the string field reply.',
-                    value['cwd'], artifacts, schema, journal, key)
+                    value['cwd'], artifacts, None if natural else schema, journal, key)
                 validate(reply['report'], REPLY_SCHEMA)
                 if verification:
                     ModelAdmission(self.runtime).renew(b,value['cwd'],reply,verification)
@@ -420,7 +422,7 @@ class SessionCenter:
         except (Blocked, Conflict, Invalid, OSError, ValueError) as exc:
             if value['binding'].get('admission_policy'):
                 from .model_admission import ModelAdmission
-                ModelAdmission(self.runtime).invalidate(value['binding'], value['cwd'])
+                ModelAdmission(self.runtime).invalidate_verification(value['binding'],value['cwd'],verification)
             cancelled = journal.get(key)['data']['cancel_requested']
             self.db.update('session-operation', key, dict(state='CANCELLED' if cancelled else 'FAILED',
                 reason=safe_text(str(exc))))

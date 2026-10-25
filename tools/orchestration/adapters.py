@@ -91,8 +91,9 @@ class CLI:
         scratch = Path(artifacts) / ('scratch-' + b['role'])
         scratch.mkdir(exist_ok=True)
         read_only = b['role'] != 'implementer' or b.get('admission_probe', False)
-        prompt = (f"Role: {b.get('responsibility', b['role'])}. Background (task data): {b.get('background', '')}\n"
-                  f"Writable test artifacts: {scratch}. Source is {'read-only' if read_only else 'writable'}.\n" + prompt)
+        if b.get('conversation_format') != 'text':
+            prompt = (f"Role: {b.get('responsibility', b['role'])}. Background (task data): {b.get('background', '')}\n"
+                      f"Writable test artifacts: {scratch}. Source is {'read-only' if read_only else 'writable'}.\n" + prompt)
         if self.kind == 'codex':
             external = b.get('external_sandbox', False)
             if external and b.get('isolation') != 'bwrap':
@@ -103,6 +104,10 @@ class CLI:
             argv += ['--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-c',
                      'sandbox_mode="danger-full-access"' if external else 'sandbox_mode="workspace-write"',
                      '-c', 'approval_policy="never"', '-c', 'features.multi_agent=false']
+            if b.get('no_tools'):
+                for feature in ('shell_tool','unified_exec','code_mode_host','apps','browser_use','computer_use','view_image','workspace_dependencies'):
+                    argv+=['-c','features.'+feature+'=false']
+                argv+=['-c','mcp_servers={}']
             if output_schema:
                 argv += ['--output-schema', str(output_schema)]
             if b['model'] != 'unknown':
@@ -233,7 +238,7 @@ class CLI:
                 sid = obj.get('session_id')
                 report = obj.get('structured_output')
                 if report is None:
-                    report = json.loads(obj['result'])
+                    report = self.conversation_report(obj['result']) if self.binding.get('conversation_format') == 'text' else json.loads(obj['result'])
                 models = list(obj.get('modelUsage', {}))
                 resolved = models[0] if len(models) == 1 else 'unknown'
                 usage = {'total_cost_usd': obj.get('total_cost_usd', 'unknown'),
@@ -249,7 +254,7 @@ class CLI:
                 sid = starts[0].get('thread_id')
                 texts = [e['item']['text'] for e in events if e.get('type') == 'item.completed'
                          and e.get('item', {}).get('type') == 'agent_message']
-                report = json.loads(texts[-1])
+                report = self.conversation_report(texts[-1]) if self.binding.get('conversation_format') == 'text' else json.loads(texts[-1])
                 resolved = starts[0].get('model', 'unknown')
                 usage = {'usage': ends[0].get('usage', {}), 'total_cost_usd': 'unknown', 'semantics': 'turn'}
             if not isinstance(sid, str):
@@ -262,6 +267,20 @@ class CLI:
             raise Blocked('invalid CLI structured output') from None
         return {'session_id': sid, 'resolved_model': resolved, 'resolved_effort': 'unknown',
                 'report': report, 'usage': usage, 'process': process}
+
+    @staticmethod
+    def conversation_report(text):
+        if not isinstance(text, str) or not text.strip():
+            raise Blocked('missing visible native conversation answer')
+        # Compatibility with already-produced reply-only envelopes. Ordinary
+        # native text needs no JSON Schema tool and remains a native message.
+        try:
+            value = json.loads(text)
+            if isinstance(value, dict) and set(value) == {'reply'} and isinstance(value['reply'], str):
+                return value
+        except ValueError:
+            pass
+        return {'reply': text}
 
     def resume(self, session, **kwargs):
         if not session:

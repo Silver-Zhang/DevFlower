@@ -24,13 +24,14 @@ class ModelAdmission:
     def scope(self, binding, cwd):
         # operator_sha pins executable, credential/settings bytes and dependencies.
         # Never retain credential values in a public scope or certificate.
-        return dict(version=1, candidate=self.rt.candidate_sha256,
+        from .model_registration import profile_identity
+        return dict(version=1, profile_environment=profile_identity(binding), candidate=self.rt.candidate_sha256,
             operator=self.rt.operator_sha256, policy=binding.get('admission_policy'),
             environment_sha256=digest(canonical(clean_env())),
             profile=binding.get('runtime_profile'), cwd=str(cwd),
             config={k: binding.get(k) for k in ('provider', 'model', 'effort',
                 'execution_mode', 'role', 'tools', 'timeout_seconds', 'executable',
-                'read_paths', 'readonly_files', 'isolation', 'external_sandbox', 'buffered_tool_transport')})
+                'read_paths', 'readonly_files', 'isolation', 'external_sandbox', 'buffered_tool_transport', 'model_registration_key','model_registration_sha256','no_tools','execution_context')})
 
     def key(self, binding, cwd):
         return digest(canonical(self.scope(binding, cwd)))
@@ -52,6 +53,8 @@ class ModelAdmission:
 
     def require(self, binding, cwd):
         self.rt.check_operator()
+        from .model_registration import ModelRegistration
+        ModelRegistration(self.rt).require(binding)
         if binding.get('admission_policy_file'):
             from .session_sources import opened
             import os
@@ -97,17 +100,27 @@ class ModelAdmission:
                 'resolved_model','resolved_effort','process','permission_mode','raw_report_sha256')})
         return self._publish(event,expected_id=verification['verification_id'])
 
-    def invalidate(self, binding, cwd, reason='native-call-failed'):
-        key = self.key(binding, cwd)
+    def invalidate(self, binding, cwd, reason='native-call-failed', *, expected_record=None):
+        # A failed process belongs to the captured scope. Credential/CLI bytes
+        # may rotate during its call; never revoke a different, recomputed key.
+        scope=expected_record['scope'] if expected_record is not None else self.scope(binding,cwd)
+        key = digest(canonical(scope))
         # Append failure history; leave the original successful check untouched.
         event = dict(id=secrets.token_hex(16), key=key, state='FAILED', at=time.time(),
-                     scope=self.scope(binding, cwd), reason=reason)
-        self._publish(event)
+                     scope=scope, reason=reason)
+        return self._publish(event,expected_record=expected_record)
+
+    def invalidate_verification(self,binding,cwd,verification,reason='native-call-failed'):
+        if not verification:return self.invalidate(binding,cwd,reason)
+        try:record=self.db.get('model-admission',verification['key'])
+        except Invalid:return False
+        if record.get('id')!=verification.get('verification_id'):return False
+        return self.invalidate(binding,cwd,reason,expected_record=record)
 
     def prepare(self, request):
         self.rt.check_operator()
         self.validate_request(request)
-        selected = self.rt.node_binding(request['workspace'], dict(request, session='new'), admission=False)
+        selected = self.select(request)
         return self.db.prepare(dict(purpose='model-admission', **selected,
             candidate_sha256=self.rt.candidate_sha256, operator_sha256=self.rt.operator_sha256,
             policy_sha256=self.rt.policy_sha, scope=self.scope(selected['binding'], selected['cwd']),
@@ -115,19 +128,30 @@ class ModelAdmission:
 
     @staticmethod
     def validate_request(request):
-        allowed = {'workspace', 'profile', 'model', 'effort', 'mode', 'permission', 'tools', 'timeout'}
+        allowed = {'workspace', 'profile', 'model', 'effort', 'mode', 'permission', 'tools', 'timeout', 'context'}
         if not isinstance(request, dict) or set(request)-allowed or not {'workspace','profile','model','effort','mode'} <= set(request):
             raise Invalid('执行验证需要工作区、Profile、模型、强度及工作方式')
         if any(not isinstance(request[k],str) or not request[k].strip() or request[k]=='unknown' for k in ('workspace','profile','model','effort','mode')):
             raise Invalid('请选择明确的模型与推理强度；unknown 不能作为执行验证配置')
+        if request.get('context') not in (None,'configuration'):raise Invalid('不支持的连接用途')
+        if request.get('context')=='configuration' and (request['mode']!='Ask' or request.get('permission','read')!='read' or request.get('tools')):raise Invalid('AI配置助手只能使用固定只读环境')
         if request.get('permission','read') not in ('read','workspace-write'):
             raise Invalid('执行验证权限只能为只读或工作区写入')
         if 'timeout' in request and (type(request['timeout']) is not int or not 10 <= request['timeout'] <= 3600):
             raise Invalid('执行超时必须在10–3600秒内')
 
+    def select(self, request):
+        selected=self.rt.node_binding(request['workspace'],dict(request,session='new'),admission=False)
+        if request.get('context')=='configuration':
+            cwd=self.rt.storage/'configuration-context'/digest(request['workspace'].encode())
+            cwd.mkdir(parents=True,exist_ok=True,mode=0o700)
+            selected['cwd']=str(cwd)
+            selected['binding'].update(no_tools=True,execution_context='configuration',tools=[],role='reviewer')
+        return selected
+
     def selection_status(self, request):
         self.validate_request(request)
-        selected = self.rt.node_binding(request['workspace'], dict(request, session='new'), admission=False)
+        selected = self.select(request)
         self.rt.check_operator()
         return self.status(selected['binding'], selected['cwd'])
 
@@ -145,8 +169,8 @@ class ModelAdmission:
             model=binding['model'], effort=binding['effort'],
             mode=binding['execution_mode'], timeout=binding['timeout_seconds'],
             permission='workspace-write' if binding['role']=='implementer' else 'read')
-        if binding['provider'] != 'codex':
-            request['tools'] = binding['tools']
+        if binding.get('execution_context')=='configuration':request['context']='configuration'
+        elif binding['provider'] != 'codex':request['tools'] = binding['tools']
         return dict(key=self.key(binding, selected['cwd']), selection=request,
                     verification_required=not status['execution_allowed'],
                     agent='Codex' if binding['provider']=='codex' else 'Claude Code')
@@ -285,7 +309,7 @@ class ModelAdmission:
                 raise Blocked('执行验证期间准入已被撤销或更新；迟到回执不能覆盖，请重新确认验证')
             return self.status(binding, cwd)
         except (Blocked, Invalid, OSError, ValueError) as exc:
-            self.invalidate(binding, cwd)
+            self.invalidate_verification(binding,cwd,dict(key=key,verification_id=check_id))
             event.update(state='FAILED', reason=safe_text(str(exc)))
             self.db.put('model-admission-event', check_id, event)
             try: self.db.update('session-operation', check_id, dict(state='FAILED', reason=event['reason']))
