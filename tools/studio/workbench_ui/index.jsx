@@ -11,7 +11,7 @@ import './polish.css';
 import './studio.css';
 import './interactions.css';
 import './user_experience.css';
-import {ConfigurationAssistant} from './ConfigurationAssistant.jsx';
+import {CanvasAssistant as ConfigurationAssistant} from './CanvasAssistant.jsx';
 import {SessionActions} from './SessionActions.jsx';
 import {AgentPicker} from './AgentPicker.jsx';
 import {checkConnections} from './start_checks.mjs';

@@ -24,6 +24,8 @@ def create_server(runtime,port=0):
         token=secrets.token_urlsafe(32);token_path.write_text(token);token_path.chmod(0o600)
     sessions=WorkbenchSessions(runtime)
     terminals=NativeTerminals(runtime,sessions)
+    from .canvas_assistant import CanvasAssistant
+    canvas_assistant=CanvasAssistant(runtime)
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def respond(self,status,value,mime='application/json; charset=utf-8'):
@@ -74,6 +76,8 @@ def create_server(runtime,port=0):
                     elif path=='/api/terminal':value=sessions.terminal(q['workspace'],q['handle'])
                     elif path=='/api/terminals':value={'terminals':terminals.listing(q['workspace'])}
                     elif path=='/api/terminal/output':value=terminals.snapshot(q['workspace'],q['id'],int(q.get('after','0')))
+                    elif path=='/api/copilot/models':value=canvas_assistant.catalog()
+                    elif path=='/api/canvas-assistant/conversation':value=canvas_assistant.conversation(q['workspace'],q['id'])
                     elif path=='/api/run':value=runtime.snapshot(q['run'],int(q.get('after','0')))
                     elif path=='/api/config-assistant/schema':
                         from .configuration_assistant import ConfigurationAssistant,schema
@@ -125,6 +129,8 @@ def create_server(runtime,port=0):
                 elif path=='/api/sessions/trash/confirm':
                     from .session_batch import SessionBatch
                     value=SessionBatch(sessions).confirm(data['id'],data['sha256'],data['answer'])
+                elif path=='/api/canvas-assistant/messages':value=canvas_assistant.start(data)
+                elif path=='/api/canvas-assistant/cancel':value=canvas_assistant.cancel(data['workspace'],data['conversation'])
                 elif path.startswith('/api/config-assistant/'):
                     from .configuration_assistant import ConfigurationAssistant
                     assistant=ConfigurationAssistant(runtime);action=path.rsplit('/',1)[1]
@@ -163,6 +169,7 @@ def create_server(runtime,port=0):
                 self.respond(400,{'error':safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境','category':type(exc).__name__,'node':getattr(exc,'node',None)})
     class Server(ThreadingHTTPServer):
         def server_close(self):
+            canvas_assistant.shutdown()
             terminals.shutdown()
             super().server_close()
     server=Server(('127.0.0.1',port),Handler);server.daemon_threads=True

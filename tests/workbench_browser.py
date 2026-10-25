@@ -57,6 +57,11 @@ def main():
         if method=='claude/auth-status':return dict(logged_in=True,auth_method='synthetic fixture',service_verified=False)
         return original_rpc(manager,binding,cwd,method,params)
     metadata_patch=patch.object(WorkbenchSessions,'rpc',metadata);metadata_patch.start();owner.addCleanup(metadata_patch.stop)
+    # Built-in assistant browser scenarios are synthetic; never use a real
+    # signed-in Copilot account as an unlabelled catalog/model fixture.
+    from test_canvas_assistant import SyntheticBackend
+    from studio.canvas_assistant import CanvasAssistant
+    assistant_patch=patch('studio.canvas_assistant.CopilotRPC',SyntheticBackend);assistant_patch.start();owner.addCleanup(assistant_patch.stop)
     server,token=create_server(rt)
     # Drain real in-flight history requests before deleting the fixture DBs.
     # Browser disconnect does not itself end the server's request thread.
