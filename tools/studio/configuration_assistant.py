@@ -109,6 +109,7 @@ class ConfigurationAssistant:
         if not v.get('configuration'):raise Blocked('不是配置助手任务')
         attempted=False;admission_record=None
         try:
+            if v.get('cancel_requested'):raise Blocked('配置生成已在排队期间取消；未调用模型')
             self.rt.check_operator();self._source(v);b=v['binding'];verification=ModelAdmission(self.rt).require(b,v['cwd'])
             admission_record=self.rt.db.get('model-admission',verification['key'])
             if admission_record.get('state')!='VERIFIED' or admission_record.get('id')!=verification.get('verification_id'):
@@ -125,6 +126,8 @@ class ConfigurationAssistant:
             with lease(Path(b['home']).parent/(digest(str(Path(b['home']).resolve()).encode())+'.session.lock')):
                 ModelAdmission(self.rt).require(b,v['cwd'])
                 if self.rt.db.get('model-admission',verification['key'])!=admission_record:raise Blocked('配置助手连接在启动前变化；未调用模型')
+                if self.rt.db.get('session-operation',key).get('cancel_requested'):
+                    raise Blocked('配置生成已在启动前取消；未调用模型')
                 attempted=True
                 r=CLI(b['provider'],b,dict(step_timeout_seconds=120,max_log_bytes=2_000_000)).start(prompt,v['cwd'],out,sf,ConfigurationJournal(self.rt.db,key),key)
             def sanitize(value):

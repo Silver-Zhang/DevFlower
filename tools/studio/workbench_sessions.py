@@ -264,7 +264,10 @@ class WorkbenchSessions:
         return dict(sessions=result,coverage=listing['discovery']['coverage'],operations=operations)
 
     def busy(self,binding,sid):
-        if self.rt.session_center._busy(binding['home']):return True
+        return self.rt.session_center._busy(binding['home']) or self.native_process_busy(binding['home'],sid)
+
+    def native_process_busy(self,home,sid):
+        """Inspect native writers even while this caller holds its own HOME lease."""
         # External native terminals need not honour our lock; check their actual HOME/explicit session.
         for p in Path('/proc').glob('[0-9]*'):
             comm=''
@@ -273,7 +276,7 @@ class WorkbenchSessions:
                 if not any(x in comm for x in ('codex','claude')):continue
                 argv=(p/'cmdline').read_bytes().split(b'\0')
                 env=dict(x.split(b'=',1) for x in (p/'environ').read_bytes().split(b'\0') if b'=' in x)
-                if sid.encode() in argv or env.get(b'HOME')==binding['home'].encode():return True
+                if sid.encode() in argv or env.get(b'HOME')==home.encode():return True
             except (OSError,ValueError):
                 if any(x in comm for x in ('codex','claude')):
                     # A process can disappear between /proc reads. Only a

@@ -122,6 +122,30 @@ class BatchTests(unittest.TestCase):
   self.assertEqual(self.rt.flow.list('session-meta'),[])
  def test_busy_group_does_not_prepare(self):
   with patch.object(self.manager,'busy',return_value=True),self.assertRaises(Blocked):self.prepare()
+ def test_external_writer_starting_after_home_lease_prevents_whole_batch(self):
+  import os,subprocess,sys
+  p=self.prepare();original_lease=__import__('studio.session_batch',fromlist=['lease']).lease;children=[]
+  @contextmanager
+  def occupied_after_lease(path):
+   with original_lease(path):
+    if not children:
+     home=p['data']['members'][0]['home']
+     child=subprocess.Popen([sys.executable,'-B','-c',"import ctypes,sys;ctypes.CDLL(None).prctl(15,ctypes.c_char_p(b'claude'),0,0,0);print('ready',flush=True);sys.stdin.read(1)"],env=dict(os.environ,HOME=home),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE);children.append(child)
+     self.assertEqual(child.stdout.readline(),b'ready\n')
+    yield
+  try:
+   with patch('studio.session_batch.lease',side_effect=occupied_after_lease),self.assertRaises(Blocked):self.confirm(p)
+   self.assertEqual(self.rt.flow.list('session-meta'),[])
+   for path,raw in self.paths:self.assertEqual(path.read_bytes(),raw)
+  finally:
+   for child in children:
+    child.communicate(b'x',timeout=5);self.assertEqual(child.returncode,0)
+ def test_own_held_home_lease_is_not_an_external_writer(self):
+  p=self.prepare();original=self.manager.native_process_busy;held=[]
+  def inspect(home,sid):
+   held.append(self.rt.session_center._busy(home));return original(home,sid)
+  with patch.object(self.manager,'native_process_busy',side_effect=inspect):result=self.confirm(p)
+  self.assertEqual(result['trashed'],2);self.assertIn(True,held)
  def test_meta_cas_change_does_not_trash_other_member(self):
   p=self.prepare();self.rt.flow.put('session-meta',self.handles[1],dict(id=self.handles[1],workspace=self.w,alias='New'))
   with self.assertRaises(Conflict):self.confirm(p)
@@ -202,6 +226,19 @@ class ConfigurationTests(unittest.TestCase):
   return self.rt.db.get('session-operation',key)
  def test_native_generation_persists_receipt_but_does_not_run_workflow(self):
   v=self.generated();self.assertEqual(v['state'],'COMPLETED');self.assertEqual(v['receipt']['session_id'],'10000000-0000-4000-8000-000000000001');self.assertEqual(self.rt.flow.list('run'),[])
+ def cancellation_before_dispatch(self,at_lease=False):
+  key=self.generation();row=self.rt.db.get('session-operation',key);gate=ModelAdmission(self.rt);scope_key=gate.key(row['binding'],row['cwd']);before=gate.db.get('model-admission',scope_key)
+  if not at_lease:self.rt.db.update('session-operation',key,dict(cancel_requested=True))
+  original_lease=__import__('studio.configuration_assistant',fromlist=['lease']).lease
+  @contextmanager
+  def cancel_after_lease(path):
+   with original_lease(path):
+    if at_lease:self.rt.db.update('session-operation',key,dict(cancel_requested=True))
+    yield
+  with patch('studio.configuration_assistant.lease',side_effect=cancel_after_lease),patch('studio.configuration_assistant.CLI.start',side_effect=AssertionError('Cancelled work must not reach native adapter')) as call:self.ai.execute(key)
+  call.assert_not_called();self.assertEqual(self.rt.db.get('session-operation',key)['state'],'CANCELLED');self.assertEqual(gate.db.get('model-admission',scope_key),before)
+ def test_queued_cancellation_never_calls_model_or_revokes_certificate(self):self.cancellation_before_dispatch()
+ def test_cancellation_during_lease_acquisition_never_calls_model(self):self.cancellation_before_dispatch(at_lease=True)
  def test_cancel_at_result_publication_never_becomes_completed(self):self.assertEqual(self.generated(cancel=True)['state'],'CANCELLED')
  def test_revocation_during_generation_prevents_proposal_publication(self):self.assertEqual(self.generated(revoke=True)['state'],'FAILED')
  def test_native_invalid_structured_output_fails_closed(self):self.assertEqual(self.generated(invalid=True)['state'],'FAILED')

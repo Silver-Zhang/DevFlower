@@ -53,6 +53,8 @@ class SessionBatch:
                 _,current=self.rt.session_center.resolve(v['workspace'],r['handle'])
                 if (current['native']['sha256'],current['native']['session_id'],current['profile']['home'])!=(r['native_sha256'],r['session_id'],r['home']):
                     raise Conflict('原生历史在核对后变化；没有批量修改，请重新确认')
+                if self.manager.native_process_busy(r['home'],r['session_id']):
+                    raise Blocked('会话在核对后被外部终端占用；整批未修改')
             if any(o.get('binding',{}).get('home') in homes and o['state'] not in ('COMPLETED','FAILED','CANCELLED')
                    for o in self.rt.db.listing('session-operation',limit=None)):raise Blocked('有新会话操作待执行；没有批量修改')
             with self.rt.flow.tx() as db:
