@@ -135,7 +135,7 @@ function App(){
  const editHistory=useRef({past:[],future:[]}),clipboard=useRef(null),savedGraph=useRef(null);
  const generation=useRef(0),graphRef=useRef(null),workspaceRef=useRef(null),currentRun=useRef(null),pollVersion=useRef(0),lastSequence=useRef(0),dragged=useRef(0),loadingHistory=useRef({}),savePending=useRef(false),canvasRef=useRef(null),sessionsVersion=useRef(0),sessionsEpoch=useRef(0),sessionsPending=useRef(null),sessionFilters=useRef(null),previousFilters=useRef(JSON.stringify([sessionView,search])),loaded=useRef(false),restoreChat=useRef(null),chatTicket=useRef(0),tabRef=useRef(tab);
  tabRef.current=tab;
- const guard=async fn=>{try{setError('');await fn()}catch(e){setError(e.message);if(e.node){const parts=e.node.split('/');setLoopPath(parts.slice(0,-1));setViewMode('draft');setSelected(parts.at(-1));setConfigTab(['initial_prompt','round_prompt','handoff_prompt'].includes(e.field)?'prompts':'basic');setPinned(true);setTab('canvas')}}};
+ const guard=async (fn,{background=false}={})=>{try{if(!background)setError('');await fn()}catch(e){setError(old=>background&&old?old:e.message);if(!background&&e.node){const parts=e.node.split('/');setLoopPath(parts.slice(0,-1));setViewMode('draft');setSelected(parts.at(-1));setConfigTab(['initial_prompt','round_prompt','handoff_prompt'].includes(e.field)?'prompts':'basic');setPinned(true);setTab('canvas')}}};
  const rememberGraph=()=>{if(graphRef.current){editHistory.current.past.push(clone(graphRef.current));editHistory.current.past=editHistory.current.past.slice(-80);editHistory.current.future=[];setEditVersion(v=>v+1)}};
  const changeGraph=useCallback((updater,record=true)=>{const before=graphRef.current;if(!before)return;const next=typeof updater==='function'?updater(clone(before)):clone(updater);if(JSON.stringify(next)===JSON.stringify(before))return;if(record){editHistory.current.past.push(clone(before));editHistory.current.past=editHistory.current.past.slice(-80);editHistory.current.future=[];}graphRef.current=next;setGraph(next);setDirty(JSON.stringify(next)!==JSON.stringify(savedGraph.current));setEditVersion(v=>v+1)},[]);
  const traverseHistory=direction=>{if(viewMode==='run')return;const from=editHistory.current[direction==='undo'?'past':'future'];if(!from.length)return;const to=editHistory.current[direction==='undo'?'future':'past'];to.push(clone(graphRef.current));const next=from.pop();graphRef.current=next;setGraph(next);setDirty(JSON.stringify(next)!==JSON.stringify(savedGraph.current));setSelected(null);setEdge(null);setSelection([]);setEditVersion(v=>v+1)};
@@ -175,8 +175,8 @@ setStatus(s);setChatProfile(s.profiles.find(p=>p.available)?.id||'');
   sessionsPending.current={key,promise};
   try{return await promise}finally{if(sessionsPending.current?.promise===promise)sessionsPending.current=null}
  },[]);
- useEffect(()=>{guard(refreshSessions)},[workspace,refreshSessions]);
- useEffect(()=>{const key=JSON.stringify([sessionView,search]);if(previousFilters.current===key)return;previousFilters.current=key;const timer=setTimeout(()=>guard(refreshSessions),160);return()=>clearTimeout(timer)},[search,sessionView,refreshSessions]);
+ useEffect(()=>{guard(refreshSessions,{background:true})},[workspace,refreshSessions]);
+ useEffect(()=>{const key=JSON.stringify([sessionView,search]);if(previousFilters.current===key)return;previousFilters.current=key;const timer=setTimeout(()=>guard(refreshSessions,{background:true}),160);return()=>clearTimeout(timer)},[search,sessionView,refreshSessions]);
  useEffect(()=>{if(!run)return;const id=run;currentRun.current=id;lastSequence.current=0;setEvents([]);setPulseAfter(Infinity);setConnection('unknown');setSnapshot(null);let active=true,inFlight=false,controller,initialized=false;
   async function poll(){if(!active||inFlight)return;inFlight=true;controller=new AbortController();const version=++pollVersion.current;const timeout=setTimeout(()=>controller.abort(),5000);
    try{const r=await api(`/api/run?run=${id}&after=${lastSequence.current}`,undefined,controller.signal);if(!active||currentRun.current!==id||version!==pollVersion.current)return;if(r.run.id!==id)throw Error('运行身份未确认，旧结果已隐藏');setSnapshot(r);setConnection('connected');if(!initialized){setPulseAfter(r.events.at(-1)?.seq||0);initialized=true;}if(r.events.length){lastSequence.current=r.events.at(-1).seq;setEvents(old=>[...old,...r.events].slice(-1000))}}
@@ -184,9 +184,9 @@ setStatus(s);setChatProfile(s.profiles.find(p=>p.available)?.id||'');
    finally{clearTimeout(timeout);inFlight=false}}
   poll();const timer=setInterval(poll,850);return()=>{active=false;clearInterval(timer);controller?.abort();pollVersion.current++}
  },[run,pollNonce]);
- useEffect(()=>{if(snapshot?.state==='COMPLETED'||snapshot?.state==='FAILED')guard(refreshSessions)},[snapshot?.state]);
+ useEffect(()=>{if(snapshot?.state==='COMPLETED'||snapshot?.state==='FAILED')guard(refreshSessions,{background:true})},[snapshot?.state]);
  const nativeLifecycleList=snapshot?.nodes?.map(n=>[n.observed_session||n.receipt?.session_id||'',n.state].join(':')).join('|');
- useEffect(()=>{if(nativeLifecycleList){sessionsEpoch.current++;guard(refreshSessions)}},[nativeLifecycleList]);
+ useEffect(()=>{if(nativeLifecycleList){sessionsEpoch.current++;guard(refreshSessions,{background:true})}},[nativeLifecycleList]);
  useEffect(()=>{if(!chatOperation||!workspace)return;let active=true;const key=chatOperation.id;const w=workspace.id;
   const tick=async()=>{try{const r=await api(`/api/chat?id=${key}&workspace=${w}`);if(!active||workspaceRef.current?.id!==w)return;setChatOperation(r);if(r.session_id||r.requested_session){const lookup=await api(`/api/chat-session?workspace=${w}&id=${key}`);const found=lookup.session;if(active&&workspaceRef.current?.id===w&&found&&tabRef.current==='new'){await openChat(found);await refreshSessions()}}if(['COMPLETED','FAILED','CANCELLED'].includes(r.state)){clearInterval(timer);await refreshSessions();setNotice(r.state==='COMPLETED'?'原生回合已完成，可打开同一会话查看历史':r.reason||statusText(r.state));}}
    catch(e){if(active)setError(e.message)}};const timer=setInterval(tick,1000);tick();return()=>{active=false;clearInterval(timer)}

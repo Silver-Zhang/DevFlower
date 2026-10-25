@@ -256,11 +256,13 @@ await test('native-unmount-discards-delayed-prepare-for-same-session',async p=>{
  }finally{a.release()}
 });
 await test('recovery-entry-refuses-missing-completion-without-replay',async p=>{
- await openWorkspace(p);let starts=0;p.on('request',r=>{if(r.url().endsWith('/api/start'))starts++});
+ await openWorkspace(p);let starts=0,afterRejection=false,backgroundReads=0;p.on('request',r=>{if(r.url().endsWith('/api/start'))starts++;if(afterRejection&&r.url().includes('/api/sessions?'))backgroundReads++});
+ // A subsequent real HTTP snapshot changes native lifecycle metadata. Its
+ // background sidebar refresh must not erase an earlier user-action rejection.
+ await p.route('**/api/run?**',async route=>{const response=await route.fetch(),v=await response.json();if(afterRejection&&v.run.id===access.lost_run)for(const n of v.nodes)n.state='FAILED';await route.fulfill({json:v})});
  await p.getByLabel('历史运行',{exact:true}).selectOption(access.lost_run);
- await p.getByRole('button',{name:'核验并恢复',exact:true}).waitFor();await p.getByRole('button',{name:'核验并恢复',exact:true}).click();
- await until(async()=>(await p.locator('.alert').innerText()).includes('缺少可靠原生完成回执'));
- assert.equal(starts,0);assert((await p.locator('.activity-tabs').innerText()).includes('状态未确认'));
+ await p.getByRole('button',{name:'核验并恢复',exact:true}).waitFor();const rejected=p.waitForResponse(r=>r.url().endsWith('/api/control')&&r.request().method()==='POST');await p.getByRole('button',{name:'核验并恢复',exact:true}).click();const r=await rejected;assert.equal(r.status(),400);await until(async()=>await p.locator('.alert').count()>0&&(await p.locator('.alert').innerText()).includes('缺少可靠原生完成回执'));afterRejection=true;
+ await until(()=>Promise.resolve(backgroundReads>0));await delay(500);assert((await p.locator('.alert').innerText()).includes('缺少可靠原生完成回执'));assert.equal(starts,0);assert((await p.locator('.activity-tabs').innerText()).includes('状态未确认'));
 });
 await test('existing-chat-keeps-native-profile-and-terminal-hides-second-composer',async p=>{
  await openWorkspace(p);await p.locator('.session-main').filter({hasText:'Synthetic dialog-native'}).click();

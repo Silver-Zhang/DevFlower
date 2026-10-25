@@ -111,7 +111,8 @@ class ModelAdmission:
         return self._publish(event,expected_record=expected_record)
 
     def invalidate_verification(self,binding,cwd,verification,reason='native-call-failed'):
-        if not verification:return self.invalidate(binding,cwd,reason)
+        # Preflight rejection before a native call has no failed certificate.
+        if not verification:return False
         try:record=self.db.get('model-admission',verification['key'])
         except Invalid:return False
         if record.get('id')!=verification.get('verification_id'):return False

@@ -222,3 +222,10 @@ class ConfigurationTests(unittest.TestCase):
   p=self.rt.operator['profiles']['default-codex'];s=ModelAdmission(self.rt).select(dict(workspace=self.w,profile='default-codex',model=p['model'],effort=p['effort'],mode='Ask'));b=s['binding'];gate=ModelAdmission(self.rt);key=gate.key(b,s['cwd']);scope=gate.scope(b,s['cwd']);self.rt.db.put('model-admission',key,dict(id='original',state='VERIFIED',verified_at=time.time(),scope=scope));ref=gate.require(b,s['cwd'])
   with patch('studio.model_registration.profile_identity',return_value='rotated-environment'):self.assertTrue(gate.invalidate_verification(b,s['cwd'],ref))
   self.assertFalse(gate.status(b,s['cwd'])['execution_allowed']);self.assertEqual(self.rt.db.get('model-admission',key)['scope'],scope)
+
+ def test_conversation_preflight_rejection_cannot_revoke_newer_certificate(self):
+  p=self.rt.operator['profiles']['default-codex'];s=self.rt.node_binding(self.w,dict(profile='default-codex',model=p['model'],effort=p['effort'],mode='Ask'),admission=False);g=ModelAdmission(self.rt);k=g.key(s['binding'],s['cwd']);self.rt.db.put('model-admission',k,dict(id='original',state='VERIFIED',verified_at=time.time(),scope=g.scope(s['binding'],s['cwd'])))
+  permit=self.rt.session_center.prepare(dict(workspace=self.w,handle='new',profile='default-codex',prompt='User task',permission='read',model=p['model'],effort=p['effort'],mode='Ask'));self.rt.db.put('session-operation','preflight',dict(permit['data'],id='preflight',state='QUEUED',created_at=time.time(),cancel_requested=False))
+  newer=dict(id='newer-after-queued',state='VERIFIED',verified_at=time.time(),scope=g.scope(s['binding'],s['cwd']));self.rt.db.put('model-admission',k,newer);(self.base.source/'README.md').write_text('User edited after preview')
+  with patch('studio.session_center.CLI.start',side_effect=AssertionError('Must not call native agent')) as call:self.rt.session_center.execute('preflight')
+  call.assert_not_called();self.assertEqual(self.rt.db.get('session-operation','preflight')['state'],'FAILED');self.assertEqual(self.rt.db.get('model-admission',k),newer)
