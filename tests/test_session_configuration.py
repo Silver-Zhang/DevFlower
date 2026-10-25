@@ -416,7 +416,7 @@ class PhysicalSpawnBoundaryTests(unittest.TestCase):
  certificate=AtomicConfigurationDispatchTests.certificate
  # Use the candidate process helper and a real harmless child. Fault only the
  # journal read; no nested provider call or manual started flag is involved.
- def physical_failure(self,cancel,failed_spawn=False):
+ def physical_failure(self,cancel,failed_spawn=False,error_type=OSError):
   import os,signal,subprocess,tempfile
   from orchestration import process as native_process
   from studio.usable_store import Storage
@@ -424,7 +424,12 @@ class PhysicalSpawnBoundaryTests(unittest.TestCase):
   def start(*args,**kw):
    journal=args[-2];journals.append(journal);get=journal.db.get;armed=[True]
    def fail_get(kind,item):
-    if armed[0] and kind=='session-step':armed[0]=False;raise OSError('Synthetic physical post-spawn journal read failure')
+    if armed[0] and kind=='session-step':
+     armed[0]=False
+     if error_type is not OSError:
+      import sqlite3
+      with sqlite3.connect(':memory:') as faulty: faulty.execute('SELECT * FROM intentionally_missing_journal_table')
+     raise OSError('Synthetic physical post-spawn journal read failure')
     return get(kind,item)
    def popen(*a,**kw):
     if failed_spawn:raise OSError('Synthetic Popen did not create a child')
@@ -432,7 +437,7 @@ class PhysicalSpawnBoundaryTests(unittest.TestCase):
    try:
     with tempfile.TemporaryDirectory() as scratch,patch.object(journal.db,'get',side_effect=fail_get),patch.object(native_process.subprocess,'Popen',side_effect=popen):
      native_process._execute(['/bin/sh','-c','sleep 20'],row['cwd'],row['binding']['home'],(),(),5,1024,journal,key,'',None,False,'landlock',None,(),scratch,None)
-   except OSError:
+   except error_type:
     if cancel:other.update('session-operation',key,dict(cancel_requested=True))
     raise
   try:
@@ -450,3 +455,10 @@ class PhysicalSpawnBoundaryTests(unittest.TestCase):
  def test_physical_spawn_journal_failure_then_cancel_revokes_and_kills_owned_child(self):self.physical_failure(True)
  def test_physical_spawn_journal_failure_without_cancel_revokes_and_kills_owned_child(self):self.physical_failure(False)
  def test_failed_popen_then_cancel_preserves_certificate(self):self.physical_failure(True,True)
+
+ def test_real_sqlite_error_after_spawn_then_cancel_revokes_and_finalizes(self):
+  import sqlite3
+  self.physical_failure(True,error_type=sqlite3.OperationalError)
+ def test_real_sqlite_error_after_spawn_without_cancel_revokes_and_finalizes(self):
+  import sqlite3
+  self.physical_failure(False,error_type=sqlite3.OperationalError)

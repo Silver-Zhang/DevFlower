@@ -1,6 +1,6 @@
 """AI-generated configuration is a bounded draft, never permission or execution."""
 from pathlib import Path
-import copy,json,secrets,subprocess,sys,time
+import copy,json,secrets,sqlite3,subprocess,sys,time
 from orchestration.common import canonical,digest,tree_hash,clean_env,Blocked
 from orchestration.adapters import CLI
 from orchestration.contracts import validate
@@ -172,7 +172,7 @@ class ConfigurationAssistant:
                 else:current.update(state='COMPLETED',plan=r['report'],proposed_graph=graph,receipt={k:r.get(k) for k in ('session_id','provider','requested_model','requested_effort','resolved_model','resolved_effort','process','usage','home','cwd','raw_report_sha256')},summary=safe_text(r['report']['summary']))
                 self._finish_dispatch(db,current)
                 db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
-        except (Blocked,Invalid,ValueError,OSError,Conflict) as e:
+        except (Blocked,Invalid,ValueError,OSError,Conflict,sqlite3.Error) as e:
             if attempted:
                 # A cancellation before a process exists vetoes revocation in
                 # the same certificate transaction, not via a stale snapshot.
