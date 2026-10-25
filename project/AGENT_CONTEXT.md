@@ -1,15 +1,15 @@
 # DevFlower 接续入口
 
-先读 STATUS，再读 tasks/2026-10/20261025_01_stable-promotion/README.md 和 validation.json。旧任务04/06及旧 BLOCKED 不改写。
+先读STATUS及tasks/2026-10/20261025_04_session-config-assistant/README.md、validation.json；旧Task01晋升/Task02获准历史清理/Task03有限接受保持原义，不重写。
 
-源码 main 工作树 /home/workspace/DevFlower/DevFlower，当前 `e0a0f92fed7f94bfef3a01b1298f8465c008023d` /tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` /候选 `cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe`，183 文件。PR18 已普通合并，源码分支清理；development/stable-promotion 目录保留并 detached 最新main，原生 cwd 不搬迁。records 在 project/devflower，通过普通 merge 同步main，不能回流main；project/codeweave不动。
+源码 main工作树 /home/workspace/DevFlower/DevFlower，HEAD e0a0f92fed7f94bfef3a01b1298f8465c008023d，tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039，已批准CFcfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe。当前开发 /home/workspace/DevFlower/development/user-experience，branch flow/workbench-user-experience，HEAD 2df889c381eeb6607578f8659fe270831181c4d6，tree 13c2440320b659bc612e42847fcf5c89e33e25fd，CF b77ec0adccee5e6912371641b71dd7b8ec6279850dcd58e00838fd70f4970a7f。PR19仍Draft，未合main。
 
-正式入口：python3 /home/workspace/DevFlower/.local/open-devflower.py；--check 查看批准与身份。只读安装 stable/accepted-cfea19cac598，批准来源与外部Gate/原始报告位于 archives/devflower-stable-promotion-20261025/deployment。原 Stable5816、旧日常包7b0c及旧指针/脚本/DB备份均保留。storage/native-homes 沿用 archives/devflower-model-admission-20261024/stage-final-r2 原路径；禁止清理活跃 archives/原生会话/认证。
+本轮原始最终 NEEDS_CORRECTION、固定旧Gate BLOCKED；技术验收阻塞：SC08-POST-SPAWN-SUPERVISOR-JOURNAL-FAILURE-ORPHAN。5源码轮/2恢复已满，不能把本轮视作旧Task03通过或隐式续审。全部原始负面报告保留；r15实施核验BLOCKED不是Claude，r16实施核验也不自批。
 
-本任务3轮审核，R1/R2 NEEDS_CORRECTION，R3真实Claude硬ACCEPT；基础设施恢复已2/2，用完。固定旧Stable Gate最终exit0。被审源码与当前main完整tree/CF一致，589Python/6宿主/169浏览器/20JS全0失败错误Skip，真实模型流程与正式安装实际顺序/汇合均通过。用户名义体验验收尚未进行。
+当前入口 python3 /home/workspace/DevFlower/.local/open-ux-development.py；--check核验冻结源码/进程/配置/API。这是隔离Development，原正式入口 .local/open-devflower.py和stable/accepted-cfea19cac598未替换；原部署因Codex OAuth文件刷新目前旧指纹校验拒绝。旧Stable5816/日常包/Task01批准文件与备份、所有现有Agent HOME/工作树/原生cwd/证据不清理。
 
-按时间项目记录可用，通用Studio结束自动归档project仍未实现；生产external_steps为空，自动业务交付未启用。本次PR来自获准外部监督。当前任务停止在已授权正式晋升，不自动扩展功能。
+原生审核恢复 .local/resume-session-config-review.py，当前明确UUID 987ba065-b657-448f-bd17-5fc6b9365c70，HOME/cwd/native路径见validation；活动写入者拒绝第二写入，版本命名的Claude进程也检查，不用--last、不复制全局认证。请求模型Codex gpt-6.1-sol/xhigh、Claude claude-opus-5-5[1m]/high；物理后端/生效effort unknown。
 
-原始本地证据 archives/devflower-stable-promotion-20261025。实际CLI模型Codex gpt-6.1-sol/xhigh、Claude claude-opus-5-5[1m]/high；物理后端/实际effort unknown。恢复使用机器摘要所记原HOME/cwd和明确session UUID，先排除双写，不使用--last。不删除旧会话、改写负面结论或以新结论套用旧候选。
+原始本地 archives/devflower-session-config-20261025；源码203文件/测试/流程/会话/句柄/轮次同CF。初次真实观察harness按同名选错Provider，保留失败，按精确handle读取原Codex并完成后续，不重放消息。737/6/193/56、87定向/21正常宿主补证和真实模型分列。
 
-2026-10-25 后续维护：用户明确要求连原生历史也删除，任务20261025_02已清理当前工作台7个旧业务会话（4Codex/3Claude）的JSONL及专用索引，业务会话列表为空；不是全机删除。旧晋升任务保留原文，不能据旧manifest声称这些后来获准删除的7份仍存在。独立审核会话、验收档案/运行记录、全局认证及当前Codex聊天未删。用户自测步骤见任务02 README第4节，尚未用户验收。
+records在project/devflower，仅整理摘要/机器记录/结构化原始裁决；大日志/截图/原生JSONL只本地，不能将project整支合main。任务记录可按时间追溯；Studio逐运行自动Git归档仍未实现。生产自动交付external_steps为空，不以此任务永久授权其他业务任务。CodeWeave/RMC不动。

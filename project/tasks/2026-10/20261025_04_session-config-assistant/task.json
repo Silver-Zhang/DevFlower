@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "20261025_04_session-config-assistant",
+  "date": "2026-10-25",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/workbench-user-experience",
+      "base": "cecbed3878702dcc0e8aa0ce7d25fe99cc0dcb1c",
+      "commit": "2df889c381eeb6607578f8659fe270831181c4d6",
+      "candidate_sha256": "b77ec0adccee5e6912371641b71dd7b8ec6279850dcd58e00838fd70f4970a7f",
+      "git_tree": "13c2440320b659bc612e42847fcf5c89e33e25fd",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/19"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "actor": "fixed external readonly host assertion",
+  "candidate_sha256": "9f7b8206ee78d418ef4b0393b3f8c2797a313f0d96808b67e46d1dbe73a2a87c",
+  "home": "/home/workspace/DevFlower/archives/devflower-session-config-20261025/runtime/claude-source-r4",
+  "session": "187dea84-4c9c-4f15-92a4-2244f81ed7b0",
+  "actual_native": [
+    {
+      "identity": {
+        "host": "silver-work-station",
+        "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+        "pid": 3140203,
+        "start": "152564151",
+        "state": "S",
+        "pgid": 3140201,
+        "sid": 3140201
+      },
+      "comm": "2.1.303",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-session-config-20261025/reviews/source-r4/candidate"
+    }
+  ],
+  "observed_busy": false,
+  "expected_busy": true
+}
