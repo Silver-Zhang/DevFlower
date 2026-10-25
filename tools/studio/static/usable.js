@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const text = (tag, value, cls) => { const e = document.createElement(tag); e.textContent = value; if(cls)e.className=cls; return e; };
-const state = {workspace:null, document:null, identity:crypto.randomUUID(), version:0, saved:null, selected:null,
+const state = {workspace:null, document:null, identity:crypto.randomUUID(), version:0, saveRequest:0, saved:null, selected:null,
   mode:'design', snapshot:null, runSelected:null, profiles:[], verificationProfiles:[], owned:[], drafts:[], run:null, runEpoch:0, workspaceEpoch:0, preview:null, history:[], historyIndex:0, loadEpoch:0, statusEpoch:0, runRequest:0, pollPending:null};
 const fragment = new URLSearchParams(location.hash.slice(1));
 if(fragment.has('token')) { sessionStorage.setItem('devflower-stable-token',fragment.get('token')); history.replaceState(null,'',location.pathname); }
@@ -82,12 +82,14 @@ function setWorkspace(workspace) {
   $('sessions').replaceChildren();$('preview').replaceChildren();$('monitor').replaceChildren();if(state.mode==='run')canvas.render({nodes:[],edges:[]});$('run-title').textContent='未选择运行';sessionStorage.setItem('devflower-workspace',workspace.id);status().catch(e=>notice(e.message));sessions().catch(e=>notice(e.message));
 }
 async function saveDraft() {
-  const identity=state.identity, version=state.version, document=structuredClone(state.document), saved=state.saved?{...state.saved}:null;
+  const identity=state.identity, version=state.version, request=++state.saveRequest, document=structuredClone(state.document), saved=state.saved?{...state.saved}:null;
   const result=await api('/api/draft',{document,id:saved?.id||null,expected:saved?.revision||null});
   if(identity===state.identity) {
     // A concurrent response must not replace a newer confirmed revision.
     const stillExpected=state.saved?.revision===(saved?.revision);
-    if(stillExpected||!state.saved&&!saved){
+    // Overlapping creations have distinct IDs. Only the newest request may
+    // choose this draft's first identity; confirmed revisions still use CAS.
+    if((saved||request===state.saveRequest)&&(stillExpected||!state.saved&&!saved)){
       state.saved={id:result.id,revision:result.revision};
       state.drafts=[result,...state.drafts.filter(d=>d.id!==result.id)];
       options($('drafts'),[['','已保存流程'],...state.drafts.map(d=>[d.id,d.document.name])],result.id);
