@@ -173,9 +173,11 @@ class ConfigurationAssistant:
                 self._finish_dispatch(db,current)
                 db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
         except (Blocked,Invalid,ValueError,OSError,Conflict) as e:
-            cancelled=self.rt.db.get('session-operation',key).get('cancel_requested')
-            if attempted and (not cancelled or journal and journal.process_started):
-                ModelAdmission(self.rt).invalidate(b,v['cwd'],'configuration-call-failed',expected_record=admission_record)
+            if attempted:
+                # A cancellation before a process exists vetoes revocation in
+                # the same certificate transaction, not via a stale snapshot.
+                ModelAdmission(self.rt).invalidate(b,v['cwd'],'configuration-call-failed',expected_record=admission_record,
+                    unless_cancelled=key if not journal or not journal.process_started else None)
             with self.rt.db.lock,self.rt.db.db() as db,db:
                 db.execute('BEGIN IMMEDIATE')
                 raw=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(key,)).fetchone();current=json.loads(raw[0])

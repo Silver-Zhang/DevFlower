@@ -362,3 +362,21 @@ class AtomicConfigurationDispatchTests(unittest.TestCase):
   writer.join(3);self.assertFalse(writer.is_alive());self.assertEqual(errors,[]);self.assertTrue(done.is_set());row=self.rt.db.get('session-operation',key);self.assertTrue(row['cancel_requested']);self.assertTrue(row['dispatch_step'])
   with self.assertRaises(Blocked):ConfigurationJournal(self.rt.db,key).intent(key,'AGENT_REQUEST',dict(requested_session='10000000-0000-4000-8000-000000000001'))
   self.assertTrue(self.ai._finish_cancelled(key));self.assert_cancelled_without_proposal(key)
+
+ def test_cancellation_committed_before_failure_revocation_preserves_certificate(self):
+  from studio.usable_store import Storage
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k);other=Storage(self.rt.db.path.parent);original=ModelAdmission.invalidate;observed=[]
+  def cancel_before_certificate_transaction(gate,*args,**kw):
+   other.update('session-operation',key,dict(cancel_requested=True));observed.append(kw.get('unless_cancelled'));return original(gate,*args,**kw)
+  with patch('studio.configuration_assistant.CLI.start',side_effect=Blocked('Synthetic pre-spawn failure')),patch.object(ModelAdmission,'invalidate',new=cancel_before_certificate_transaction):self.ai.execute(key)
+  self.assertEqual(observed,[key]);self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k),before)
+ def test_pre_spawn_failure_without_cancellation_still_revokes_captured_certificate(self):
+  key=self.helper.generation();g,k=self.certificate(key)
+  with patch('studio.configuration_assistant.CLI.start',side_effect=Blocked('Synthetic unsupported native configuration')):self.ai.execute(key)
+  self.assertEqual(self.rt.db.get('session-operation',key)['state'],'FAILED');self.assertEqual(g.db.get('model-admission',k)['state'],'FAILED')
+ def test_cancelled_started_native_process_still_revokes_uncertain_certificate(self):
+  key=self.helper.generation();g,k=self.certificate(key)
+  def cancelled_started(*args,**kw):
+   args[-2].process_started=True;self.rt.db.update('session-operation',key,dict(cancel_requested=True));raise Blocked('Synthetic owned process cancelled after start')
+  with patch('studio.configuration_assistant.CLI.start',side_effect=cancelled_started):self.ai.execute(key)
+  self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k)['state'],'FAILED')

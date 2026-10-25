@@ -103,7 +103,7 @@ class ModelAdmission:
                 'resolved_model','resolved_effort','process','permission_mode','raw_report_sha256')})
         return self._publish(event,expected_id=verification['verification_id'],unless_cancelled=unless_cancelled)
 
-    def invalidate(self, binding, cwd, reason='native-call-failed', *, expected_record=None):
+    def invalidate(self, binding, cwd, reason='native-call-failed', *, expected_record=None, unless_cancelled=None):
         # A failed process belongs to the captured scope. Credential/CLI bytes
         # may rotate during its call; never revoke a different, recomputed key.
         scope=expected_record['scope'] if expected_record is not None else self.scope(binding,cwd)
@@ -111,7 +111,7 @@ class ModelAdmission:
         # Append failure history; leave the original successful check untouched.
         event = dict(id=secrets.token_hex(16), key=key, state='FAILED', at=time.time(),
                      scope=scope, reason=reason)
-        return self._publish(event,expected_record=expected_record)
+        return self._publish(event,expected_record=expected_record,unless_cancelled=unless_cancelled)
 
     def invalidate_verification(self,binding,cwd,verification,reason='native-call-failed'):
         # Preflight rejection before a native call has no failed certificate.
