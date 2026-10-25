@@ -290,3 +290,75 @@ class ProcessOccupancyTests(unittest.TestCase):
  def test_exited_unrelated_process_cannot_make_every_session_busy(self):self.assertFalse(self.probe(False,None))
  def test_live_uninspectable_process_still_fails_closed(self):self.assertTrue(self.probe(True,dict(state='R')))
  def test_zombie_cannot_be_a_native_writer(self):self.assertFalse(self.probe(True,dict(state='Z')))
+
+class AtomicConfigurationDispatchTests(unittest.TestCase):
+ def setUp(self):
+  self.helper=ConfigurationTests();self.helper.setUp();self.addCleanup(self.helper.doCleanups);self.rt=self.helper.rt;self.ai=self.helper.ai
+ def certificate(self,key):
+  row=self.rt.db.get('session-operation',key);g=ModelAdmission(self.rt);return g,g.key(row['binding'],row['cwd'])
+ def assert_cancelled_without_proposal(self,key):
+  row=self.rt.db.get('session-operation',key);self.assertEqual(row['state'],'CANCELLED')
+  for field in ('plan','proposed_graph','receipt'):self.assertNotIn(field,row)
+  if row.get('dispatch_step'):self.assertEqual(self.rt.db.get('session-step',row['dispatch_step'])['status'],'CANCELLED')
+ def response(self,key):
+  row=self.rt.db.get('session-operation',key)
+  return dict(report=self.helper.plan(),session_id='10000000-0000-4000-8000-000000000001',requested_model=row['binding']['model'],requested_effort=row['binding']['effort'],process=dict(exit=0,timeout=False,overflow=False,cancelled=False))
+ def test_cancel_wins_immediately_before_atomic_dispatch_claim(self):
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k);claim=self.ai._claim_dispatch
+  def cancel_then_claim(key):self.rt.db.update('session-operation',key,dict(cancel_requested=True));return claim(key)
+  with patch.object(self.ai,'_claim_dispatch',side_effect=cancel_then_claim),patch('studio.configuration_assistant.CLI.start') as call:self.ai.execute(key)
+  call.assert_not_called();self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k),before);self.assertNotIn('dispatch_step',self.rt.db.get('session-operation',key))
+ def test_claim_is_durable_and_cannot_be_replayed(self):
+  key=self.helper.generation();self.rt.db.update('session-operation',key,dict(state='STARTING'));self.assertTrue(self.ai._claim_dispatch(key));row=self.rt.db.get('session-operation',key);step=self.rt.db.get('session-step',row['dispatch_step']);self.assertEqual(step['kind'],'CONFIGURATION_DISPATCH');self.assertEqual(step['status'],'INTENT')
+  with self.assertRaises(Blocked):self.ai._claim_dispatch(key)
+  self.rt.db.update('session-operation',key,dict(cancel_requested=True));self.assertFalse(self.ai._claim_dispatch(key));self.assertEqual(len(self.rt.db.listing('session-step')),1)
+ def test_cancel_after_claim_is_rejected_before_real_adapter_process_intent(self):
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k)
+  def cancelled_adapter(*args,**kw):
+   self.rt.db.update('session-operation',key,dict(cancel_requested=True));args[-2].intent(key,'PROCESS',dict(argv=['synthetic-never-spawned']))
+   self.fail('Cancelled request must not create process intent')
+  with patch('studio.configuration_assistant.CLI.start',side_effect=cancelled_adapter):self.ai.execute(key)
+  self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k),before);self.assertEqual([r['kind'] for r in self.rt.db.listing('session-step')],['CONFIGURATION_DISPATCH'])
+ def test_cancelled_synthetic_success_cannot_renew_or_publish(self):
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k)
+  def cancelled_response(*args,**kw):self.rt.db.update('session-operation',key,dict(cancel_requested=True));return self.response(key)
+  with patch('studio.configuration_assistant.CLI.start',side_effect=cancelled_response),patch.object(ModelAdmission,'renew') as renew:self.ai.execute(key)
+  renew.assert_not_called();self.assert_cancelled_without_proposal(key);self.assertEqual(g.db.get('model-admission',k),before)
+ def test_renew_checks_cancellation_in_same_certificate_transaction(self):
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k);row=self.rt.db.get('session-operation',key);verification=g.require(row['binding'],row['cwd']);self.rt.db.update('session-operation',key,dict(cancel_requested=True))
+  self.assertFalse(g.renew(row['binding'],row['cwd'],self.response(key),verification,unless_cancelled=key));self.assertEqual(g.db.get('model-admission',k),before)
+ def test_cancel_after_completed_renewal_still_discards_proposal(self):
+  key=self.helper.generation();g,k=self.certificate(key);before=g.db.get('model-admission',k);original=ModelAdmission.renew
+  def renew_before_cancel(gate,*args,**kw):
+   result=original(gate,*args,**kw);self.assertTrue(result);self.rt.db.update('session-operation',key,dict(cancel_requested=True));return result
+  with patch('studio.configuration_assistant.CLI.start',side_effect=lambda *a,**kw:self.response(key)),patch.object(ModelAdmission,'renew',new=renew_before_cancel):self.ai.execute(key)
+  self.assert_cancelled_without_proposal(key);self.assertNotEqual(g.db.get('model-admission',k)['id'],before['id'])
+ def test_separate_store_cannot_cancel_between_claim_read_and_commit(self):
+  import threading
+  from studio.usable_store import Storage
+  from studio.configuration_assistant import ConfigurationJournal
+  key=self.helper.generation();self.rt.db.update('session-operation',key,dict(state='STARTING'));other=Storage(self.rt.db.path.parent);started=threading.Event();done=threading.Event();errors=[]
+  def cancel():
+   started.set()
+   try:other.update('session-operation',key,dict(cancel_requested=True))
+   except Exception as e:errors.append(e)
+   finally:done.set()
+  writer=threading.Thread(target=cancel);original=self.rt.db.db;test=self
+  class Cursor:
+   def __init__(self,cursor):self.cursor=cursor
+   def fetchone(self):
+    row=self.cursor.fetchone();writer.start();test.assertTrue(started.wait(1));test.assertFalse(done.wait(.04),'Separate SQLite writer must wait for dispatch transaction');return row
+  class Connection:
+   def __init__(self,db):self.db=db
+   def __enter__(self):self.db.__enter__();return self
+   def __exit__(self,*a):return self.db.__exit__(*a)
+   def execute(self,sql,params=()):
+    cursor=self.db.execute(sql,params)
+    return Cursor(cursor) if sql.startswith('SELECT data FROM objects') and "kind='session-operation'" in sql else cursor
+  @contextmanager
+  def connection():
+   with original() as db:yield Connection(db)
+  with patch.object(self.rt.db,'db',side_effect=connection):self.assertTrue(self.ai._claim_dispatch(key))
+  writer.join(3);self.assertFalse(writer.is_alive());self.assertEqual(errors,[]);self.assertTrue(done.is_set());row=self.rt.db.get('session-operation',key);self.assertTrue(row['cancel_requested']);self.assertTrue(row['dispatch_step'])
+  with self.assertRaises(Blocked):ConfigurationJournal(self.rt.db,key).intent(key,'AGENT_REQUEST',dict(requested_session='10000000-0000-4000-8000-000000000001'))
+  self.assertTrue(self.ai._finish_cancelled(key));self.assert_cancelled_without_proposal(key)

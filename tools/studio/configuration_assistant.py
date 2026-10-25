@@ -53,6 +53,28 @@ def plan_graph(plan, choices):
 
 
 class ConfigurationJournal(SessionJournal):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs);self.process_started=False
+
+    def intent(self,run,kind,data):
+        # Cancellation and the actual adapter's request/process intents use
+        # the same durable ordering, including across supervisor processes.
+        with self.db.lock,self.db.db() as db,db:
+            db.execute('BEGIN IMMEDIATE')
+            raw=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(self.operation,)).fetchone()
+            current=json.loads(raw[0])
+            if current.get('cancel_requested'):raise Blocked('配置生成已取消；未发起原生请求')
+            key=secrets.token_hex(16)
+            db.execute('INSERT INTO objects VALUES(?,?,?)',('session-step',key,canonical(dict(id=key,operation=self.operation,kind=kind,data=data,status='INTENT')).decode()))
+            if kind=='AGENT_REQUEST' and data.get('requested_session'):
+                current['requested_session']=data['requested_session']
+                db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),self.operation))
+        return key
+
+    def finish(self,key,status,**updates):
+        if status=='RUNNING' and self.db.get('session-step',key)['kind']=='PROCESS':self.process_started=True
+        return super().finish(key,status,**updates)
+
     def visible_request(self,prompt):
         self.db.update('session-operation',self.operation,dict(actual_request=safe_text(prompt),actual_request_sha256=digest(prompt.encode())))
 
@@ -107,7 +129,7 @@ class ConfigurationAssistant:
     def execute(self,key):
         v=self.rt.db.update('session-operation',key,dict(state='STARTING'),states={'QUEUED'})
         if not v.get('configuration'):raise Blocked('不是配置助手任务')
-        attempted=False;admission_record=None
+        attempted=False;admission_record=None;journal=None
         try:
             if v.get('cancel_requested'):raise Blocked('配置生成已在排队期间取消；未调用模型')
             self.rt.check_operator();self._source(v);b=v['binding'];verification=ModelAdmission(self.rt).require(b,v['cwd'])
@@ -126,10 +148,12 @@ class ConfigurationAssistant:
             with lease(Path(b['home']).parent/(digest(str(Path(b['home']).resolve()).encode())+'.session.lock')):
                 ModelAdmission(self.rt).require(b,v['cwd'])
                 if self.rt.db.get('model-admission',verification['key'])!=admission_record:raise Blocked('配置助手连接在启动前变化；未调用模型')
-                if self.rt.db.get('session-operation',key).get('cancel_requested'):
+                if not self._claim_dispatch(key):
                     raise Blocked('配置生成已在启动前取消；未调用模型')
                 attempted=True
-                r=CLI(b['provider'],b,dict(step_timeout_seconds=120,max_log_bytes=2_000_000)).start(prompt,v['cwd'],out,sf,ConfigurationJournal(self.rt.db,key),key)
+                journal=ConfigurationJournal(self.rt.db,key)
+                r=CLI(b['provider'],b,dict(step_timeout_seconds=120,max_log_bytes=2_000_000)).start(prompt,v['cwd'],out,sf,journal,key)
+            if self._finish_cancelled(key):return
             def sanitize(value):
                 if isinstance(value,str):return safe_text(redact(value,known))
                 if isinstance(value,list):return [sanitize(x) for x in value]
@@ -137,17 +161,60 @@ class ConfigurationAssistant:
                 return value
             r['report']=sanitize(r['report'])
             graph=plan_graph(r['report'],v['choices']);self._source(v)
-            if not ModelAdmission(self.rt).renew(b,v['cwd'],r,verification):raise Blocked('配置助手连接已被撤销或回执不匹配；未发布提案')
+            if not ModelAdmission(self.rt).renew(b,v['cwd'],r,verification,unless_cancelled=key):
+                if self._finish_cancelled(key):return
+                raise Blocked('配置助手连接已被撤销或回执不匹配；未发布提案')
             # Cancellation and publication are ordered in the same transaction.
             with self.rt.db.lock,self.rt.db.db() as db,db:
                 db.execute('BEGIN IMMEDIATE')
                 row=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(key,)).fetchone();current=json.loads(row[0])
-                current.update(state='CANCELLED' if current.get('cancel_requested') else 'COMPLETED',plan=r['report'],proposed_graph=graph,receipt={k:r.get(k) for k in ('session_id','provider','requested_model','requested_effort','resolved_model','resolved_effort','process','usage','home','cwd','raw_report_sha256')},summary=safe_text(r['report']['summary']))
+                if current.get('cancel_requested'):current.update(state='CANCELLED')
+                else:current.update(state='COMPLETED',plan=r['report'],proposed_graph=graph,receipt={k:r.get(k) for k in ('session_id','provider','requested_model','requested_effort','resolved_model','resolved_effort','process','usage','home','cwd','raw_report_sha256')},summary=safe_text(r['report']['summary']))
+                self._finish_dispatch(db,current)
                 db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
         except (Blocked,Invalid,ValueError,OSError,Conflict) as e:
-            if attempted:
+            cancelled=self.rt.db.get('session-operation',key).get('cancel_requested')
+            if attempted and (not cancelled or journal and journal.process_started):
                 ModelAdmission(self.rt).invalidate(b,v['cwd'],'configuration-call-failed',expected_record=admission_record)
-            self.rt.db.update('session-operation',key,dict(state='CANCELLED' if self.rt.db.get('session-operation',key).get('cancel_requested') else 'FAILED',reason=safe_text(str(e))))
+            with self.rt.db.lock,self.rt.db.db() as db,db:
+                db.execute('BEGIN IMMEDIATE')
+                raw=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(key,)).fetchone();current=json.loads(raw[0])
+                current.update(state='CANCELLED' if current.get('cancel_requested') else 'FAILED',reason=safe_text(str(e)))
+                self._finish_dispatch(db,current)
+                db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
+
+    @staticmethod
+    def _finish_dispatch(db,current):
+        if not current.get('dispatch_step'):return
+        row=db.execute("SELECT data FROM objects WHERE kind='session-step' AND id=?",(current['dispatch_step'],)).fetchone();step=json.loads(row[0])
+        step['status']=current['state']
+        db.execute("UPDATE objects SET data=? WHERE kind='session-step' AND id=?",(canonical(step).decode(),step['id']))
+
+    def _claim_dispatch(self,key):
+        """Linearization point: cancellation wins, or one durable dispatch intent wins.
+
+        Later cancellation still reaches the adapter journal and process supervisor;
+        it cannot turn an already claimed operation into a second queued attempt.
+        """
+        with self.rt.db.lock,self.rt.db.db() as db,db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(key,)).fetchone();current=json.loads(row[0])
+            if current.get('cancel_requested'):return False
+            if current.get('dispatch_step') or current['state']!='STARTING':raise Blocked('配置请求已发起或状态已变化；未重复调用')
+            step=secrets.token_hex(16);current.update(dispatch_step=step,dispatch_claimed_at=time.time())
+            db.execute('INSERT INTO objects VALUES(?,?,?)',('session-step',step,canonical(dict(id=step,operation=key,kind='CONFIGURATION_DISPATCH',status='INTENT')).decode()))
+            db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
+        return True
+
+    def _finish_cancelled(self,key):
+        with self.rt.db.lock,self.rt.db.db() as db,db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(key,)).fetchone();current=json.loads(row[0])
+            if not current.get('cancel_requested'):return False
+            current['state']='CANCELLED'
+            self._finish_dispatch(db,current)
+            db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
+        return True
 
     def status(self,workspace,key):
         v=self.rt.db.get('session-operation',key)

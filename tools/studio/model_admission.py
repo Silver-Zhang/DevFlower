@@ -72,11 +72,14 @@ class ModelAdmission:
             raise Blocked('此模型/强度/工作方式和 Profile 尚无有效原生执行验证；请点击“验证执行”并确认。登记和目录发现不等于可执行，配置变化或验证过期需重验')
         return status
 
-    def _publish(self, event, expected_id=None, expected_state='VERIFIED', expected_record=None):
+    def _publish(self, event, expected_id=None, expected_state='VERIFIED', expected_record=None, unless_cancelled=None):
         # Certificate and check history commit together. A late successful call
         # cannot overwrite a revocation or a newer independently verified check.
         with self.db.lock, self.db.db() as db, db:
             db.execute('BEGIN IMMEDIATE')
+            if unless_cancelled is not None:
+                operation=db.execute("SELECT data FROM objects WHERE kind='session-operation' AND id=?",(unless_cancelled,)).fetchone()
+                if not operation or json.loads(operation[0]).get('cancel_requested'):return False
             if expected_id is not None or expected_record is not None:
                 row=db.execute("SELECT data FROM objects WHERE kind='model-admission' AND id=?",(event['key'],)).fetchone()
                 previous=json.loads(row[0]) if row else {}
@@ -86,7 +89,7 @@ class ModelAdmission:
                 db.execute('INSERT OR REPLACE INTO objects VALUES(?,?,?)',(kind,key,canonical(event).decode()))
         return True
 
-    def renew(self, binding, cwd, receipt, verification):
+    def renew(self, binding, cwd, receipt, verification, *, unless_cancelled=None):
         process=receipt.get('process',{})
         if (not verification.get('verification_id') or process.get('exit')!=0 or
             any(process.get(k,True) for k in ('timeout','overflow','cancelled')) or
@@ -98,7 +101,7 @@ class ModelAdmission:
             renewed_from=verification['verification_id'],evidence_type='successful-native-turn',
             receipt={k:receipt.get(k) for k in ('provider','session_id','requested_model','requested_effort',
                 'resolved_model','resolved_effort','process','permission_mode','raw_report_sha256')})
-        return self._publish(event,expected_id=verification['verification_id'])
+        return self._publish(event,expected_id=verification['verification_id'],unless_cancelled=unless_cancelled)
 
     def invalidate(self, binding, cwd, reason='native-call-failed', *, expected_record=None):
         # A failed process belongs to the captured scope. Credential/CLI bytes
