@@ -36,7 +36,8 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
   <p className="connection-hint">{selected?.operator_registered?'发送或开始时自动检查连接':'此模型可以在这里配置，无须修改文件。'}</p>
   {selected&&!selected.operator_registered&&<button type="button" disabled={disabled||!workspace?.id} onClick={configure}>配置此模型</button>}
   {registration&&<section className="model-config-confirm" data-local-escape aria-label="确认模型配置" onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setRegistration(null)}}}><h4>配置 {registration.data.model}</h4><p>当前工作区 · {registration.data.effort}。不调用模型、不保存API密钥；首次使用时自动检查真实执行能力。</p><p className="hint">{registration.data.capability_source==='provider'?'强度来自当前服务目录':'强度沿用当前Agent配置；此模型是否支持尚待真实检查。'}</p><button onClick={()=>setRegistration(null)}>取消</button><button disabled={registering} onClick={confirmConfiguration}>配置并选择</button></section>}
-  <button type="button" className="refresh-models" disabled={pending||disabled} onClick={()=>load(true)}>{pending?'正在读取…':'刷新模型'}</button>
+  <button type="button" className="refresh-models" aria-busy={pending} disabled={pending||disabled} onClick={()=>load(true)}>刷新模型</button>
+  {pending&&<small role="status" aria-label="模型读取状态">正在读取模型目录…</small>}
   {(error||current?.error)&&<p role="alert">{error||current.error}</p>}
   <details className="model-connection-details"><summary>连接详情与手动检查</summary><p>已登记：操作者允许选择的配置；已发现未授权：服务返回但本机未配置。两者都不代表本次模型调用已成功。</p>
   <div className="admission-status" aria-label="执行准入">

@@ -672,5 +672,15 @@ await test('sc-discovered-model-configures-in-ui-without-authorizing-execution',
 await test('sc-workflow-batch-trash-confirm-cancel-and-preserve-native-records',async p=>{
  await openWorkspace(p);await p.getByLabel('会话分组方式',{exact:true}).selectOption('workflow');await p.locator('.session-main').first().waitFor();const count=await p.locator('.session-main').count();const target=p.locator('.group-trash').first();await target.waitFor();await target.click();const modal=p.getByRole('dialog',{name:'清理工作流对话',exact:true});await modal.waitFor();assert((await modal.innerText()).includes('不删除原生历史'));await modal.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await p.locator('.session-main').count(),count);await target.click();await modal.getByRole('button',{name:'确认移入回收站',exact:true}).click();await until(async()=>await p.locator('.session-main').count()<count);await p.getByRole('button',{name:'回收站',exact:true}).click();await until(async()=>await p.locator('.session-main').count()>0);assert(await p.locator('.session-main').count()>0);
 });
+await test('sc-model-refresh-entry-remains-visible-during-slow-load',async p=>{
+ await openWorkspace(p);let release,seen=0;const held=new Promise(r=>release=r);
+ await p.route('**/api/models',async route=>{const response=await route.fetch();seen++;await held;await route.fulfill({response})});
+ try{
+  await p.getByRole('button',{name:'新建会话',exact:true}).click();await until(()=>seen>0);
+  const refresh=p.getByRole('button',{name:'刷新模型',exact:true});
+  assert.equal(await refresh.count(),1,'Refreshing must keep a stable, visible action name');assert(await refresh.isVisible());assert(await refresh.isDisabled());assert.equal(await refresh.getAttribute('aria-busy'),'true');assert(await p.getByRole('status',{name:'模型读取状态',exact:true}).isVisible());
+  release();await until(async()=>await refresh.isEnabled());assert.equal(await refresh.getAttribute('aria-busy'),'false');
+ }finally{release()}
+});
 await browser.close();console.log(JSON.stringify({tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0}));process.exitCode=results.some(r=>!r.passed)?1:0;
 })().catch(e=>{console.error(String(e));process.exitCode=1;browser?.close();});
