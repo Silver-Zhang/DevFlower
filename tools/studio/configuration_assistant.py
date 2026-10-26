@@ -1,7 +1,7 @@
 """AI-generated configuration is a bounded draft, never permission or execution."""
 from pathlib import Path
 import copy,json,secrets,sqlite3,subprocess,sys,time
-from orchestration.common import canonical,digest,tree_hash,clean_env,Blocked
+from orchestration.common import canonical,digest,tree_hash,clean_env,Blocked, workspace_hash
 from orchestration.adapters import CLI
 from orchestration.contracts import validate
 from orchestration.store import lease,process_identity
@@ -93,8 +93,9 @@ class ConfigurationAssistant:
         return {p['id']:dict(provider=p['provider'],models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
                 for p in WorkbenchSessions(self.rt).capabilities(False,workspace=workspace) if p.get('available')}
 
-    def _base(self,data):
-        self.rt.check_operator();project=self.rt.session_center.workspace(data['workspace']);source=self.rt.validate_source(project['path'])
+    def _base(self,data,*,canvas_only=False):
+        self.rt.check_operator();project=self.rt.session_center.workspace(data['workspace'])
+        source=dict(root=project['path'],kind='canvas-only') if canvas_only else self.rt.validate_source(project['path'])
         g=data['graph']
         if (not isinstance(g,dict) or len(canonical(g))>150000 or g.get('version')!=3 or
             set(g)-{'version','name','nodes','edges','budget','viewport'} or not isinstance(g.get('nodes'),list) or not isinstance(g.get('edges'),list)):
@@ -102,7 +103,7 @@ class ConfigurationAssistant:
         # A blank graph is a legitimate editor state, not an executable graph.
         if g['nodes']:validate_graph(g)
         elif g['edges']:raise Invalid('空画布不能有未绑定连线')
-        return dict(workspace=data['workspace'],source=source,source_sha256=tree_hash(project['path']),base_graph=copy.deepcopy(g),base_graph_sha256=digest(canonical(g)),choices=self.choices(data['workspace']))
+        return dict(workspace=data['workspace'],source=source,source_sha256=None if canvas_only else workspace_hash(project['path']),base_graph=copy.deepcopy(g),base_graph_sha256=digest(canonical(g)),choices=self.choices(data['workspace']))
 
     def prepare(self,data):
         if set(data)!={'workspace','graph','goal','profile','model','effort'}:raise Invalid('请提供任务说明、当前画布与配置助手Agent')
@@ -115,7 +116,10 @@ class ConfigurationAssistant:
 
     def _source(self,value):
         project=self.rt.session_center.workspace(value['workspace'])
-        if self.rt.validate_source(project['path'])!=value['source'] or tree_hash(project['path'])!=value['source_sha256']:raise Conflict('工作区源码已变化，请重新生成或导入配置')
+        if value.get('source',{}).get('kind')=='canvas-only':
+            if value['source']['root']!=project['path']:raise Conflict('画布所属项目已变化')
+            return  # This record can only yield a draft, never an execution permit.
+        if self.rt.validate_source(project['path'])!=value['source'] or workspace_hash(project['path'])!=value['source_sha256']:raise Conflict('工作区源码已变化，请重新生成或导入配置')
 
     def start(self,id,sha256,answer):
         self.rt.check_operator();v,receipt=self.rt.db.consume(id,sha256,[answer])
@@ -243,9 +247,9 @@ class ConfigurationAssistant:
         self.rt.session_center.cancel(workspace,key)
         return self.status(workspace,key)
 
-    def external(self,data):
+    def external(self,data,*,canvas_only=False):
         if set(data)!={'workspace','graph','plan'}:raise Invalid('外部提案只接受工作区、当前画布和版本化配置计划，不接受命令/凭据/授权')
-        base=self._base(data);graph=plan_graph(data['plan'],base['choices']);key=secrets.token_hex(16)
+        base=self._base(data,canvas_only=canvas_only);graph=plan_graph(data['plan'],base['choices']);key=secrets.token_hex(16)
         v=dict(base,id=key,configuration=True,source_kind='external-unverified',diagnostic=True,state='COMPLETED',proposed_graph=graph,plan=data['plan'],summary=safe_text(data['plan']['summary']),created_at=time.time())
         self.rt.db.put('session-operation',key,v);return self.status(data['workspace'],key)
 

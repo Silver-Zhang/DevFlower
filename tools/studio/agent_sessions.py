@@ -148,7 +148,7 @@ def nested_profiles(workspace, *, depth=4, entries=1200):
     if root == Path.home() or root == Path('/'):
         return [], dict(status='not_scanned', reason='broad_home_or_root')
     result, count, partial = [], 0, False
-    excluded = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache'}
+    excluded = {'.git', '.devflower', 'node_modules', '.venv', 'venv', '__pycache__', '.cache'}
 
     def walk(folder, level):
         nonlocal count, partial

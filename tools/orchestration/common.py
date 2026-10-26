@@ -128,8 +128,39 @@ def tree_hash(root, excludes=()):
     return digest(canonical(manifest(root, excludes)))
 
 
+def workspace_metadata(root, *, check_git=False):
+    """Reserved local project data, never source or Agent input.
+
+    This is deliberately NOT an exclusion in manifest/tree_hash: whole-program
+    review and release fingerprints must still include every candidate file.
+    """
+    path = Path(root) / '.devflower'
+    if not os.path.lexists(path): return None
+    if path.is_symlink() or not path.is_dir(): raise Blocked('项目 .devflower 必须是普通目录')
+    marker = path / 'project.json'
+    fd = os.open(marker, os.O_PATH | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_nlink != 1 or s.st_size > 4096:
+            raise Blocked('项目元数据标识无效')
+        with open('/proc/self/fd/' + str(fd), 'rb') as stream: value = json.loads(stream.read(4097))
+    finally: os.close(fd)
+    if value != dict(version=1, kind='devflower-project', authority=False):
+        raise Blocked('未识别的 .devflower 不会从源码身份中排除')
+    # Reserved data cannot hide tracked executable source from the source hash.
+    if check_git and (Path(root) / '.git').exists() and git(root, 'ls-files', '--', '.devflower'):
+        raise Blocked('.devflower 是本地记录保留区，不能包含已跟踪的源码')
+    return str(path)
+
+
+def workspace_hash(root):
+    return tree_hash(root, excludes=('.devflower',) if workspace_metadata(root) else ())
+
+
 def snapshot(source, dest, excludes=(), baseline=None):
     source, dest = Path(source), Path(dest)
+    if workspace_metadata(source) and included('.devflower', excludes):
+        raise Blocked('源码快照须明确排除 .devflower 项目记录；不能将对话历史当源码发送')
     entries = manifest(source, excludes)
     dest.mkdir(parents=True, exist_ok=False)
     for entry in entries:

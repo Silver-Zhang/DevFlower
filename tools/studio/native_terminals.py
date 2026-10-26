@@ -16,7 +16,7 @@ import termios
 import threading
 import time
 
-from orchestration.common import Blocked, canonical, clean_env, digest, tree_hash
+from orchestration.common import Blocked, canonical, clean_env, digest, tree_hash, workspace_hash
 from orchestration.privacy import credentials
 from orchestration.process import group_alive, stop
 from orchestration.store import process_identity
@@ -53,7 +53,7 @@ class NativeTerminals:
         value = dict(purpose='native-terminal', workspace=data['workspace'], handle=data['handle'],
             provider=binding['provider'], model=binding['model'], effort=binding['effort'],
             cwd=row['native']['cwd'], session_id=row['native']['session_id'], native_sha256=row['native']['sha256'],
-            home=binding['home'], source_sha256=tree_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
+            home=binding['home'], source_sha256=workspace_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
             execution_binding=selected['binding'],admission_checks=[check] if check else [],
             operator_sha256=self.rt.operator_sha256, policy_sha256=self.rt.policy_sha,
             human_questions=['在原生只读CLI中打开此明确会话；使用原目录和HOME，并独占该会话写入锁。'])
@@ -77,7 +77,7 @@ class NativeTerminals:
             if not binding or self.sessions.busy(binding, value['session_id']): raise Blocked(reason or '原生会话已占用')
             if (binding['home'], row['native']['cwd'], row['native']['session_id'], row['native']['sha256']) != (
                     value['home'], value['cwd'], value['session_id'], value['native_sha256']): raise Conflict('原生身份或历史在确认后变化')
-            if tree_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
+            if workspace_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
             from .model_admission import ModelAdmission
             verification=ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
             if any(e['home'] == binding['home'] and e['proc'].poll() is None for e in self.entries.values()): raise Blocked('同一HOME已有终端')

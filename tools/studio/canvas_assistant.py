@@ -108,7 +108,7 @@ class CanvasAssistant:
             with self.lock:self.active.pop(key,None)
 
     def listing(self,workspace,view='active',query=''):
-        self.rt.session_center.workspace(workspace)
+        project=self.rt.session_center.workspace(workspace)
         if view not in ('active','archived','trash') or not isinstance(query,str) or len(query)>200:raise Invalid('助手会话筛选无效')
         with self.rt.flow.tx(read=True) as db:
             rows=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND json_extract(data,'$.workspace')=? AND json_extract(data,'$.agent_id')=? AND COALESCE(json_extract(data,'$.collection'),'active')=? AND instr(lower(COALESCE(json_extract(data,'$.title'),json_extract(data,'$.messages[0].text'),'')),lower(?))>0 ORDER BY COALESCE(json_extract(data,'$.updated_at'),0) DESC,rowid DESC LIMIT 100",(workspace,AGENT_ID,view,query)).fetchall()
@@ -123,6 +123,13 @@ class CanvasAssistant:
                     with self.lock:running=turn['id'] in self.active
                     if not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):state='RECOVERY_REQUIRED'
                 result.append(dict(id=v['id'],title=v.get('title') or next((m['text'][:60] for m in v['messages'] if m['role']=='user'),'新对话'),collection=v.get('collection','active'),metadata_revision=v.get('metadata_revision',0),updated_at=v.get('updated_at'),message_count=len(v['messages']),state=state))
+        if hasattr(self.rt,'project_files') and project.get('path'):
+            known={v['id'] for v in self.rt.flow.list('canvas-conversation') if v.get('workspace')==workspace}
+            for saved in self.rt.project_files(workspace).archives('assistant'):
+                v=saved['data']
+                if v['id'] in known or v.get('collection','active')!=view or query.casefold() not in v.get('title','').casefold():continue
+                result.append(dict(id=v['id'],title=v.get('title','助手历史'),saved_history=True,
+                    message_count=len(v.get('messages',[])),updated_at=v.get('updated_at'),state='UNKNOWN',metadata_revision=0))
         return dict(conversations=result,view=view,limit=100)
 
     def manage(self,data):
@@ -151,7 +158,11 @@ class CanvasAssistant:
         self.rt.session_center.workspace(workspace)
         with self.rt.flow.tx(read=True) as db:
             row=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(key,)).fetchone()
-            if not row:raise Invalid('尚无此助手对话')
+            if not row:
+                if hasattr(self.rt,'project_files'):
+                    saved=self.rt.project_files(workspace).archive('assistant',key)['data']
+                    return dict(saved,workspace=workspace,active_turn=None,turn=None,collection='reading-copy',saved_history=True)
+                raise Invalid('尚无此助手对话')
             result=json.loads(row[0])
             if result['workspace']!=workspace:raise Blocked('助手对话不属于当前工作空间')
             turn=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(result['active_turn'],)).fetchone()[0]) if result.get('active_turn') else None
@@ -181,7 +192,7 @@ class CanvasAssistant:
                 validate_graph(g)
             elif g['edges']:raise Invalid('空画布不能有未绑定连线')
             base=dict(workspace=data['workspace'],source=None,source_sha256=None,base_graph=g,base_graph_sha256=digest(canonical(g)),choices={})
-        else:base=ConfigurationAssistant(self.rt)._base(data)
+        else:base=ConfigurationAssistant(self.rt)._base(data,canvas_only=True)
         for name,p in base['choices'].items():
             profile=self.rt.operator['profiles'][name];p.update(default_model=profile['model'],default_effort=profile['effort'])
         connection_sha=None
@@ -269,7 +280,7 @@ class CanvasAssistant:
                 r=client.chat(t['model'],prompt)
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
                 if graph and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布')
-                proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan'])) if graph else None
+                proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=t.get('source',{}).get('kind')=='canvas-only') if graph else None
             with self.lock:
                 if cancel.is_set():raise Blocked('生成已取消；未应用草稿')
                 with self.rt.flow.tx() as db:
@@ -284,6 +295,9 @@ class CanvasAssistant:
             except (sqlite3.Error,OSError):pass
         finally:
             with self.lock:self.active.pop(key,None)
+            if 't' in locals():
+                from .project_files import archive_completed
+                archive_completed(self.rt,t['workspace'],assistant=t['conversation'])
 
     def cancel(self,workspace,key):
         self.rt.check_operator();v=self.conversation(workspace,key);turn=v.get('turn')

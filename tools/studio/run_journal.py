@@ -76,4 +76,4 @@ def run_conversation(manager,workspace,run):
     # Equal timestamps have a stable identity order. Unknown clocks never receive invented dates.
     entries.sort(key=lambda e:(e['at'] is None,e['at'] or 0,e['id']))
     return dict(workspace=workspace,run=run,name=text(flow['graph']['name']),task=text(flow.get('task')),state=snapshot['state'],
-        draft_id=flow.get('draft_id'),candidate_sha256=flow.get('candidate_sha256','unknown'),viewer_candidate_sha256=rt.candidate_sha256,entries=entries,notices=notices,more=more)
+        draft_id=flow.get('draft_id'),candidate_sha256=flow.get('candidate_sha256','unknown'),viewer_candidate_sha256=rt.candidate_sha256,event_sequence=cursor,entries=entries,notices=notices,more=more)

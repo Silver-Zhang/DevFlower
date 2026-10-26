@@ -12,7 +12,8 @@ class WorkflowLibrary:
 
     def listing(self,workspace):
         self.rt.session_center.workspace(workspace)
-        return dict(templates=[r for r in self.rt.flow.list('workflow-template') if r['workspace']==workspace])
+        with self.rt.project_files(workspace).library() as store:
+            return dict(templates=[r for r in store.list('workflow-template') if r['workspace']==workspace])
 
     def save(self,data):
         if set(data)-{'workspace','graph','name','description','id','expected'} or not {'workspace','graph','name'}<=set(data):raise Invalid('模板字段无效')
@@ -35,7 +36,7 @@ class WorkflowLibrary:
         clean(graph);graph['name']=name;graph=validate_graph(graph)
         key=data.get('id') or secrets.token_hex(16)
         if not isinstance(key,str) or len(key)>80:raise Invalid('模板身份无效')
-        with self.rt.flow.tx() as db:
+        with self.rt.project_files(data['workspace']).library() as store, store.tx() as db:
             import json
             old=db.execute("SELECT data FROM records WHERE kind='workflow-template' AND id=?",(key,)).fetchone();old=json.loads(old[0]) if old else None
             if (old or {}).get('workspace',data['workspace'])!=data['workspace']:raise Blocked('模板不属于当前工作区')
@@ -44,13 +45,15 @@ class WorkflowLibrary:
                 favorite=True,collection='active',created_at=(old or {}).get('created_at',time.time()),updated_at=time.time(),revision=secrets.token_hex(16),graph_sha256=digest(canonical(graph)))
             db.execute('INSERT INTO records VALUES(?,?,?)',('workflow-template-version',key+':'+row['revision'],canonical(row).decode()))
             db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('workflow-template',key,canonical(row).decode()))
+        self.rt.flow.put('workflow-template', key, row)
+        self.rt.flow.put('workflow-template-version', key+':'+row['revision'], row)
         return row
 
     def manage(self,data):
         if set(data)!={'workspace','id','expected','operation'} or data['operation'] not in ('favorite','unfavorite','trash','restore'):raise Invalid('模板操作无效')
         self.rt.session_center.workspace(data['workspace'])
         import json
-        with self.rt.flow.tx() as db:
+        with self.rt.project_files(data['workspace']).library() as store, store.tx() as db:
             raw=db.execute("SELECT data FROM records WHERE kind='workflow-template' AND id=?",(data['id'],)).fetchone()
             if not raw:raise Invalid('模板不存在')
             row=json.loads(raw[0])
@@ -60,4 +63,5 @@ class WorkflowLibrary:
             if op in ('favorite','unfavorite'):row['favorite']=op=='favorite'
             else:row['collection']='trash' if op=='trash' else 'active'
             db.execute("UPDATE records SET data=? WHERE kind='workflow-template' AND id=?",(canonical(row).decode(),row['id']))
+        self.rt.flow.put('workflow-template', row['id'], row)
         return row

@@ -24,7 +24,7 @@ MAX_TOTAL = 128 * 1024 * 1024
 MAX_FILES = 10000
 MAX_NODES = 20000
 MAX_DEPTH = 64
-PRIVATE_PARTS = {'.claude', '.codex', '.copilot', '.ssh', '.aws', '.azure', '.gnupg',
+PRIVATE_PARTS = {'.devflower', '.claude', '.codex', '.copilot', '.ssh', '.aws', '.azure', '.gnupg',
                  'node_modules', '.venv', '__pycache__'}
 PRIVATE_NAMES = {'auth.json', 'credentials.json', '.credentials.json', 'browser-token',
                  'operator.json', '.env', '.netrc', 'id_rsa', 'id_ed25519'}

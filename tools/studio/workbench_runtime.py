@@ -8,7 +8,7 @@ import socket
 import subprocess
 import sys
 import time
-from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash
+from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash, workspace_hash
 from orchestration.process import execute, group_alive, stop
 from orchestration.store import alive, process_identity, lease
 from orchestration.trust import TrustedRelease, overlap
@@ -101,6 +101,61 @@ class WorkbenchRuntime(SessionRuntime):
             value.update(git_commit=self.trust.data['git_commit'], git_tree=self.trust.data['git_tree'])
         return value
 
+    def readable_directory(self, path):
+        try: return super().readable_directory(path)
+        except Blocked as exc:
+            # A workspace container may be opened as a local library. It never
+            # becomes an executable source root or a native-history scan root.
+            p = Path(clean_path(path))
+            protected = [*self.protected, self.storage, self.native]
+            if (str(exc) != 'Workspace overlaps protected Development session data' or
+                    any(p.is_relative_to(x) for x in protected)):
+                raise
+            return str(p)
+
+    def project_files(self, workspace):
+        from .project_files import ProjectFiles
+        return ProjectFiles(self, workspace)
+
+    def open_workspace(self, path):
+        row = super().open_workspace(path)
+        row['protected_container'] = any(Path(x).is_relative_to(row['path']) for x in
+            [*self.protected, self.storage, self.native])
+        row['project_storage'] = self.project_files(row['id']).initialize()
+        self.db.put('workspace', row['id'], row)
+        # Non-destructive migration of visible hosted conversation records.
+        for value in self.flow.list('canvas-conversation'):
+            if value.get('workspace') == row['id']: self.project_files(row['id']).assistant(value)
+        return row
+
+    def project_drafts(self):
+        rows = {r['id']: r for r in self.flow.list('draft')}
+        errors = []
+        for w in self.db.listing('workspace', limit=None):
+            if not w.get('project_storage'): continue
+            # Suppress stale host caches even if the project is offline.
+            rows = {k: r for k, r in rows.items() if r.get('workspace') != w['id']}
+            try:
+                with self.project_files(w['id']).library() as store:
+                    for r in store.list('draft'): rows[w['id'] + ':' + r['id']] = r
+            except (OSError, ValueError, Invalid, Blocked):
+                errors.append(dict(workspace=w['id'], error='项目记录不可读，请重新打开文件夹；本机旧缓存未冒充最新工作流'))
+        return list(rows.values()), errors
+
+    def saved_runs(self):
+        current = self.flow.list('run'); known = {(r['workspace'],r['id']) for r in current}
+        result = [{k: v for k, v in r.items() if k in ('id','workspace','state','created_at','task')} for r in current]
+        for w in self.db.listing('workspace', limit=None):
+            if not w.get('project_storage'): continue
+            try:
+                for v in self.project_files(w['id']).archives('run'):
+                    if (w['id'],v['key']) in known: continue
+                    r = v['data']
+                    result.append(dict(id=v['key'], workspace=w['id'], state='UNKNOWN',
+                        created_at=r.get('created_at') or 0, task=r.get('task',''), saved_history=True))
+            except (OSError, ValueError, Invalid, Blocked): pass  # project_drafts exposes the read error.
+        return result
+
     def folder(self, path=None):
         """Directory names are navigation, not execution authority or file access."""
         roots = self.operator['allowed_roots'];path = clean_path(path) if path else roots[0]
@@ -122,7 +177,12 @@ class WorkbenchRuntime(SessionRuntime):
         parent = str(Path(path).parent)
         locations=[dict(name='主文件夹',path=str(Path.home())),dict(name='此电脑',path='/')]
         locations += [dict(name=Path(p).name,path=p) for p in ('/home','/mnt','/media','/tmp') if Path(p).is_dir()]
+        try:
+            self.readable_directory(path); openable = True; reason = None
+        except (Blocked, Invalid) as exc: openable = False; reason = str(exc)
+        contains_private = any(Path(x).is_relative_to(path) for x in [*self.protected,self.storage,self.native])
         return dict(path=path, name=Path(path).name, parent=parent if path!='/' else None,locations=locations,
+                    openable=openable, open_reason=reason, protected_container=contains_private,
                     execution_allowed=any(Path(path).is_relative_to(r) for r in roots),
                     roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime', release=self.release_identity(),
                     recent=self.db.listing('workspace', limit=8))
@@ -133,6 +193,7 @@ class WorkbenchRuntime(SessionRuntime):
 
     def node_binding(self, workspace, node, *, admission=True):
         project = self.session_center.workspace(workspace)
+        self.validate_source(project['path'])
         if not any(Path(project['path']).is_relative_to(x) for x in self.operator['allowed_roots']): raise Blocked('工作区未获执行授权')
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
@@ -197,6 +258,7 @@ class WorkbenchRuntime(SessionRuntime):
                 text=text[:24000],truncated=len(text)>24000,notice='这是用户选择的上下文副本，不是原生恢复；原记录保留'))
         for ref in node.get('context_refs',[]):
             if not isinstance(ref,str) or Path(ref).is_absolute() or '..' in Path(ref).parts:raise Invalid('上下文文件必须位于本工作区')
+            if Path(ref).parts and Path(ref).parts[0]=='.devflower':raise Blocked('项目对话记录不是 Agent 源码或隐式上下文，请只选择授权的项目文件')
             with opened(Path(cwd)/ref) as fd:
                 raw=os.read(fd,16001)
                 if len(raw)>16000:raise Invalid('上下文文件超过16000字节预算：'+ref)
@@ -229,7 +291,7 @@ class WorkbenchRuntime(SessionRuntime):
         for ref in refs:
             if not isinstance(ref, str): raise Invalid('产物引用必须为路径文本')
             path = Path(ref) if ref.startswith('/') else Path(cwd) / ref
-            accessible = path.is_relative_to(cwd) and '..' not in path.parts
+            accessible = path.is_relative_to(cwd) and '..' not in path.parts and '.devflower' not in path.relative_to(cwd).parts
             try:
                 if accessible:
                     with opened(path) as fd:
@@ -284,14 +346,16 @@ class WorkbenchRuntime(SessionRuntime):
                 if check: checks[check['key']] = check
         draft_id = request.get('draft_id')
         if draft_id is not None:
-            current = self.flow.get('draft', draft_id)
+            with self.project_files(workspace).library() as designs:
+                try: current = designs.get('draft', draft_id)
+                except Invalid: current = self.flow.get('draft', draft_id)  # legacy offline clients
             if current.get('workspace') != workspace:
                 raise Conflict('工作流不属于此工作区；未分配的旧工作流请先新建工作区副本')
             if current['graph'] != graph: raise Conflict('运行图和已保存草稿不一致，请先保存')
         return self.db.prepare(dict(purpose='workbench-v3',workspace=workspace,graph=graph,task=task,bindings=bindings,
             draft_id=draft_id,admission_checks=list(checks.values()),automatic_admission=automatic,
             graph_sha256=digest(canonical(graph)),candidate_sha256=self.candidate_sha256,operator_sha256=self.operator_sha256,
-            policy_sha256=self.policy_sha,source_sha256=tree_hash(project['path']),
+            policy_sha256=self.policy_sha,source_sha256=workspace_hash(project['path']),
             human_questions=['确认本次目标、外部模型使用、各节点权限与调用预算。'+
                 (f' 将检查 {len(checks)} 个连接；已有有效结果会复用，未验证或过期配置至多进行一次只读原生诊断，不发送源码。长运行中已通过的连接如过期，会在节点执行前检查，额外调用计入本次运行预算；失败/撤销不自动重试。' if checks else '')]))
 
@@ -306,7 +370,7 @@ class WorkbenchRuntime(SessionRuntime):
         if value.get('purpose')!='workbench-v3' or value['candidate_sha256']!=self.candidate_sha256 or value['policy_sha256']!=self.policy_sha:
             raise Blocked('授权不属于此工作台候选')
         project=self.session_center.workspace(value['workspace'])
-        if tree_hash(project['path'])!=value['source_sha256']: raise Conflict('工作区在预览后发生变化，请重新确认')
+        if workspace_hash(project['path'])!=value['source_sha256']: raise Conflict('工作区在预览后发生变化，请重新确认')
         from .model_admission import ModelAdmission
         for selected in value['bindings'].values():
             ModelAdmission(self).require(selected['binding'], selected['cwd'])
@@ -366,7 +430,7 @@ class WorkbenchRuntime(SessionRuntime):
                     completion=json.loads(file.read_text())
                     if completion['run']!=run or completion['activation']!=n['id']: raise Blocked('完成回执身份不一致')
                     chat=self.flow.get('node-session',completion['chat_key'])
-                    if tree_hash(chat['cwd'])!=completion['source_after']:
+                    if workspace_hash(chat['cwd'])!=completion['source_after']:
                         raise Blocked('源码与最后的可靠完成回执不同，禁止自动重发')
                     self.flow.change('activation',n['id'],{'state':'COMPLETED','output':completion['output']})
                     binding=dict(chat['binding'],session_id=completion['session_id'])
@@ -391,7 +455,7 @@ class WorkbenchRuntime(SessionRuntime):
         validate_profile(profile)
         command=profile['argv'];executable=Path(command[0])
         if digest(executable.read_bytes())!=profile['executable_sha256']: raise Blocked('固定外部执行器已变化')
-        row=self.flow.get('run',run);project=self.session_center.workspace(row['workspace']);source=tree_hash(project['path'])
+        row=self.flow.get('run',run);project=self.session_center.workspace(row['workspace']);source=workspace_hash(project['path'])
         payload=dict(run=run,activation=key,source=project['path'],candidate_sha256=source,inputs=inputs,
                      graph_sha256=row['graph_sha256'],authorization_sha256=digest(canonical(row['authorization'])),
                      acceptance_sha256=digest(row['task'].encode('utf-8')))
@@ -409,6 +473,6 @@ class WorkbenchRuntime(SessionRuntime):
         from orchestration.common import save
         save(artifacts/'receipt.json',receipt)
         self.flow.change('activation',key,{'external_receipt':receipt,'external_receipt_sha256':digest(canonical(receipt))})
-        if tree_hash(project['path'])!=source:raise Blocked('外部执行期间源码变化')
+        if workspace_hash(project['path'])!=source:raise Blocked('外部执行期间源码变化')
         validate_receipt(receipt,payload,node['kind'])
         return dict(answer=receipt.get('summary','固定外部步骤完成'),result=receipt,evidence=[receipt])

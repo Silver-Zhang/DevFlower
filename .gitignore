@@ -17,3 +17,5 @@ local-evidence/
 **/dist/
 **/node_modules/
 **/logs/
+# Project-local designs and conversation reading copies are private by default.
+.devflower/

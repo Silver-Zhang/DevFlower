@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 sys.dont_write_bytecode=True
-from orchestration.common import Blocked,clean_env,digest
+from orchestration.common import Blocked,clean_env,digest,workspace_metadata
 from orchestration.store import lease, process_identity
 from orchestration.sandbox import runtime_paths
 from orchestration.provider_transport import claude_transport
@@ -77,6 +77,8 @@ def wrap_native_cli(binding,cwd,home,scratch,argv):
         dest=home/relative
         if dest.is_symlink() or not dest.resolve().is_relative_to(home.resolve()):raise Blocked('凭据挂载路径不安全')
         dest.parent.mkdir(parents=True,exist_ok=True);wrapped+=['--ro-bind',source,str(dest)]
+    metadata=workspace_metadata(cwd,check_git=True)
+    if metadata:wrapped+=['--tmpfs',metadata,'--remount-ro',metadata]
     return wrapped+['--remount-ro','/','--remount-ro','/tmp','--chdir',str(cwd),'--',*argv]
 
 

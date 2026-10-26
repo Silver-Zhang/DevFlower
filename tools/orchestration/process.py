@@ -64,6 +64,10 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     parent = os.getpid()
     if readonly_files and backend != 'bwrap':
         raise Blocked('read-only credential overlays require bwrap')
+    from .common import workspace_metadata
+    metadata = workspace_metadata(cwd, check_git=True)
+    if metadata and (backend != 'bwrap' or not isolate):
+        raise Blocked('项目记录隔离需要强制的外层执行保护')
     overlays = []
     for source, relative in readonly_files:
         from .common import relative as safe_relative
@@ -93,6 +97,10 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 wrapped += ['--ro-bind', str(Path(p).resolve()), str(p)]
         for source, dest in overlays:
             wrapped += ['--ro-bind', str(source), str(dest)]
+        if metadata:
+            # An empty read-only mount hides conversations and prevents writes,
+            # including from a workspace-write Agent. The real DB stays hosted.
+            wrapped += ['--tmpfs', metadata, '--remount-ro', metadata]
         command = [str(Path(argv[0]).resolve()) if Path(argv[0]).is_absolute() else argv[0], *argv[1:]]
         argv = wrapped + ['--remount-ro', '/', '--remount-ro', '/tmp', '--chdir', str(cwd), '--', *command]
     elif backend != 'landlock':

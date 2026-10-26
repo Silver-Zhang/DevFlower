@@ -15,7 +15,7 @@ import sys
 import time
 
 from orchestration.adapters import CLI
-from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash
+from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash, workspace_hash
 from orchestration.contracts import validate
 from orchestration.privacy import credentials, redact
 from orchestration.process import group_alive, stop
@@ -61,6 +61,8 @@ class SessionCenter:
             raise Invalid('Storage discovery is unsupported for this Provider')
         try:
             root = clean_path(config_root)
+            if Path(root).is_relative_to(Path(project['path'])/'.devflower'):
+                raise Blocked('项目保存的阅读记录不能登记为原生 Agent 环境')
             allowed = [project['path'], *self.runtime.operator.get('session_read_roots', [])]
             if not any(Path(root).is_relative_to(p) for p in allowed):
                 raise Blocked('Storage root must be inside this workspace or operator-approved read roots')
@@ -96,6 +98,10 @@ class SessionCenter:
     def discover(self, workspace, include_hidden=False):
         self.runtime.check_operator()
         project = self.workspace(workspace)
+        if project.get('protected_container'):
+            return dict(workspace_id=workspace, owned=[], operations=[], capabilities={}, discovery=dict(
+                workspace_id=workspace, sessions=[], coverage=[], nested_coverage=dict(status='protected-container'),
+                profile_coverage=dict(status='not-scanned'), unsupported=[], scanned_at=time.time()))
         profiles, nested, owned = self._profiles(project)
         # A busy installation must report incomplete coverage instead of making
         # every session unavailable when it exceeds the bounded scanner budget.
@@ -280,7 +286,7 @@ class SessionCenter:
         prompt=request['prompt']
         if 'mode' in request and not hasattr(self.runtime, 'policy'):
             mode=request['mode'];prompt=prompt+'\n\n工作方式：'+mode+'。'+('只读制定计划，不执行修改。' if mode=='Plan' else '只读回答，不执行修改。' if mode=='Ask' else '仅在已授权工作区和工具范围内执行。')
-        value = dict(workspace=project['id'], source=source, source_sha256=tree_hash(source['root']),
+        value = dict(workspace=project['id'], source=source, source_sha256=workspace_hash(source['root']),
                      binding=binding, cwd=cwd, prompt=prompt, user_prompt=request['prompt'], permission=request['permission'],
                      handle=handle, native_sha256=native_sha, profile=request['profile'],
                      mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),
@@ -330,7 +336,7 @@ class SessionCenter:
         if value['operator_sha256'] != self.runtime.operator_sha256:
             raise Blocked('Approved operator profile changed')
         project = self.runtime.project(value['workspace'])
-        if self.runtime.validate_source(project['path']) != value['source'] or tree_hash(project['path']) != value['source_sha256']:
+        if self.runtime.validate_source(project['path']) != value['source'] or workspace_hash(project['path']) != value['source_sha256']:
             raise Conflict('Workspace changed after the session preview')
         if value['handle'] != 'new':
             _, row = self.resolve(value['workspace'], value['handle'])
@@ -427,6 +433,10 @@ class SessionCenter:
             cancelled = journal.get(key)['data']['cancel_requested']
             self.db.update('session-operation', key, dict(state='CANCELLED' if cancelled else 'FAILED',
                 reason=safe_text(str(exc))))
+        finally:
+            if not value.get('diagnostic'):
+                from .project_files import archive_completed
+                archive_completed(self.runtime,value['workspace'])
 
 
 class SessionJournal:

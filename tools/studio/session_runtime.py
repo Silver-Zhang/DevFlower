@@ -143,8 +143,12 @@ class SessionRuntime:
 
     def validate_source(self, path):
         path = self.readable_directory(path)
+        if any(overlaps(path, x) for x in [*self.protected, self.storage, self.native]):
+            raise Blocked('此文件夹包含工作台、Stable 或受保护的运行数据。可以查看项目记录；运行 Agent 请选择具体的源码项目文件夹。')
         if not any(Path(path).is_relative_to(clean_path(p)) for p in self.operator['allowed_roots']):
             raise Blocked('Folder is outside the operator-approved execution roots')
+        from orchestration.common import workspace_metadata
+        workspace_metadata(path, check_git=True)
         return identity(path)
 
     def project(self, key):

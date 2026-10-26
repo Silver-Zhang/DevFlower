@@ -7,7 +7,7 @@ from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]/'tools'),str(Path(__file__).resolve().parent)]
-from orchestration.common import Blocked,canonical,digest,save,tree_hash
+from orchestration.common import Blocked,canonical,digest,save,tree_hash,workspace_hash
 from studio.graph import Invalid
 from studio.server import Conflict
 from studio.workbench_runtime import WorkbenchRuntime
@@ -341,7 +341,7 @@ class RuntimeTests(unittest.TestCase):
         self.rt.policy['external_steps']['fixed']=dict(kind='verify',argv=[executable],executable_sha256=sha,dependencies={executable:sha})
         self.rt.flow.put('run','r',dict(workspace=self.w,graph_sha256='g',authorization={},task='frozen task'))
         self.rt.flow.put('activation','a',dict(id='a',run='r'))
-        base=dict(run='r',activation='a',candidate_sha256=tree_hash(self.base.source),graph_sha256='g',
+        base=dict(run='r',activation='a',candidate_sha256=workspace_hash(self.base.source),graph_sha256='g',
                   authorization_sha256=digest(canonical({})),acceptance_sha256=digest(b'frozen task'),
                   tests=2,failures=1,errors=0,skipped=0,verdict='ACCEPT',verified=True)
         for changed in ({},{'failures':0,'candidate_sha256':'0'*64},{'failures':0,'tests':0},{'failures':0,'skipped':1}):
@@ -356,7 +356,7 @@ class RuntimeTests(unittest.TestCase):
         self.rt.policy['external_steps']['fixed']=dict(kind='delivery',argv=[executable],executable_sha256=sha,dependencies={executable:sha})
         self.rt.flow.put('run','r',dict(workspace=self.w,graph_sha256='g',authorization={},task='frozen task'))
         self.rt.flow.put('activation','a',dict(id='a',run='r'))
-        receipt=dict(run='r',activation='a',candidate_sha256=tree_hash(self.base.source),graph_sha256='g',
+        receipt=dict(run='r',activation='a',candidate_sha256=workspace_hash(self.base.source),graph_sha256='g',
                      authorization_sha256=digest(canonical({})),acceptance_sha256=digest(b'frozen task'),
                      verdict='ACCEPT',remote_verified=False,delivery_state='COMPLETED')
         with patch('studio.workbench_runtime.execute',return_value=({'exit':0,'timeout':False,'cancelled':False,'overflow':False},canonical(receipt),b'')):

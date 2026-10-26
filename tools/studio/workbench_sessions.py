@@ -22,6 +22,7 @@ class WorkbenchSessions:
         op=self.rt.session_center.operation(operation,workspace)
         matches=[]
         for session in self.listing(workspace)['sessions']:
+            if session.get('saved_history'):continue
             internal=self.rt.db.get('session-handle',session['handle'])
             if self.matching_operation(workspace,internal,op):matches.append(session)
         if len(matches)>1:raise Blocked('原生会话身份不唯一，未自动打开')
@@ -87,6 +88,7 @@ class WorkbenchSessions:
             raise Blocked('节点会话不属于当前工作区和运行')
         chat = self.db.get('node-session', item['chat_key'])
         for row in self.listing(workspace)['sessions']:
+            if row.get('saved_history'):continue
             internal = self.rt.db.get('session-handle', row['handle'])
             if chat['id'] in self.matching_chats(workspace, internal):
                 return row
@@ -261,6 +263,17 @@ class WorkbenchSessions:
                 named['execution'] = dict(profile=exact, provider=bound['provider'],
                                           model=bound['model'], effort=bound['effort'])
             if not query or query.casefold() in (title+' '+row['provider']).casefold():result.append(named)
+        if hasattr(self.rt,'project_files'):
+            # Never adopt a copied UUID/HOME as a writer. Saved copies use a
+            # separate read-only handle namespace and are explicitly labelled.
+            for item in self.rt.project_files(workspace).archives('session'):
+                row=item['data']['session']
+                if row['handle'] in native_keys or row.get('collection','active')!=view:continue
+                if query and query.casefold() not in (row.get('title','')+' '+row['provider']).casefold():continue
+                result.append(dict(row,handle='saved:'+item['key'],identity='saved:'+item['key'],
+                    workspace_id=workspace,saved_history=True,display_state='UNKNOWN',busy=False,
+                    choices=dict(view=True,resume=False,context_new=False,fork=False),
+                    note='项目内保存的对话阅读副本；不恢复原生进程，不授予执行权限'))
         return dict(sessions=result,coverage=listing['discovery']['coverage'],operations=operations)
 
     def busy(self,binding,sid):
@@ -303,6 +316,14 @@ class WorkbenchSessions:
         return False
 
     def history(self,workspace,handle,query='',*,start_offset=0,end_offset=None,include_turns=True):
+        if handle.startswith('saved:'):
+            self.rt.session_center.workspace(workspace)
+            v=self.rt.project_files(workspace).archive('session',handle[6:])['data']
+            messages=[m for m in v['messages'] if not query or query.casefold() in m.get('text','').casefold()]
+            return dict(workspace_id=workspace,handle=handle,messages=messages,
+                conversation_turns=v.get('conversation_turns',[]),activity=v.get('activity',[]),summaries=v.get('summaries',[]),
+                execution_results=v.get('execution_results',[]),
+                saved_history=True,history_status='project-reading-copy',notice='保存的阅读副本；不是原生恢复或当前执行回执')
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta={}
         if meta.get('native_archived'):

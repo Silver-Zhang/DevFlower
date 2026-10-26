@@ -26,6 +26,8 @@ def create_server(runtime,port=0):
     terminals=NativeTerminals(runtime,sessions)
     from .canvas_assistant import CanvasAssistant
     canvas_assistant=CanvasAssistant(runtime)
+    from .project_files import ProjectSync
+    project_sync=ProjectSync(runtime)
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def respond(self,status,value,mime='application/json; charset=utf-8'):
@@ -63,10 +65,13 @@ def create_server(runtime,port=0):
                 if not post:
                     if path=='/api/status':
                         release=runtime.release_identity()
+                        drafts, project_errors=runtime.project_drafts()
                         value=dict(version=3,label=release['channel']+' · Agent 工作台',candidate=runtime.candidate_sha256,release=release,
-                        profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=runtime.flow.list('draft'),
+                        profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=drafts,project_errors=project_errors,
+                        archive_status=runtime.db.listing('project-archive-status',limit=100),
+                        project_migrations=runtime.db.listing('project-migration',limit=100),
                         external_profiles=[{'id':k,'name':p.get('name',k),'kind':p['kind']} for k,p in runtime.policy.get('external_steps',{}).items()],
-                        runs=[{k:v for k,v in r.items() if k in ('id','workspace','state','created_at','task')} for r in runtime.flow.list('run')],
+                        runs=runtime.saved_runs(),
                         stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
                     elif path=='/api/folders':value=runtime.folder(q.get('path'))
                     elif path=='/api/workflow-library':
@@ -74,7 +79,15 @@ def create_server(runtime,port=0):
                         value=WorkflowLibrary(runtime).listing(q['workspace'])
                     elif path=='/api/run-conversation':
                         from .run_journal import run_conversation
-                        value=run_conversation(sessions,q['workspace'],q['run'])
+                        try: live_run=runtime.flow.get('run',q['run'])
+                        except Invalid: live_run=None
+                        if live_run is None or live_run.get('workspace')!=q['workspace']:
+                            value=dict(runtime.project_files(q['workspace']).archive('run',q['run'])['data'],
+                                workspace=q['workspace'],run=q['run'],state='UNKNOWN',saved_history=True,
+                                notices=['来自项目保存的阅读副本；历史结论不是当前运行状态或批准，不能据此恢复进程。'])
+                        else:
+                            value=run_conversation(sessions,q['workspace'],q['run'])
+                            runtime.project_files(q['workspace']).save_archive('run',q['run'],value)
                     elif path=='/api/file-reference':
                         from .run_journal import file_reference
                         value=file_reference(runtime,q['workspace'],q['reference'])
@@ -104,7 +117,9 @@ def create_server(runtime,port=0):
                     elif path=='/api/chat':value=runtime.session_center.operation(q['id'],q['workspace'])
                     elif path=='/api/chat-session':value=sessions.operation_session(q['workspace'],q['id'])
                     else:raise Invalid('没有这个工作台接口')
-                elif path=='/api/workspace':value=runtime.open_workspace(data['path'])
+                elif path=='/api/workspace':
+                    value=runtime.open_workspace(data['path'])
+                    project_sync.start(value['id'])
                 elif path=='/api/workflow-library/save':
                     from .workflow_library import WorkflowLibrary
                     value=WorkflowLibrary(runtime).save(data)
@@ -135,11 +150,12 @@ def create_server(runtime,port=0):
                     value=ModelAdmission(runtime).verify(data['id'],data['sha256'],data['answer'],reuse_verified=data.get('reuse_verified',False))
                 elif path=='/api/draft':
                     if data.get('workspace'):runtime.session_center.workspace(data['workspace'])
-                    value=runtime.flow.save(data.get('id') or secrets.token_hex(16),validate_graph(data['graph']),data.get('expected'),data.get('workspace'))
+                    if not data.get('workspace'): raise Invalid('保存需要明确的工作区')
+                    value=runtime.project_files(data['workspace']).save_draft(data.get('id') or secrets.token_hex(16),validate_graph(data['graph']),data.get('expected'))
                 elif path=='/api/draft/delete':
                     if set(data) != {'workspace','id','expected'}:raise Invalid('删除需要工作区、草稿身份和版本')
                     runtime.session_center.workspace(data['workspace'])
-                    value=runtime.flow.delete_draft(data['id'],data['expected'],data['workspace'])
+                    value=runtime.project_files(data['workspace']).delete_draft(data['id'],data['expected'])
                 elif path=='/api/prepare':value=runtime.prepare_flow(data)
                 elif path=='/api/start':value=runtime.launch_flow(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/control':value=runtime.control(data['run'],data['action'])
@@ -186,6 +202,17 @@ def create_server(runtime,port=0):
                 elif path=='/api/chat/start':value=runtime.session_center.launch(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/chat/cancel':value=runtime.session_center.cancel(data['workspace'],data['id'])
                 else:raise Invalid('没有这个工作台操作')
+                # Reading native history keeps a bounded portable reading copy,
+                # never the HOME, protocol envelope or an execution receipt.
+                if path=='/api/history' and not q.get('query') and not q['handle'].startswith('saved:'):
+                    try:
+                        selected=next(s for view in ('active','archived','trash') for s in sessions.listing(q['workspace'],view)['sessions'] if s['handle']==q['handle'])
+                        runtime.project_files(q['workspace']).session(selected,value)
+                    except (StopIteration,OSError,ValueError,Invalid,Blocked):
+                        value=dict(value,project_save_error='本机历史可读，但项目内阅读副本未保存，请检查 .devflower 权限')
+                if path in ('/api/canvas-assistant/manage','/api/canvas-assistant/conversation'):
+                    from .project_files import archive_completed
+                    archive_completed(runtime,data.get('workspace',q.get('workspace')),assistant=data.get('id',q.get('id')))
                 self.respond(200,value)
             except (BrokenPipeError,ConnectionResetError):
                 # A closed browser transport is not an application success and
@@ -200,6 +227,7 @@ def create_server(runtime,port=0):
         def server_close(self):
             canvas_assistant.shutdown()
             terminals.shutdown()
+            project_sync.close()
             super().server_close()
     server=Server(('127.0.0.1',port),Handler);server.daemon_threads=True
     server.native_terminals=terminals

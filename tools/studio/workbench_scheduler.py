@@ -11,7 +11,7 @@ import time
 
 from orchestration.adapters import CLI
 from orchestration.contracts import validate
-from orchestration.common import Blocked, canonical, digest, tree_hash, identity
+from orchestration.common import Blocked, canonical, digest, tree_hash, identity, workspace_hash
 from orchestration.process import group_alive
 from orchestration.store import lease
 from .agent_sessions import safe_text
@@ -135,6 +135,11 @@ class Scheduler:
         except Exception as exc:
             from .workbench_failures import abort_unexpected
             abort_unexpected(self.rt,self.run,exc)
+        finally:
+            from .project_files import archive_completed
+            row=self.db.get('run',self.run)
+            if hasattr(self.rt,'project_files') and row.get('workspace'):
+                archive_completed(self.rt,row['workspace'],run=self.run)
 
     def activation(self, node, prefix, iteration, iteration_path):
         # A local round repeats when an enclosing loop advances.
@@ -353,7 +358,7 @@ class Scheduler:
         schema = artifacts / 'output.schema.json';schema.write_bytes(canonical(REPLY))
         lock = self.rt.source_lock(cwd);write = node.get('permission', 'workspace-write' if node.get('mode') == 'Agent' else 'read') == 'workspace-write'
         with source_lease(lock, write), lease(home.parent / (digest(str(home.resolve()).encode()) + '.session.lock')):
-            before = tree_hash(cwd)
+            before = workspace_hash(cwd)
             source_identity={'sha256':before,'actor':'fixed runtime host, before native call'}
             try:
                 git=identity(cwd);source_identity.update({k:git[k] for k in ('head','branch') if k in git})
@@ -380,7 +385,7 @@ class Scheduler:
             self.db.change('activation',key,{'admission_verification':verification})
             receipt = CLI(binding['provider'], binding, dict(step_timeout_seconds=node.get('timeout', 300), max_log_bytes=4_000_000)).start(
                 prompt, cwd, artifacts, schema, journal, self.run)
-            if not write and tree_hash(cwd) != before: raise Blocked('只读执行后源码身份发生变化')
+            if not write and workspace_hash(cwd) != before: raise Blocked('只读执行后源码身份发生变化')
             report = receipt['report']
             validate(report,REPLY)
             structured=json.loads(report['result_json'])
@@ -402,7 +407,7 @@ class Scheduler:
             result['receipt'] = visible
             # This local completion receipt is reconciled before any crash recovery; never resubmit blindly.
             completion = dict(run=self.run, activation=key, chat_key=chat_key, output=result,
-                              session_id=receipt['session_id'], source_before=before, source_after=tree_hash(cwd))
+                              session_id=receipt['session_id'], source_before=before, source_after=workspace_hash(cwd))
             from orchestration.common import save
             save(artifacts / 'completion.json', completion)
             binding = dict(binding, session_id=receipt['session_id'])
