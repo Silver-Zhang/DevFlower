@@ -712,5 +712,23 @@
     "records_push": "checked after this record commit; exact commit provided in local delivery-receipt.json",
     "pr_draft": true,
     "main_unchanged": true
-  }
+  },
+  "github_ci": [
+    {
+      "id": 40391764048,
+      "name": "Studio contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40391764048",
+      "head": "007d34bcf7ef1bb3af40bf32267614c80b8d65e3"
+    },
+    {
+      "id": 40391764013,
+      "name": "Usable regression",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40391764013",
+      "head": "007d34bcf7ef1bb3af40bf32267614c80b8d65e3"
+    }
+  ]
 }

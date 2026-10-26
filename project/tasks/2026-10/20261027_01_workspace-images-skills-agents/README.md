@@ -17,7 +17,7 @@
 - Codex/Claude Ask/Plan 可选只读子 Agent，Agent 写入模式拒绝。Codex 原生 config/read 实测 ON=true、OFF=false，最多两子任务/一层；Claude固定只读助手/子模型，不声称原生未提供的数量上限。Copilot 扩展未开放。子调用可能额外消耗用量。
 - r8真实复杂流程 `bd364257d1e1fbea91eb5b2fbea143c4` 完成：2路 Codex 并行→汇合→独立会话编写/复核→满足条件提前退出循环→一支输出、一支Skipped，共4根调用和1真实子会话；可见工具返回确认读取Skill。r9仅改复选框CSS和浏览器可读性断言，Python/原生执行字节一致，仍分别记录候选，不伪称r9已跑Codex/Claude整版验收。r7另有Codex+Claude 6调用、2轮false→true的旧候选证据，保留原意。
 
-同一最终r9候选的命令：Python完整891、隔离6、Chromium/HTTP225（106+119）、JS57，均exit0、FAIL/ERROR/SKIP=0；Baseline结构检查exit0、前端构建/6语法检查/字节复建/已知凭据和运行数据扫描通过。精确命令、路径和日志哈希见 evidence-summary.json；合成测试与真实调用分列。普通单测临时文件使用会自动清理的 `/tmp`，持久工作流工作区、HOME和全部保留证据在 `test/`。不将私有临时文件清理失败或旧候选结果包装成产品通过。
+同一最终r9候选的命令：Python完整891、隔离6、Chromium/HTTP225（106+119）、JS57，均exit0、FAIL/ERROR/SKIP=0；Baseline结构检查exit0、前端构建/6语法检查/字节复建/已知凭据和运行数据扫描通过。云端同HEAD的 [Studio contracts](https://github.com/Silver-Zhang/DevFlower/actions/runs/40391764048) 和 [Usable regression](https://github.com/Silver-Zhang/DevFlower/actions/runs/40391764013) 均成功。精确命令、路径和日志哈希见 evidence-summary.json；合成测试与真实调用分列。普通单测临时文件使用会自动清理的 `/tmp`，持久工作流工作区、HOME和全部保留证据在 `test/`。不将私有临时文件清理失败或旧候选结果包装成产品通过。
 
 ## 3. 决策记录
 
