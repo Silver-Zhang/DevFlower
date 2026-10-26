@@ -1,5 +1,5 @@
 import React,{useState} from 'react';
-import {FolderOpen,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2,Trash2} from 'lucide-react';
+import {FolderOpen,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2,Trash2,Sparkles} from 'lucide-react';
 
 // DevFlower workspace navigation around the existing runtime.
 // Licensed Sim interaction hooks are separately attributed under vendor/sim.
@@ -24,11 +24,12 @@ export function WorkspaceNavigation({workspace,drafts,legacy=[],current,onFolder
  </>;
 }
 
-export function StudioTools({kinds,disabled,onAdd,onLibrary,palette,library,inspecting,onTools}) {
+export function StudioTools({kinds,disabled,onAdd,onLibrary,palette,library,inspecting,onTools,assistantOpen,onAssistant,assistant}) {
  const [query,setQuery]=useState('');
  return <aside className="studio-tools" aria-label="工作流工具">
-  <div className="studio-tools-tabs"><button aria-label="查看节点工具库" className={!inspecting?'active':''} onClick={onTools}><Blocks size={14}/>工具</button><button onClick={onLibrary}>示例模板</button></div>
-  {!palette&&!library&&!inspecting&&<>
+  <nav className="studio-tools-tabs" aria-label="工作台侧栏"><button aria-label="查看节点工具库" className={!assistantOpen&&!library?'active':''} aria-pressed={!assistantOpen&&!library} onClick={onTools}><Blocks size={14}/>工具</button><button className={library?'active':''} aria-pressed={Boolean(library)} onClick={onLibrary}>示例模板</button><button className={assistantOpen?'active':''} aria-pressed={Boolean(assistantOpen)} onClick={onAssistant}><Sparkles size={14}/>AI 助手</button></nav>
+  {assistant&&<div className="assistant-pane" hidden={!assistantOpen}>{assistant}</div>}
+  {!assistantOpen&&!palette&&!library&&!inspecting&&<>
    <div className="studio-tools-heading"><strong>添加节点</strong><small>选择模块，然后在画布连接</small></div>
    <label className="node-library-search"><input aria-label="筛选工具库节点" placeholder="搜索节点…" value={query} onChange={e=>setQuery(e.target.value)}/></label><div className="studio-node-library">{Object.entries(kinds).filter(([key,[name]])=>(key+name).toLowerCase().includes(query.toLowerCase())).map(([key,[name,Icon]])=><button key={key} draggable={!disabled} onDragStart={e=>{e.dataTransfer.setData('application/x-devflower-node',key);e.dataTransfer.effectAllowed='copy'}} disabled={disabled} onClick={()=>onAdd(key)}><span className={'library-node-icon '+key}><Icon size={16}/></span><span>{name}<small>{({agent:'原生会话与模型',condition:'IF / ELSE',router:'规则与语义分类',merge:'等待上游结果',loop:'有界迭代',human:'等待真实确认',verify:'运行验证合同',delivery:'审核与交付门禁',start:'任务与初始输入',output:'汇总与产物',result:'完成当前流程'})[key]}</small></span><Plus size={13}/></button>)}</div>
    <div className="studio-tools-hint"><MousePointer2 size={16}/><p>选择节点配置参数，<br/>选择连线检查数据交接。</p></div>

@@ -67,21 +67,72 @@ def decode_reply(text,choices):
 
 class CanvasAssistant:
     def __init__(self,rt):
-        self.rt=rt;self.lock=threading.RLock();self.active={};self.closed=False
+        self.rt=rt;self.lock=threading.RLock();self.active={};self.closed=False;self.catalog_cache=None
         self.root=rt.storage/'canvas-assistant';self.root.mkdir(mode=0o700,exist_ok=True)
         self.default_backend=lambda cwd,**kw:DevFlowerAgent(self.rt,cwd,**kw);self.backend=self.default_backend
 
-    def catalog(self):
+    def catalog(self,refresh=False):
         self.rt.check_operator()
+        with self.lock:
+            if self.closed:raise Blocked('助手服务正在关闭')
+        tag=None
+        if self.backend is self.default_backend:
+            from .devflower_agent import AgentConnection
+            tag=AgentConnection(self.rt).read()['fingerprint']
+        with self.lock:
+            if not refresh and self.catalog_cache and self.catalog_cache[0]==tag and time.time()-self.catalog_cache[1]<60:
+                return dict(self.catalog_cache[2],cached=True)
         # A catalog read sends no workspace, prompt or source and does no inference.
         key='catalog-'+secrets.token_hex(16);cancel=threading.Event()
         with self.lock:
             if self.closed:raise Blocked('助手服务正在关闭')
             self.active[key]=(cancel,threading.current_thread())
         try:
-            with self.backend(self.root,timeout=30,cancelled=cancel.is_set) as client:return client.catalog()
+            with self.backend(self.root,timeout=30,cancelled=cancel.is_set) as client:result=client.catalog()
+            with self.lock:self.catalog_cache=(tag,time.time(),result)
+            return dict(result,cached=False)
         finally:
             with self.lock:self.active.pop(key,None)
+
+    def listing(self,workspace,view='active',query=''):
+        self.rt.session_center.workspace(workspace)
+        if view not in ('active','archived','trash') or not isinstance(query,str) or len(query)>200:raise Invalid('助手会话筛选无效')
+        with self.rt.flow.tx(read=True) as db:
+            rows=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND json_extract(data,'$.workspace')=? AND json_extract(data,'$.agent_id')=? AND COALESCE(json_extract(data,'$.collection'),'active')=? AND instr(lower(COALESCE(json_extract(data,'$.title'),json_extract(data,'$.messages[0].text'),'')),lower(?))>0 ORDER BY COALESCE(json_extract(data,'$.updated_at'),0) DESC,rowid DESC LIMIT 100",(workspace,AGENT_ID,view,query)).fetchall()
+            result=[]
+            for raw, in rows:
+                v=json.loads(raw);turn=None
+                if v.get('active_turn'):
+                    row=db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(v['active_turn'],)).fetchone()
+                    if row:turn=json.loads(row[0])
+                state=turn['state'] if turn else 'EMPTY'
+                if turn and state in ('QUEUED','RUNNING'):
+                    with self.lock:running=turn['id'] in self.active
+                    if not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):state='RECOVERY_REQUIRED'
+                result.append(dict(id=v['id'],title=v.get('title') or next((m['text'][:60] for m in v['messages'] if m['role']=='user'),'新对话'),collection=v.get('collection','active'),metadata_revision=v.get('metadata_revision',0),updated_at=v.get('updated_at'),message_count=len(v['messages']),state=state))
+        return dict(conversations=result,view=view,limit=100)
+
+    def manage(self,data):
+        if set(data)-{'workspace','id','operation','title','expected'} or not {'workspace','id','operation','expected'}<=set(data):raise Invalid('助手会话操作格式无效')
+        self.rt.session_center.workspace(data['workspace']);op=data['operation']
+        if op not in ('rename','archive','trash','restore'):raise Invalid('不支持此助手会话操作')
+        if type(data['expected']) is not int:raise Invalid('助手会话版本无效')
+        with self.lock,self.rt.flow.tx() as db:
+            row=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(data['id'],)).fetchone()
+            if not row:raise Invalid('助手会话不存在')
+            v=json.loads(row[0])
+            if v['workspace']!=data['workspace'] or v.get('agent_id')!=AGENT_ID:raise Blocked('不能操作其他工作区或旧Provider的会话')
+            if v.get('metadata_revision',0)!=data['expected']:raise Conflict('会话列表已变化，请刷新后重试')
+            if op!='rename' and v.get('active_turn'):
+                t=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(v['active_turn'],)).fetchone()[0])
+                if t['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):raise Blocked('先停止或确认当前助手请求，再归档或移入回收站')
+            if op=='rename':
+                if not isinstance(data.get('title'),str) or not 1<=len(data['title'].strip())<=100:raise Invalid('请输入1–100字会话名称')
+                v['title']=self._redact(data['title'].strip())
+            else:v['collection']={'archive':'archived','trash':'trash','restore':'active'}[op]
+            v['metadata_revision']=v.get('metadata_revision',0)+1;v['updated_at']=time.time()
+            db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
+        return dict(id=v['id'],collection=v.get('collection','active'),metadata_revision=v['metadata_revision'],title=v.get('title'))
 
     def conversation(self,workspace,key):
         self.rt.session_center.workspace(workspace)
@@ -134,6 +185,7 @@ class CanvasAssistant:
                     return result
                 row=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(key,)).fetchone()
                 v=json.loads(row[0]) if row else dict(id=key,agent_id=AGENT_ID,workspace=data['workspace'],revision=0,messages=[],active_turn=None)
+                if row and v.get('collection','active')!='active':raise Blocked('请先恢复此助手会话，再继续发送消息')
                 if row and v.get('agent_id')!=AGENT_ID:raise Blocked('这是旧配置模型的历史，请新开 DevFlower 助手对话；原历史保留')
                 if not row and data['expected'] is not None:raise Conflict('助手对话已变化或不存在')
                 if v['workspace']!=data['workspace'] or (v['revision'] if row else None)!=data['expected']:raise Conflict('助手对话版本已变化，请读取最新消息')
@@ -141,6 +193,7 @@ class CanvasAssistant:
                 if v['active_turn']:
                     prior=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(v['active_turn'],)).fetchone()[0])
                     if prior['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):raise Blocked('上一请求尚未确认结束，请先停止或查看状态')
+                v.setdefault('created_at',time.time());v.setdefault('title',clean[:60]);v['updated_at']=time.time()
                 v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id))
                 t=dict(base,id=turn_id,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
                        messages=v['messages'][-12:],created_at=time.time(),reply=None,proposal=None,receipt=None,cancel_requested=False)
@@ -200,7 +253,7 @@ class CanvasAssistant:
                     row=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()[0])
                     v=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(t['conversation'],)).fetchone()[0])
                     row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,receipt={k:v for k,v in r.items() if k!='text'},finished_at=time.time())
-                    v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key));v['revision']+=1
+                    v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key));v['revision']+=1
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
         except Exception as exc:

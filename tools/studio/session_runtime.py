@@ -54,6 +54,8 @@ class SessionRuntime:
         self.authority = self.operator_file  # Protected input, never a writable authority directory.
         self.browser_directory = self.storage
         self.lock, self.children = threading.RLock(), {}
+        from .identity_cache import IdentityCache
+        self.identity_cache=IdentityCache()
         protected = [ROOT, self.operator_file, *self.operator_protected_paths()]
         for p in self.operator['profiles'].values():
             fields = {'provider', 'executable', 'model', 'effort', 'read_paths', 'readonly_files'}
@@ -116,18 +118,13 @@ class SessionRuntime:
         with opened(self.operator_file) as fd:
             if digest(os.read(fd, 131073)) != self.operator_sha256:
                 raise Blocked('Development operator binding changed')
-        if tree_hash(ROOT) != self.candidate_sha256:
+        if self.identity_cache.tree(ROOT) != self.candidate_sha256:
             raise Blocked('Development candidate changed; restart with the independently pinned candidate hash')
         for path, sha in self.operator['dependencies'].items():
-            with opened(clean_path(path)) as fd:
-                import hashlib
-                content = hashlib.sha256()
-                while block := os.read(fd, 1024 * 1024):
-                    content.update(block)
-            if content.hexdigest() != sha:
+            if self.identity_cache.file(clean_path(path)) != sha:
                 raise Blocked('Approved native executable or configuration changed')
         for path, sha in self.operator.get('dependency_trees', {}).items():
-            if tree_hash(clean_path(path)) != sha:
+            if self.identity_cache.tree(clean_path(path)) != sha:
                 raise Blocked('Approved native dependency tree changed')
 
     def readable_directory(self, path):

@@ -52,7 +52,7 @@ def main():
     original_rpc=WorkbenchSessions.rpc
     def metadata(manager,binding,cwd,method,params):
         if method=='cli/probe':return dict(available=True,machine_output=True,version='synthetic metadata fixture',resume=True)
-        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])]),dict(model='synthetic-configurable-model',supportedReasoningEfforts=[dict(reasoningEffort='high')])])
+        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])]),dict(model='synthetic-configurable-model',supportedReasoningEfforts=[dict(reasoningEffort='high'),dict(reasoningEffort='low')])])
         if method=='account/read':return dict(account={'type':'synthetic fixture'})
         if method=='claude/auth-status':return dict(logged_in=True,auth_method='synthetic fixture',service_verified=False)
         return original_rpc(manager,binding,cwd,method,params)
@@ -61,7 +61,9 @@ def main():
     # signed-in Copilot account as an unlabelled catalog/model fixture.
     from test_canvas_assistant import SyntheticBackend
     from studio.canvas_assistant import CanvasAssistant
-    from studio.canvas_assistant import CanvasAssistant
+    from studio.devflower_agent import AGENT_ID
+    rt.flow.put('canvas-conversation','c'*32,dict(id='c'*32,agent_id=AGENT_ID,workspace=workspace,revision=1,title='Synthetic 请求状态待确认',updated_at=0,active_turn='d'*32,messages=[dict(role='user',text='此前请求，没有伪造回答',turn='d'*32)]))
+    rt.flow.put('canvas-turn','d'*32,dict(id='d'*32,conversation='c'*32,workspace=workspace,state='RUNNING',owner=None,created_at=0,reason=None,proposal=None,receipt=None))
     def synthetic_assistant(runtime):
         assistant=CanvasAssistant(runtime);assistant.backend=SyntheticBackend;return assistant
     assistant_patch=patch('studio.canvas_assistant.CanvasAssistant',synthetic_assistant);assistant_patch.start();owner.addCleanup(assistant_patch.stop)

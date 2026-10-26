@@ -82,6 +82,13 @@ class ModelRegistration:
             human_questions=['配置此模型供当前工作区选择；不调用模型、不授予执行权限。首次使用仍需真实连接检查。'],
             capability_source='provider' if row.get('efforts') else 'current CLI profile preference; model support unknown'))
 
+    def select(self,data):
+        # A model pick is a local selection, not a second approval ceremony.
+        # The same fresh account/profile/effort contract still applies; this
+        # record never grants execution or changes workspace permissions.
+        permit=self.prepare(data)
+        return self.confirm(permit['id'],permit['sha256'],'操作者在模型选择器直接选择此模型和强度；只保存选择，不授予执行权限。')
+
     def confirm(self, id, sha256, answer):
         self.rt.check_operator();value,_=self.rt.db.consume(id,sha256,[answer])
         if value.get('purpose')!='model-registration':raise Blocked('不是模型配置确认')

@@ -76,7 +76,8 @@ def create_server(runtime,port=0):
                     elif path=='/api/terminal':value=sessions.terminal(q['workspace'],q['handle'])
                     elif path=='/api/terminals':value={'terminals':terminals.listing(q['workspace'])}
                     elif path=='/api/terminal/output':value=terminals.snapshot(q['workspace'],q['id'],int(q.get('after','0')))
-                    elif path=='/api/assistant/models':value=canvas_assistant.catalog()
+                    elif path=='/api/assistant/models':value=canvas_assistant.catalog(refresh=q.get('refresh')=='1')
+                    elif path=='/api/canvas-assistant/conversations':value=canvas_assistant.listing(q['workspace'],q.get('view','active'),q.get('query',''))
                     elif path=='/api/devflower-agent/config':
                         from .devflower_agent import AgentConnection
                         value=AgentConnection(runtime).public()
@@ -99,6 +100,9 @@ def create_server(runtime,port=0):
                 elif path=='/api/models':
                     if type(data.get('refresh',True)) is not bool:raise Invalid('刷新标记必须是布尔值')
                     value=sessions.capabilities(data.get('refresh',True),data['profile'],data.get('workspace'))[0]
+                elif path=='/api/model-selection':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).select(data)
                 elif path=='/api/model-registration/prepare':
                     from .model_registration import ModelRegistration
                     value=ModelRegistration(runtime).prepare(data)
@@ -138,6 +142,7 @@ def create_server(runtime,port=0):
                 elif path=='/api/devflower-agent/config':
                     from .devflower_agent import AgentConnection
                     value=AgentConnection(runtime).save(data)
+                elif path=='/api/canvas-assistant/manage':value=canvas_assistant.manage(data)
                 elif path=='/api/canvas-assistant/messages':value=canvas_assistant.start(data)
                 elif path=='/api/canvas-assistant/cancel':value=canvas_assistant.cancel(data['workspace'],data['conversation'])
                 elif path.startswith('/api/config-assistant/'):
