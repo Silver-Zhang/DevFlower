@@ -47,7 +47,7 @@ class NativeTerminals:
             raise Blocked(reason or '该 Provider 尚未支持原生终端')
         if self.sessions.busy(binding, row['native']['session_id']): raise Blocked('此会话已有写入者，请先停止原回合或连接已有终端')
         selected=self.rt.node_binding(data['workspace'],dict(profile=binding['runtime_profile'],
-            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read'),admission=not data.get('auto_verify',False))
+            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not data.get('auto_verify',False))
         from .model_admission import ModelAdmission
         check = ModelAdmission(self.rt).pending_check(selected,include_valid=True) if data.get('auto_verify') else None
         value = dict(purpose='native-terminal', workspace=data['workspace'], handle=data['handle'],

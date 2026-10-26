@@ -31,7 +31,7 @@ class ModelAdmission:
             profile=binding.get('runtime_profile'), cwd=str(cwd),
             config={k: binding.get(k) for k in ('provider', 'model', 'effort',
                 'execution_mode', 'role', 'tools', 'timeout_seconds', 'executable',
-                'read_paths', 'readonly_files', 'isolation', 'external_sandbox', 'buffered_tool_transport', 'model_registration_key','model_registration_sha256','no_tools','execution_context')})
+                'read_paths', 'readonly_files', 'isolation', 'external_sandbox', 'buffered_tool_transport', 'model_registration_key','model_registration_sha256','no_tools','execution_context','skills','skill_ids','subagents')})
 
     def key(self, binding, cwd):
         return digest(canonical(self.scope(binding, cwd)))
@@ -132,7 +132,7 @@ class ModelAdmission:
 
     @staticmethod
     def validate_request(request):
-        allowed = {'workspace', 'profile', 'model', 'effort', 'mode', 'permission', 'tools', 'timeout', 'context'}
+        allowed = {'workspace', 'profile', 'model', 'effort', 'mode', 'permission', 'tools', 'timeout', 'context','skills','subagents'}
         if not isinstance(request, dict) or set(request)-allowed or not {'workspace','profile','model','effort','mode'} <= set(request):
             raise Invalid('执行验证需要工作区、Profile、模型、强度及工作方式')
         if any(not isinstance(request[k],str) or not request[k].strip() or request[k]=='unknown' for k in ('workspace','profile','model','effort','mode')):
@@ -173,6 +173,7 @@ class ModelAdmission:
             model=binding['model'], effort=binding['effort'],
             mode=binding['execution_mode'], timeout=binding['timeout_seconds'],
             permission='workspace-write' if binding['role']=='implementer' else 'read')
+        if 'skills' in binding:request.update(skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled'))
         if binding.get('execution_context')=='configuration':request['context']='configuration'
         elif binding['provider'] != 'codex':request['tools'] = binding['tools']
         return dict(key=self.key(binding, selected['cwd']), selection=request,
@@ -257,7 +258,7 @@ class ModelAdmission:
         # with a stronger outer read-only sandbox and an empty diagnostic cwd.
         probe_cwd = artifacts/'workspace'; probe_cwd.mkdir(mode=0o700)
         probe = dict(binding, home=str(self.rt.storage/'model-check-homes'/check_id),
-                     session_id=None, admission_probe=True)
+                     session_id=None, admission_probe=True, responsibility='Native model configuration diagnostic', background='')
         schema = artifacts/'schema.json'
         save(schema, dict(type='object', additionalProperties=False, required=['reply'],
                           properties={'reply':dict(type='string')}))
@@ -274,6 +275,9 @@ class ModelAdmission:
                 return self.require(binding,cwd)
         else:self._publish(event)
         try:
+            if 'skills' in binding:
+                from orchestration.native_features import diagnostic_skills
+                probe['skills']=diagnostic_skills(binding,artifacts)
             from .workbench_sessions import WorkbenchSessions
             from .model_catalog import ModelCatalog
             catalog = ModelCatalog(WorkbenchSessions(self.rt)).get(binding['runtime_profile'],
@@ -307,6 +311,9 @@ class ModelAdmission:
                  'resolved_effort','process','permission_mode','raw_report_sha256','transport')})
             from .usage import public_usage
             event['receipt']['usage']=public_usage(receipt.get('usage'))
+            event['receipt']['diagnostic_inputs']=dict(business_workspace=False,
+                business_skill_content=False,skills='public-placeholders-only',
+                business_skill_execution_tested=False)
             self.db.put('session-operation', check_id, dict(operation, diagnostic=True, state='COMPLETED',
                 created_at=event['at'], cwd=str(probe_cwd), permission='read', receipt=event['receipt']))
             if not self._publish(event, expected_id=check_id, expected_state='STARTING'):

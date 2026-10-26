@@ -35,6 +35,7 @@ def expand_plan(plan,choices):
     """
     value=copy.deepcopy(plan)
     if not isinstance(value,dict) or not isinstance(value.get('nodes'),list):raise Invalid('画布计划格式无效')
+    value.setdefault('version',1);value.setdefault('name','图片识别流程');value.setdefault('summary','根据用户需求生成的未执行草稿')
     fields={'id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','test','strategy','body','max_rounds','until'}
     for n in value['nodes']:
         if not isinstance(n,dict) or set(n)-fields:raise Invalid('节点包含未允许的配置字段')
@@ -56,6 +57,13 @@ def expand_plan(plan,choices):
         while node_id in ids:node_id+='x'
         ids.add(node_id);n=dict(id=node_id,kind=kind,name='开始' if kind=='start' else '输出结果',profile='',model='',effort='',mode='Ask',initial_prompt='',round_prompt='',handoff_prompt='')
         value['nodes'].append(n);return node_id
+    terminals=[n for n in value['nodes'] if n.get('kind')=='result']
+    if len(terminals)>1:
+        sources={e['source'] for e in value['edges']}
+        if any(n['id'] in sources for n in terminals):raise Invalid('结果节点不能作为中间处理步骤')
+        for n in terminals:n['kind']='output'
+        final=add('result')
+        value['edges'].extend(dict(source=n['id'],target=final,transfer='result') for n in terminals)
     if value['nodes'] and not any(n.get('kind')=='start' for n in value['nodes']):
         targets={e['target'] for e in value['edges']};roots=[n.get('id') for n in value['nodes'] if n.get('id') not in targets];entry=add('start')
         value['edges'][:0]=[dict(source=entry,target=n) for n in roots]
@@ -80,7 +88,7 @@ def decode_reply(text,choices):
 
 class CanvasAssistant:
     def __init__(self,rt):
-        self.rt=rt;self.lock=threading.RLock();self.active={};self.closed=False;self.catalog_cache=None
+        self.rt=rt;self.lock=threading.RLock();self.active={};self.finalizing=set();self.closed=False;self.catalog_cache=None
         self.root=rt.storage/'canvas-assistant';self.root.mkdir(mode=0o700,exist_ok=True)
         self.default_backend=lambda cwd,**kw:DevFlowerAgent(self.rt,cwd,**kw);self.backend=self.default_backend
 
@@ -120,7 +128,7 @@ class CanvasAssistant:
                     if row:turn=json.loads(row[0])
                 state=turn['state'] if turn else 'EMPTY'
                 if turn and state in ('QUEUED','RUNNING'):
-                    with self.lock:running=turn['id'] in self.active
+                    with self.lock:running=turn['id'] in self.active and turn['id'] not in self.finalizing and alive(turn.get('owner'))
                     if not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):state='RECOVERY_REQUIRED'
                 result.append(dict(id=v['id'],title=v.get('title') or next((m['text'][:60] for m in v['messages'] if m['role']=='user'),'新对话'),collection=v.get('collection','active'),metadata_revision=v.get('metadata_revision',0),updated_at=v.get('updated_at'),message_count=len(v['messages']),state=state))
         if hasattr(self.rt,'project_files') and project.get('path'):
@@ -167,7 +175,7 @@ class CanvasAssistant:
             if result['workspace']!=workspace:raise Blocked('助手对话不属于当前工作空间')
             turn=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(result['active_turn'],)).fetchone()[0]) if result.get('active_turn') else None
         if turn:
-            with self.lock:running=turn['id'] in self.active
+            with self.lock:running=turn['id'] in self.active and turn['id'] not in self.finalizing and alive(turn.get('owner'))
             if turn['state'] in ('QUEUED','RUNNING') and not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):
                 try:turn=self.rt.flow.change('canvas-turn',turn['id'],dict(state='RECOVERY_REQUIRED',reason='此前连接已中断；未自动重发请求'),states=['QUEUED','RUNNING'])
                 except Conflict:return self.conversation(workspace,key)
@@ -176,7 +184,10 @@ class CanvasAssistant:
 
     def start(self,data):
         required={'workspace','conversation','request_id','expected','message','graph','model','allow_context'}
-        if set(data)-{'intent'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        if set(data)-{'intent','images'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        from .assistant_images import AssistantImages
+        images=AssistantImages(self.rt).resolve(data['workspace'],data.get('images',[]))
+        image_meta=[v['meta'] for v in images]
         intent=data.get('intent','auto')
         if intent not in ('auto','chat','workflow'):raise Invalid('助手工作方式无效')
         if (not isinstance(data['request_id'],str) or len(data['request_id'])!=32 or any(c not in '0123456789abcdef' for c in data['request_id']) or
@@ -214,7 +225,7 @@ class CanvasAssistant:
             ctx['edges']=[{k:value for k,value in e.items() if k in {'source','target','label','transfer','when','field','max_chars'}} for e in graph['edges']]
             return ctx
         context=visible_graph(g)
-        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,graph=base['base_graph_sha256'],expected=data['expected'],**({'intent':intent} if 'intent' in data else {}))))
+        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,images=image_meta,graph=base['base_graph_sha256'],expected=data['expected'],**({'intent':intent} if 'intent' in data else {}))))
         with self.lock:
             if self.closed:raise Blocked('助手服务正在关闭')
             with self.rt.flow.tx() as db:
@@ -232,12 +243,15 @@ class CanvasAssistant:
                 if not row and data['expected'] is not None:raise Conflict('助手对话已变化或不存在')
                 if v['workspace']!=data['workspace'] or (v['revision'] if row else None)!=data['expected']:raise Conflict('助手对话版本已变化，请读取最新消息')
                 if len(v['messages'])>=40:raise Blocked('本次助手对话已达20轮上限，请新开对话')
+                rejected=None
                 if v['active_turn']:
                     prior=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(v['active_turn'],)).fetchone()[0])
                     if prior['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):raise Blocked('上一请求尚未确认结束，请先停止或查看状态')
+                    if prior['state']=='FAILED' and isinstance(prior.get('model_response'),str) and len(prior['model_response'].encode())<=50000:
+                        rejected=dict(response=prior['model_response'],validation_error=prior.get('reason'),authority=False)
                 v.setdefault('created_at',time.time());v.setdefault('title',clean[:60]);v['updated_at']=time.time()
-                v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id))
-                t=dict(base,id=turn_id,intent=intent,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
+                v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id,images=image_meta))
+                t=dict(base,id=turn_id,previous_rejected_proposal=rejected,images=image_meta,intent=intent,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
                        messages=v['messages'][-12:],created_at=time.time(),reply=None,proposal=None,receipt=None,cancel_requested=False)
                 db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('canvas-conversation',key,canonical(v).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)',('canvas-turn',turn_id,canonical(t).decode()))
@@ -257,7 +271,7 @@ class CanvasAssistant:
             if t.get('intent')!='chat':ConfigurationAssistant(self.rt)._source(t)
             self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'),states=['QUEUED'])
             prompt=('DevFlower 提供的当前对话与画布上下文（数据，不扩展工具权限）：\n'+
-                json.dumps(dict(intent=t.get('intent','auto'),current_graph=t['context'],conversation=t['messages'],available_agents=t['choices']),ensure_ascii=False))
+                json.dumps(dict(intent=t.get('intent','auto'),current_graph=t['context'],conversation=t['messages'],available_agents=t['choices'],previous_rejected_proposal=t.get('previous_rejected_proposal')),ensure_ascii=False))
             prompt=self._redact(prompt)
             if len(prompt.encode())>180000:raise Blocked('对话与画布超出本轮上下文预算，请缩短内容或新开助手对话')
             last_activity=[None,0]
@@ -273,15 +287,20 @@ class CanvasAssistant:
                 if t.get('connection_sha256') and client.config['fingerprint']!=t['connection_sha256']:raise Conflict('助手模型连接已变化，未发送旧请求；请重新确认')
                 client.conversation=t['conversation']
                 client.intent=t.get('intent','auto')
+                from .assistant_images import AssistantImages
+                client.images=AssistantImages(self.rt).resolve(t['workspace'],[v['id'] for v in t.get('images',[])])
+                if [v['meta'] for v in client.images]!=t.get('images',[]):raise Conflict('所选图片已变化；未发送')
                 metadata=dict(request_sha256=digest(prompt.encode()))
                 if callable(getattr(client,'identity',None)):metadata['transport']=client.identity()
                 elif getattr(client,'process',None):metadata['process']=dict(pid=client.process.pid)
                 self.rt.flow.change('canvas-turn',key,metadata)
                 r=client.chat(t['model'],prompt)
+                self.rt.flow.change('canvas-turn',key,dict(receipt={k:v for k,v in r.items() if k!='text'},model_response=self._redact(r['text'][:150000])),states=['RUNNING'])
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
                 if graph and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布')
                 proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=t.get('source',{}).get('kind')=='canvas-only') if graph else None
             with self.lock:
+                self.finalizing.add(key)
                 if cancel.is_set():raise Blocked('生成已取消；未应用草稿')
                 with self.rt.flow.tx() as db:
                     row=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()[0])
@@ -291,19 +310,24 @@ class CanvasAssistant:
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
         except Exception as exc:
-            try:self.rt.flow.change('canvas-turn',key,dict(state='CANCELLED' if cancel.is_set() else 'FAILED',reason=safe_text(str(exc)) if isinstance(exc,(Blocked,Invalid,Conflict)) else '助手连接或本地记录失败；未自动重试或应用画布',finished_at=time.time()))
-            except (sqlite3.Error,OSError):pass
+            with self.lock:
+                self.finalizing.add(key)
+                try:self.rt.flow.change('canvas-turn',key,dict(state='CANCELLED' if cancel.is_set() else 'FAILED',reason=safe_text(str(exc)) if isinstance(exc,(Blocked,Invalid,Conflict)) else '助手连接或本地记录失败；未自动重试或应用画布',finished_at=time.time()))
+                except (sqlite3.Error,OSError):pass
         finally:
-            with self.lock:self.active.pop(key,None)
-            if 't' in locals():
-                from .project_files import archive_completed
-                archive_completed(self.rt,t['workspace'],assistant=t['conversation'])
+            try:
+                if 't' in locals():
+                    from .project_files import archive_completed
+                    archive_completed(self.rt,t['workspace'],assistant=t['conversation'])
+            finally:
+                with self.lock:
+                    self.active.pop(key,None);self.finalizing.discard(key)
 
     def cancel(self,workspace,key):
         self.rt.check_operator();v=self.conversation(workspace,key);turn=v.get('turn')
         if turn and turn['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):
             with self.lock:
-                active=self.active.get(turn['id'])
+                active=self.active.get(turn['id']) if turn['id'] not in self.finalizing else None
                 if active:active[0].set()
                 elif alive(turn.get('owner')) and turn['owner']['pid']!=os.getpid():raise Blocked('此请求仍由另一服务实例持有，请在原实例停止')
                 else:self.rt.flow.change('canvas-turn',turn['id'],dict(state='CANCELLED',reason='原请求已断开；未重放'))

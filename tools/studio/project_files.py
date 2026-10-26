@@ -29,13 +29,14 @@ class ProjectFiles:
         self.workspace = workspace
         self.project = runtime.session_center.workspace(workspace)
         if not self.project.get('path'): raise Blocked('工作区身份未确认')
-        self.root = Path(self.project['path']) / '.devflower'
+        self.base = Path(self.project.get('records_directory',self.project['path']))
+        self.root = self.base / '.devflower'
 
     @contextmanager
     def directory(self, create=False):
         # Anchored descriptors prevent project-controlled ancestor replacement
         # from redirecting writes to a credential or another project.
-        with opened(self.project['path'], directory=True) as parent:
+        with opened(self.base, directory=True) as parent:
             if create:
                 try: os.mkdir('.devflower', 0o700, dir_fd=parent)
                 except FileExistsError: pass
@@ -131,7 +132,8 @@ class ProjectFiles:
                 def clean(g):
                     for n in g['nodes']:
                         for field in ('context_from','context_refs','human_answer','receipt'): n.pop(field, None)
-                        if n['kind'] == 'agent': n['session'] = 'new'
+                        if n['kind'] == 'agent':
+                            n['session'] = 'new';n.pop('skills',None)
                         if n['kind'] == 'loop': clean(n['body'])
                 clean(graph); validate_graph(graph)
                 value.update(workspace=self.workspace, graph=graph)

@@ -102,13 +102,14 @@ class ProjectFilesTests(unittest.TestCase):
     def test_unknown_dot_directory_is_preserved(self):
         folder = self.base.source.parent / 'ordinary'; folder.mkdir()
         (folder/'.devflower').mkdir(); (folder/'.devflower'/'mine.txt').write_text('user data')
-        with self.assertRaises(Blocked):self.rt.open_workspace(str(folder))
+        row=self.rt.open_workspace(str(folder));self.assertEqual(row['record_location'],'host')
         self.assertEqual((folder/'.devflower'/'mine.txt').read_text(),'user data')
 
     def test_linked_metadata_and_archive_cannot_target_credentials(self):
         target=self.base.source.parent/'target';target.mkdir()
         folder=self.base.source.parent/'linked';folder.mkdir();(folder/'.devflower').symlink_to(target,target_is_directory=True)
-        with self.assertRaises((Blocked,OSError,ValueError)):self.rt.open_workspace(str(folder))
+        row=self.rt.open_workspace(str(folder));self.assertEqual(row['record_location'],'host');self.assertEqual(list(target.iterdir()),[])
+        with self.assertRaises(Blocked):self.rt.validate_source(str(folder))
         name='session-'+__import__('hashlib').sha256(b'evil').hexdigest()+'.json'
         private=self.base.source.parent/'secret.json';private.write_text('private')
         (self.files.root/name).symlink_to(private)

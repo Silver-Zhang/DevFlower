@@ -55,6 +55,17 @@ class CanvasAssistantTests(unittest.TestCase):
         result=self.ai.catalog();self.assertEqual(SyntheticBackend.calls,[]);self.assertFalse(result['execution_verified']);self.assertEqual(SyntheticBackend.closed,1)
     def test_builtin_conversation_returns_visible_reply_and_draft_proposal(self):
         v=self.run_turn();self.assertEqual(v['turn']['state'],'COMPLETED');self.assertEqual([m['role'] for m in v['messages']],['user','assistant']);self.assertEqual(v['turn']['receipt']['provider'],'devflower-agent');self.assertTrue(v['turn']['proposal']['graph']);self.assertEqual(self.rt.flow.list('run'),[])
+    def test_explicit_correction_sees_rejected_plan_without_automatic_retry(self):
+        rejected=json.dumps(dict(reply='未通过的提案',plan=dict(version=1,name='invalid',summary='invalid',nodes=[],edges=[])))
+        with patch.object(SyntheticBackend,'chat',return_value=dict(text=rejected)):
+            v=self.run_turn()
+        self.assertEqual(v['turn']['state'],'FAILED');self.assertEqual(v['turn']['model_response'],rejected)
+        self.assertEqual(SyntheticBackend.calls,[])
+        corrected=self.run_turn(self.data(conversation=v['id'],expected=v['revision'],message='请修正上次被拒绝的方案'))
+        self.assertEqual(corrected['turn']['state'],'COMPLETED');self.assertEqual(len(SyntheticBackend.calls),1)
+        previous=SyntheticBackend.calls[0]['previous_rejected_proposal']
+        self.assertEqual(previous['response'],rejected);self.assertIs(previous['authority'],False)
+
     def test_no_codex_or_claude_cli_used_for_configuration(self):
         with patch('orchestration.adapters.CLI.start',side_effect=AssertionError('Must not call native coding Agent')):self.assertEqual(self.run_turn()['turn']['state'],'COMPLETED')
     def test_second_turn_sees_current_canvas_and_conversation(self):

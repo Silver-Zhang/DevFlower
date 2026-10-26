@@ -254,9 +254,10 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.base,self.rt=fixture(self, admission=True);self.w=self.base.project['id'];self.graph=examples(self.rt.operator['profiles'])[0]
     def request(self):return dict(workspace=self.w,graph=copy.deepcopy(self.graph),task='Synthetic transport boundary')
-    def test_folder_is_browsable_but_outside_roots_and_links_are_refused(self):
+    def test_folder_is_browsable_outside_roots_but_execution_is_refused(self):
         result=self.rt.folder(str(self.base.source));self.assertEqual(result['path'],str(self.base.source))
-        with self.assertRaises(Blocked):self.rt.folder('/etc')
+        outside=self.rt.folder('/etc');self.assertTrue(outside['openable']);self.assertFalse(outside['execution_allowed'])
+        with self.assertRaises(Blocked):self.rt.validate_source('/etc')
         link=self.base.source/'escape';link.symlink_to('/etc',target_is_directory=True)
         self.assertNotIn('escape',[x['name'] for x in self.rt.folder(str(self.base.source))['folders']])
     def test_ask_and_plan_cannot_select_write_permission(self):

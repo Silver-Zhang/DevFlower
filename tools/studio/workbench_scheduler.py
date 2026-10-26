@@ -393,6 +393,7 @@ class Scheduler:
             structured.setdefault('accepted',report['accepted'])
             if not isinstance(report.get('reply'), str): raise Blocked('原生回合没有有效回答')
             visible = {k: receipt.get(k) for k in ('session_id', 'requested_model', 'requested_effort', 'resolved_model', 'resolved_effort', 'process', 'permission_mode', 'raw_report_sha256', 'usage')}
+            visible.update(skills=receipt.get('skills',[]),subagents=receipt.get('subagents','disabled'))
             from .usage import public_usage
             visible['usage']=public_usage(receipt.get('usage'))
             visible['usage_scope']=digest(canonical([binding['provider'],binding['home'],receipt['session_id']]))

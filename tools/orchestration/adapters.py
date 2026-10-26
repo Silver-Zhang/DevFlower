@@ -106,7 +106,7 @@ class CLI:
                 argv += ['resume', session]
             argv += ['--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-c',
                      'sandbox_mode="danger-full-access"' if external else 'sandbox_mode="workspace-write"',
-                     '-c', 'approval_policy="never"', '-c', 'features.multi_agent=false']
+                     '-c', 'approval_policy="never"']
             if b.get('no_tools'):
                 for feature in ('shell_tool','unified_exec','code_mode_host','apps','browser_use','computer_use','view_image','workspace_dependencies'):
                     argv+=['-c','features.'+feature+'=false']
@@ -119,7 +119,8 @@ class CLI:
                 argv += ['-c', 'model_reasoning_effort=' + json.dumps(b['effort'])]
             argv += ['-']
         else:
-            tools = b.get('tools', ['Read', 'Glob', 'Grep'])
+            tools = list(b.get('tools', ['Read', 'Glob', 'Grep']))
+            if b.get('subagents')=='readonly':tools.append('Agent')
             dynamic = bool(set(tools) - {'Read', 'Glob', 'Grep'})
             if dynamic and b.get('isolation') != 'bwrap':
                 raise Blocked('dynamic tools require mandatory outer bwrap')
@@ -143,9 +144,14 @@ class CLI:
                 argv += ['--model', b['model']]
             if b['effort'] != 'unknown':
                 argv += ['--effort', b['effort']]
+        from .native_features import native_args,skill_mounts
+        extension_args,extension_env=native_args(dict(b,provider=self.kind));argv=argv[:-1]+extension_args+argv[-1:] if self.kind=='codex' else argv+extension_args
+        env.update(extension_env)
+        mounts,masks=skill_mounts(dict(b,provider=self.kind),cwd,artifacts)
         request_op = store.intent(run, 'AGENT_REQUEST', {'kind': self.kind, 'project': b['project'],
             'role': b['role'], 'requested_session': requested_session,
-            'requested_model': b['model'], 'requested_effort': b['effort']}) if store else None
+            'requested_model': b['model'], 'requested_effort': b['effort'],
+            'skills':[{k:v[k] for k in ('id','sha256')} for v in b.get('skills',[])], 'subagents':b.get('subagents','disabled')}) if store else None
         if store and callable(getattr(store, 'visible_request', None)):
             # Application-owned visible request, never system instructions or hidden reasoning.
             store.visible_request(prompt)
@@ -183,7 +189,7 @@ class CLI:
                     timeout=step_timeout, cap=self.limits['max_log_bytes'],
                     input_text=prompt, store=store, run=run, env_extra=env, backend=b.get('isolation', 'landlock'), readonly_files=b.get('readonly_files', []),
                     context={'agent_role': b['role'], 'provider': self.kind, 'transport': transport_evidence['mode']},
-                    on_stdout=observe, readonly_paths=[str(Path(cwd)/'.git')])
+                    on_stdout=observe, readonly_paths=[str(Path(cwd)/'.git')],readonly_dirs=mounts,hidden_paths=masks)
         except Blocked as exc:
             category = 'authentication' if AUTH_FAILURE.search(str(exc).encode()) else 'configuration'
             if store:
@@ -221,7 +227,7 @@ class CLI:
                         cwd=str(cwd), home=b['home'], provider=self.kind,
                         permission_mode=('external-bwrap/tool-allowlist' if dynamic else 'plan/read-tools') if self.kind == 'claude' else
                             'external-bwrap/never' if b.get('external_sandbox') else 'workspace-write/never',
-                        adapter_version=VERSION)
+                        skills=[{k:v[k] for k in ('id','sha256')} for v in b.get('skills',[])],subagents=b.get('subagents','disabled'),adapter_version=VERSION)
         if envelope['resolved_model'] != 'unknown' and b['model'] != 'unknown':
             # Aliases cannot be compared with a resolved provider ID. Retain both.
             if b['model'].startswith(('gpt-', 'claude-')) and b['model'] != envelope['resolved_model']:

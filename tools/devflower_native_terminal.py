@@ -65,7 +65,7 @@ def native_cli_argv(binding,sid):
     raise Blocked('此 Provider 尚不支持原生终端')
 
 
-def wrap_native_cli(binding,cwd,home,scratch,argv):
+def wrap_native_cli(binding,cwd,home,scratch,argv,readonly_dirs=(),hidden_paths=()):
     """Internal fixed native CLI only; HTTP never supplies argv or mount paths."""
     home=Path(home)
     wrapped=['/usr/bin/bwrap','--die-with-parent','--unshare-user','--unshare-pid','--unshare-ipc','--unshare-uts','--cap-drop','ALL','--proc','/proc','--dev','/dev','--tmpfs','/tmp']
@@ -77,6 +77,11 @@ def wrap_native_cli(binding,cwd,home,scratch,argv):
         dest=home/relative
         if dest.is_symlink() or not dest.resolve().is_relative_to(home.resolve()):raise Blocked('凭据挂载路径不安全')
         dest.parent.mkdir(parents=True,exist_ok=True);wrapped+=['--ro-bind',source,str(dest)]
+    for source,relative in readonly_dirs:
+        dest=home/relative
+        if relative not in ('.agents/skills','.codex/skills','.claude/skills') or not dest.resolve().is_relative_to(home.resolve()) or dest.is_symlink():raise Blocked('Skill 挂载位置不安全')
+        dest.mkdir(parents=True,exist_ok=True);wrapped+=['--ro-bind',source,str(dest)]
+    for path in hidden_paths:wrapped+=['--tmpfs',path,'--remount-ro',path]
     metadata=workspace_metadata(cwd,check_git=True)
     if metadata:wrapped+=['--tmpfs',metadata,'--remount-ro',metadata]
     return wrapped+['--remount-ro','/','--remount-ro','/tmp','--chdir',str(cwd),'--',*argv]
@@ -99,10 +104,13 @@ def main():
     if not binding or WorkbenchSessions(rt).busy(binding,row['native']['session_id']):raise Blocked(reason or '会话占用状态未确认')
     cwd=row['native']['cwd'];home=Path(binding['home']);sid=row['native']['session_id']
     selected=rt.node_binding(a.workspace,dict(profile=binding['runtime_profile'],model=binding['model'],
-        effort=binding['effort'],mode='Ask',permission='read'))
-    argv=native_cli_argv(binding,sid)
+        effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')))
+    binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='bwrap')
+    from orchestration.native_features import native_args,skill_mounts
+    extension_args,extension_env=native_args(binding)
+    argv=native_cli_argv(binding,sid)+extension_args
     transport=(nullcontext(([],{})) if binding['provider']=='codex' else claude_transport(binding,timeout=3600))
-    with source_lease(rt.source_lock(cwd),False),lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')),tempfile.TemporaryDirectory(prefix='df-terminal-') as scratch,transport as (extra,_):
+    with source_lease(rt.source_lock(cwd),False),lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')),tempfile.TemporaryDirectory(prefix='df-terminal-') as scratch,tempfile.TemporaryDirectory(prefix='df-skills-') as pack_root,transport as (extra,_):
         # All runtime/source mounts are readonly; only this native HOME and the
         # private temporary directory are writable. No PTY is attached in HTTP.
         rt.check_operator();rt.session_center.resolve(a.workspace,a.handle)
@@ -110,8 +118,9 @@ def main():
         verification=ModelAdmission(rt).require(selected['binding'],cwd)
         from studio.native_preferences import inherit_claude_display
         inherit_claude_display(binding,rt.native)
-        wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra])
-        env=clean_env(home);env['TMPDIR']=scratch;env['TERM']=os.environ.get('TERM','xterm-256color')
+        mounts,masks=skill_mounts(binding,cwd,pack_root)
+        wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra],mounts,masks)
+        env=clean_env(home);env.update(extension_env);env['TMPDIR']=scratch;env['TERM']=os.environ.get('TERM','xterm-256color')
         code=subprocess.call(wrapped,cwd=cwd,env=env)
         if code:
             ModelAdmission(rt).invalidate_verification(selected['binding'],cwd,verification)

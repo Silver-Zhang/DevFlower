@@ -557,8 +557,10 @@ class WorkbenchSessions:
                 try:cli=self.db.get('cli-probe',name)
                 except Invalid:cli={'available':Path(profile['executable']).is_file(),'status':'registered; native capability refresh not yet performed'}
             catalog=ModelCatalog(self).get(name,profile,refresh,workspace)
+            from .agent_extensions import capabilities as extension_capabilities
+            extensions=extension_capabilities(profile)
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
-                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],subagents=False,
+                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'],subagents=extensions['subagents'],extensions=extensions,
                 model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
         if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):

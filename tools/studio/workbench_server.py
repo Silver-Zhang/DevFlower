@@ -59,7 +59,7 @@ def create_server(runtime,port=0):
                     if self.headers.get('Content-Type','').split(';')[0]!='application/json' or self.headers.get('Transfer-Encoding'):
                         raise Invalid('需要 JSON 请求')
                     size=int(self.headers.get('Content-Length','0'))
-                    if not 0<size<=600000:raise Invalid('请求大小超限')
+                    if not 0<size<=(9_000_000 if path=='/api/canvas-assistant/images' else 600000):raise Invalid('请求大小超限')
                     data=json.loads(self.rfile.read(size))
                     if not isinstance(data,dict):raise Invalid('请求格式错误')
                 if not post:
@@ -73,7 +73,10 @@ def create_server(runtime,port=0):
                         external_profiles=[{'id':k,'name':p.get('name',k),'kind':p['kind']} for k,p in runtime.policy.get('external_steps',{}).items()],
                         runs=runtime.saved_runs(),
                         stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
-                    elif path=='/api/folders':value=runtime.folder(q.get('path'))
+                    elif path=='/api/agent-extensions':
+                        from .agent_extensions import AgentExtensions
+                        value=AgentExtensions(runtime).catalog(q['workspace'],q['profile'])
+                    elif path=='/api/folders':value=runtime.folder(q.get('path'),q.get('hidden')=='1')
                     elif path=='/api/workflow-library':
                         from .workflow_library import WorkflowLibrary
                         value=WorkflowLibrary(runtime).listing(q['workspace'])
@@ -173,6 +176,9 @@ def create_server(runtime,port=0):
                 elif path=='/api/devflower-agent/config':
                     from .devflower_agent import AgentConnection
                     value=AgentConnection(runtime).save(data)
+                elif path=='/api/canvas-assistant/images':
+                    from .assistant_images import AssistantImages
+                    value=AssistantImages(runtime).upload(data)
                 elif path=='/api/canvas-assistant/manage':value=canvas_assistant.manage(data)
                 elif path=='/api/canvas-assistant/messages':value=canvas_assistant.start(data)
                 elif path=='/api/canvas-assistant/cancel':value=canvas_assistant.cancel(data['workspace'],data['conversation'])

@@ -29,9 +29,11 @@ class FolderAndLibraryTests(unittest.TestCase):
   outside=parent/'outside';outside.mkdir();w=self.rt.open_workspace(str(outside));self.assertFalse(w['execution_allowed'])
   with self.assertRaises(Blocked):self.rt.node_binding(w['id'],self.g['nodes'][1],admission=False)
  def test_filesystem_browse_does_not_expose_system_private_or_symlink(self):
-  v=self.rt.folder('/');self.assertNotIn('proc',[x['name'] for x in v['folders']]);self.assertNotIn('etc',[x['name'] for x in v['folders']])
+  v=self.rt.folder('/');self.assertIn('etc',[x['name'] for x in v['folders']]);self.assertFalse(v['execution_allowed'])
   for p in ['/proc','/etc',str(self.rt.storage),str(self.rt.native)]:
-   with self.subTest(p=p),self.assertRaises((Blocked,Invalid)):self.rt.folder(p)
+   with self.subTest(p=p):
+    v=self.rt.folder(p);self.assertTrue(v['openable']);self.assertFalse(v['execution_allowed'])
+    with self.assertRaises(Blocked):self.rt.validate_source(p)
   link=self.base.source/'shortcut';link.symlink_to(self.base.source.parent,target_is_directory=True);self.assertNotIn('shortcut',[x['name'] for x in self.rt.folder(str(self.base.source))['folders']])
  def test_template_survives_reopening_and_is_not_a_run(self):
   row=self.save();self.assertEqual(WorkflowLibrary(self.rt).listing(self.w)['templates'][0]['id'],row['id']);self.assertTrue(row['favorite']);self.assertEqual(self.rt.flow.list('run'),[])

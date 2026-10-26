@@ -79,8 +79,12 @@ def validate_graph(document, *, depth=0):
                 raise Invalid('请选择只读或当前工作区写入权限')
             if not isinstance(n.get('context_refs',[]),list) or len(n.get('context_refs',[]))>16:
                 raise Invalid('最多选择16份已授权上下文文件')
-            if n.get('subagents', 'disabled') != 'disabled':
-                raise Invalid('此运行器尚未启用子 Agent；请关闭该策略')
+            if n.get('subagents','disabled') not in ('disabled','readonly'):
+                raise Invalid('子 Agent 策略无效')
+            if n.get('subagents')=='readonly' and (n.get('mode')=='Agent' or n.get('permission')=='workspace-write'):
+                raise Invalid('子 Agent 仅支持只读 Ask/Plan')
+            if not isinstance(n.get('skills',[]),list) or len(n.get('skills',[]))>6 or any(not isinstance(v,str) or not re.fullmatch(r'[a-f0-9]{64}',v) for v in n.get('skills',[])):
+                raise Invalid('Skill 选择身份无效')
             for key in ('initial_prompt', 'round_prompt', 'handoff_prompt', 'responsibility', 'background'):
                 if not isinstance(n.get(key, ''), str) or len(n.get(key, '')) > 20000:
                     raise Invalid('节点提示词超过预算：' + n['id'])

@@ -41,7 +41,7 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=()):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=()):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
@@ -49,11 +49,11 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
         parent_scratch = '/tmp'
     with tempfile.TemporaryDirectory(prefix='dfp-', dir=parent_scratch) as scratch:
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths)
+                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths, readonly_dirs, hidden_paths)
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=()):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=()):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
     home = Path(home)
@@ -62,7 +62,7 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     env.update(env_extra or {})
     env['TMPDIR'] = scratch
     parent = os.getpid()
-    if readonly_files and backend != 'bwrap':
+    if (readonly_files or readonly_dirs or hidden_paths) and (backend != 'bwrap' or not isolate):
         raise Blocked('read-only credential overlays require bwrap')
     from .common import workspace_metadata
     metadata = workspace_metadata(cwd, check_git=True)
@@ -79,6 +79,20 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
             raise Blocked('credential overlay escapes dedicated HOME')
         dest.parent.mkdir(parents=True, exist_ok=True)
         overlays.append((source, dest))
+    directory_overlays=[]
+    for source,relative in readonly_dirs:
+        if relative not in ('.agents/skills','.codex/skills','.claude/skills'):raise Blocked('unsupported native directory overlay')
+        source=Path(source);dest=home/relative
+        from studio.session_sources import opened
+        with opened(source,directory=True):pass
+        if not dest.resolve().is_relative_to(home.resolve()) or dest.is_symlink():raise Blocked('native directory overlay escapes HOME')
+        dest.mkdir(parents=True,exist_ok=True)
+        with opened(dest,directory=True):pass
+        directory_overlays.append((str(source),str(dest)))
+    for path in hidden_paths:
+        if str(Path(path).relative_to(cwd)) not in ('.agents/skills','.codex/skills','.claude/skills'):raise Blocked('unsupported hidden native path')
+        from studio.session_sources import opened
+        with opened(path,directory=True):pass
     if backend == 'bwrap':
         wrapped = ['/usr/bin/bwrap', '--die-with-parent', '--unshare-user', '--unshare-pid',
                    '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev',
@@ -97,6 +111,10 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 wrapped += ['--ro-bind', str(Path(p).resolve()), str(p)]
         for source, dest in overlays:
             wrapped += ['--ro-bind', str(source), str(dest)]
+        for source,dest in directory_overlays:
+            wrapped += ['--ro-bind',source,dest]
+        for path in hidden_paths:
+            wrapped += ['--tmpfs',path,'--remount-ro',path]
         if metadata:
             # An empty read-only mount hides conversations and prevents writes,
             # including from a workspace-write Agent. The real DB stays hosted.

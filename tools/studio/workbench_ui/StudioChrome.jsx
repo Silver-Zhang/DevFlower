@@ -19,7 +19,7 @@ export function WorkspaceNavigation({migration,workspace,drafts,legacy=[],curren
   <section className="workspace-workflows" aria-label="工作流快捷列表">
    <div className="workspace-section-title"><span>工作流</span><button aria-label="查看所有工作流" onClick={onWorkflows}><Plus size={14}/></button></div>
    {!workspace?<p>打开文件夹以开始工作</p>:!owned.length?<p>从空白画布开始，或选择示例</p>:owned.slice(0,5).map(d=><div className="workflow-list-row" key={d.id}><button aria-label={'切换至工作流 '+d.graph.name} aria-current={d.id===current?'page':undefined} onClick={()=>onDocument(d)}><Workflow size={13}/><span>{d.graph.name}</span></button><button className="delete-workflow" aria-label={'删除工作流 '+d.graph.name} title="删除工作流草稿" onClick={()=>onDelete(d)}><Trash2 size={14}/></button></div>)}
-   {workspace?.project_storage&&<p className="project-storage-note" title={workspace.project_storage.path}>工作流与历史 · .devflower<br/><small>{migration?.state==='RUNNING'?'正在整理旧记录…':migration?.error||'项目内保存，凭据仍在本机'}</small></p>}
+   {workspace?.project_storage&&<p className="project-storage-note" title={workspace.project_storage.path}>工作流与历史 · {workspace.project_storage.location==='host'?'本机记录区':'.devflower'}<br/><small>{migration?.state==='RUNNING'?'正在整理旧记录…':migration?.error||'项目内保存，凭据仍在本机'}</small></p>}
    {workspace&&<LegacyDraftCopies drafts={legacy} onCopy={onDocument}/>}
   </section>
  </>;

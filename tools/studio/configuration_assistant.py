@@ -18,7 +18,7 @@ def schema(profiles,depth=0):
     def string(limit,**kwargs):return dict(type='string',pattern=r'^[\s\S]{0,'+str(limit)+r'}$',**kwargs)
     text=string(6000)
     node=dict(type='object',additionalProperties=False,required=['id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt'],properties=dict(
-        id=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_-]{0,63}$'),kind=dict(type='string',enum=['start','agent','merge','result','condition']+(['loop'] if depth<2 else [])),name=string(100,minLength=1),
+        id=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_-]{0,63}$'),kind=dict(type='string',enum=['start','agent','merge','result','output','condition']+(['loop'] if depth<2 else [])),name=string(100,minLength=1),
         profile=dict(type='string',enum=['',*profiles]),model=string(200),effort=string(40),mode=dict(type='string',enum=['Ask','Plan','Agent']),
         initial_prompt=text,round_prompt=text,handoff_prompt=text))
     node['properties'].update(test=dict(type='object',additionalProperties=False,required=['field','op','value'],properties=dict(field=string(200),op=dict(type='string',enum=['equals','not_equals','contains','exists','greater','less']),value={})),strategy=dict(type='string',enum=['all','selected']))
@@ -90,7 +90,7 @@ class ConfigurationAssistant:
 
     def choices(self,workspace):
         from .workbench_sessions import WorkbenchSessions
-        return {p['id']:dict(provider=p['provider'],models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
+        return {p['id']:dict(provider=p['provider'],modes=p.get('modes',['Ask','Plan']),models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
                 for p in WorkbenchSessions(self.rt).capabilities(False,workspace=workspace) if p.get('available')}
 
     def _base(self,data,*,canvas_only=False):

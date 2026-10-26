@@ -102,26 +102,50 @@ class WorkbenchRuntime(SessionRuntime):
         return value
 
     def readable_directory(self, path):
-        try: return super().readable_directory(path)
-        except Blocked as exc:
-            # A workspace container may be opened as a local library. It never
-            # becomes an executable source root or a native-history scan root.
-            p = Path(clean_path(path))
-            protected = [*self.protected, self.storage, self.native]
-            if (str(exc) != 'Workspace overlaps protected Development session data' or
-                    any(p.is_relative_to(x) for x in protected)):
-                raise
-            return str(p)
+        from .workspace_access import browse_directory
+        return browse_directory(path)
+
+    def validate_source(self, path):
+        from .workspace_access import view_policy
+        path = self.readable_directory(path)
+        if view_policy(self,path)['protected_container']:
+            raise Blocked('文件夹已打开，但此位置包含系统或工作台保护数据；运行 Agent 请选择具体的项目代码目录。')
+        try: return super().validate_source(path)
+        except (OSError,ValueError):
+            raise Blocked('文件夹已打开；项目内记录保留区需要检查，暂不允许 Agent 执行。') from None
+
+    def hosted_project_records(self, row, reason):
+        base = self.storage/'project-records'
+        base.mkdir(mode=0o700,exist_ok=True)
+        with opened(base,directory=True): pass
+        target = base/row['id'];target.mkdir(mode=0o700,exist_ok=True)
+        with opened(target,directory=True): pass
+        row.update(records_directory=str(target),record_location='host',record_notice=reason)
+        self.db.put('workspace',row['id'],row)
 
     def project_files(self, workspace):
         from .project_files import ProjectFiles
         return ProjectFiles(self, workspace)
 
     def open_workspace(self, path):
+        from .workspace_access import view_policy
+        path=self.readable_directory(path)
+        try: old=self.db.get('workspace',digest(path.encode())[:32])
+        except Invalid: old={}
         row = super().open_workspace(path)
-        row['protected_container'] = any(Path(x).is_relative_to(row['path']) for x in
-            [*self.protected, self.storage, self.native])
-        row['project_storage'] = self.project_files(row['id']).initialize()
+        policy = view_policy(self,row['path'])
+        row['protected_container'] = policy['protected_container']
+        # Reuse an existing hosted view cache; never silently abandon its data.
+        row.update(record_location='project',records_directory=row['path'],record_notice=None)
+        self.db.put('workspace',row['id'],row)
+        if policy['hosted_records'] or old.get('record_location')=='host':
+            self.hosted_project_records(row,policy['reason'] or old.get('record_notice'))
+        try: row['project_storage'] = self.project_files(row['id']).initialize()
+        except (OSError,ValueError,Blocked,Invalid) as exc:
+            if row['record_location']=='host': raise
+            self.hosted_project_records(row,'文件夹已打开；原有数据未覆盖。此位置不能使用项目内记录，已改用独立本机记录区。')
+            row['project_storage'] = self.project_files(row['id']).initialize()
+        row['project_storage'].update(location=row['record_location'],notice=row['record_notice'])
         self.db.put('workspace', row['id'], row)
         # Non-destructive migration of visible hosted conversation records.
         for value in self.flow.list('canvas-conversation'):
@@ -156,18 +180,16 @@ class WorkbenchRuntime(SessionRuntime):
             except (OSError, ValueError, Invalid, Blocked): pass  # project_drafts exposes the read error.
         return result
 
-    def folder(self, path=None):
+    def folder(self, path=None, show_hidden=False):
         """Directory names are navigation, not execution authority or file access."""
-        roots = self.operator['allowed_roots'];path = clean_path(path) if path else roots[0]
+        roots = self.operator['allowed_roots'];path = self.readable_directory(path if path else roots[0])
         def private(p):
-            return (any(Path(p).is_relative_to(x) for x in [*self.protected,self.storage,self.native,'/proc','/sys','/dev','/etc','/usr','/bin','/sbin','/lib','/lib64','/boot','/root']) or
-                    any(part.startswith('.') or part in ('node_modules','__pycache__') for part in Path(p).parts))
-        if private(path):raise Blocked('此位置包含系统或私有数据，请选择普通工作目录')
+            return not show_hidden and (Path(p).name.startswith('.') or Path(p).name in ('node_modules','__pycache__'))
         rows = []
         try:
             with opened(path, directory=True) as fd:
                 for name in sorted(os.listdir(fd))[:1000]:
-                    if name.startswith('.') or name in ('node_modules', '__pycache__'): continue
+                    if not show_hidden and (name.startswith('.') or name in ('node_modules', '__pycache__')): continue
                     target = str(Path(path) / name)
                     try:
                         with opened(target, directory=True): pass
@@ -180,10 +202,13 @@ class WorkbenchRuntime(SessionRuntime):
         try:
             self.readable_directory(path); openable = True; reason = None
         except (Blocked, Invalid) as exc: openable = False; reason = str(exc)
-        contains_private = any(Path(x).is_relative_to(path) for x in [*self.protected,self.storage,self.native])
-        return dict(path=path, name=Path(path).name, parent=parent if path!='/' else None,locations=locations,
+        from .workspace_access import view_policy
+        policy = view_policy(self,path)
+        contains_private = policy['protected_container']
+        return dict(path=path, name=Path(path).name, parent=parent if path!='/' else None,locations=locations,show_hidden=show_hidden,
                     openable=openable, open_reason=reason, protected_container=contains_private,
-                    execution_allowed=any(Path(path).is_relative_to(r) for r in roots),
+                    record_location='host' if policy['hosted_records'] else 'project',record_notice=policy['reason'],
+                    execution_allowed=not contains_private and any(Path(path).is_relative_to(r) for r in roots),
                     roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime', release=self.release_identity(),
                     recent=self.db.listing('workspace', limit=8))
 
@@ -245,6 +270,8 @@ class WorkbenchRuntime(SessionRuntime):
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
         if registration:
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
+        from .agent_extensions import AgentExtensions
+        AgentExtensions(self).bind(workspace,node,binding)
         if admission:
             from .model_admission import ModelAdmission
             ModelAdmission(self).require(binding, cwd)
