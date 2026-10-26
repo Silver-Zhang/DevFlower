@@ -5,7 +5,24 @@ const out=process.argv[2],access=JSON.parse(fs.readFileSync(out+'/access.json'))
 const results=[];let browser;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await delay(40)}throw Error('Condition did not become true');}
-async function test(name,fn){if(process.env.TEST_FILTER&&!name.includes(process.env.TEST_FILTER))return;const context=await browser.newContext({viewport:{width:952,height:756}}),page=await context.newPage();page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(String(e)));try{await page.addInitScript(()=>localStorage.setItem('devflower-terminal-auto-open','false'));await page.goto(access.url+'/#'+access.token);await page.getByRole('button',{name:'打开文件夹',exact:true}).waitFor();await fn(page);assert.deepEqual(errors,[]);results.push({name,passed:true});}catch(e){results.push({name,passed:false,error:e.stack||String(e)});await page.screenshot({path:out+'/'+name+'-failure.png'});}finally{await page.unrouteAll({behavior:'ignoreErrors'});await context.close();fs.writeFileSync(out+'/workbench-results.json',JSON.stringify({evidence_type:'synthetic native data, ordinary Chromium/real HTTP',tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0,results},null,2));}}
+function writeResults(current=null,complete=false){fs.writeFileSync(out+'/workbench-results.json',JSON.stringify({evidence_type:'synthetic native data, ordinary Chromium/real HTTP',tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0,current_case:current,complete,results},null,2));}
+async function test(name,fn){
+ if(process.env.TEST_FILTER&&!name.includes(process.env.TEST_FILTER))return;
+ const context=await browser.newContext({viewport:{width:952,height:756}}),page=await context.newPage();page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(String(e)));const started=Date.now();let timer;
+ writeResults(name);console.log(JSON.stringify({case:name,state:'started'}));
+ try{
+  await Promise.race([(async()=>{await page.addInitScript(()=>localStorage.setItem('devflower-terminal-auto-open','false'));await page.goto(access.url+'/#'+access.token);await page.getByRole('button',{name:'打开文件夹',exact:true}).waitFor();await fn(page);assert.deepEqual(errors,[])})(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Browser case exceeded 45 seconds: '+name)),45000)})]);
+  results.push({name,passed:true,milliseconds:Date.now()-started});
+ }catch(e){
+  results.push({name,passed:false,error:e.stack||String(e),milliseconds:Date.now()-started});
+  writeResults(name);
+  try{await page.screenshot({path:out+'/'+name+'-failure.png',timeout:3000})}catch(shot){results.at(-1).screenshot_error=String(shot)}
+ }finally{
+  clearTimeout(timer);await page.unrouteAll({behavior:'ignoreErrors'});writeResults(name);
+  let cleanup;try{await Promise.race([context.close(),new Promise((_,reject)=>{cleanup=setTimeout(()=>reject(Error('Browser context did not close: '+name)),5000)})])}catch(e){results.at(-1).passed=false;results.at(-1).cleanup_error=String(e);writeResults(name);throw e}finally{clearTimeout(cleanup)}
+  writeResults();console.log(JSON.stringify({case:name,state:results.at(-1).passed?'passed':'failed',milliseconds:Date.now()-started}));
+ }
+}
 async function openWorkspace(p,chooseExample=true){await p.getByRole('button',{name:'打开文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor();await p.getByRole('button',{name:'选择此文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor({state:'hidden'});await until(async()=>!(await p.getByRole('button',{name:'开始运行',exact:true}).isDisabled()));if(chooseExample)await example(p,0);}
 async function example(p,index){await p.getByRole('button',{name:'示例',exact:true}).click();await p.locator('.example-library>button').nth(index).click();if(await p.getByRole('dialog',{name:'未保存的草稿',exact:true}).count())await p.getByRole('button',{name:'丢弃草稿并关闭',exact:true}).click();}
 async function displayedCanvasEdges(p,graph){
@@ -688,5 +705,5 @@ await test('builtin-assistant-chat-updates-canvas-and-retains-dialog',async p=>{
 await test('builtin-assistant-user-edit-during-inference-is-not-overwritten',async p=>{
  await openWorkspace(p);await p.getByRole('button',{name:'AI 配置',exact:true}).click();const panel=p.getByRole('dialog',{name:'AI配置助手',exact:true});await panel.getByLabel('助手模型',{exact:true}).selectOption('auto');let release;const hold=new Promise(r=>release=r);await p.route('**/api/canvas-assistant/conversation?*',async route=>{const response=await route.fetch();const body=await response.json();if(body.turn?.state==='COMPLETED')await hold;await route.fulfill({response})});try{await panel.getByRole('checkbox',{name:/允许发送本次对话/}).check();await panel.getByLabel('配置需求',{exact:true}).fill('生成过程中保留编辑');await panel.getByRole('button',{name:'发送并设计',exact:true}).click();await p.getByLabel('工作流名称',{exact:true}).fill('用户手动保留的名称');release();await until(async()=>await panel.getByRole('alert').count()>0);assert.equal(await p.getByLabel('工作流名称',{exact:true}).inputValue(),'用户手动保留的名称');assert((await panel.getByRole('alert').first().innerText()).includes('修改'));}finally{release()}
 });
-await browser.close();console.log(JSON.stringify({tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0}));process.exitCode=results.some(r=>!r.passed)?1:0;
+await browser.close();writeResults(null,true);console.log(JSON.stringify({tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0}));process.exitCode=results.some(r=>!r.passed)?1:0;
 })().catch(e=>{console.error(String(e));process.exitCode=1;browser?.close();});
