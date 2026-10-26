@@ -1,0 +1,234 @@
+{
+  "source": {
+    "repo": "https://github.com/Silver-Zhang/DevFlower",
+    "branch": "flow/copilot-canvas-assistant",
+    "base": "98ce61a5bb1fe87aa98e7b6c6de2d4178945bc5f",
+    "commit": "a362fb49ee8f9ebb572ffbf247e2d74a1169fc64",
+    "git_tree": "38c6850e1537af0f4334a27d3aaa984c7d8ea78f",
+    "candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+    "files": 227,
+    "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+  },
+  "selftest": {
+    "python": 843,
+    "host": 6,
+    "chromium_http": 210,
+    "javascript": 57,
+    "exit": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "assistant": {
+    "passed": true,
+    "calls": 2,
+    "workflow_starts": 0,
+    "model": "deepseek-flash",
+    "turns": [
+      {
+        "id": "713a9b3c863542b79245d03cbf5ced77",
+        "turn": "071cb6c328be4ca19d399893eade7aeb",
+        "state": "COMPLETED",
+        "intent": "chat",
+        "receipt": {
+          "agent_id": "devflower-assistant/v1",
+          "effort": "unknown",
+          "model_provider": "anthropic-api",
+          "native_session_id": null,
+          "provider": "devflower-agent",
+          "provider_message_id": "d07c800f-4dad-4baa-b89f-24d95ca5d02e",
+          "provider_request_id": null,
+          "public_summaries": [],
+          "requested_effort": "xhigh",
+          "requested_model": "deepseek-flash",
+          "resolved_model": "deepseek-flash",
+          "session_id": "713a9b3c863542b79245d03cbf5ced77",
+          "tools_enabled": [],
+          "transport": {
+            "agent_id": "devflower-assistant/v1",
+            "coding_cli": false,
+            "connection_sha256": "1294a77f1feef5d285cfedbecec3de28ead1694a0ac17b4c60072c5d12a56146",
+            "kind": "direct-model-api",
+            "protocol": "anthropic"
+          },
+          "usage": {
+            "input_tokens": 268,
+            "output_tokens": 300
+          }
+        },
+        "proposal": false
+      },
+      {
+        "id": "7617f409c61e49b9a74521d4c496b4b2",
+        "turn": "6fec2bb320b74f75bcb8aa51cafa6a82",
+        "state": "COMPLETED",
+        "intent": "workflow",
+        "receipt": {
+          "agent_id": "devflower-assistant/v1",
+          "effort": "unknown",
+          "model_provider": "anthropic-api",
+          "native_session_id": null,
+          "provider": "devflower-agent",
+          "provider_message_id": "9e32313e-800f-491d-a779-d732bbf7417a",
+          "provider_request_id": null,
+          "public_summaries": [],
+          "requested_effort": "xhigh",
+          "requested_model": "deepseek-flash",
+          "resolved_model": "deepseek-flash",
+          "session_id": "7617f409c61e49b9a74521d4c496b4b2",
+          "tools_enabled": [
+            "propose_workflow"
+          ],
+          "transport": {
+            "agent_id": "devflower-assistant/v1",
+            "coding_cli": false,
+            "connection_sha256": "1294a77f1feef5d285cfedbecec3de28ead1694a0ac17b4c60072c5d12a56146",
+            "kind": "direct-model-api",
+            "protocol": "anthropic"
+          },
+          "usage": {
+            "input_tokens": 718,
+            "output_tokens": 2551
+          }
+        },
+        "proposal": true
+      }
+    ],
+    "chat_without_graph": true,
+    "complex_design_validated": true,
+    "template_saved": true,
+    "public_reasoning_fields": []
+  },
+  "native_guide": {
+    "candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+    "git_tree": "38c6850e1537af0f4334a27d3aaa984c7d8ea78f",
+    "run": "867cd6c253381827200b924e2e047aeb",
+    "workspace": "9f26a4dd4c64e870a8df37cefd31dd30",
+    "state": "COMPLETED",
+    "actual_calls": 3,
+    "passed": true,
+    "journal_entries": 45,
+    "error": null,
+    "explicit_new_attempt_after": "d3fba4b0a6f2e8e98d08a8c61aa0e300 invalid Provider JSON; original failure retained; one bounded fresh task, not replay",
+    "sessions": [
+      {
+        "activation": "42a9d4ae528fd2c6eaad614d7a9cd76c99199b09342be7de851191d7aa85f3d9",
+        "node": "judge",
+        "round": [],
+        "state": "COMPLETED",
+        "session_id": "80bfa651-ea1e-435a-bad3-f6fde8ebb710",
+        "requested_model": "auto",
+        "requested_effort": "default",
+        "resolved_model": "gpt-5.6-luna",
+        "resolved_effort": "unknown"
+      },
+      {
+        "activation": "54b2739ef4795d6b3dbb02c297618e8b4e8221ebd632ab2a273a62b02e619ae9",
+        "node": "risks",
+        "round": [],
+        "state": "COMPLETED",
+        "session_id": "6d4759ce-53bf-470e-9893-0da128ae9d15",
+        "requested_model": "auto",
+        "requested_effort": "default",
+        "resolved_model": "gpt-5.6-luna",
+        "resolved_effort": "unknown"
+      },
+      {
+        "activation": "fb045f0bf5413ee6b15ae2b7e5fadddc08a841178daa4e86737369b4dc7c93b1",
+        "node": "feasibility",
+        "round": [],
+        "state": "COMPLETED",
+        "session_id": "09e18a49-eaa3-4348-8a81-2e298c6e59c1",
+        "requested_model": "auto",
+        "requested_effort": "default",
+        "resolved_model": "gpt-5.6-luna",
+        "resolved_effort": "unknown"
+      }
+    ]
+  },
+  "real_ui": {
+    "candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+    "git_tree": "38c6850e1537af0f4334a27d3aaa984c7d8ea78f",
+    "actor": "Agent-operated real Chromium, not personal user acceptance",
+    "new_inference_calls": 0,
+    "run": "867cd6c253381827200b924e2e047aeb",
+    "runtime_state": "COMPLETED",
+    "runtime_passed": true,
+    "file_reference_verified": true,
+    "saved_answers": 3,
+    "provider_label_correct": true,
+    "messages_first_view": true,
+    "refresh_no_replay": true,
+    "runtime_business_accepted": true,
+    "passed": true,
+    "scope": "product UI/history/file-link checks only; business verdict remains separate"
+  },
+  "history_import": {
+    "workspaces": 1,
+    "conversations": 4,
+    "metadata_records": 10,
+    "native_homes_copied": 0,
+    "approvals_or_permits_copied": 0,
+    "operator_changed": false,
+    "original_database_writes": false
+  },
+  "privacy": {
+    "candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+    "git_tree": "38c6850e1537af0f4334a27d3aaa984c7d8ea78f",
+    "files": 227,
+    "known_credential_matches": [],
+    "forbidden_runtime_files": [],
+    "source_unchanged": true,
+    "passed": true
+  },
+  "ci": {
+    "commit": "a362fb49ee8f9ebb572ffbf247e2d74a1169fc64",
+    "runs": [
+      {
+        "id": 40302140337,
+        "name": "Studio contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40302140337"
+      },
+      {
+        "id": 40302140209,
+        "name": "Usable regression",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40302140209"
+      }
+    ]
+  },
+  "negative_history": [
+    {
+      "candidate": "77d6a6cf765c11102385ff20fa77a3f86d9d43c96f9d981315fb3a374c90f144",
+      "run": "7975cf14b34cfc31f82653af18d435d1",
+      "calls": 7,
+      "state": "FAILED",
+      "reason": "merge.summary absent, null reached downstream, loop limit2; fixed and no old approval reused"
+    },
+    {
+      "candidate": "ded43aac987ba18586ddc058cb059142ab5f1881b1a3281dd601d0d7f39bed11",
+      "run": "f35bca4fc3bd54fe9c801bbe7ddfc645",
+      "calls": 4,
+      "state": "FAILED",
+      "reason": "Native Copilot revision timeout; no replay"
+    },
+    {
+      "candidate": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+      "run": "d3fba4b0a6f2e8e98d08a8c61aa0e300",
+      "calls": 3,
+      "state": "FAILED",
+      "reason": "Provider returned invalid JSON; source candidate unchanged; one explicit fresh business attempt, not continuation"
+    }
+  ],
+  "curated_template": {
+    "id": "ce176d817513dc7446a8bee4b83b98a9",
+    "workspace": "9f26a4dd4c64e870a8df37cefd31dd30",
+    "name": "真实复杂示例：操作指南审阅（Copilot）",
+    "revision": "bf2be198e82b1b3b718ec7a2d8621c58",
+    "graph_sha256": "e730b3cb5b11b1bff186f4cb22e2c2ace4e13d0bb8f933975faba948fef5dcce"
+  },
+  "archive": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026"
+}

@@ -1,0 +1,15 @@
+{
+  "status": "BLOCKED",
+  "candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+  "git_tree": "38c6850e1537af0f4334a27d3aaa984c7d8ea78f",
+  "source_review_verdict": null,
+  "final_candidate_independent_review": false,
+  "gate_invoked": false,
+  "gate_exit": null,
+  "reason": "Claude180+60 seconds no verdict on predecessor; final display corrections require fresh audit when service recovers; inherited Task04 SC08 remains OPEN",
+  "selftest": true,
+  "agent_operated_ui": true,
+  "business_result": "COMPLETED",
+  "user_personal_acceptance": false,
+  "stable_promoted": false
+}

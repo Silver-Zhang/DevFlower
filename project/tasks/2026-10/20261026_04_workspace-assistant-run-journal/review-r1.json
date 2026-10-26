@@ -1,0 +1,117 @@
+{
+  "status": "NO_VALID_VERDICT",
+  "raw_verdict": null,
+  "readiness": "BLOCKED",
+  "source_rounds": 1,
+  "infrastructure_recoveries": 1,
+  "attempts": [
+    {
+      "candidate_sha256": "ded43aac987ba18586ddc058cb059142ab5f1881b1a3281dd601d0d7f39bed11",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "74052566ce8fe20597775c46e951231aab8adab568b3bfaa05204f2c47368931",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "df6137e838dabc2592822df032584d2804e76971",
+      "home": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-workspace-journal-20261026-reviews-source-r1-candidate/691c78c1-50bc-4ce4-9da8-c3cd9445e464.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 180.097,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 4086363,
+          "pid": 4086363,
+          "sid": 4086363,
+          "start": "157250753",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "workspace-assistant-run-journal-20261026",
+      "session_id": "691c78c1-50bc-4ce4-9da8-c3cd9445e464",
+      "source_unchanged": true,
+      "task": "20261026_04_workspace-assistant-run-journal"
+    },
+    {
+      "candidate_sha256": "ded43aac987ba18586ddc058cb059142ab5f1881b1a3281dd601d0d7f39bed11",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "74052566ce8fe20597775c46e951231aab8adab568b3bfaa05204f2c47368931",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "df6137e838dabc2592822df032584d2804e76971",
+      "home": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-workspace-journal-20261026-reviews-source-r1-candidate/691c78c1-50bc-4ce4-9da8-c3cd9445e464.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 60.13,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 4087948,
+          "pid": 4087948,
+          "sid": 4087948,
+          "start": "157277768",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "recovery": 1,
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "workspace-assistant-run-journal-20261026",
+      "session_id": "691c78c1-50bc-4ce4-9da8-c3cd9445e464",
+      "source_unchanged": true,
+      "task": "20261026_04_workspace-assistant-run-journal",
+      "verdict": null
+    }
+  ],
+  "final_candidate_sha256": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+  "final_candidate_review": "not_submitted_after_provider_label_and_chat_display_correction: service unavailable after two bounded attempts; no old verdict reused",
+  "native_session_recovery": {
+    "home": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1",
+    "config_root": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude",
+    "cwd": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/reviews/source-r1/candidate",
+    "session_id": "691c78c1-50bc-4ce4-9da8-c3cd9445e464",
+    "native_record": "/home/workspace/DevFlower/archives/devflower-workspace-journal-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-workspace-journal-20261026-reviews-source-r1-candidate/691c78c1-50bc-4ce4-9da8-c3cd9445e464.jsonl",
+    "method": "Use pinned external supervisor/explicit UUID; never --last or another project"
+  }
+}

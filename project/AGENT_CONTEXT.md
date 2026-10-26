@@ -1,13 +1,11 @@
 # DevFlower 接续入口
 
-先读STATUS及tasks/2026-10/20261026_03_assistant-dock-model-selection/README.md、evidence-summary.json、review-r1.json。
+先读STATUS、tasks/2026-10/20261026_04_workspace-assistant-run-journal/README.md、evidence-summary.json、review-r1.json。
 
-开发源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD 98ce61a5bb1fe87aa98e7b6c6de2d4178945bc5f，tree e457f0c1723bed3817a83b88a58f7e369e9aec23，CF 0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c，218文件，Draft PR20依赖Draft PR19。
+源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD a362fb49ee8f9ebb572ffbf247e2d74a1169fc64，tree 38c6850e1537af0f4334a27d3aaa984c7d8ea78f，227文件CF b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b，Draft PR20依赖PR19。当前目录/助手/模板/整轮群聊/下一任务/安全文件链接已实现；真实发现的merge.summary空交接已加静态和运行时拒绝，不能恢复为静默null。
 
-当前AI助手为右侧常驻页签，不弹窗；内置专属Agent独立API，不调用编程CLI。会话管理/恢复保留草稿；模型目录直接选择保存偏好，无额外配置确认，执行准入与权限保持。安全哈希缓存不按TTL跳过校验。当前815/6/201/56零失败；真实两次API+同turn补充观察，原失败脚本保留。
+同候选843/6/210/57零失败。实际模型业务与合成测试分列；当前真实指南run 867cd6c253381827200b924e2e047aeb COMPLETED；旧7回合上限失败、4回合超时及当前3回合无效JSON均保留，不改成通过。Copilot显示身份来自原生绑定，未知不猜Claude；默认突出发言，普通事件可展开。
 
-Claude Task07 UUID fb2d921b-0e5a-427a-946c-1ba992184f1f，请求opus5.5[1m]/high；实际模型/effort unknown；HOME/cwd/native路径在review-r1.json。180+60秒两次无有效裁决后已停止，不在旧任务隐式加轮，不无声换模型。
+Claude Task08 R1/同UUID恢复均无裁决，1源码轮/1基础设施恢复后停止。UUID 691c78c1-50bc-4ce4-9da8-c3cd9445e464、HOME/cwd/native路径见review-r1.json。R1候选ded43，不覆盖后续最终显示修正；服务恢复后需对最新候选发起新源码轮，最多5轮/infra2，保留已有预算和原负面记录。实际后端/effort unknown，不擅自换模型。
 
-本机入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指preview-finalized；完整原始证据 /home/workspace/DevFlower/archives/devflower-assistant-dock-20261026。旧入口备份previous-launcher.py，所有旧版本/原生会话/认证保留；不覆盖Stable。
-
-旧Task04 SC08仍OPEN、R1–R5与Gate负面意见原样；Task05/06超时原记录保留，不复用旧ACCEPT。当前独立Gate前置条件不足。记录仅project/devflower，不入源码flow/main；CodeWeave/RMC不动。
+当前入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指reader Development。旧入口备份和完整日志/截图/会话在 /home/workspace/DevFlower/archives/devflower-workspace-journal-20261026；旧Stable与本机已有数据不删。旧Task04 SC08仍OPEN，Task05–07负面裁决/预算原样；不以此次UI自验批准Controller自身、合同K或Stable。记录仅project/devflower，CodeWeave/RMC不动。
