@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261026_05_workspace-local-project",
+  "date": "2026-10-26",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "a362fb49ee8f9ebb572ffbf247e2d74a1169fc64",
+      "commit": "c8d9c1a11775013f84027c3e818a48d1c7d3674f",
+      "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+      "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+      "files": 231,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

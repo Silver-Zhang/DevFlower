@@ -1,0 +1,6 @@
+WP01: Opening a safe project creates managed .devflower; reopening recovers local drafts/templates and project-scoped readable native/assistant/run history. Prior hosted data and native HOME/auth remain untouched.
+WP02: Local draft/template CAS and immutable revisions survive host cache loss; deletion does not resurrect. Copying project imports designs without native writers or permits.
+WP03: Local history is untrusted read-only presentation; cannot grant model admission, Runtime process identity, authorization, ACCEPT or resume. Unknown status is honest.
+WP04: Source hash excludes only valid reserved local metadata; complete program candidate hashing remains unchanged. Real write-capable process and native terminal mask metadata. Reject unknown/symlink/hardlink/special metadata; no protected parent execution admission.
+WP05: Browser can select/open a project, see local persistence, save/reopen workflows/templates, read scoped conversation history without model replay. Errors remain visible. Unsaved drafts are preserved.
+WP06: Full prior Python/host/baseline/build/syntax/Chromium regressions and new persistence/negative tests. Real model evidence is separate, reviews bound to full candidate; no Stable promotion/self-Gate/main merge.

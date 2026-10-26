@@ -1,11 +1,11 @@
 # DevFlower 接续入口
 
-先读STATUS、tasks/2026-10/20261026_04_workspace-assistant-run-journal/README.md、evidence-summary.json、review-r1.json。
+先读STATUS、tasks/2026-10/20261026_05_workspace-local-project/README.md、evidence-summary.json、review-r1.json、readiness.json。旧Task08及之前的结论/预算/证据保持原样。
 
-源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD a362fb49ee8f9ebb572ffbf247e2d74a1169fc64，tree 38c6850e1537af0f4334a27d3aaa984c7d8ea78f，227文件CF b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b，Draft PR20依赖PR19。当前目录/助手/模板/整轮群聊/下一任务/安全文件链接已实现；真实发现的merge.summary空交接已加静态和运行时拒绝，不能恢复为静默null。
+源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEADc8d9c1a11775013f84027c3e818a48d1c7d3674f，tree83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4，231文件CF7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43，Draft PR20依赖PR19。Task09实现项目内设计/模板主库、只读历史复制/恢复、保护总目录可查看但不执行、元数据源身份分离和真实进程隔离；默认空白画布保持。
 
-同候选843/6/210/57零失败。实际模型业务与合成测试分列；当前真实指南run 867cd6c253381827200b924e2e047aeb COMPLETED；旧7回合上限失败、4回合超时及当前3回合无效JSON均保留，不改成通过。Copilot显示身份来自原生绑定，未知不猜Claude；默认突出发言，普通事件可展开。
+同候选865/6/219/57最终零失败；一次浏览器读取观察超时未删除、未改断言，完整100项复跑通过。真实run9bf0d7c2351ff9a4d7ed1063557761eb Codex只读1业务+1检查、DeepSeek助手1次；空宿主本地历史可读，无模型重放/原生HOME复制/授权或运行状态导入。全部原始档案在 /home/workspace/DevFlower/archives/devflower-project-local-20261026。
 
-Claude Task08 R1/同UUID恢复均无裁决，1源码轮/1基础设施恢复后停止。UUID 691c78c1-50bc-4ce4-9da8-c3cd9445e464、HOME/cwd/native路径见review-r1.json。R1候选ded43，不覆盖后续最终显示修正；服务恢复后需对最新候选发起新源码轮，最多5轮/infra2，保留已有预算和原负面记录。实际后端/effort unknown，不擅自换模型。
+Claude Task09 R1及准确同UUID恢复均无最终裁决，1源码轮+1基础设施恢复后停止；UUIDa8df7386-27ba-4131-8b86-3292863eec61，HOME/cwd/native路径见review-r1.json。请求Opus5.5 1M/high，原生报告claude-opus-5-5，物理后端/实际effort unknown。新证据出现前不要再无界请求；后续若修正候选需重新验证/审核，不复用旧报告。旧Task04 SC08 P1仍OPEN，最终Gate未调用，不能自批Stable/合同K。
 
-当前入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指reader Development。旧入口备份和完整日志/截图/会话在 /home/workspace/DevFlower/archives/devflower-workspace-journal-20261026；旧Stable与本机已有数据不删。旧Task04 SC08仍OPEN，Task05–07负面裁决/预算原样；不以此次UI自验批准Controller自身、合同K或Stable。记录仅project/devflower，CodeWeave/RMC不动。
+入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development CF7307 /40477；建议选择项目位置DevFlower-Project-Local-ready。旧入口备份在本任务archives，旧Stable、HOME、会话、认证、服务和工作树未删。`.devflower`不含凭据/权威，Git默认忽略，原生长历史200条显示预算不冒充完整归档；源快照/外部交付须明确排除它。源码只推flow/copilot-canvas-assistant，记录只推project/devflower；不合并main，不升级Stable，不修改CodeWeave/RMC。

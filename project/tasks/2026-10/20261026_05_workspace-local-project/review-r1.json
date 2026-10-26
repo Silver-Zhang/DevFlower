@@ -1,0 +1,128 @@
+{
+  "task": "20261026_05_workspace-local-project",
+  "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+  "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+  "source_rounds": 1,
+  "recoveries": 1,
+  "final_verdict": null,
+  "valid_final_result": false,
+  "stop_reason": "180s and exact-session60s supervisor deadlines elapsed without a valid final structured CLI result; original native inspection retained; no third request",
+  "rounds": [
+    {
+      "round": 1,
+      "recovery": null,
+      "home": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1",
+      "config_root": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1/.claude",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/reviews/source-r1/candidate",
+      "session_id": "a8df7386-27ba-4131-8b86-3292863eec61",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-project-local-20261026-reviews-source-r1-candidate/a8df7386-27ba-4131-8b86-3292863eec61.jsonl",
+      "requested_model": "claude-opus-5-5[1m]",
+      "requested_effort": "high",
+      "reported_model": null,
+      "physical_backend": "unknown",
+      "effective_effort": "unknown",
+      "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+      "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+      "contract_sha256": "0eb96933b6d2c91d6bb3ba188b30bcd33b5e643015400e8093c99e11cf066924",
+      "complete": false,
+      "verdict": null,
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 180.157,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 213903,
+          "pid": 213903,
+          "sid": 213903,
+          "start": "158025576",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "source_unchanged": true,
+      "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3"
+    },
+    {
+      "round": 1,
+      "recovery": 1,
+      "home": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1",
+      "config_root": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1/.claude",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/reviews/source-r1/candidate",
+      "session_id": "a8df7386-27ba-4131-8b86-3292863eec61",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-project-local-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-project-local-20261026-reviews-source-r1-candidate/a8df7386-27ba-4131-8b86-3292863eec61.jsonl",
+      "requested_model": "claude-opus-5-5[1m]",
+      "requested_effort": "high",
+      "reported_model": null,
+      "physical_backend": "unknown",
+      "effective_effort": "unknown",
+      "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+      "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+      "contract_sha256": "0eb96933b6d2c91d6bb3ba188b30bcd33b5e643015400e8093c99e11cf066924",
+      "complete": false,
+      "verdict": null,
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 60.141,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 238998,
+          "pid": 238998,
+          "sid": 238998,
+          "start": "158056796",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "source_unchanged": true,
+      "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3"
+    }
+  ],
+  "native_metadata": {
+    "reported_native_models": [
+      "<synthetic>",
+      "claude-opus-5-5"
+    ],
+    "visible_tool_counts": {
+      "Read": 7,
+      "Bash": 6,
+      "Grep": 1
+    },
+    "native_record_bytes": 5519134,
+    "native_record_sha256": "513e291bedad739e87f3e1744f93437d961bfeb96acdf984c7a66c6009ba5461",
+    "native_structured_report_count": 0,
+    "physical_backend": "unknown",
+    "effective_effort": "unknown"
+  }
+}

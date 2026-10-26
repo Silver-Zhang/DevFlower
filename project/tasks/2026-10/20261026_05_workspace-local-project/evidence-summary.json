@@ -1,0 +1,161 @@
+{
+  "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+  "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+  "files": 231,
+  "python": {
+    "tests": 865,
+    "exit": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "host": {
+    "tests": 6,
+    "exit": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "baseline": {
+    "exit": 0,
+    "meaning": "structural-only"
+  },
+  "chromium_http": {
+    "tests": 219,
+    "exit": 0,
+    "failures": 0,
+    "skipped": 0,
+    "components": {
+      "workbench": 100,
+      "project": 9,
+      "other": 110
+    }
+  },
+  "javascript": {
+    "tests": 57,
+    "exit": 0
+  },
+  "syntax": {
+    "commands": 6,
+    "exit": 0
+  },
+  "build": {
+    "exit": 0,
+    "byte_identical": true
+  },
+  "real": {
+    "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+    "git_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+    "synthetic": false,
+    "actor": "local implementation Agent under this user task authorization, not personal user acceptance",
+    "passed": true,
+    "workspace": "2aa769e368cf764f4dcc7b5167f9d5cb",
+    "run": "9bf0d7c2351ff9a4d7ed1063557761eb",
+    "state": "COMPLETED",
+    "actual_calls": 1,
+    "agents": [
+      {
+        "id": "898c7885c298768e2d5db01c7304a6bff98cd4f59e28f9e2b322779dd5bda131",
+        "node": "analyze",
+        "state": "COMPLETED",
+        "receipt": {
+          "permission_mode": "external-bwrap/never",
+          "process": {
+            "bytes": {
+              "stderr": 0,
+              "stdout": 697
+            },
+            "cancelled": false,
+            "duration": 22.601,
+            "exit": 0,
+            "operation_id": "5418fd777d6b01f9fd82803cf3bd9a44",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 162350,
+              "pid": 162350,
+              "sid": 162350,
+              "start": "157974653",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "stdout": "ca5eff857b4f0d86bfeacb3568472813c49e1394d38c034a01cfedd4ef867bb5"
+            },
+            "timeout": false
+          },
+          "raw_report_sha256": "2e2cb76cb18c896d2b3099dea5b6994b56e8362d6db248119aee675e0423676f",
+          "requested_effort": "xhigh",
+          "requested_model": "gpt-6.1-sol",
+          "resolved_effort": "unknown",
+          "resolved_model": "unknown",
+          "session_id": "01a177f5-a62f-71e2-89c8-65804628caba",
+          "usage": {
+            "semantics": "turn",
+            "total_cost_usd": "unknown",
+            "usage": {
+              "cached_input_tokens": 0,
+              "input_tokens": 15895,
+              "output_tokens": 334
+            }
+          },
+          "usage_scope": "8a3ac6fcb322d0cd726729af237c734fecd43070be770e8e88d1d43fbcba29a9"
+        }
+      }
+    ],
+    "assistant_id": "7fe3943d08b727f5c88ee1dac6a2a511",
+    "assistant_model": "deepseek-flash",
+    "assistant_messages": 2,
+    "independent_empty_host_readback": true,
+    "reading_launched_agents": 0,
+    "reading_admissions": 0,
+    "native_home_copied": false
+  },
+  "review": {
+    "status": "INCOMPLETE",
+    "round": 1,
+    "infra_recoveries": 1,
+    "verdict": null
+  },
+  "stable_changed": false,
+  "main_changed": false,
+  "code": {
+    "head": "c8d9c1a11775013f84027c3e818a48d1c7d3674f",
+    "tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+    "branch": "flow/copilot-canvas-assistant",
+    "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+    "staged_paths": [
+      ".gitignore",
+      "docs/user/assistant-and-copilot.md",
+      "tests/test_workbench_runtime.py",
+      "tools/devflower_native_terminal.py",
+      "tools/orchestration/common.py",
+      "tools/orchestration/process.py",
+      "tools/review_handoff.py",
+      "tools/studio/agent_sessions.py",
+      "tools/studio/canvas_assistant.py",
+      "tools/studio/configuration_assistant.py",
+      "tools/studio/native_terminals.py",
+      "tools/studio/run_journal.py",
+      "tools/studio/session_center.py",
+      "tools/studio/session_runtime.py",
+      "tools/studio/static/workbench.js",
+      "tools/studio/workbench_runtime.py",
+      "tools/studio/workbench_scheduler.py",
+      "tools/studio/workbench_server.py",
+      "tools/studio/workbench_sessions.py",
+      "tools/studio/workbench_ui/CanvasAssistant.jsx",
+      "tools/studio/workbench_ui/FolderPicker.jsx",
+      "tools/studio/workbench_ui/RunJournal.jsx",
+      "tools/studio/workbench_ui/SessionList.jsx",
+      "tools/studio/workbench_ui/StudioChrome.jsx",
+      "tools/studio/workbench_ui/index.jsx",
+      "tools/studio/workflow_library.py",
+      "tests/project_files_browser.cjs",
+      "tests/project_files_browser.py",
+      "tests/test_project_files.py",
+      "tools/studio/project_files.py"
+    ]
+  }
+}
