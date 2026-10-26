@@ -1,13 +1,13 @@
 # DevFlower 接续入口
 
-先读STATUS、tasks/2026-10/20261026_05_workspace-local-project/README.md、evidence-summary.json、review-r1.json、readiness.json。旧Task08及之前的结论/预算/证据保持原样。
+先读STATUS、tasks/2026-10/20261027_01_workspace-images-skills-agents/README.md、evidence-summary.json、readiness.json、contract.txt。每任务一份五节README，原始日志/图片/会话不入库，不改写旧裁决。
 
-源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEADc8d9c1a11775013f84027c3e818a48d1c7d3674f，tree83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4，231文件CF7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43，Draft PR20依赖PR19。Task09实现项目内设计/模板主库、只读历史复制/恢复、保护总目录可查看但不执行、元数据源身份分离和真实进程隔离；默认空白画布保持。
+源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD007d34bcf7ef1bb3af40bf32267614c80b8d65e3，treeec742da6d997857f56dd201900770931031ff189，237文件CFdbe28848f475e1fdd5bd322984a156969df77740f9a68b3d8be524d7633f5847；Draft PR20依赖PR19。main仍e0a0f92fed7f94bfef3a01b1298f8465c008023d；Stable未替换。
 
-同候选865/6/219/57最终零失败；一次浏览器读取观察超时未删除、未改断言，完整100项复跑通过。真实run9bf0d7c2351ff9a4d7ed1063557761eb Codex只读1业务+1检查、DeepSeek助手1次；空宿主本地历史可读，无模型重放/原生HOME复制/授权或运行状态导入。全部原始档案在 /home/workspace/DevFlower/archives/devflower-project-local-20261026。
+Task10修复打开总目录误拦，浏览不能授予执行；项目优先.devflower，保护/未知/不可写位置托管不覆盖。图片PNG/JPEG显式发送；Skill完整内容哈希绑定/只读挂载/拒绝策略注入；连接诊断用公共占位不发业务Skill；Codex/Claude只读原生子Agent，写入任务单写者，Copilot不提供扩展。实际开关ON/OFF均测；不可把代理/原生未知参数猜成已生效。
 
-Claude Task09 R1及准确同UUID恢复均无最终裁决，1源码轮+1基础设施恢复后停止；UUIDa8df7386-27ba-4131-8b86-3292863eec61，HOME/cwd/native路径见review-r1.json。请求Opus5.5 1M/high，原生报告claude-opus-5-5，物理后端/实际effort unknown。新证据出现前不要再无界请求；后续若修正候选需重新验证/审核，不复用旧报告。旧Task04 SC08 P1仍OPEN，最终Gate未调用，不能自批Stable/合同K。
+最终同候选891/6/225/57零失败，真实图片9节点10边。r8复杂真实Codex4调用+1真实子Agent完成，r9只CSS/浏览器断言变化，分别绑定。r7 Codex+Claude6调用2轮旧证据保留；不能代替当前最终双Provider/独立审核。
 
-入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development CF7307 /40477；建议选择项目位置DevFlower-Project-Local-ready。旧入口备份在本任务archives，旧Stable、HOME、会话、认证、服务和工作树未删。`.devflower`不含凭据/权威，Git默认忽略，原生长历史200条显示预算不冒充完整归档；源快照/外部交付须明确排除它。源码只推flow/copilot-canvas-assistant，记录只推project/devflower；不合并main，不升级Stable，不修改CodeWeave/RMC。
+固定旧Stable监督ClaudeR1及同UUID恢复均HTTP502 exit1、verdict=null，UUID72705bcc-99a5-4193-8b6c-b0c0543d0e1a，HOME/cwd/native路径见摘要。原生请求Opus5.5 1M/high，实际物理后端/effort unknown。基础设施恢复预算2已尽；不得新UUID/新候选偷续服务请求。当前正式验收BLOCKED、Gate未调用，继承SC08 P1未关；不自批Stable/合同K，不合并main。
 
-旧当前预览的记录已通过只读数据库快照迁入 /home/workspace/DevFlower/.devflower：3工作流/2模板/6助手（保留4回收站）/2任务/6会话阅读副本；没有复制HOME或批准Root执行。两项GitHub CI成功，原始导入日志只在本任务archives。
+入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development /35837。旧页面/版本、原生HOME/认证和服务不删。所有后续新增工作流测试与保留证据统一 /home/workspace/DevFlower/test，任务本轮根 /home/workspace/DevFlower/test/20261027-workspace-images-skills-agents；普通单测临时文件/tmp自动清理。源码只推flow/copilot-canvas-assistant，记录只推project/devflower，不修改CodeWeave/RMC。

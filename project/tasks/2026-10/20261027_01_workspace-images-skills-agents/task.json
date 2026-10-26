@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261027_01_workspace-images-skills-agents",
+  "date": "2026-10-27",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "c8d9c1a11775013f84027c3e818a48d1c7d3674f",
+      "commit": "007d34bcf7ef1bb3af40bf32267614c80b8d65e3",
+      "git_tree": "ec742da6d997857f56dd201900770931031ff189",
+      "candidate_sha256": "dbe28848f475e1fdd5bd322984a156969df77740f9a68b3d8be524d7633f5847",
+      "files": 237,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

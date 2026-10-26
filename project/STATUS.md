@@ -1,11 +1,9 @@
 # 当前状态
 
-Task09 20261026_05_workspace-local-project：项目内`.devflower`存储已实现和自验。源码c8d9c1a / tree83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4 / CF7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43，231文件，PR20保持Draft，依赖PR19。
+Task10 `20261027_01_workspace-images-skills-agents`：文件夹浏览/执行分离、流程图图片、原生Skill和只读子Agent开关已实现。源码 007d34bcf7ef1bb3af40bf32267614c80b8d65e3 / tree ec742da6d997857f56dd201900770931031ff189 / CF dbe28848f475e1fdd5bd322984a156969df77740f9a68b3d8be524d7633f5847，237文件；PR20依赖PR19，保持Draft。
 
-865 Python、6隔离、219 Chromium/HTTP、57JS最终exit0、FAIL/ERROR/SKIP0；原同候选一次浏览器观察超时保留，完整不改断言复跑100/0。真实Codex1业务+1检查、DeepSeek助手1次；同项目独立空宿主可读设计/对话而无原生HOME或执行权威导入。
+最终同候选891 Python、6隔离、225 Chromium/HTTP、57 JS，exit0、FAIL/ERROR/SKIP0；Baseline/构建/6语法/隐私扫描通过。当前DeepSeek真实识图9节点10边；原生ON/OFF配置实测。r8复杂Codex4调用+1子Agent完成；与r9仅CSS/一浏览器断言不同，证据分版本。r7另有Codex+Claude两轮6调用旧证据。
 
-Claude新任务R1(180秒)+同UUID恢复(60秒)真实检查但无有效最终裁决，verdict=null；正式验收BLOCKED，最终Gate未调用，旧SC08仍OPEN。旧任务预算/原始结论不改写。新工作流/模板在项目内主存储；历史是阅读副本，许可与凭据留独立本机存储。
+Claude新任务R1及准确同UUID恢复均HTTP502、exit1，无有效裁决verdict=null；当前r9未经源码独立复核，正式验收BLOCKED，Gate未调用。当前最终双Provider真实复验缺失，旧SC08 P1仍OPEN。旧Task09及更早结论/预算未改。
 
-上一版当前预览已按阅读副本整理到根工作区.devflower（3工作流/2模板/6助手/2任务/6会话），保留回收站和真实时间，原件未动；源分支已推送读回，GitHub两项CI成功。
-
-入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py；Development http://127.0.0.1:40477，旧Stable/版本/会话/证据保留。原始大日志仅archives/devflower-project-local-20261026。下一步仅恢复独立最终审核与用户体验确认，不合并或晋升。
+入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development http://127.0.0.1:35837；旧页面/服务/Stable/会话保留。后续新增工作流测试、持久HOME与证据统一放工作空间test/，普通单测临时文件自动清理。下一步：服务恢复后的合规独立复核及用户体验确认，不自批Gate或Stable。
