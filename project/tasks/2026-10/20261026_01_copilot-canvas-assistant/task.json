@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "20261026_01_copilot-canvas-assistant",
+  "date": "2026-10-26",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "2df889c381eeb6607578f8659fe270831181c4d6",
+      "commit": "eeb6189a2667d66967d309473c4572e2b9d20cf3",
+      "candidate_sha256": "e4c0eeda51fbe00d2c57110261986dbc833c1c96f1586e37281cf4a3781e6017",
+      "git_tree": "a42653c1e22a2f28a57c9fe424d027f8d1fda11f",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

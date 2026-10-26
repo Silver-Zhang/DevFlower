@@ -1,0 +1,6 @@
+{
+  "status": "BLOCKED",
+  "gate_invoked": false,
+  "reason": "Missing valid independent verdict for current complete candidate; gate precondition not met",
+  "prior_task04_original_gate": "BLOCKED, unchanged"
+}

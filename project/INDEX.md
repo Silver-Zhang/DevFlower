@@ -4,6 +4,7 @@
 
 | 日期 | 任务 | 模式 | 状态 |
 |---|---|---|---|
+| 2026-10-26 | [20261026_01_copilot-canvas-assistant](tasks/2026-10/20261026_01_copilot-canvas-assistant/README.md) | B | 阻塞 |
 | 2026-10-25 | [20261025_04_session-config-assistant](tasks/2026-10/20261025_04_session-config-assistant/README.md) | B | 阻塞 |
 | 2026-10-25 | [20261025_03_workbench-user-experience](tasks/2026-10/20261025_03_workbench-user-experience/README.md) | B | 阻塞 |
 | 2026-10-25 | [20261025_02_session-cleanup-selftest](tasks/2026-10/20261025_02_session-cleanup-selftest/README.md) | A | 已完成 |
