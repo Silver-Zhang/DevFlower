@@ -91,3 +91,6 @@ test('cost report does not require invented tokens; cumulative cost without scop
 test('overflow of finite reports cannot be displayed as an infinite bill',()=>{
  const r=usageSummary([billed('a',1,Number.MAX_VALUE),billed('b',2,Number.MAX_VALUE)]);assert.equal(r.cost,null);assert.equal(r.costReported,2);assert.equal(r.costComplete,false);
 });
+
+import {providerLabel} from "../tools/studio/workbench_ui/provider_label.mjs";
+test("Provider labels preserve Copilot and never guess Claude",()=>{assert.equal(providerLabel("copilot"),"GitHub Copilot");assert.equal(providerLabel("claude"),"Claude Code");assert.equal(providerLabel("codex"),"Codex");assert.equal(providerLabel("unverified"),"Agent（未确认）")});

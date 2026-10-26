@@ -66,6 +66,8 @@ class RunJournalTests(unittest.TestCase):
  def test_reading_whole_run_retains_task_and_two_answers_without_inference(self):
   with patch('subprocess.Popen',side_effect=AssertionError('history must not launch')):v=run_conversation(self.manager,self.w,self.run)
   self.assertEqual(v['run'],self.run);answers=[e for e in v['entries'] if e['kind']=='assistant'];self.assertEqual(len(answers),2);self.assertNotIn('journal-B',json.dumps(answers));self.assertNotIn('HIDDEN_RESULT_REASONING',json.dumps(v));self.assertEqual(len(self.rt.flow.list('run')),2)
+ def test_provider_fallback_uses_exact_node_session_binding(self):
+  a=self.rt.flow.get('activation','journal-A-turn-1');a.pop('provider',None);self.rt.flow.put('activation',a['id'],a);v=run_conversation(self.manager,self.w,self.run);rows=[e for e in v['entries'] if e.get('activation')==a['id']];self.assertTrue(rows);self.assertTrue(all(e['provider']=='claude' for e in rows))
  def test_old_candidate_is_not_relabelled_as_current(self):
   v=run_conversation(self.manager,self.w,self.run);self.assertEqual(v['candidate_sha256'],'unknown');self.assertEqual(v['viewer_candidate_sha256'],self.rt.candidate_sha256)
  def test_foreign_workspace_and_failed_receipt_cannot_become_verified_answer(self):

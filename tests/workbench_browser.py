@@ -30,6 +30,7 @@ def main():
         _,row=structured_session(base,rt,label)
         rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic '+label))
         session_rows[label]=dict(handle=row['handle'],session_id=row['session_id'])
+    rt.flow.event('dialog-A-run','fixture-history',node='loop/analyze',reason='')  # Synthetic UI-only history event, not a real control action.
     # Native Codex final text already supplies this answer: no second result body.
     _,row=structured_session(base,rt,'dialog-native','codex',native_answers=True)
     rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic dialog-native'))

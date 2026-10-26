@@ -44,7 +44,12 @@ def run_conversation(manager,workspace,run):
     for a in snapshot['nodes']:
         if a.get('kind')!='agent':continue
         value=manager.node_conversation(workspace,run,a['id'])
-        common=dict(node=a['node'],activation=a['id'],round=a.get('iteration_path',[]),provider=a.get('provider'),state=value['state'])
+        provider=a.get('provider')
+        if not provider and a.get('chat_key'):
+            chat=rt.flow.get('node-session',a['chat_key'])
+            if chat.get('workspace')!=workspace or chat.get('run')!=run:raise Blocked('原生会话身份与运行不匹配')
+            provider=chat['binding']['provider']
+        common=dict(node=a['node'],activation=a['id'],round=a.get('iteration_path',[]),provider=provider,state=value['state'])
         add(a['id']+':input','input',a.get('started_at'),a.get('name',a['node']),sections=value['request_sections'],**common)
         answer=value.get('saved_answer')
         if answer:add(a['id']+':answer','assistant',a.get('finished_at'),a.get('name',a['node']),text=answer,session=value.get('session'),**common)
