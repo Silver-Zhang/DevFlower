@@ -9,3 +9,5 @@
 Claude Task09 R1及准确同UUID恢复均无最终裁决，1源码轮+1基础设施恢复后停止；UUIDa8df7386-27ba-4131-8b86-3292863eec61，HOME/cwd/native路径见review-r1.json。请求Opus5.5 1M/high，原生报告claude-opus-5-5，物理后端/实际effort unknown。新证据出现前不要再无界请求；后续若修正候选需重新验证/审核，不复用旧报告。旧Task04 SC08 P1仍OPEN，最终Gate未调用，不能自批Stable/合同K。
 
 入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development CF7307 /40477；建议选择项目位置DevFlower-Project-Local-ready。旧入口备份在本任务archives，旧Stable、HOME、会话、认证、服务和工作树未删。`.devflower`不含凭据/权威，Git默认忽略，原生长历史200条显示预算不冒充完整归档；源快照/外部交付须明确排除它。源码只推flow/copilot-canvas-assistant，记录只推project/devflower；不合并main，不升级Stable，不修改CodeWeave/RMC。
+
+旧当前预览的记录已通过只读数据库快照迁入 /home/workspace/DevFlower/.devflower：3工作流/2模板/6助手（保留4回收站）/2任务/6会话阅读副本；没有复制HOME或批准Root执行。两项GitHub CI成功，原始导入日志只在本任务archives。

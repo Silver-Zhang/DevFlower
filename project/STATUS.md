@@ -6,4 +6,6 @@ Task09 20261026_05_workspace-local-project：项目内`.devflower`存储已实�
 
 Claude新任务R1(180秒)+同UUID恢复(60秒)真实检查但无有效最终裁决，verdict=null；正式验收BLOCKED，最终Gate未调用，旧SC08仍OPEN。旧任务预算/原始结论不改写。新工作流/模板在项目内主存储；历史是阅读副本，许可与凭据留独立本机存储。
 
+上一版当前预览已按阅读副本整理到根工作区.devflower（3工作流/2模板/6助手/2任务/6会话），保留回收站和真实时间，原件未动；源分支已推送读回，GitHub两项CI成功。
+
 入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py；Development http://127.0.0.1:40477，旧Stable/版本/会话/证据保留。原始大日志仅archives/devflower-project-local-20261026。下一步仅恢复独立最终审核与用户体验确认，不合并或晋升。

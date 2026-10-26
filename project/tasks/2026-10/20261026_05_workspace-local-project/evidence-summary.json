@@ -157,5 +157,60 @@
       "tests/test_project_files.py",
       "tools/studio/project_files.py"
     ]
+  },
+  "legacy_migration": {
+    "passed": true,
+    "candidate_sha256": "7307d873eb7ef10f347f3847cd5f719754e40a8b708b51d7f61e8a2747a6ef43",
+    "destination": "/home/workspace/DevFlower/.devflower",
+    "origin_candidate": "b3188afda745b5f1ade2ce13cff89aaa079a473510d993ed5106109d79555b4b",
+    "counts": {
+      "drafts": 3,
+      "templates": 2,
+      "assistants": 6,
+      "runs": 2,
+      "sessions": 6
+    },
+    "errors": [],
+    "native_homes_copied": false,
+    "source_databases_opened": "readonly SQLite backup",
+    "models_invoked": 0,
+    "execution_authorization_granted": false,
+    "source_runtime_replaced": false,
+    "http_readback": {
+      "drafts": 3,
+      "templates": 2,
+      "sessions": 6,
+      "assistants_by_collection": {
+        "active": 2,
+        "archived": 0,
+        "trash": 4
+      },
+      "runs": 2,
+      "protected_container_execution_rejected": true
+    },
+    "run_clocks_preserved": true
+  },
+  "delivery": {
+    "source_branch": "flow/copilot-canvas-assistant",
+    "source_head": "c8d9c1a11775013f84027c3e818a48d1c7d3674f",
+    "source_tree": "83ada1d141a6dcdcc3f95b1e682cda34bd3e51c4",
+    "source_pushed": true,
+    "source_remote_readback": true,
+    "records_branch": "project/devflower",
+    "previous_records_push_readback": "3f315a7ebeef6a1f7e3689e00f085c0c00b10b90",
+    "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20",
+    "draft": true,
+    "ci": [
+      {
+        "id": 40317433890,
+        "name": "Studio contracts",
+        "conclusion": "success"
+      },
+      {
+        "id": 40317433881,
+        "name": "Usable regression",
+        "conclusion": "success"
+      }
+    ]
   }
 }

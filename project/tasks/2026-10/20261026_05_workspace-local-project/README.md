@@ -22,6 +22,8 @@
 - 独立空宿主重新打开同一项目：工作流、真实对话和助手可读；没有复制原生HOME，无模型重发，无准入或运行权威导入。此场景是本轮持久化验收，不冒充整版合同K或用户本人接受。
 - 隐私扫描231文件：已知凭据0命中，运行数据0入库，冻结后源码未变化。
 
+上一版当前预览的本机数据库通过只读SQLite备份提取，不直接修改源库；原生HOME未复制。已在 `/home/workspace/DevFlower/.devflower` 整理3份工作流、2份模板、6份助手记录（2活动/4原回收站）、2轮任务和6份原生对话阅读副本。保留原始工作区/候选与真实运行时间，不把旧记录标成新候选通过；HTTP读回数量与只读属性通过，容器目录实际执行仍被拒绝，迁移调用模型0次。其他旧服务/档案未全局合并，原件保留。
+
 原始证据只在 `/home/workspace/DevFlower/archives/devflower-project-local-20261026`，机器摘要见本目录evidence-summary.json，审核见review-r1.json。用户指南随源码位于docs/user/assistant-and-copilot.md。
 
 ## 3. 决策记录
@@ -34,7 +36,7 @@
 
 本机已验证入口 `python3 /home/workspace/DevFlower/.local/open-devflower-agent.py`，Development CF7307d873eb7e，http://127.0.0.1:40477。建议在目录选择器选择DevFlower-Project-Local-ready项目位置；更换目录只打开其自己的记录，不自动合并其他项目。较长原生会话沿用200条显示/读取预算，完整原件仍在原生工具中；复制SQLite需一致性备份或关闭工作台，不能只拷主文件漏掉WAL。旧托管记录后台整理失败会保留原件并显示错误；本地阅读副本不是防篡改审计原件。源快照/固定外部交付配置须明确排除`.devflower`，不能沿用未核验的旧任务许可。
 
-用户本人体验待确认。源码提交/远端读回与PR更新记录以本次交付回执为准，PR20保持Draft，依赖PR19；项目记录独立分支同步，原始日志/截图/原生会话不上传。下一步仅在新证据支持恢复时取得当前候选有效独立最终裁决；不继续扩展功能或自行晋升。
+用户本人体验待确认。源码已正常推送并读回c8d9c1a；[Studio contracts](https://github.com/Silver-Zhang/DevFlower/actions/runs/40317433890)与[Usable regression](https://github.com/Silver-Zhang/DevFlower/actions/runs/40317433881)均成功。PR20已更新且保持Draft，依赖PR19；项目记录独立分支同步，原始日志/截图/原生会话不上传。下一步仅在新证据支持恢复时取得当前候选有效独立最终裁决；不继续扩展功能或自行晋升。
 
 ## 5. 过程记录
 
