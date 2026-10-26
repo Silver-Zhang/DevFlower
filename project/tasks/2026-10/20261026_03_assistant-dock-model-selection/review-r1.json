@@ -1,0 +1,107 @@
+{
+  "raw_verdict": null,
+  "readiness": "BLOCKED",
+  "source_rounds": 1,
+  "recoveries": 1,
+  "stop_reason": "same candidate two bounded attempts without valid final verdict",
+  "attempts": [
+    {
+      "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "8c39f544dfd5f9f509fb39a76271565f5d55990f5e0a20da4ef947158287e63c",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+      "home": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-assistant-dock-20261026-reviews-source-r1-candidate/fb2d921b-0e5a-427a-946c-1ba992184f1f.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 180.113,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 3880408,
+          "pid": 3880408,
+          "sid": 3880408,
+          "start": "155885993",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "assistant-dock-model-selection-20261026",
+      "session_id": "fb2d921b-0e5a-427a-946c-1ba992184f1f",
+      "source_unchanged": true,
+      "task": "20261026_03_assistant-dock-model-selection"
+    },
+    {
+      "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "8c39f544dfd5f9f509fb39a76271565f5d55990f5e0a20da4ef947158287e63c",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+      "home": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-assistant-dock-20261026-reviews-source-r1-candidate/fb2d921b-0e5a-427a-946c-1ba992184f1f.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 60.134,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 3881958,
+          "pid": 3881958,
+          "sid": 3881958,
+          "start": "155913760",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "recovery": 1,
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "assistant-dock-model-selection-20261026",
+      "session_id": "fb2d921b-0e5a-427a-946c-1ba992184f1f",
+      "source_unchanged": true,
+      "task": "20261026_03_assistant-dock-model-selection",
+      "verdict": null
+    }
+  ]
+}

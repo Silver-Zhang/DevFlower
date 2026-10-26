@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "20261026_03_assistant-dock-model-selection",
+  "date": "2026-10-26",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "d3ccd925ca103f9f8b89fd8f60e40f615db33d7c",
+      "commit": "98ce61a5bb1fe87aa98e7b6c6de2d4178945bc5f",
+      "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+      "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

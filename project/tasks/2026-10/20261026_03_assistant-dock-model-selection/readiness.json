@@ -1,0 +1,10 @@
+{
+  "status": "BLOCKED",
+  "gate_invoked": false,
+  "gate_exit": null,
+  "raw_review_verdict": null,
+  "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+  "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+  "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+  "reason": "No independent final verdict; inherited Task04 SC08 remains OPEN and is not closed by UI work"
+}

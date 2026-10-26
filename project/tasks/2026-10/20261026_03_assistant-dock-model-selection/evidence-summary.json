@@ -1,0 +1,364 @@
+{
+  "source": {
+    "repo": "https://github.com/Silver-Zhang/DevFlower",
+    "branch": "flow/copilot-canvas-assistant",
+    "base": "d3ccd925ca103f9f8b89fd8f60e40f615db33d7c",
+    "commit": "98ce61a5bb1fe87aa98e7b6c6de2d4178945bc5f",
+    "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+    "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+    "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+  },
+  "files": 218,
+  "selftest": {
+    "python": 815,
+    "host": 6,
+    "chromium_http": 201,
+    "javascript": 56,
+    "exit": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "ui_real": {
+    "passed": true,
+    "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+    "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+    "original_model_calls": 2,
+    "original_observation_passed": false,
+    "original_proof": "proof.json",
+    "continuation_proof": "continuation3.json",
+    "new_model_calls": 0,
+    "actor": "Agent-operated Chromium, not user acceptance"
+  },
+  "real_turns": [
+    {
+      "id": "ac59c5ed44aa4cd8bccb22258a23e3e9",
+      "turn": "862f7bfa1c064fb7a3d941d0605be1c5",
+      "title": "创建一个只读Copilot分析工作流，只有开始、一个Agent、结果三个节点。使用default-copilot、aut",
+      "revision": 2,
+      "elapsed_ms": 17460,
+      "receipt": {
+        "agent_id": "devflower-assistant/v1",
+        "effort": "unknown",
+        "model_provider": "anthropic-api",
+        "native_session_id": null,
+        "provider": "devflower-agent",
+        "provider_message_id": "resp_0493f86551f2c110016adee49c9f308199919b591749699c10",
+        "provider_request_id": "8c066cb4-65a3-46f4-b2a6-e1400062bd3c",
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5",
+        "resolved_model": "claude-opus-5-5",
+        "session_id": "ac59c5ed44aa4cd8bccb22258a23e3e9",
+        "tools_enabled": [
+          "propose_workflow"
+        ],
+        "transport": {
+          "agent_id": "devflower-assistant/v1",
+          "coding_cli": false,
+          "connection_sha256": "d60a2642e1962ddc63f35c3ca036ff3f07a76bc1d25703dfc36e82eb83f29f73",
+          "kind": "direct-model-api",
+          "protocol": "anthropic"
+        },
+        "usage": {
+          "input_tokens": 1026,
+          "output_tokens": 487
+        }
+      }
+    },
+    {
+      "id": "b9e74379bb284af4aa57ada9ac0398f4",
+      "turn": "757ed81244ef4ad8a1d68c44bb10aea1",
+      "title": "创建两个只读Copilot节点的顺序工作流，第一个分析任务，第二个复核遗漏。使用default-copilot、auto",
+      "revision": 2,
+      "elapsed_ms": 10447,
+      "receipt": {
+        "agent_id": "devflower-assistant/v1",
+        "effort": "unknown",
+        "model_provider": "anthropic-api",
+        "native_session_id": null,
+        "provider": "devflower-agent",
+        "provider_message_id": "resp_0b5843ed30d49a5d016adee4af5d2c819899e0e355c5386891",
+        "provider_request_id": "ece85dcd-7a74-4db6-8fb5-f0d93d45c38c",
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5",
+        "resolved_model": "claude-opus-5-5",
+        "session_id": "b9e74379bb284af4aa57ada9ac0398f4",
+        "tools_enabled": [
+          "propose_workflow"
+        ],
+        "transport": {
+          "agent_id": "devflower-assistant/v1",
+          "coding_cli": false,
+          "connection_sha256": "d60a2642e1962ddc63f35c3ca036ff3f07a76bc1d25703dfc36e82eb83f29f73",
+          "kind": "direct-model-api",
+          "protocol": "anthropic"
+        },
+        "usage": {
+          "input_tokens": 1236,
+          "output_tokens": 477
+        }
+      }
+    }
+  ],
+  "model_selection": {
+    "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+    "directory_source": "Codex app-server model/list",
+    "catalog_error": null,
+    "models": [
+      {
+        "id": "gpt-6.1-sol",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      {
+        "id": "gpt-6-astra",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      {
+        "id": "gpt-6-sol",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      {
+        "id": "gpt-6-luna",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "discovered": true,
+        "native_efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      }
+    ],
+    "inference_calls": 0,
+    "selected_model": "gpt-6-astra",
+    "effort": "low",
+    "selection": {
+      "capability_source": "provider",
+      "configured": true,
+      "effort": "low",
+      "execution_allowed": false,
+      "model": "gpt-6-astra"
+    },
+    "execution_status": {
+      "execution_allowed": false,
+      "key": "1b7e2c0afc74ff20d21aa308feedf40a3f57fdb99dbf8db8170099ea38f975e5",
+      "status": "unverified"
+    },
+    "elapsed_seconds": 6.329,
+    "passed": true
+  },
+  "performance": {
+    "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+    "status_seconds": [
+      0.088,
+      0.09,
+      0.084,
+      0.079,
+      0.075
+    ],
+    "old_status_seconds": [
+      1.15,
+      1.112,
+      1.118
+    ],
+    "scope": "same native dependency files; local HTTP status only, model time excluded"
+  },
+  "privacy": {
+    "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+    "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+    "files": 218,
+    "known_credential_matches": [],
+    "forbidden_runtime_files": [],
+    "source_unchanged": true,
+    "passed": true
+  },
+  "independent_review": {
+    "raw_verdict": null,
+    "readiness": "BLOCKED",
+    "source_rounds": 1,
+    "recoveries": 1,
+    "stop_reason": "same candidate two bounded attempts without valid final verdict",
+    "attempts": [
+      {
+        "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+        "complete": false,
+        "config_root": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude",
+        "contract_sha256": "8c39f544dfd5f9f509fb39a76271565f5d55990f5e0a20da4ef947158287e63c",
+        "cwd": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/reviews/source-r1/candidate",
+        "effective_effort": "unknown",
+        "error": {
+          "reason": "CLI process failed, interrupted or truncated",
+          "type": "Blocked"
+        },
+        "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+        "home": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1",
+        "native_record": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-assistant-dock-20261026-reviews-source-r1-candidate/fb2d921b-0e5a-427a-946c-1ba992184f1f.jsonl",
+        "physical_backend": "unknown",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 0
+          },
+          "cancelled": false,
+          "duration": 180.113,
+          "exit": -15,
+          "operation_id": null,
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3880408,
+            "pid": 3880408,
+            "sid": 3880408,
+            "start": "155885993",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "timeout": true
+        },
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5[1m]",
+        "round": 1,
+        "run_id": "assistant-dock-model-selection-20261026",
+        "session_id": "fb2d921b-0e5a-427a-946c-1ba992184f1f",
+        "source_unchanged": true,
+        "task": "20261026_03_assistant-dock-model-selection"
+      },
+      {
+        "candidate_sha256": "0d181909923ae5c8b87afc844083bf9b810fd51717b711c84334e079001ff54c",
+        "complete": false,
+        "config_root": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude",
+        "contract_sha256": "8c39f544dfd5f9f509fb39a76271565f5d55990f5e0a20da4ef947158287e63c",
+        "cwd": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/reviews/source-r1/candidate",
+        "effective_effort": "unknown",
+        "error": {
+          "reason": "CLI process failed, interrupted or truncated",
+          "type": "Blocked"
+        },
+        "git_tree": "e457f0c1723bed3817a83b88a58f7e369e9aec23",
+        "home": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1",
+        "native_record": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-assistant-dock-20261026-reviews-source-r1-candidate/fb2d921b-0e5a-427a-946c-1ba992184f1f.jsonl",
+        "physical_backend": "unknown",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 0
+          },
+          "cancelled": false,
+          "duration": 60.134,
+          "exit": -15,
+          "operation_id": null,
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3881958,
+            "pid": 3881958,
+            "sid": 3881958,
+            "start": "155913760",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "timeout": true
+        },
+        "recovery": 1,
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5[1m]",
+        "round": 1,
+        "run_id": "assistant-dock-model-selection-20261026",
+        "session_id": "fb2d921b-0e5a-427a-946c-1ba992184f1f",
+        "source_unchanged": true,
+        "task": "20261026_03_assistant-dock-model-selection",
+        "verdict": null
+      }
+    ]
+  },
+  "user_personal_acceptance": false,
+  "main_merged": false,
+  "stable_replaced": false,
+  "raw_archive": "/home/workspace/DevFlower/archives/devflower-assistant-dock-20261026",
+  "ci": {
+    "commit": "98ce61a5bb1fe87aa98e7b6c6de2d4178945bc5f",
+    "runs": [
+      {
+        "id": 40275533921,
+        "name": "Studio contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40275533921"
+      },
+      {
+        "id": 40275534026,
+        "name": "Usable regression",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/Silver-Zhang/DevFlower/actions/runs/40275534026"
+      }
+    ]
+  }
+}

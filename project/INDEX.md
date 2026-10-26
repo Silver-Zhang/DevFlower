@@ -4,6 +4,7 @@
 
 | 日期 | 任务 | 模式 | 状态 |
 |---|---|---|---|
+| 2026-10-26 | [20261026_03_assistant-dock-model-selection](tasks/2026-10/20261026_03_assistant-dock-model-selection/README.md) | B | 阻塞 |
 | 2026-10-26 | [20261026_02_provider-assistant-separation](tasks/2026-10/20261026_02_provider-assistant-separation/README.md) | B | 阻塞 |
 | 2026-10-26 | [20261026_01_copilot-canvas-assistant](tasks/2026-10/20261026_01_copilot-canvas-assistant/README.md) | B | 阻塞 |
 | 2026-10-25 | [20261025_04_session-config-assistant](tasks/2026-10/20261025_04_session-config-assistant/README.md) | B | 阻塞 |
