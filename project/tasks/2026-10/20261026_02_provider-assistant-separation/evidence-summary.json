@@ -1,0 +1,400 @@
+{
+  "task": "20261026_02_provider-assistant-separation",
+  "source": {
+    "repo": "https://github.com/Silver-Zhang/DevFlower",
+    "branch": "flow/copilot-canvas-assistant",
+    "base": "eeb6189a2667d66967d309473c4572e2b9d20cf3",
+    "commit": "d3ccd925ca103f9f8b89fd8f60e40f615db33d7c",
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+  },
+  "counts": {
+    "python": 794,
+    "host": 6,
+    "chromium_http": 195,
+    "javascript": 56,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "self_tests": "PASS",
+  "assistant_backend": "DevFlower-owned Agent / direct model API",
+  "assistant_real": {
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "actor": "local Agent operated Chromium, not user acceptance",
+    "backend": "DevFlower own Agent, direct model API",
+    "requested_model": "claude-opus-5-5",
+    "started_at": 1792982873863,
+    "calls": 2,
+    "execution_starts": 0,
+    "assistant_passed": true,
+    "user_acceptance": false,
+    "passed": true,
+    "finished_at": 1792982931316,
+    "turns": [
+      {
+        "turn": "d75703c5ba15418893e59c56913f9d96",
+        "conversation": "637c12dcb26843838fb041c0eb0e92a3",
+        "request_sha256": "0cbcb7d17e5cd44ffcab15fedd4ced09e3bb6c9ecc6264b6c4f21c7390697bfd",
+        "source_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+        "model": {
+          "agent_id": "devflower-assistant/v1",
+          "effort": "unknown",
+          "model_provider": "anthropic-api",
+          "native_session_id": null,
+          "provider": "devflower-agent",
+          "provider_message_id": "resp_00e60f8d9e80d3cd016adebf68cdac8190a7f774be1f72c2ba",
+          "provider_request_id": "6eac3258-a6d7-4658-a9ce-4df8b9416df6",
+          "requested_effort": "high",
+          "requested_model": "claude-opus-5-5",
+          "resolved_model": "claude-opus-5-5",
+          "session_id": "637c12dcb26843838fb041c0eb0e92a3",
+          "tools_enabled": [
+            "propose_workflow"
+          ],
+          "transport": {
+            "agent_id": "devflower-assistant/v1",
+            "coding_cli": false,
+            "connection_sha256": "d60a2642e1962ddc63f35c3ca036ff3f07a76bc1d25703dfc36e82eb83f29f73",
+            "kind": "direct-model-api",
+            "protocol": "anthropic"
+          },
+          "usage": {
+            "input_tokens": 1045,
+            "output_tokens": 564
+          }
+        }
+      },
+      {
+        "turn": "49c778de586b464dbe64a466388dca75",
+        "conversation": "637c12dcb26843838fb041c0eb0e92a3",
+        "request_sha256": "dfe00f41ef2bb58ec5fd63b07db75956c614327ab271ab1804a8f9e329772dd3",
+        "source_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+        "model": {
+          "agent_id": "devflower-assistant/v1",
+          "effort": "unknown",
+          "model_provider": "anthropic-api",
+          "native_session_id": null,
+          "provider": "devflower-agent",
+          "provider_message_id": "resp_015f9a138648784b016adebf8094948197b97d59270d49812e",
+          "provider_request_id": "d4bf02f8-6ab0-47ea-b827-307f505da231",
+          "requested_effort": "high",
+          "requested_model": "claude-opus-5-5",
+          "resolved_model": "claude-opus-5-5",
+          "session_id": "637c12dcb26843838fb041c0eb0e92a3",
+          "tools_enabled": [
+            "propose_workflow"
+          ],
+          "transport": {
+            "agent_id": "devflower-assistant/v1",
+            "coding_cli": false,
+            "connection_sha256": "d60a2642e1962ddc63f35c3ca036ff3f07a76bc1d25703dfc36e82eb83f29f73",
+            "kind": "direct-model-api",
+            "protocol": "anthropic"
+          },
+          "usage": {
+            "input_tokens": 1598,
+            "output_tokens": 587
+          }
+        }
+      }
+    ]
+  },
+  "workflow_real": {
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "actor": "local Agent-operated Chromium and authorized HTTP runner; not human acceptance",
+    "started": 1792983009520,
+    "independent_assistant_settings": true,
+    "copilot_node_configuration": true,
+    "run_id": "5e9ea7c0e4b55d70d7627a8f5cbfe5ef",
+    "nodes": [
+      {
+        "id": "8ce9e5e4254f8a65f436e0d9754024f0880ad3024f25098b6a6bd6e0f196cfc2",
+        "node": "review",
+        "native_session": "75903e6a-1c77-48de-970f-7aa0e275edbe",
+        "model": "gpt-5.6-luna",
+        "requested": "auto",
+        "effort": "default",
+        "initialization_included": true
+      },
+      {
+        "id": "672f3f601a1dfe8430be0572c038325d6df0b63880fb4de1481a3a7093000e3f",
+        "node": "analyze",
+        "native_session": "d3828eea-b3ce-4a8c-b7c2-714987cc4b85",
+        "model": "gpt-5.6-luna",
+        "requested": "auto",
+        "effort": "default",
+        "initialization_included": true
+      }
+    ],
+    "actual_calls": 2,
+    "reload_no_replay": true,
+    "resume_prepare": "057373088df4431934a96a864bdf14ed",
+    "resume_native_session": "75903e6a-1c77-48de-970f-7aa0e275edbe",
+    "passed": true,
+    "finished": 1792983145554
+  },
+  "native_exact_request_evidence": {
+    "passed": true,
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "source_unchanged": true,
+    "run_id": "5e9ea7c0e4b55d70d7627a8f5cbfe5ef",
+    "run_state": "COMPLETED",
+    "actual_workflow_calls": 2,
+    "handoff_deliveries": 1,
+    "downstream_inputs_preserve_upstream": true,
+    "sessions": [
+      {
+        "activation": "8ce9e5e4254f8a65f436e0d9754024f0880ad3024f25098b6a6bd6e0f196cfc2",
+        "node": "review",
+        "session_id": "75903e6a-1c77-48de-970f-7aa0e275edbe",
+        "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/preview-r4/native/25dc96e47f1a8a28018dcd8e4edc2327",
+        "cwd": "/home/workspace/DevFlower/development/DevFlower-Agent-Preview-r4",
+        "native_path": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/preview-r4/native/25dc96e47f1a8a28018dcd8e4edc2327/.copilot/session-state/75903e6a-1c77-48de-970f-7aa0e275edbe/events.jsonl",
+        "native_prefix_bytes": 33757,
+        "native_prefix_sha256": "8a6c97333e71ba3591ec9472a0df79e8d3d0932b7f8cee0cbcf2e02e6f28c10d",
+        "visible_request_sha256": "4192cc45097bf3d224af485e3570034231faa415de44cdd34edae9dde0cbee19",
+        "native_request_exact_match": true,
+        "actual_model": "gpt-5.6-luna",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 2089
+          },
+          "cancelled": false,
+          "duration": 20.14,
+          "exit": 0,
+          "operation_id": "abd77c69ff5a04b0e7ddf694c24a34bd",
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3684539,
+            "pid": 3684539,
+            "sid": 3684539,
+            "start": "154887728",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "29f821b9064ce3fdf6cd6045754e72981d278e82df25ebb2f48217aa76ed84fc"
+          },
+          "timeout": false
+        }
+      },
+      {
+        "activation": "672f3f601a1dfe8430be0572c038325d6df0b63880fb4de1481a3a7093000e3f",
+        "node": "analyze",
+        "session_id": "d3828eea-b3ce-4a8c-b7c2-714987cc4b85",
+        "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/preview-r4/native/ea4ba9490de1ad4be3bfe6e7838ae6a7",
+        "cwd": "/home/workspace/DevFlower/development/DevFlower-Agent-Preview-r4",
+        "native_path": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/preview-r4/native/ea4ba9490de1ad4be3bfe6e7838ae6a7/.copilot/session-state/d3828eea-b3ce-4a8c-b7c2-714987cc4b85/events.jsonl",
+        "native_prefix_bytes": 26364,
+        "native_prefix_sha256": "c69097b95d80a98148b4618e2e6af87f7898826ee1b16bca771443aff967daaf",
+        "visible_request_sha256": "9ef87acf63d05c75dc8601158b60e19de7a75e4d4b2fe36bac2b6af47c614041",
+        "native_request_exact_match": true,
+        "actual_model": "gpt-5.6-luna",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 2076
+          },
+          "cancelled": false,
+          "duration": 16.117,
+          "exit": 0,
+          "operation_id": "018176b500e03d8b016f258088506746",
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3683985,
+            "pid": 3683985,
+            "sid": 3683985,
+            "start": "154885246",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "c7edeaef7008c2587d4bd1a5bedb6bfdd9e59073fd8dff1f567853df8ce8e5f6"
+          },
+          "timeout": false
+        }
+      }
+    ]
+  },
+  "privacy": {
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "files": 214,
+    "known_credential_matches": [],
+    "forbidden_runtime_files": [],
+    "source_unchanged": true,
+    "passed": true
+  },
+  "review": {
+    "task": "20261026_02_provider-assistant-separation",
+    "source_rounds": 1,
+    "infrastructure_recoveries": 1,
+    "raw_verdict": null,
+    "readiness": "BLOCKED",
+    "stop_reason": "same candidate/session blocked twice without a valid final verdict; stop bounded retries",
+    "native_visible_error": "Request timed out",
+    "attempts": [
+      {
+        "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+        "complete": false,
+        "config_root": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude",
+        "contract_sha256": "1a2c59eb6d54b3a3424e1a2a10d9d9991aae66a9d5b619fb733a4cfbef868fae",
+        "cwd": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/reviews/source-r1/candidate",
+        "effective_effort": "unknown",
+        "error": {
+          "reason": "CLI process failed, interrupted or truncated",
+          "type": "Blocked"
+        },
+        "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+        "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1",
+        "native_record": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-provider-assistant-20261026-reviews-source-r1-candidate/fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56.jsonl",
+        "physical_backend": "unknown",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 1525
+          },
+          "cancelled": false,
+          "duration": 428.907,
+          "exit": 1,
+          "operation_id": null,
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3706259,
+            "pid": 3706259,
+            "sid": 3706259,
+            "start": "154938321",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "49b059e005105895efe01eb86352db86763f903794fcaced8aabb55da9217c12"
+          },
+          "timeout": false
+        },
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5[1m]",
+        "round": 1,
+        "run_id": "provider-assistant-separation-20261026",
+        "session_id": "fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56",
+        "source_unchanged": true,
+        "task": "20261026_02_provider-assistant-separation"
+      },
+      {
+        "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+        "complete": false,
+        "config_root": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude",
+        "contract_sha256": "1a2c59eb6d54b3a3424e1a2a10d9d9991aae66a9d5b619fb733a4cfbef868fae",
+        "cwd": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/reviews/source-r1/candidate",
+        "effective_effort": "unknown",
+        "error": {
+          "reason": "CLI process failed, interrupted or truncated",
+          "type": "Blocked"
+        },
+        "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+        "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1",
+        "native_record": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-provider-assistant-20261026-reviews-source-r1-candidate/fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56.jsonl",
+        "physical_backend": "unknown",
+        "process": {
+          "bytes": {
+            "stderr": 0,
+            "stdout": 0
+          },
+          "cancelled": false,
+          "duration": 180.078,
+          "exit": -15,
+          "operation_id": null,
+          "overflow": false,
+          "process": {
+            "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+            "host": "silver-work-station",
+            "pgid": 3709267,
+            "pid": 3709267,
+            "sid": 3709267,
+            "start": "154995635",
+            "state": "R"
+          },
+          "sha256": {
+            "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "timeout": true
+        },
+        "recovery": 1,
+        "requested_effort": "high",
+        "requested_model": "claude-opus-5-5[1m]",
+        "round": 1,
+        "run_id": "provider-assistant-separation-20261026",
+        "session_id": "fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56",
+        "source_unchanged": true,
+        "task": "20261026_02_provider-assistant-separation",
+        "verdict": null
+      }
+    ]
+  },
+  "user_personal_acceptance": false,
+  "main_merged": false,
+  "stable_updated": false,
+  "inherited_open_finding": "SC08-POST-SPAWN-SUPERVISOR-JOURNAL-FAILURE-ORPHAN",
+  "raw_archive": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026",
+  "ci": {
+    "head": "d3ccd925ca103f9f8b89fd8f60e40f615db33d7c",
+    "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "workflow_runs": [
+      {
+        "id": 40262088343,
+        "name": "Studio contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 48,
+        "jobs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40262088343/jobs",
+        "logs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40262088343/logs",
+        "workflow_id": 389551712
+      },
+      {
+        "id": 40262088339,
+        "name": "Usable regression",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 56,
+        "jobs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40262088339/jobs",
+        "logs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40262088339/logs",
+        "workflow_id": 391099208
+      }
+    ]
+  },
+  "native_log_privacy": {
+    "native_files": 3,
+    "credential_matches": [],
+    "passed": true
+  },
+  "regression_exit": 0,
+  "r2_failure_readback": {
+    "original_candidate_sha256": "4544d46902f86421f48fb16c21d1a00768df68a89faa87af1ca2348f7cdbd0f2",
+    "run_id": "7ca0c253d4caf9d7cfb8781d9f293f37",
+    "state": "FAILED",
+    "reason": "Development candidate changed; restart with the independently pinned candidate hash",
+    "actual_calls": null,
+    "unexpected_file": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/candidate-r2/candidate/.local/state/gh/device-id",
+    "unexpected_bytes": 36,
+    "unexpected_sha256": "ba6c182f0c6adc3083d3d690db0ca584fd78e108b71c100d067866cba2a61247",
+    "original_manifest_contains_file": false,
+    "original_candidate_preserved": true,
+    "not_final_gate": true
+  },
+  "formal_acceptance": false,
+  "gate_invoked": false,
+  "stop_condition": "Repeated infrastructure failure; final independent verdict unavailable"
+}

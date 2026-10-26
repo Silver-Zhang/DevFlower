@@ -1,0 +1,16 @@
+{
+  "status": "BLOCKED",
+  "decision_kind": "external readiness preconditions, not a fabricated Gate execution",
+  "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+  "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+  "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+  "gate_invoked": false,
+  "gate_exit": null,
+  "raw_review_verdict": null,
+  "blockers": [
+    "No valid independent final verdict for this candidate",
+    "Inherited Task04 SC08 OPEN finding not closed by this task"
+  ],
+  "main_merged": false,
+  "stable_promoted": false
+}

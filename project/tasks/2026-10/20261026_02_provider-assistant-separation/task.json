@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "20261026_02_provider-assistant-separation",
+  "date": "2026-10-26",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "eeb6189a2667d66967d309473c4572e2b9d20cf3",
+      "commit": "d3ccd925ca103f9f8b89fd8f60e40f615db33d7c",
+      "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+      "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

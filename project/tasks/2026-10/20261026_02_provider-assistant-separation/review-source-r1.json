@@ -1,0 +1,109 @@
+{
+  "task": "20261026_02_provider-assistant-separation",
+  "source_rounds": 1,
+  "infrastructure_recoveries": 1,
+  "raw_verdict": null,
+  "readiness": "BLOCKED",
+  "stop_reason": "same candidate/session blocked twice without a valid final verdict; stop bounded retries",
+  "native_visible_error": "Request timed out",
+  "attempts": [
+    {
+      "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "1a2c59eb6d54b3a3424e1a2a10d9d9991aae66a9d5b619fb733a4cfbef868fae",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+      "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-provider-assistant-20261026-reviews-source-r1-candidate/fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 1525
+        },
+        "cancelled": false,
+        "duration": 428.907,
+        "exit": 1,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 3706259,
+          "pid": 3706259,
+          "sid": 3706259,
+          "start": "154938321",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "49b059e005105895efe01eb86352db86763f903794fcaced8aabb55da9217c12"
+        },
+        "timeout": false
+      },
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "provider-assistant-separation-20261026",
+      "session_id": "fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56",
+      "source_unchanged": true,
+      "task": "20261026_02_provider-assistant-separation"
+    },
+    {
+      "candidate_sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude",
+      "contract_sha256": "1a2c59eb6d54b3a3424e1a2a10d9d9991aae66a9d5b619fb733a4cfbef868fae",
+      "cwd": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+      "home": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1",
+      "native_record": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-archives-devflower-provider-assistant-20261026-reviews-source-r1-candidate/fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56.jsonl",
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 180.078,
+        "exit": -15,
+        "operation_id": null,
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 3709267,
+          "pid": 3709267,
+          "sid": 3709267,
+          "start": "154995635",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "recovery": 1,
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "provider-assistant-separation-20261026",
+      "session_id": "fd7b6dac-f5a7-4eeb-9450-e3a0185b0b56",
+      "source_unchanged": true,
+      "task": "20261026_02_provider-assistant-separation",
+      "verdict": null
+    }
+  ]
+}

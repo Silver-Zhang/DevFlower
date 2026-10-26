@@ -1,0 +1,26 @@
+[
+  {
+    "candidate": "r1",
+    "sha256": "ff3ec86dd5221e9d73530db7f23118c1c8750f31ecced2fc1676be2b14f2350c",
+    "git_tree": "fb77cee1ec5dd546923bceff445ca1b4c47ef011",
+    "manifest": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/candidate-r1/candidate-manifest.json"
+  },
+  {
+    "candidate": "r2",
+    "sha256": "4544d46902f86421f48fb16c21d1a00768df68a89faa87af1ca2348f7cdbd0f2",
+    "git_tree": "db4c84855c494604bfdf22c585a3853b3646b822",
+    "manifest": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/candidate-r2/candidate-manifest.json"
+  },
+  {
+    "candidate": "r3",
+    "sha256": "91ad4985e85ef04566db2b37208dcc487b1ec1c79e2d21449d9c8698c90f1fc7",
+    "git_tree": "8e2a7594b17679b928126b71aa2c94f1735268e4",
+    "manifest": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/candidate-r3/candidate-manifest.json"
+  },
+  {
+    "candidate": "r4",
+    "sha256": "e8126d502d486b37c6b99fa0e7ab5dba7427edc19da97d3dae5cf0e09c85e499",
+    "git_tree": "475ef880731fb8e48c99013cb21af6b3af9e24d5",
+    "manifest": "/home/workspace/DevFlower/archives/devflower-provider-assistant-20261026/candidate-r4/candidate-manifest.json"
+  }
+]
