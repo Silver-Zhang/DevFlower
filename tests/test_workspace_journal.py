@@ -123,3 +123,19 @@ class PublicAssistantOutputTests(unittest.TestCase):
  def test_chat_request_omits_canvas_tools(self):
   with DevFlowerAgent(self.rt) as a:a.intent='chat';r=a.chat('synthetic-model','general explanation')
   self.assertNotIn('tools',self.requests[0][1]);self.assertEqual(r['tools_enabled'],[])
+
+class MissingHandoffFieldTests(unittest.TestCase):
+ def setUp(self):self.base,self.rt=fixture(self)
+ def test_merge_summary_repro_is_rejected_before_any_downstream_call(self):
+  graph=examples(self.rt.operator['profiles'])[1];edge=next(e for e in graph['edges'] if e['source']=='merge');edge['transfer']='summary'
+  with self.assertRaisesRegex(Invalid,'没有所选交接字段'):validate_graph(graph)
+ def test_start_cannot_offer_agent_only_output_fields(self):
+  graph=examples(self.rt.operator['profiles'])[0];graph['edges'][0]['transfer']='issues'
+  with self.assertRaisesRegex(Invalid,'没有所选交接字段'):validate_graph(graph)
+ def test_missing_runtime_field_refuses_instead_of_forwarding_null(self):
+  from studio.workbench_graph import transfer
+  for edge in [{'transfer':'summary'},{'transfer':'field','field':'result.missing'}]:
+   with self.subTest(edge=edge),self.assertRaisesRegex(Invalid,'不会发送空输入'):transfer({'answer':'two real branches','result':{'inputs':[1,2]}},edge)
+ def test_present_null_and_false_are_real_data_not_missing_fields(self):
+  from studio.workbench_graph import transfer
+  self.assertIsNone(transfer({'result':{'value':None}},{'transfer':'field','field':'result.value'}));self.assertIs(transfer({'result':{'value':False}},{'transfer':'field','field':'result.value'}),False)

@@ -128,6 +128,12 @@ def validate_graph(document, *, depth=0):
             raise Invalid('请选择无条件、条件满足或条件不满足')
         if e.get('transfer', 'result') not in ('result', 'answer', 'summary', 'field', 'artifacts', 'issues', 'evidence'):
             raise Invalid('请选择交接内容类型')
+        # These deterministic nodes do not synthesize Agent-only fields.
+        # Reject an empty handoff before spending downstream model calls.
+        if source['kind'] in ('start','merge'):
+            selected=e.get('field','').split('.')[0] if e.get('transfer')=='field' else e.get('transfer','result')
+            if selected not in ({'answer','result','sources'} if source['kind']=='merge' else {'answer','result'}):
+                raise Invalid('“'+source['name']+'”没有所选交接字段；请选择合并结果或合并回答')
         if e.get('transfer') == 'field':
             field({}, public_field(e.get('field', '')))
         if 'label' in e and (not isinstance(e['label'], str) or len(e['label']) > 120):
@@ -168,7 +174,13 @@ def validate_graph(document, *, depth=0):
 def transfer(output, edge):
     kind = edge.get('transfer', 'result')
     public = public_data(output)
-    value = public if kind == 'result' else field(public, public_field(edge.get('field', '')) if kind == 'field' else kind)
+    value=public
+    if kind!='result':
+        path=public_field(edge.get('field','')) if kind=='field' else kind
+        field(public,path)  # validate the ordinary public path grammar first
+        for part in path.split('.'):
+            if not isinstance(value,dict) or part not in value:raise Invalid('上游没有提供所选交接字段“'+path+'”；请检查连线，不会发送空输入或调用下游 Agent')
+            value=value[part]
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True)
     cap = edge.get('max_chars', 16000)
     if len(raw) > cap:
