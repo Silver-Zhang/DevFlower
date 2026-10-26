@@ -166,7 +166,9 @@ class WorkbenchRuntime(SessionRuntime):
         write = node.get('permission', 'workspace-write' if node.get('mode') == 'Agent' else 'read') == 'workspace-write'
         if write and node.get('mode') != 'Agent': raise Invalid('Ask / Plan 必须保持只读权限')
         if write and cwd != project['path']: raise Blocked('原冻结目录不能授予写权限')
-        allowed = ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if write else ['Read', 'Glob', 'Grep']
+        if profile['provider']=='copilot' and (write or node.get('mode','Ask')=='Agent' or node.get('tools')):
+            raise Blocked('Copilot 当前仅支持 Ask/Plan 上下文分析，尚未开放写入或原生工具')
+        allowed = [] if profile['provider']=='copilot' else ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if write else ['Read', 'Glob', 'Grep']
         tools = node.get('tools', allowed)
         if not isinstance(tools, list) or any(t not in allowed for t in tools): raise Invalid('所选工具超出工作方式允许的权限')
         if profile['provider']=='codex' and 'tools' in node:

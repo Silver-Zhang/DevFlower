@@ -111,6 +111,10 @@ class ModelCatalog:
             try:
                 if profile['provider'] == 'codex':
                     rows = codex_models(self.manager.rpc, profile, self.rt.rpc_home/name, self.rt.storage)
+                elif profile['provider']=='copilot':
+                    data=self.manager.rpc(dict(profile,home=str(self.rt.rpc_home/name)),str(self.rt.storage),'copilot/models',{})
+                    rows=[dict(id=m['id'],name=m.get('name') or m['id'],efforts=[],source='Copilot RPC models.list',effort_source='unknown',inference_verified=False) for m in data['models']]
+                    if not rows:raise Invalid('Copilot 返回空模型目录')
                 else: rows = proxy_models(profile)
                 cached = dict(id=key, profile_sha256=identity, environment_sha256=environment, models=rows, at=now, attempted_at=now,
                               source=rows[0]['source'], error=None)
@@ -121,7 +125,7 @@ class ModelCatalog:
             self.db.put('model-discovery', key, cached)
             try:
                 auth=self.manager.rpc(dict(profile,home=str(self.rt.rpc_home/name)),str(self.rt.storage),
-                    'account/read' if profile['provider']=='codex' else 'claude/auth-status',{})
+                    'account/read' if profile['provider']=='codex' else 'copilot/auth-status' if profile['provider']=='copilot' else 'claude/auth-status',{})
                 if profile['provider']=='codex':
                     auth=dict(logged_in=bool(auth.get('account')) or auth.get('requiresOpenaiAuth') is False,
                               auth_method=(auth.get('account') or {}).get('type','unknown'),service_verified=False)

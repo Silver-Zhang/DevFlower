@@ -86,7 +86,7 @@ class Journal:
         if row['kind'] == 'PROCESS' and status == 'RUNNING':
             self.s.db.change('activation', self.key, {'state': 'RUNNING', 'process': updates['process']},
                              event={'kind': 'node-running', 'action': '原生 Agent 已启动'})
-            if row['data'].get('context',{}).get('provider') in ('codex','claude'):
+            if row['data'].get('context',{}).get('provider') in ('codex','claude','copilot'):
                 with self.s.db.tx() as db:
                     r=json.loads(db.execute("SELECT data FROM records WHERE kind='run' AND id=?",(self.s.run,)).fetchone()[0])
                     r['actual_calls']=r.get('actual_calls',0)+1

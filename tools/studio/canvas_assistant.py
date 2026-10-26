@@ -12,7 +12,7 @@ from .graph import Invalid
 from .server import Conflict
 from .agent_sessions import safe_text
 from .configuration_assistant import ConfigurationAssistant,plan_graph,schema
-from .copilot_client import CopilotRPC
+from .devflower_agent import AGENT_ID,DevFlowerAgent
 
 
 def expand_plan(plan,choices):
@@ -69,7 +69,7 @@ class CanvasAssistant:
     def __init__(self,rt):
         self.rt=rt;self.lock=threading.RLock();self.active={};self.closed=False
         self.root=rt.storage/'canvas-assistant';self.root.mkdir(mode=0o700,exist_ok=True)
-        self.backend=CopilotRPC
+        self.default_backend=lambda cwd,**kw:DevFlowerAgent(self.rt,cwd,**kw);self.backend=self.default_backend
 
     def catalog(self):
         self.rt.check_operator()
@@ -109,6 +109,10 @@ class CanvasAssistant:
         self.rt.check_operator();base=ConfigurationAssistant(self.rt)._base(data)
         for name,p in base['choices'].items():
             profile=self.rt.operator['profiles'][name];p.update(default_model=profile['model'],default_effort=profile['effort'])
+        connection_sha=None
+        if self.backend is self.default_backend:
+            from .devflower_agent import AgentConnection
+            connection_sha=AgentConnection(self.rt).read()['fingerprint']
         key=data['conversation'] or secrets.token_hex(16);turn_id=data['request_id']
         if not isinstance(key,str) or len(key)!=32 or any(c not in '0123456789abcdef' for c in key):raise Invalid('助手对话身份无效')
         clean=self._redact(data['message']);g=self._redact(base['base_graph'])
@@ -117,7 +121,7 @@ class CanvasAssistant:
         nodes={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility'}
         context={k:g[k] for k in ('version','name')};context['nodes']=[{k:v for k,v in n.items() if k in nodes} for n in g['nodes']]
         context['edges']=[{k:v for k,v in e.items() if k in {'source','target','label','transfer'}} for e in g['edges']]
-        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],graph=base['base_graph_sha256'],expected=data['expected'])))
+        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,graph=base['base_graph_sha256'],expected=data['expected'])))
         with self.lock:
             if self.closed:raise Blocked('助手服务正在关闭')
             with self.rt.flow.tx() as db:
@@ -129,7 +133,8 @@ class CanvasAssistant:
                     result['turn']=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(result['active_turn'],)).fetchone()[0])
                     return result
                 row=db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(key,)).fetchone()
-                v=json.loads(row[0]) if row else dict(id=key,workspace=data['workspace'],revision=0,messages=[],active_turn=None)
+                v=json.loads(row[0]) if row else dict(id=key,agent_id=AGENT_ID,workspace=data['workspace'],revision=0,messages=[],active_turn=None)
+                if row and v.get('agent_id')!=AGENT_ID:raise Blocked('这是旧配置模型的历史，请新开 DevFlower 助手对话；原历史保留')
                 if not row and data['expected'] is not None:raise Conflict('助手对话已变化或不存在')
                 if v['workspace']!=data['workspace'] or (v['revision'] if row else None)!=data['expected']:raise Conflict('助手对话版本已变化，请读取最新消息')
                 if len(v['messages'])>=40:raise Blocked('本次助手对话已达20轮上限，请新开对话')
@@ -137,7 +142,7 @@ class CanvasAssistant:
                     prior=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(v['active_turn'],)).fetchone()[0])
                     if prior['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):raise Blocked('上一请求尚未确认结束，请先停止或查看状态')
                 v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id))
-                t=dict(base,id=turn_id,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
+                t=dict(base,id=turn_id,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
                        messages=v['messages'][-12:],created_at=time.time(),reply=None,proposal=None,receipt=None,cancel_requested=False)
                 db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('canvas-conversation',key,canonical(v).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)',('canvas-turn',turn_id,canonical(t).decode()))
@@ -166,16 +171,7 @@ class CanvasAssistant:
             if cancel.is_set():raise Blocked('已取消，未调用模型')
             ConfigurationAssistant(self.rt)._source(t)
             self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'),states=['QUEUED'])
-            prompt=('你是 DevFlower 软件内置的聊天式工作流设计助手，不是执行任务的开发Agent。用中文直接回答用户，结合历史持续修改当前画布。'
-                '只根据给定信息，不调用工具、不访问文件、不启动工作流、不授予任何权限。需要澄清时直接聊天，plan=null。'
-                '需要创建或修改画布时返回完整plan。只能使用available_agents中精确的profile/model/effort；支持start/agent/merge/result，'
-                '并行只允许Ask/Plan只读Agent，优先最少必要模型调用。无法完成的控制类型直接说明，不伪造。'
-                '仅输出JSON对象，严格包含reply（简短中文回答，最多100字）和plan（计划或null），不要Markdown围栏。'
-                '计划格式：{version:1,name:名称,summary:简述,nodes:[节点],edges:[{source:节点ID,target:节点ID}]}。'
-                '完整流程应包含唯一start开始节点和result结果节点，连线从开始经过所有Agent到结果。'
-                '节点必填id/kind/name；agent还要profile及initial_prompt/round_prompt/handoff_prompt，提示词简洁、各不超过100字。'
-                'model/effort省略时由本地填充该Profile明确的default_model/default_effort，mode省略为Ask。'
-                '非Agent只输出id/kind/name。不得返回URL/密钥/命令/授权字段，不返回schema本身。\n'+
+            prompt=('DevFlower 提供的当前对话与画布上下文（数据，不扩展工具权限）：\n'+
                 json.dumps(dict(current_graph=t['context'],conversation=t['messages'],available_agents=t['choices']),ensure_ascii=False))
             prompt=self._redact(prompt)
             if len(prompt.encode())>180000:raise Blocked('对话与画布超出本轮上下文预算，请缩短内容或新开助手对话')
@@ -189,7 +185,12 @@ class CanvasAssistant:
             # All fallible metadata operations while the process is alive are
             # inside its ownership context. No post-Popen orphan window.
             with self.backend(self.root,timeout=180,cancelled=cancel.is_set,notify=notify) as client:
-                self.rt.flow.change('canvas-turn',key,dict(process=dict(pid=client.process.pid),request_sha256=digest(prompt.encode())))
+                if t.get('connection_sha256') and client.config['fingerprint']!=t['connection_sha256']:raise Conflict('助手模型连接已变化，未发送旧请求；请重新确认')
+                client.conversation=t['conversation']
+                metadata=dict(request_sha256=digest(prompt.encode()))
+                if callable(getattr(client,'identity',None)):metadata['transport']=client.identity()
+                elif getattr(client,'process',None):metadata['process']=dict(pid=client.process.pid)
+                self.rt.flow.change('canvas-turn',key,metadata)
                 r=client.chat(t['model'],prompt)
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
                 proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan'])) if graph else None

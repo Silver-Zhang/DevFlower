@@ -11,6 +11,8 @@ if __name__=='__main__':
     signal.signal(signal.SIGTERM,terminate)
     args=[sys.argv[3],'--headless','--stdio','--no-auto-update','--log-level','none',
           '--no-custom-instructions','--disable-builtin-mcps']
+    if os.environ.get('COPILOT_GITHUB_TOKEN'):
+        args+=['--no-auto-login','--auth-token-env','COPILOT_GITHUB_TOKEN','--secret-env-vars','COPILOT_GITHUB_TOKEN']
     child=subprocess.Popen(args)
     try:sys.exit(child.wait())
     finally:

@@ -57,7 +57,7 @@ class SessionCenter:
     def register(self, workspace, provider, config_root):
         self.runtime.check_operator()
         project = self.workspace(workspace)
-        if provider not in ('codex', 'claude'):
+        if provider not in ('codex', 'claude','copilot'):
             raise Invalid('Storage discovery is unsupported for this Provider')
         try:
             root = clean_path(config_root)
@@ -112,7 +112,7 @@ class SessionCenter:
         for p in discovery.profiles:
             if p['workspace'] and p['workspace'] != project['path']:
                 continue
-            native, report = scan(str(Path(p['config_root']) / ('sessions' if p['provider'] == 'codex' else 'projects')),
+            native, report = scan(str(Path(p['config_root']) / ('sessions' if p['provider'] == 'codex' else 'session-state' if p['provider']=='copilot' else 'projects')),
                                   p['provider'], discovery.limits, p['session_ids'], include_paths=True)
             coverage.append(dict(profile_id=p['id'], provider=p['provider'], storage_root=display(p['config_root']), **report))
             for record in native:
@@ -149,7 +149,7 @@ class SessionCenter:
         return dict(workspace_id=workspace, owned=owned,
             discovery=dict(workspace_id=workspace, sessions=[x for x in rows if include_hidden or not x['hidden']],
                 coverage=coverage, nested_coverage=nested, profile_coverage=profile_coverage,
-                unsupported=['copilot'], scanned_at=time.time()),
+                unsupported=[], scanned_at=time.time()),
             capabilities={p: capabilities(p) for p in ('codex', 'claude', 'copilot')},
             operations=[self.operation(x['id'], workspace) for x in self.db.listing('session-operation', filters={'workspace': workspace}) if not x.get('diagnostic')])
 
@@ -253,7 +253,7 @@ class SessionCenter:
         if handle == 'new':
             p = self.runtime.operator['profiles'].get(request['profile'])
             if not p or not capabilities(p['provider'])['create']:
-                raise Invalid('Choose an operator-approved Codex or Claude execution profile')
+                raise Invalid('Choose an operator-approved native execution profile')
             home = str(self.runtime.native / secrets.token_hex(16))
             binding = dict(p, home=home, session_id=None, project=project['id'], role='reviewer',
                            runtime_profile=request['profile'], isolation='bwrap', external_sandbox=p['provider'] == 'codex')
@@ -265,7 +265,7 @@ class SessionCenter:
             binding = dict(binding, session_id=row['native']['session_id'])
             p = self.runtime.operator['profiles'].get(request['profile'])
             if (not p or binding.get('runtime_profile', request['profile']) != request['profile'] or
-                    any(binding.get(k) != p.get(k) for k in (('provider','executable','read_paths','readonly_files') if selected else ('provider','executable','model','effort','read_paths','readonly_files')))):
+                    any(binding.get(k) != p.get(k) for k in (('provider','executable','read_paths','readonly_files','auth') if selected else ('provider','executable','model','effort','read_paths','readonly_files','auth')))):
                 raise Blocked('Resume requires the exact approved Provider/model/effort/configuration profile')
             native_sha, cwd = row['native']['sha256'], row['native']['cwd']
         if selected:
@@ -273,8 +273,9 @@ class SessionCenter:
         # No writable access to a frozen Controller candidate or baseline.
         if request['permission'] == 'workspace-write' and cwd != project['path']:
             raise Blocked('Frozen Controller sources can only be continued with read permission')
+        if binding['provider']=='copilot' and request['permission']=='workspace-write':raise Blocked('Copilot 当前仅支持只读 Ask/Plan')
         binding = dict(binding, role='implementer' if request['permission'] == 'workspace-write' else 'reviewer',
-                       tools=['native'] if binding['provider'] == 'codex' else
+                       tools=[] if binding['provider']=='copilot' else ['native'] if binding['provider'] == 'codex' else
                        ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if request['permission'] == 'workspace-write' else ['Read', 'Glob', 'Grep'])
         prompt=request['prompt']
         if 'mode' in request and not hasattr(self.runtime, 'policy'):

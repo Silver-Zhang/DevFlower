@@ -269,7 +269,7 @@ class WorkbenchSessions:
     def native_process_busy(self,home,sid):
         """Inspect actual native writers, including version-named/renamed CLIs."""
         profiles=getattr(getattr(self,'rt',None),'operator',{}).get('profiles',{})
-        programs={str(value) for p in profiles.values() if p.get('provider') in ('codex','claude')
+        programs={str(value) for p in profiles.values() if p.get('provider') in ('codex','claude','copilot')
                   for value in (p.get('executable'),) if value}
         programs|={str(Path(p).resolve()) for p in programs}
         names={Path(p).name for p in programs}
@@ -277,7 +277,7 @@ class WorkbenchSessions:
             comm='';possible=False
             try:
                 comm=(p/'comm').read_text().strip()
-                possible=any(x in comm for x in ('codex','claude')) or comm in names
+                possible=any(x in comm for x in ('codex','claude','copilot')) or comm in names
                 if not possible:
                     try:possible=str((p/'exe').resolve(strict=True)) in programs
                     except OSError:pass
@@ -463,6 +463,13 @@ class WorkbenchSessions:
                     native_modified=native_modified,permanently_deleted=False)
 
     def rpc(self,binding,cwd,method,params):
+        if binding['provider']=='copilot':
+            if method not in ('cli/probe','copilot/models','copilot/auth-status'):raise Blocked('Copilot 尚未支持此原生元数据操作')
+            from .copilot_adapter import invoke
+            home=Path(binding['home']);artifacts=self.rt.storage/'metadata-artifacts';artifacts.mkdir(exist_ok=True)
+            with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')):
+                result,_=invoke(binding,cwd,artifacts,dict(mode='metadata'),timeout=30)
+            return dict(logged_in=result['authenticated'],auth_method='operator-pinned GitHub CLI token',service_verified=False) if method=='copilot/auth-status' else result
         helper=Path(__file__).with_name('workbench_rpc.py')
         home=Path(binding['home']);artifacts=self.rt.storage/'metadata-artifacts';artifacts.mkdir(exist_ok=True)
         mutation=method in ('thread/archive','thread/unarchive','thread/name/set','thread/fork')
@@ -493,6 +500,7 @@ class WorkbenchSessions:
 
     def terminal(self,workspace,handle):
         project,row=self.rt.session_center.resolve(workspace,handle)
+        if row['profile']['provider']=='copilot':raise Blocked('Copilot 已支持工作流创建/恢复；原生交互终端尚未验证，未开放')
         binding,reason=self.rt.session_center._binding(row,project)
         if not binding or self.busy(binding,row['native']['session_id']):raise Blocked(reason or '原生会话正被占用')
         command=[sys.executable,str(Path(__file__).parents[1]/'devflower_native_terminal.py')]
@@ -505,7 +513,7 @@ class WorkbenchSessions:
         if not refresh:return self._capabilities(False,selected,workspace)
         if selected is None:
             rows=[self.capabilities(True,name,workspace)[0] for name in self.rt.operator['profiles']]
-            return rows+[dict(id='copilot',provider='copilot',available=False,reason='认证、原生会话与隔离能力尚未验证')]
+            return rows+([] if any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()) else [dict(id='copilot',provider='copilot',available=False,reason='请登记 Copilot 原生执行配置后启用')])
         if selected not in self.rt.operator['profiles']:raise Invalid('请选择已登记的 Provider 配置')
         import threading
         lock=self._catalog_locks.setdefault((str(self.rt.storage),selected),threading.Lock())
@@ -529,10 +537,10 @@ class WorkbenchSessions:
                 except Invalid:cli={'available':Path(profile['executable']).is_file(),'status':'registered; native capability refresh not yet performed'}
             catalog=ModelCatalog(self).get(name,profile,refresh,workspace)
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
-                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan','Agent'],skills=[],subagents=False,
+                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],subagents=False,
                 model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
-        if selected is None:
+        if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):
             result.append(dict(id='copilot',provider='copilot',available=False,installed=bool(__import__('shutil').which('copilot')),
                 reason='认证、模型发现与隔离执行尚未验证，不能作为可执行节点'))
         return result

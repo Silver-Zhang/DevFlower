@@ -18,7 +18,7 @@ class SyntheticBackend:
     def __init__(self,cwd,**kw):self.cwd=cwd;self.cancelled=kw.get('cancelled',lambda:False);self.process=type('P',(),{'pid':os.getpid()})()
     def __enter__(self):type(self).entered+=1;return self
     def __exit__(self,*a):type(self).closed+=1
-    def catalog(self):return dict(provider='copilot',source='SYNTHETIC catalog; not native inference',models=[dict(id='auto',name='Synthetic Auto')],observed_at=time.time(),inference_calls=0,execution_verified=False)
+    def catalog(self):return dict(provider='devflower-agent',source='SYNTHETIC catalog; not native inference',models=[dict(id='auto',name='Synthetic Auto')],observed_at=time.time(),inference_calls=0,execution_verified=False)
     def chat(self,model,prompt):
         type(self).calls.append(json.loads(prompt.split('\n',1)[1]));end=time.monotonic()+type(self).delay
         while time.monotonic()<end:
@@ -29,7 +29,7 @@ class SyntheticBackend:
         for id,kind in [('start','start'),('analyze','agent'),('result','result')]:
             nodes.append(dict(id=id,kind=kind,name=id,profile=profile if kind=='agent' else '',model=m['id'] if kind=='agent' else '',effort=m['efforts'][0] if kind=='agent' else '',mode='Ask',initial_prompt='理解目标',round_prompt=ctx['conversation'][-1]['text'],handoff_prompt='简洁回答'))
         plan=dict(version=1,name=name,summary='Synthetic plan, not a native call',nodes=nodes,edges=[dict(source='start',target='analyze'),dict(source='analyze',target='result')])
-        return dict(text=json.dumps(dict(reply='SYNTHETIC 画布已设计：'+name,plan=plan)),provider='copilot',requested_model=model,resolved_model='unknown',session_id='synthetic',tools_enabled=False)
+        return dict(text=json.dumps(dict(reply='SYNTHETIC 画布已设计：'+name,plan=plan)),provider='devflower-agent',requested_model=model,resolved_model='unknown',session_id='synthetic',tools_enabled=False)
 
 
 class CanvasAssistantTests(unittest.TestCase):
@@ -52,7 +52,7 @@ class CanvasAssistantTests(unittest.TestCase):
     def test_catalog_does_not_call_model_or_enable_execution(self):
         result=self.ai.catalog();self.assertEqual(SyntheticBackend.calls,[]);self.assertFalse(result['execution_verified']);self.assertEqual(SyntheticBackend.closed,1)
     def test_builtin_conversation_returns_visible_reply_and_draft_proposal(self):
-        v=self.run_turn();self.assertEqual(v['turn']['state'],'COMPLETED');self.assertEqual([m['role'] for m in v['messages']],['user','assistant']);self.assertEqual(v['turn']['receipt']['provider'],'copilot');self.assertTrue(v['turn']['proposal']['graph']);self.assertEqual(self.rt.flow.list('run'),[])
+        v=self.run_turn();self.assertEqual(v['turn']['state'],'COMPLETED');self.assertEqual([m['role'] for m in v['messages']],['user','assistant']);self.assertEqual(v['turn']['receipt']['provider'],'devflower-agent');self.assertTrue(v['turn']['proposal']['graph']);self.assertEqual(self.rt.flow.list('run'),[])
     def test_no_codex_or_claude_cli_used_for_configuration(self):
         with patch('orchestration.adapters.CLI.start',side_effect=AssertionError('Must not call native coding Agent')):self.assertEqual(self.run_turn()['turn']['state'],'COMPLETED')
     def test_second_turn_sees_current_canvas_and_conversation(self):

@@ -44,6 +44,7 @@ def plan_graph(plan, choices):
         if n['kind']=='agent':
             allowed=choices.get(n['profile'])
             if not allowed or (n['model'],n['effort']) not in [(m['id'],e) for m in allowed['models'] for e in m['efforts']]:raise Invalid('AI提案选择了尚未配置的模型或强度')
+            if allowed['provider']=='copilot' and n['mode'] not in ('Ask','Plan'):raise Invalid('Copilot 提案仅允许 Ask/Plan 上下文分析')
             v.update(profile=n['profile'],provider=allowed['provider'],model=n['model'],effort=n['effort'],mode=n['mode'],permission='workspace-write' if n['mode']=='Agent' else 'read',
                 session='new',subagents='disabled',timeout=300,responsibility=n['name'],initial_prompt=n['initial_prompt'],round_prompt=n['round_prompt'],handoff_prompt=n['handoff_prompt'])
         nodes.append(v)

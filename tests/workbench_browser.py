@@ -61,7 +61,10 @@ def main():
     # signed-in Copilot account as an unlabelled catalog/model fixture.
     from test_canvas_assistant import SyntheticBackend
     from studio.canvas_assistant import CanvasAssistant
-    assistant_patch=patch('studio.canvas_assistant.CopilotRPC',SyntheticBackend);assistant_patch.start();owner.addCleanup(assistant_patch.stop)
+    from studio.canvas_assistant import CanvasAssistant
+    def synthetic_assistant(runtime):
+        assistant=CanvasAssistant(runtime);assistant.backend=SyntheticBackend;return assistant
+    assistant_patch=patch('studio.canvas_assistant.CanvasAssistant',synthetic_assistant);assistant_patch.start();owner.addCleanup(assistant_patch.stop)
     server,token=create_server(rt)
     # Drain real in-flight history requests before deleting the fixture DBs.
     # Browser disconnect does not itself end the server's request thread.

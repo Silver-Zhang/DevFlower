@@ -164,7 +164,7 @@ class WorkspaceTests(unittest.TestCase):
         finally:path.chmod(0o700)
 
     def test_missing_and_unsupported_are_distinct(self):
-        _,missing=scan(self.base/'missing','claude');_,unsupported=scan(self.base,'copilot')
+        _,missing=scan(self.base/'missing','claude');_,unsupported=scan(self.base,'unknown-provider')
         self.assertEqual(missing['status'],'not_found');self.assertEqual(unsupported['status'],'unsupported')
 
     def test_config_folder_is_not_a_session_library(self):

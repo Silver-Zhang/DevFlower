@@ -12,13 +12,13 @@ from .agent_sessions import safe_text
 
 
 class CopilotRPC:
-    def __init__(self, cwd, timeout=120, cancelled=lambda: False, notify=lambda event: None):
-        self.cwd=str(cwd);self.timeout=timeout;self.cancelled=cancelled;self.notify=notify
+    def __init__(self, cwd, timeout=120, cancelled=lambda: False, notify=lambda event: None, executable=None):
+        self.cwd=str(cwd);self.timeout=timeout;self.cancelled=cancelled;self.notify=notify;self.executable=executable
         self.process=None;self.messages=queue.Queue(maxsize=512);self.events=deque();self.sequence=0
         self.reader_stop=threading.Event();self.reader_error=None
 
     def __enter__(self):
-        executable=shutil.which('copilot')
+        executable=self.executable or shutil.which('copilot')
         if not executable:raise Blocked('未安装 GitHub Copilot CLI，请先安装并登录')
         try:
             owner=process_identity(os.getpid())
@@ -75,9 +75,9 @@ class CopilotRPC:
                 continue
             if isinstance(value,BaseException):raise Blocked('Copilot 连接已关闭或响应超限；请检查登录和网络')
             if 'method' in value and 'id' in value:
-                # Built-in assistant exposes no native tool or permission surface.
-                self._send(dict(jsonrpc='2.0',id=value['id'],error=dict(code=-32601,message='DevFlower canvas assistant has no native tools')))
-                raise Blocked('Copilot 请求了未授权的工具/权限；已拒绝且未修改画布')
+                # Context-only workflow Agent exposes no native tool/permission surface.
+                self._send(dict(jsonrpc='2.0',id=value['id'],error=dict(code=-32601,message='DevFlower workflow Agent has no native tools')))
+                raise Blocked('Copilot 请求了未授权的工具/权限；已拒绝执行')
             if value.get('method')=='session.event':
                 event=value.get('params',{}).get('event',{})
                 self.notify(event)
@@ -102,14 +102,17 @@ class CopilotRPC:
         return dict(provider='copilot',source='Copilot RPC models.list',cli_version=self.version,observed_at=time.time(),
                     authenticated=True,models=models,inference_calls=0,execution_verified=False)
 
-    def chat(self,model,prompt):
+    def chat(self,model,prompt,session_id=None,resume=False):
         catalog=self.catalog()
         if model not in [m['id'] for m in catalog['models']]:raise Blocked('当前账号模型目录中没有此模型；未替换模型或发起推理')
-        session=self.request('session.create',dict(model=model,availableTools=[],excludedTools=[],
-            systemMessage=dict(mode='replace',content='你是 DevFlower 内置画布助手。只处理提供的对话和画布数据，严格按请求格式回答。'),
+        options=dict(model=model,availableTools=[],excludedTools=[],
+            systemMessage=dict(mode='replace',content='你是 DevFlower 工作流中的 GitHub Copilot Agent。只根据提供的上下文执行当前任务；没有工具、文件或交付权限。'),
             workingDirectory=self.cwd,streaming=True,requestPermission=False,requestUserInput=False,
-            enableConfigDiscovery=False,enableFileHooks=False,enableSkills=False,enableHostGitOperations=False))
+            enableConfigDiscovery=False,enableFileHooks=False,enableSkills=False,enableHostGitOperations=False)
+        if session_id:options['sessionId']=session_id
+        session=self.request('session.resume' if resume else 'session.create',options)
         sid=session['sessionId'];self.session=sid
+        if session_id and sid!=session_id:raise Blocked('Copilot 未恢复明确绑定的原生会话')
         self.request('session.send',dict(sessionId=sid,prompt=prompt))
         answer='';resolved='unknown';usage=None
         while True:

@@ -14,7 +14,7 @@ import time
 from .graph import Invalid
 from .session_sources import clean_path, opened, Refused, scan, LIMITS, UUID
 
-PROVIDERS = {'codex': 'sessions', 'claude': 'projects', 'copilot': None}
+PROVIDERS = {'codex': 'sessions', 'claude': 'projects', 'copilot': 'session-state'}
 
 
 def identity(*parts):
@@ -84,7 +84,7 @@ class WorkspaceSessions:
                         config_root=env.get(name) or str(Path(home)/('.'+provider)), origin='default')]
             for root in self.roots.values():
                 # Only these immediate, explicit source roots; never crawl a project or HOME.
-                for provider in ('codex', 'claude'):
+                for provider in ('codex', 'claude','copilot'):
                     profiles = [*profiles, dict(provider=provider, config_root=str(Path(root)/('.'+provider)),
                                                workspace=root, original_project_root=root, origin='nested',
                                                home=None)]
@@ -93,7 +93,7 @@ class WorkspaceSessions:
                 raise Invalid('Unknown profile fields')
             provider = value.get('provider')
             if provider not in PROVIDERS:
-                raise Invalid('Unknown provider; use the explicit unsupported Copilot declaration')
+                raise Invalid('Unknown native session Provider')
             try:
                 config_root = clean_path(value['config_root'])
                 home = clean_path(value['home']) if value.get('home') else None
@@ -128,7 +128,7 @@ class WorkspaceSessions:
         if len(self.profiles) > 64 or len(self.roots) > 8:
             raise Invalid('M0 supports at most 8 workspaces and 64 profiles')
         # Standalone capability declaration; not a pretend native parser.
-        self.unsupported = ['copilot']
+        self.unsupported = []
         if persist:
             self.initialize_storage()
 
@@ -188,7 +188,7 @@ class WorkspaceSessions:
                    resume_note='Native CLI resume has not been confirmed. Occupancy/auth/version are unknown.')
         # A command is a copy-only suggestion, never a claim of native confirmation.
         # An unknown HOME or changed/mismatched cwd cannot reconstruct the original environment.
-        if verified and association in ('cwd', 'registered_origin') and profile['home'] and disclosed:
+        if verified and association in ('cwd', 'registered_origin') and profile['home'] and disclosed and profile['provider']!='copilot':
             provider = profile['provider']
             assignments = ['env', 'HOME='+profile['home'],
                            ('CODEX_HOME=' if provider == 'codex' else 'CLAUDE_CONFIG_DIR=')+profile['config_root']]

@@ -32,7 +32,12 @@ def profile_identity(profile):
         exe_hash=_executable_hash(str(exe),*stamp)
         after=exe.stat()
         if stamp!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns):raise Blocked('原生工具正在更新，配置待确认')
-    return digest(canonical(dict(provider=profile.get('provider'), executable=str(exe) if exe else None,
+    auth_identity=None
+    if profile.get('provider')=='copilot':
+        from .copilot_adapter import credential
+        # Account/credential rotation invalidates an old execution receipt.
+        auth_identity=digest(credential(profile).encode())
+    return digest(canonical(dict(auth_identity=auth_identity,provider=profile.get('provider'), executable=str(exe) if exe else None,
         executable_sha256=exe_hash,
         files=files)))
 

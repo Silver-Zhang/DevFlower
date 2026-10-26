@@ -177,7 +177,7 @@ class ModelAdmission:
         elif binding['provider'] != 'codex':request['tools'] = binding['tools']
         return dict(key=self.key(binding, selected['cwd']), selection=request,
                     verification_required=not status['execution_allowed'],
-                    agent='Codex' if binding['provider']=='codex' else 'Claude Code')
+                    agent='Codex' if binding['provider']=='codex' else 'GitHub Copilot' if binding['provider']=='copilot' else 'Claude Code')
 
     def ensure_for_node(self, selected, run, activation):
         """Refresh only an expired successful check in an already authorized run.

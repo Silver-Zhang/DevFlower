@@ -76,7 +76,13 @@ def create_server(runtime,port=0):
                     elif path=='/api/terminal':value=sessions.terminal(q['workspace'],q['handle'])
                     elif path=='/api/terminals':value={'terminals':terminals.listing(q['workspace'])}
                     elif path=='/api/terminal/output':value=terminals.snapshot(q['workspace'],q['id'],int(q.get('after','0')))
-                    elif path=='/api/copilot/models':value=canvas_assistant.catalog()
+                    elif path=='/api/assistant/models':value=canvas_assistant.catalog()
+                    elif path=='/api/devflower-agent/config':
+                        from .devflower_agent import AgentConnection
+                        value=AgentConnection(runtime).public()
+                    elif path=='/api/devflower-agent/tools':
+                        from .devflower_agent import AGENT_ID,canvas_tools
+                        value=dict(agent_id=AGENT_ID,tools=canvas_tools(),permissions=['canvas-draft-only'])
                     elif path=='/api/canvas-assistant/conversation':value=canvas_assistant.conversation(q['workspace'],q['id'])
                     elif path=='/api/run':value=runtime.snapshot(q['run'],int(q.get('after','0')))
                     elif path=='/api/config-assistant/schema':
@@ -129,6 +135,9 @@ def create_server(runtime,port=0):
                 elif path=='/api/sessions/trash/confirm':
                     from .session_batch import SessionBatch
                     value=SessionBatch(sessions).confirm(data['id'],data['sha256'],data['answer'])
+                elif path=='/api/devflower-agent/config':
+                    from .devflower_agent import AgentConnection
+                    value=AgentConnection(runtime).save(data)
                 elif path=='/api/canvas-assistant/messages':value=canvas_assistant.start(data)
                 elif path=='/api/canvas-assistant/cancel':value=canvas_assistant.cancel(data['workspace'],data['conversation'])
                 elif path.startswith('/api/config-assistant/'):

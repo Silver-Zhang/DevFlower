@@ -18,11 +18,11 @@ from orchestration.privacy import redact
 
 
 def capabilities(provider):
-    supported = provider in ('codex', 'claude')
+    supported = provider in ('codex', 'claude','copilot')
     return dict(supported=supported, discover=supported, read=supported,
                 create=supported, resume=supported, hide=supported, unhide=supported,
                 native_archive=False, native_delete=False, models=supported,
-                effort=supported, subagents=False, parallel_dag=False)
+                effort=supported and provider!='copilot', terminal=supported and provider!='copilot', context_only=provider=='copilot', subagents=False, parallel_dag=False)
 
 
 def session_identity(provider, native_id, storage_profile, cwd, workspace):
@@ -48,6 +48,12 @@ def safe_text(value):
 
 def _visible(obj, provider):
     if not isinstance(obj, dict):
+        return None
+    if provider=='copilot':
+        role={'user.message':'user','assistant.message':'assistant'}.get(obj.get('type'))
+        data=obj.get('data',{})
+        if role and isinstance(data,dict) and isinstance(data.get('content'),str):
+            return dict(role=role,text=safe_text(data['content']))
         return None
     if provider == 'codex':
         if obj.get('type') != 'response_item':
@@ -89,7 +95,7 @@ def _visible(obj, provider):
 
 
 def conversation(provider, path, limit=100, query='', *, expected_sha256=None, secrets=(), start_offset=0, end_offset=None, include_metadata=False):
-    if provider not in ('codex', 'claude'):
+    if provider not in ('codex', 'claude','copilot'):
         raise Invalid('Provider history is unsupported')
     if type(limit) is not int or not 1 <= limit <= 500 or not isinstance(query, str) or len(query) > 500:
         raise Invalid('History limit must be 1–500 and search at most 500 characters')

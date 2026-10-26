@@ -1,5 +1,5 @@
 import React from 'react';
-const name=p=>p.provider==='claude'?'Claude Code':p.provider==='codex'?'Codex':p.provider;
+const name=p=>p.provider==='claude'?'Claude Code':p.provider==='codex'?'Codex':p.provider==='copilot'?'GitHub Copilot':p.provider;
 export function AgentPicker({profiles,value,onChange,disabled=false}){
  const same=p=>profiles.filter(x=>x.provider===p.provider).length>1;
  return <label className="field agent-picker"><span>Agent</span><select aria-label="Agent 工具" value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)}>

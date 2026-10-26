@@ -57,12 +57,21 @@ class SessionRuntime:
         protected = [ROOT, self.operator_file, *self.operator_protected_paths()]
         for p in self.operator['profiles'].values():
             fields = {'provider', 'executable', 'model', 'effort', 'read_paths', 'readonly_files'}
-            if not fields <= set(p) or set(p) - fields - {'buffered_tool_transport', 'timeout_seconds'}:
+            if not fields <= set(p) or set(p) - fields - {'buffered_tool_transport', 'timeout_seconds','auth'}:
                 raise Blocked('Unexpected native execution profile fields')
-            if p['provider'] not in ('codex', 'claude') or not all(isinstance(p[k], str) and p[k] for k in ('model', 'effort')):
-                raise Blocked('Only explicit Codex/Claude model and effort profiles are supported')
+            if p['provider'] not in ('codex', 'claude','copilot') or not all(isinstance(p[k], str) and p[k] for k in ('model', 'effort')):
+                raise Blocked('Only explicit supported Provider/model/effort profiles are supported')
             if len(p['readonly_files']) > 2:
                 raise Blocked('Only explicit native authentication/settings overlays are supported')
+            if p['provider']=='copilot':
+                auth=p.get('auth',{})
+                if set(auth)!={'kind','executable','config_file'} or auth.get('kind')!='github-cli' or p['readonly_files'] or p['effort']!='default':
+                    raise Blocked('Copilot requires a pinned GitHub CLI credential broker, no overlays and default effort')
+                for name in ('executable','config_file'):
+                    path=clean_path(auth[name])
+                    if path not in self.operator['dependencies']:raise Blocked('Copilot credential broker must be operator-pinned')
+                    protected.append(Path(path))
+            elif 'auth' in p:raise Blocked('Credential broker belongs to Copilot only')
             destinations = set()
             for src, dest in p['readonly_files']:
                 if dest not in (('.codex/auth.json',) if p['provider'] == 'codex' else ('.claude/settings.json', '.claude/.credentials.json')) or dest in destinations:
@@ -161,7 +170,8 @@ class SessionRuntime:
 
     def profiles(self):
         return [dict(id=k, provider=p['provider'], model=p['model'], effort=p['effort'], subagents=False,
-                     tools=['native'] if p['provider'] == 'codex' else ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'])
+                     tools=[] if p['provider']=='copilot' else ['native'] if p['provider'] == 'codex' else ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'],
+                     modes=['Ask','Plan'] if p['provider']=='copilot' else ['Ask','Plan','Agent'])
                 for k, p in self.operator['profiles'].items()]
 
     def owned_sessions(self, workspace, validate=False):

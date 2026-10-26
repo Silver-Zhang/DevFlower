@@ -75,6 +75,9 @@ class CLI:
         self.kind, self.binding, self.limits = kind, binding, limits
 
     def start(self, prompt, cwd, artifacts, output_schema=None, store=None, run=None, session=None):
+        if self.kind == 'copilot':
+            from studio.copilot_adapter import CopilotAdapter
+            return CopilotAdapter(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
         b = self.binding
         if not Path(b['executable']).is_file() or not os.access(b['executable'], os.X_OK):
             raise Blocked('CLI executable unavailable before spawn')
