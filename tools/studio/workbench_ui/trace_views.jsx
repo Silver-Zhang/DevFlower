@@ -1,5 +1,5 @@
 import React,{useState} from 'react';
-import Markdown from 'react-markdown';
+import Markdown from './DocumentLinks.jsx';
 import remarkGfm from 'remark-gfm';
 import {ReadableContent} from './ConversationView.jsx';
 import {handoffDeliveries} from './handoff_deliveries.mjs';

@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import Markdown from 'react-markdown';
+import Markdown from './DocumentLinks.jsx';
 import remarkGfm from 'remark-gfm';
 import {ToolActivity} from './ToolActivity.jsx';
 import {StatusBadge} from './RuntimeOverview.jsx';

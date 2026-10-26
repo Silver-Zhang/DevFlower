@@ -24,7 +24,9 @@ class SyntheticBackend:
         while time.monotonic()<end:
             if self.cancelled():raise Blocked('Synthetic cancel')
             time.sleep(.01)
-        ctx=type(self).calls[-1];name='Synthetic '+ctx['conversation'][-1]['text'][:40];profile,choice=next(iter(ctx['available_agents'].items()));m=choice['models'][0]
+        ctx=type(self).calls[-1]
+        if ctx.get('intent')=='chat':return dict(text=json.dumps(dict(reply='SYNTHETIC 普通解释，没有修改画布',plan=None)),public_summaries=[dict(source='provider-public-summary',text='SYNTHETIC 公开依据')])
+        name='Synthetic '+ctx['conversation'][-1]['text'][:40];profile,choice=next(iter(ctx['available_agents'].items()));m=choice['models'][0]
         nodes=[]
         for id,kind in [('start','start'),('analyze','agent'),('result','result')]:
             nodes.append(dict(id=id,kind=kind,name=id,profile=profile if kind=='agent' else '',model=m['id'] if kind=='agent' else '',effort=m['efforts'][0] if kind=='agent' else '',mode='Ask',initial_prompt='理解目标',round_prompt=ctx['conversation'][-1]['text'],handoff_prompt='简洁回答'))

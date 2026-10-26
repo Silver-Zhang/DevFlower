@@ -69,6 +69,15 @@ def create_server(runtime,port=0):
                         runs=[{k:v for k,v in r.items() if k in ('id','workspace','state','created_at','task')} for r in runtime.flow.list('run')],
                         stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
                     elif path=='/api/folders':value=runtime.folder(q.get('path'))
+                    elif path=='/api/workflow-library':
+                        from .workflow_library import WorkflowLibrary
+                        value=WorkflowLibrary(runtime).listing(q['workspace'])
+                    elif path=='/api/run-conversation':
+                        from .run_journal import run_conversation
+                        value=run_conversation(sessions,q['workspace'],q['run'])
+                    elif path=='/api/file-reference':
+                        from .run_journal import file_reference
+                        value=file_reference(runtime,q['workspace'],q['reference'])
                     elif path=='/api/sessions':value=sessions.listing(q['workspace'],q.get('view','active'),q.get('query',''))
                     elif path=='/api/history':value=sessions.history(q['workspace'],q['handle'],q.get('query',''))
                     elif path=='/api/node-session':value=sessions.activation_session(q['workspace'],q['run'],q['activation'])
@@ -96,6 +105,12 @@ def create_server(runtime,port=0):
                     elif path=='/api/chat-session':value=sessions.operation_session(q['workspace'],q['id'])
                     else:raise Invalid('没有这个工作台接口')
                 elif path=='/api/workspace':value=runtime.open_workspace(data['path'])
+                elif path=='/api/workflow-library/save':
+                    from .workflow_library import WorkflowLibrary
+                    value=WorkflowLibrary(runtime).save(data)
+                elif path=='/api/workflow-library/manage':
+                    from .workflow_library import WorkflowLibrary
+                    value=WorkflowLibrary(runtime).manage(data)
                 elif path=='/api/capabilities':value=sessions.capabilities(True)
                 elif path=='/api/models':
                     if type(data.get('refresh',True)) is not bool:raise Invalid('刷新标记必须是布尔值')

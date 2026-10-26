@@ -102,10 +102,12 @@ class WorkbenchRuntime(SessionRuntime):
         return value
 
     def folder(self, path=None):
-        """Browse only explicitly approved runtime roots; never follow project symlinks."""
+        """Directory names are navigation, not execution authority or file access."""
         roots = self.operator['allowed_roots'];path = clean_path(path) if path else roots[0]
-        if not any(Path(path).is_relative_to(r) for r in roots): raise Blocked('只能浏览已批准的运行器目录')
-        if any(Path(path).is_relative_to(p) for p in [*self.protected, self.storage, self.native]): raise Blocked('该目录包含受保护数据')
+        def private(p):
+            return (any(Path(p).is_relative_to(x) for x in [*self.protected,self.storage,self.native,'/proc','/sys','/dev','/etc','/usr','/bin','/sbin','/lib','/lib64','/boot','/root']) or
+                    any(part.startswith('.') or part in ('node_modules','__pycache__') for part in Path(p).parts))
+        if private(path):raise Blocked('此位置包含系统或私有数据，请选择普通工作目录')
         rows = []
         try:
             with opened(path, directory=True) as fd:
@@ -114,11 +116,14 @@ class WorkbenchRuntime(SessionRuntime):
                     target = str(Path(path) / name)
                     try:
                         with opened(target, directory=True): pass
-                        if not any(Path(target).is_relative_to(p) for p in [*self.protected, self.storage, self.native]): rows.append({'name': name, 'path': target})
+                        if not private(target): rows.append({'name': name, 'path': target})
                     except (OSError, ValueError): continue
         except (OSError, ValueError): raise Invalid('没有权限读取这个文件夹，请返回父目录') from None
         parent = str(Path(path).parent)
-        return dict(path=path, name=Path(path).name, parent=parent if any(Path(parent).is_relative_to(r) for r in roots) else None,
+        locations=[dict(name='主文件夹',path=str(Path.home())),dict(name='此电脑',path='/')]
+        locations += [dict(name=Path(p).name,path=p) for p in ('/home','/mnt','/media','/tmp') if Path(p).is_dir()]
+        return dict(path=path, name=Path(path).name, parent=parent if path!='/' else None,locations=locations,
+                    execution_allowed=any(Path(path).is_relative_to(r) for r in roots),
                     roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime', release=self.release_identity(),
                     recent=self.db.listing('workspace', limit=8))
 

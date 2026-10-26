@@ -13,15 +13,17 @@ from .agent_sessions import safe_text
 from .workbench_graph import validate_graph
 
 
-def schema(profiles):
+def schema(profiles,depth=0):
     # Keep the schema within the adapter's closed JSON-schema subset.
     def string(limit,**kwargs):return dict(type='string',pattern=r'^[\s\S]{0,'+str(limit)+r'}$',**kwargs)
     text=string(6000)
     node=dict(type='object',additionalProperties=False,required=['id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt'],properties=dict(
-        id=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_-]{0,63}$'),kind=dict(type='string',enum=['start','agent','merge','result']),name=string(100,minLength=1),
+        id=dict(type='string',pattern='^[A-Za-z][A-Za-z0-9_-]{0,63}$'),kind=dict(type='string',enum=['start','agent','merge','result','condition']+(['loop'] if depth<2 else [])),name=string(100,minLength=1),
         profile=dict(type='string',enum=['',*profiles]),model=string(200),effort=string(40),mode=dict(type='string',enum=['Ask','Plan','Agent']),
         initial_prompt=text,round_prompt=text,handoff_prompt=text))
-    edge=dict(type='object',additionalProperties=False,required=['source','target'],properties=dict(source=string(64),target=string(64)))
+    node['properties'].update(test=dict(type='object',additionalProperties=False,required=['field','op','value'],properties=dict(field=string(200),op=dict(type='string',enum=['equals','not_equals','contains','exists','greater','less']),value={})),strategy=dict(type='string',enum=['all','selected']))
+    if depth<2:node['properties'].update(body=schema(profiles,depth+1),max_rounds=dict(type='integer',minimum=1,maximum=5),until=dict(type='object',additionalProperties=False,required=['field','op','value'],properties=dict(field=string(200),op=dict(type='string',enum=['equals','not_equals','contains','exists','greater','less']),value={})))
+    edge=dict(type='object',additionalProperties=False,required=['source','target'],properties=dict(source=string(64),target=string(64),when=dict(type='string',enum=['always','true','false']),transfer=dict(type='string',enum=['result','answer','summary','issues','evidence'])))
     return dict(type='object',additionalProperties=False,required=['version','name','summary','nodes','edges'],properties=dict(version=dict(type='integer',const=1),name=string(160,minLength=1),summary=text,
         nodes=dict(type='array',minItems=3,items=node),edges=dict(type='array',minItems=2,items=edge)))
 
@@ -41,6 +43,9 @@ def plan_graph(plan, choices):
     for n in plan['nodes']:
         layer=depth[n['id']];row=slots.get(layer,0);slots[layer]=row+1
         v=dict(id=n['id'],kind=n['kind'],name=n['name'],position=dict(x=80+layer*280,y=120+row*200))
+        if n['kind']=='condition':v['test']=n.get('test',dict(field='result.accepted',op='equals',value=True))
+        if n['kind']=='merge':v['strategy']=n.get('strategy','all')
+        if n['kind']=='loop':v.update(body=plan_graph(n.get('body'),choices),max_rounds=n.get('max_rounds',5),until=n.get('until',dict(field='result.accepted',op='equals',value=True)))
         if n['kind']=='agent':
             allowed=choices.get(n['profile'])
             if not allowed or (n['model'],n['effort']) not in [(m['id'],e) for m in allowed['models'] for e in m['efforts']]:raise Invalid('AI提案选择了尚未配置的模型或强度')
@@ -48,8 +53,8 @@ def plan_graph(plan, choices):
             v.update(profile=n['profile'],provider=allowed['provider'],model=n['model'],effort=n['effort'],mode=n['mode'],permission='workspace-write' if n['mode']=='Agent' else 'read',
                 session='new',subagents='disabled',timeout=300,responsibility=n['name'],initial_prompt=n['initial_prompt'],round_prompt=n['round_prompt'],handoff_prompt=n['handoff_prompt'])
         nodes.append(v)
-    if not any(n['kind']=='agent' for n in nodes) or sum(n['kind']=='result' for n in nodes)!=1:raise Invalid('提案需要Agent与唯一结果节点')
-    graph=dict(version=3,name=plan['name'],nodes=nodes,edges=[dict(id='ai-edge'+str(i),**e,transfer='result') for i,e in enumerate(plan['edges'])],budget=dict(calls=24,seconds=3600))
+    if not any(n['kind'] in ('agent','loop') for n in nodes) or sum(n['kind']=='result' for n in nodes)!=1:raise Invalid('提案需要Agent与唯一结果节点')
+    graph=dict(version=3,name=plan['name'],nodes=nodes,edges=[dict(dict(id='ai-edge'+str(i),transfer='result'),**e) for i,e in enumerate(plan['edges'])],budget=dict(calls=24,seconds=3600))
     return validate_graph(graph)
 
 

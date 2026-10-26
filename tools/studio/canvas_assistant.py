@@ -15,6 +15,18 @@ from .configuration_assistant import ConfigurationAssistant,plan_graph,schema
 from .devflower_agent import AGENT_ID,DevFlowerAgent
 
 
+def redact_visible(rt,value):
+    from orchestration.privacy import credentials,redact
+    known=[]
+    for p in rt.operator['profiles'].values():
+        known.extend(credentials(p.get('home',''),[f[0] for f in p.get('readonly_files',[])]))
+    def clean(v):
+        if isinstance(v,str):return safe_text(redact(v,known))
+        if isinstance(v,list):return [clean(x) for x in v]
+        if isinstance(v,dict):return {k:clean(x) for k,x in v.items()}
+        return v
+    return clean(value)
+
 def expand_plan(plan,choices):
     """Compact assistant output -> unchanged strict public plan validator.
 
@@ -23,7 +35,7 @@ def expand_plan(plan,choices):
     """
     value=copy.deepcopy(plan)
     if not isinstance(value,dict) or not isinstance(value.get('nodes'),list):raise Invalid('画布计划格式无效')
-    fields={'id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt'}
+    fields={'id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','test','strategy','body','max_rounds','until'}
     for n in value['nodes']:
         if not isinstance(n,dict) or set(n)-fields:raise Invalid('节点包含未允许的配置字段')
         p=choices.get(n.get('profile'),{}) if n.get('kind')=='agent' else {}
@@ -33,10 +45,11 @@ def expand_plan(plan,choices):
         n.setdefault('effort',p.get('default_effort',models[0]['efforts'][0] if len(models)==1 and len(models[0]['efforts'])==1 else ''))
         n.setdefault('mode','Ask')
         for key in ('initial_prompt','round_prompt','handoff_prompt'):n.setdefault(key,'')
+        if n.get('kind')=='loop':n['body']=expand_plan(n.get('body'),choices)
     # Entry/result are local canvas scaffolding, not extra Agent invocations.
     # LLMs may describe just the meaningful processing nodes. Add missing
     # scaffolding deterministically, then apply the unchanged graph validator.
-    if not isinstance(value.get('edges'),list) or any(not isinstance(e,dict) or set(e)!={'source','target'} for e in value['edges']):raise Invalid('画布连线格式无效')
+    if not isinstance(value.get('edges'),list) or any(not isinstance(e,dict) or not {'source','target'}<=set(e) or set(e)-{'source','target','when','transfer'} for e in value['edges']):raise Invalid('画布连线格式无效')
     ids={n.get('id') for n in value['nodes'] if isinstance(n.get('id'),str)}
     def add(kind):
         node_id='assistant_'+kind
@@ -152,12 +165,23 @@ class CanvasAssistant:
 
     def start(self,data):
         required={'workspace','conversation','request_id','expected','message','graph','model','allow_context'}
-        if set(data)!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        if set(data)-{'intent'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        intent=data.get('intent','auto')
+        if intent not in ('auto','chat','workflow'):raise Invalid('助手工作方式无效')
         if (not isinstance(data['request_id'],str) or len(data['request_id'])!=32 or any(c not in '0123456789abcdef' for c in data['request_id']) or
             not isinstance(data['message'],str) or not 1<=len(data['message'].strip())<=6000 or not isinstance(data['model'],str) or len(data['model'])>200):
             raise Invalid('消息、模型或请求身份无效')
         if data['expected'] is not None and type(data['expected']) is not int:raise Invalid('对话版本无效')
-        self.rt.check_operator();base=ConfigurationAssistant(self.rt)._base(data)
+        self.rt.check_operator()
+        if intent=='chat':
+            self.rt.session_center.workspace(data['workspace']);g=copy.deepcopy(data['graph'])
+            if not isinstance(g,dict) or len(canonical(g))>150000 or not isinstance(g.get('nodes'),list) or not isinstance(g.get('edges'),list) or g.get('version')!=3 or not isinstance(g.get('name'),str):raise Invalid('画布快照无效')
+            if g['nodes']:
+                from .workbench_graph import validate_graph
+                validate_graph(g)
+            elif g['edges']:raise Invalid('空画布不能有未绑定连线')
+            base=dict(workspace=data['workspace'],source=None,source_sha256=None,base_graph=g,base_graph_sha256=digest(canonical(g)),choices={})
+        else:base=ConfigurationAssistant(self.rt)._base(data)
         for name,p in base['choices'].items():
             profile=self.rt.operator['profiles'][name];p.update(default_model=profile['model'],default_effort=profile['effort'])
         connection_sha=None
@@ -169,10 +193,17 @@ class CanvasAssistant:
         clean=self._redact(data['message']);g=self._redact(base['base_graph'])
         # The exact original graph remains local for CAS. Only declared fields
         # and redacted visible text are sent to the inference backend.
-        nodes={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility'}
-        context={k:g[k] for k in ('version','name')};context['nodes']=[{k:v for k,v in n.items() if k in nodes} for n in g['nodes']]
-        context['edges']=[{k:v for k,v in e.items() if k in {'source','target','label','transfer'}} for e in g['edges']]
-        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,graph=base['base_graph_sha256'],expected=data['expected'])))
+        nodes={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility','test','strategy','max_rounds','until','input_contract','output_contract'}
+        def visible_graph(graph):
+            ctx={k:graph[k] for k in ('version','name')};ctx['nodes']=[]
+            for n in graph['nodes']:
+                v={k:value for k,value in n.items() if k in nodes}
+                if n.get('kind')=='loop':v['body']=visible_graph(n['body'])
+                ctx['nodes'].append(v)
+            ctx['edges']=[{k:value for k,value in e.items() if k in {'source','target','label','transfer','when','field','max_chars'}} for e in graph['edges']]
+            return ctx
+        context=visible_graph(g)
+        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,graph=base['base_graph_sha256'],expected=data['expected'],**({'intent':intent} if 'intent' in data else {}))))
         with self.lock:
             if self.closed:raise Blocked('助手服务正在关闭')
             with self.rt.flow.tx() as db:
@@ -195,7 +226,7 @@ class CanvasAssistant:
                     if prior['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):raise Blocked('上一请求尚未确认结束，请先停止或查看状态')
                 v.setdefault('created_at',time.time());v.setdefault('title',clean[:60]);v['updated_at']=time.time()
                 v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id))
-                t=dict(base,id=turn_id,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
+                t=dict(base,id=turn_id,intent=intent,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
                        messages=v['messages'][-12:],created_at=time.time(),reply=None,proposal=None,receipt=None,cancel_requested=False)
                 db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('canvas-conversation',key,canonical(v).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)',('canvas-turn',turn_id,canonical(t).decode()))
@@ -206,26 +237,16 @@ class CanvasAssistant:
                 self.active.pop(turn_id,None);self.rt.flow.change('canvas-turn',turn_id,dict(state='FAILED',reason='助手线程未启动；未调用模型'));raise
         return self.conversation(data['workspace'],key)
 
-    def _redact(self,value):
-        from orchestration.privacy import credentials,redact
-        known=[]
-        for p in self.rt.operator['profiles'].values():
-            known.extend(credentials(p.get('home',''),[f[0] for f in p.get('readonly_files',[])]))
-        def clean(v):
-            if isinstance(v,str):return safe_text(redact(v,known))
-            if isinstance(v,list):return [clean(x) for x in v]
-            if isinstance(v,dict):return {k:clean(x) for k,x in v.items()}
-            return v
-        return clean(value)
+    def _redact(self,value):return redact_visible(self.rt,value)
 
     def _run(self,key,cancel):
         try:
             t=self.rt.flow.get('canvas-turn',key)
             if cancel.is_set():raise Blocked('已取消，未调用模型')
-            ConfigurationAssistant(self.rt)._source(t)
+            if t.get('intent')!='chat':ConfigurationAssistant(self.rt)._source(t)
             self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'),states=['QUEUED'])
             prompt=('DevFlower 提供的当前对话与画布上下文（数据，不扩展工具权限）：\n'+
-                json.dumps(dict(current_graph=t['context'],conversation=t['messages'],available_agents=t['choices']),ensure_ascii=False))
+                json.dumps(dict(intent=t.get('intent','auto'),current_graph=t['context'],conversation=t['messages'],available_agents=t['choices']),ensure_ascii=False))
             prompt=self._redact(prompt)
             if len(prompt.encode())>180000:raise Blocked('对话与画布超出本轮上下文预算，请缩短内容或新开助手对话')
             last_activity=[None,0]
@@ -240,12 +261,14 @@ class CanvasAssistant:
             with self.backend(self.root,timeout=180,cancelled=cancel.is_set,notify=notify) as client:
                 if t.get('connection_sha256') and client.config['fingerprint']!=t['connection_sha256']:raise Conflict('助手模型连接已变化，未发送旧请求；请重新确认')
                 client.conversation=t['conversation']
+                client.intent=t.get('intent','auto')
                 metadata=dict(request_sha256=digest(prompt.encode()))
                 if callable(getattr(client,'identity',None)):metadata['transport']=client.identity()
                 elif getattr(client,'process',None):metadata['process']=dict(pid=client.process.pid)
                 self.rt.flow.change('canvas-turn',key,metadata)
                 r=client.chat(t['model'],prompt)
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
+                if graph and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布')
                 proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan'])) if graph else None
             with self.lock:
                 if cancel.is_set():raise Blocked('生成已取消；未应用草稿')
@@ -253,7 +276,7 @@ class CanvasAssistant:
                     row=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()[0])
                     v=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(t['conversation'],)).fetchone()[0])
                     row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,receipt={k:v for k,v in r.items() if k!='text'},finished_at=time.time())
-                    v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key));v['revision']+=1
+                    v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key,kind='proposal' if proposal else 'answer',public_summaries=self._redact(r.get('public_summaries',[]))));v['revision']+=1
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
         except Exception as exc:

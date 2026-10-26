@@ -36,4 +36,15 @@ def examples(profiles):
     for edge in routing['edges']:
         if edge['source']=='route':edge['route']=edge['target']
     single=graph('单 Agent 快速任务',[node('start','start','任务输入',50,180),agent('agent','处理任务',first,350,180),node('result','result','结果',650,180)],[('start','agent'),('agent','result')])
-    return [sequential,parallel,loop,routing,single]
+    complex_graph=graph('综合协作：并行、审核与有界修订',[
+        node('start','start','任务输入',40,220),agent('feasibility','方案分析',first,280,80),agent('risks','风险检查',second,280,360),
+        node('merge','merge','汇合两路意见',550,220),agent('judge','独立判断是否完整',first,820,220),
+        node('check','condition','是否满足标准',1090,220,test={'field':'result.accepted','op':'equals','value':True}),
+        node('revise','loop','修订与复审（最多两轮）',1370,380,body=body,max_rounds=2,until={'field':'result.accepted','op':'equals','value':True}),
+        node('result','result','本轮结果',1690,220)],
+        [('start','feasibility'),('start','risks'),('feasibility','merge'),('risks','merge'),('merge','judge'),('judge','check'),('check','result'),('check','revise'),('revise','result')])
+    complex_graph['nodes'][4]['handoff_prompt']='检查两路意见是否回答了用户任务并有可检查的标准。完整时 accepted=true，否则 accepted=false 并列出需修正的问题；不为结束流程而改判。'
+    for e in complex_graph['edges']:
+        if e['source']=='check':e['when']='true' if e['target']=='result' else 'false'
+    complex_graph['budget']={'calls':16,'seconds':1800}
+    return [sequential,parallel,loop,routing,single,complex_graph]
