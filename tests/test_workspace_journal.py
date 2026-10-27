@@ -124,13 +124,13 @@ class PublicAssistantOutputTests(unittest.TestCase):
  setUp=pa.DirectAgentTests.setUp
  call=pa.DirectAgentTests.call
  def test_openai_explicit_reasoning_field_is_visible_redacted_not_hidden(self):
-  self.cfg.save(dict(self.data,expected=self.cfg.public()['fingerprint'],protocol='openai'));self.reply=dict(id='synthetic',choices=[dict(message=dict(content='回答',reasoning_content='公开依据 PRIVATE_FIXTURE_SECRET',thinking='HIDDEN'))])
-  r=self.call();self.assertEqual(r['public_summaries'][0]['source'],'provider-visible-field:reasoning_content');self.assertNotIn('PRIVATE_FIXTURE_SECRET',json.dumps(r));self.assertNotIn('HIDDEN',json.dumps(r))
+  self.cfg.save(dict(self.data,expected=self.cfg.public()['fingerprint'],protocol='openai'));self.reply=dict(id='synthetic',choices=[dict(message=dict(content='回答',reasoning_summary='公开依据 PRIVATE_FIXTURE_SECRET',reasoning_content='HIDDEN_CHAIN',thinking='HIDDEN'))])
+  r=self.call();self.assertEqual(r['public_summaries'][0]['source'],'provider-visible-field:reasoning_summary');self.assertNotIn('PRIVATE_FIXTURE_SECRET',json.dumps(r));self.assertNotIn('HIDDEN',json.dumps(r))
  def test_anthropic_hidden_thinking_never_promoted(self):
   self.reply['content'].append({'type':'thinking','thinking':'HIDDEN'});r=self.call();self.assertEqual(r['public_summaries'],[]);self.assertNotIn('HIDDEN',json.dumps(r))
  def test_chat_request_omits_canvas_tools(self):
   with DevFlowerAgent(self.rt) as a:a.intent='chat';r=a.chat('synthetic-model','general explanation')
-  self.assertNotIn('tools',self.requests[0][1]);self.assertEqual(r['tools_enabled'],[])
+  self.assertEqual([t['name'] for t in self.requests[0][1]['tools']],['search_public_source','read_public_source']);self.assertEqual(r['tools_enabled'],['search_public_source','read_public_source'])
 
 class MissingHandoffFieldTests(unittest.TestCase):
  def setUp(self):self.base,self.rt=fixture(self)

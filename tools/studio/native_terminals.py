@@ -41,17 +41,18 @@ class NativeTerminals:
         atexit.register(self.shutdown)
 
     def prepare(self, data):
-        if not {'workspace','handle'} <= set(data) or set(data)-{'workspace','handle','auto_verify'} or type(data.get('auto_verify',False)) is not bool: raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
+        if not {'workspace','handle'} <= set(data) or set(data)-{'workspace','handle','auto_verify','interaction'} or type(data.get('auto_verify',False)) is not bool: raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
         project, row = self.rt.session_center.resolve(data['workspace'], data['handle'])
         binding, reason = self.rt.session_center._binding(row, project)
         if not binding or binding['provider'] not in ('codex', 'claude'):
             raise Blocked(reason or '该 Provider 尚未支持原生终端')
         if self.sessions.busy(binding, row['native']['session_id']): raise Blocked('此会话已有写入者，请先停止原回合或连接已有终端')
+        direct=data.get('interaction')=='click'
         selected=self.rt.node_binding(data['workspace'],dict(profile=binding['runtime_profile'],
-            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not data.get('auto_verify',False))
+            model=binding['model'],effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not (direct or data.get('auto_verify',False)),direct=direct)
         from .model_admission import ModelAdmission
-        check = ModelAdmission(self.rt).pending_check(selected,include_valid=True) if data.get('auto_verify') else None
-        value = dict(purpose='native-terminal', workspace=data['workspace'], handle=data['handle'],
+        check = ModelAdmission(self.rt).pending_check(selected,include_valid=True) if data.get('auto_verify') and not direct else None
+        value = dict(purpose='native-terminal', interaction='click' if direct else 'legacy',click_action='open-terminal' if direct else None, workspace=data['workspace'], handle=data['handle'],
             provider=binding['provider'], model=binding['model'], effort=binding['effort'],
             cwd=row['native']['cwd'], session_id=row['native']['session_id'], native_sha256=row['native']['sha256'],
             home=binding['home'], source_sha256=workspace_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
@@ -69,7 +70,7 @@ class NativeTerminals:
                 if prior['sha256'] != data['sha256']: raise Conflict('终端重试身份不一致')
                 return self.snapshot(prior['workspace'], prior['terminal'])
             except Invalid: pass
-            value, receipt = self.rt.db.consume(data['id'], data['sha256'], [data['answer']])
+            value, receipt = (self.rt.db.consume_click(data['id'],data['sha256'],'open-terminal') if data.get('answer')=={'action':'open-terminal'} else self.rt.db.consume(data['id'], data['sha256'], [data['answer']]))
             if value.get('purpose') != 'native-terminal' or any(value[k] != actual for k, actual in (
                     ('candidate_sha256', self.rt.candidate_sha256), ('operator_sha256', self.rt.operator_sha256), ('policy_sha256', self.rt.policy_sha))):
                 raise Blocked('终端授权不属于当前运行器')
@@ -80,7 +81,12 @@ class NativeTerminals:
                     value['home'], value['cwd'], value['session_id'], value['native_sha256']): raise Conflict('原生身份或历史在确认后变化')
             if workspace_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
             from .model_admission import ModelAdmission
-            verification=ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
+            if value.get('interaction') == 'click':
+                from .model_registration import ModelRegistration
+                ModelRegistration(self.rt).require_direct(value['execution_binding'])
+                verification=None
+            else:
+                verification=ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
             if any(e['home'] == binding['home'] and e['proc'].poll() is None and
                    (binding.get('execution_backend')!='native-local' or e.get('session_id')==value['session_id'])
                    for e in self.entries.values()): raise Blocked('同一原生会话已有终端')
@@ -93,7 +99,7 @@ class NativeTerminals:
                 execution_backend=binding.get('execution_backend','isolated'),
                 cwd=value['cwd'], session_id=value['session_id'], model=value['model'], effort=value['effort'], state='STARTING', created_at=time.time(),
                     input_sequence=0, input_owner='workbench', input_generation=0,
-                    authorization_sha256=digest(canonical(receipt)), candidate_sha256=self.rt.candidate_sha256)
+                    authorization_sha256=digest(canonical(receipt)), interaction=value.get('interaction'), permit=data['id'], execution_environment_sha256=value['execution_binding'].get('direct_environment_sha256'), native_sha256=value['native_sha256'], candidate_sha256=self.rt.candidate_sha256)
             with self.rt.flow.tx() as db:
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal', key, canonical(record).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal-permit', data['id'], canonical(dict(
@@ -103,15 +109,17 @@ class NativeTerminals:
             argv = [sys.executable, '-B', str(Path(__file__).parents[1] / 'devflower_native_terminal.py')]
             for name, item in dict(operator=str(self.rt.operator_file), operator_sha256=self.rt.operator_sha256,
                     candidate_sha256=self.rt.candidate_sha256, policy=str(self.rt.policy_file), policy_sha256=self.rt.policy_sha,
-                    workspace=value['workspace'], handle=value['handle']).items():
+                    workspace=value['workspace'], handle=value['handle'], terminal_id=key).items():
                 argv += ['--' + name.replace('_', '-'), item]
             env = clean_env(); env.update(TERM='xterm-256color', COLORTERM='truecolor',
                                          DEVFLOWER_TERMINAL_PARENT_PID=str(os.getpid()),
                                          DEVFLOWER_TERMINAL_PARENT_START=process_identity(os.getpid())['start'])
             process=None;identity=None;entry=None
             try:
-                process = subprocess.Popen(argv, cwd=value['cwd'], env=env, stdin=slave, stdout=slave, stderr=slave,
-                                           start_new_session=True, close_fds=True)
+                from .preference_baseline import worker_baseline
+                with worker_baseline(self.rt,env) as fds:
+                    process = subprocess.Popen(argv, cwd=value['cwd'], env=env, stdin=slave, stdout=slave, stderr=slave,
+                                               start_new_session=True, close_fds=True,pass_fds=fds)
                 self.rt.children['terminal:'+key]=process
                 os.set_blocking(master, False)
                 identity = process_identity(process.pid)

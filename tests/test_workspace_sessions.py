@@ -111,6 +111,37 @@ class WorkspaceTests(unittest.TestCase):
             self.assertIn('CODEX_HOME=' if row['provider']=='codex' else 'CLAUDE_CONFIG_DIR=',row['resume_command'])
             self.assertIn(SID,row['resume_command']);self.assertNotIn('--last',row['resume_command'])
 
+    def test_default_claude_resume_command_uses_native_home_preferences(self):
+        from studio.workspace_sessions import WorkspaceSessions
+        home = self.f['home']
+        native(home/'.claude', 'claude', self.f['a'])
+        sessions = WorkspaceSessions(self.base/'studio', [self.f['a']],
+                                     environ={'HOME': str(home)}, persist=False)
+        workspace = next(iter(sessions.roots))
+        profile = next(p for p in sessions.profiles if p['provider'] == 'claude' and p['origin'] == 'default')
+        from studio.session_sources import scan
+        rows, _ = scan(str(home/'.claude/projects'), 'claude', sessions.limits)
+        command = sessions._row(rows[0], profile, workspace)['resume_command']
+        self.assertIn('HOME=', command)
+        self.assertNotIn('CLAUDE_CONFIG_DIR=', command)
+        self.assertIn('-u CLAUDE_CONFIG_DIR', command)
+        self.assertIn(SID, command)
+
+    def test_default_claude_explicit_config_root_remains_in_resume_command(self):
+        from studio.workspace_sessions import WorkspaceSessions
+        from studio.session_sources import scan
+        home = self.f['home']
+        root = self.base/'explicit-claude'
+        native(root, 'claude', self.f['a'])
+        sessions = WorkspaceSessions(self.base/'studio', [self.f['a']],
+                                     environ={'HOME': str(home), 'CLAUDE_CONFIG_DIR': str(root)}, persist=False)
+        workspace = next(iter(sessions.roots))
+        profile = next(p for p in sessions.profiles if p['provider'] == 'claude' and p['origin'] == 'default')
+        rows, _ = scan(str(root/'projects'), 'claude', sessions.limits)
+        command = sessions._row(rows[0], profile, workspace)['resume_command']
+        self.assertIn('CLAUDE_CONFIG_DIR='+str(root), command)
+        self.assertNotIn('-u CLAUDE_CONFIG_DIR', command)
+
     def test_wrong_registered_origin_is_explicit_and_has_no_command(self):
         path=self.f['paths'][2]
         path.write_text(path.read_text().replace(str(self.f['a']),'/private/token-SENTINEL'))

@@ -102,6 +102,8 @@ jobs:
   chromium:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -112,11 +114,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 --version
+          node --version
+          git --version
           npm install --prefix "$RUNNER_TEMP/pw" --ignore-scripts --no-audit --no-fund playwright@1.56.1
-          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
           echo "PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
           echo "PLAYWRIGHT_MODULE=$GITHUB_WORKSPACE/tests/browser_driver.cjs" >> "$GITHUB_ENV"
           echo "CHROMIUM=$(node -e "process.stdout.write(require('$RUNNER_TEMP/pw/node_modules/playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+          test -x "$(node -e "process.stdout.write(require('$RUNNER_TEMP/pw/node_modules/playwright').chromium.executablePath())")"
       - name: Real HTTP and Chromium regression (no models or user credentials)
         shell: bash
         run: |

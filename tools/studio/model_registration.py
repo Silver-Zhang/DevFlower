@@ -65,7 +65,7 @@ class ModelRegistration:
                 if r['workspace']==workspace and r['profile']==profile and r['state']=='CONFIGURED'
                 and r['operator']==self.rt.operator_sha256 and r['policy']==self.rt.policy_sha and r['environment']==fp}
 
-    def prepare(self, data):
+    def prepare(self, data, *, direct=False):
         if set(data)-{'workspace','profile','model','effort'} or not {'workspace','profile','model'}<=set(data):
             raise Invalid('请选择工作区、Agent与模型')
         self.rt.check_operator();self.rt.session_center.workspace(data['workspace'])
@@ -93,7 +93,7 @@ class ModelRegistration:
         key=self.key(data['workspace'],data['profile'],data['model'])
         try: prior=self.rt.flow.get('model-registration',key)
         except Invalid: prior=None
-        return self.rt.db.prepare(dict(purpose='model-registration',workspace=data['workspace'],profile=data['profile'],
+        return self.rt.db.prepare(dict(purpose='model-registration',interaction='click' if direct else 'legacy',click_action='select-model' if direct else None,workspace=data['workspace'],profile=data['profile'],
             model=data['model'],effort=effort,key=key,environment=profile_identity(p),operator=self.rt.operator_sha256,
             policy=self.rt.policy_sha,catalog_sha256=digest(canonical(cache)),prior_sha256=digest(canonical(prior)),
             human_questions=['配置此模型供当前工作区选择；不调用模型、不授予执行权限。首次使用仍需真实连接检查。'],
@@ -103,11 +103,11 @@ class ModelRegistration:
         # A model pick is a local selection, not a second approval ceremony.
         # The same fresh account/profile/effort contract still applies; this
         # record never grants execution or changes workspace permissions.
-        permit=self.prepare(data)
-        return self.confirm(permit['id'],permit['sha256'],'操作者在模型选择器直接选择此模型和强度；只保存选择，不授予执行权限。')
+        permit=self.prepare(data,direct=True)
+        return self.confirm(permit['id'],permit['sha256'],{'action':'select-model'})
 
     def confirm(self, id, sha256, answer):
-        self.rt.check_operator();value,_=self.rt.db.consume(id,sha256,[answer])
+        self.rt.check_operator();value,_=(self.rt.db.consume_click(id,sha256,'select-model') if answer == {'action':'select-model'} else self.rt.db.consume(id,sha256,[answer]))
         if value.get('purpose')!='model-registration':raise Blocked('不是模型配置确认')
         p=self.rt.operator['profiles'].get(value['profile'])
         if not p or value['operator']!=self.rt.operator_sha256 or value['policy']!=self.rt.policy_sha or profile_identity(p)!=value['environment']:
@@ -124,6 +124,11 @@ class ModelRegistration:
             record.update(id=value['key'],state='CONFIGURED',configured_at=time.time())
             db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('model-registration',value['key'],canonical(record).decode()))
         return dict(configured=True,model=value['model'],effort=value['effort'],execution_allowed=False,capability_source=value['capability_source'])
+
+    def require_direct(self, binding):
+        expected=binding.get('direct_environment_sha256')
+        if not expected or profile_identity(binding) != expected:
+            raise Conflict('模型配置或认证在操作后发生变化，请重新选择并启动')
 
     def require(self,binding):
         if not binding.get('model_registration_key'):return

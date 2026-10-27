@@ -191,8 +191,12 @@ class SessionCenter:
             binding=bind(self.runtime,profile,project['id'])
             if previous:binding.update({k:previous[k] for k in ('model','effort')})
             binding.update(runtime_profile=name,session_id=native['session_id'])
+            if p['provider']=='claude':
+                from .managed_claude import require_managed
+                try:require_managed(self.runtime,binding,native['cwd'],native.get('sha256'))
+                except Blocked as exc:return None,str(exc)
             if own_busy(self.runtime,binding,native['session_id']):return None,'同一原生会话已由另一端持有，仍可只读查看'
-            return binding,'本机原生会话；使用原HOME与原UUID，未复制记录'
+            return binding,'本机受管会话；工作台写入互斥，外部原生 CLI 不受该锁控制' if p['provider']=='claude' else '本机原生会话；使用原HOME与原UUID，未复制记录'
         # Legacy imports stay readonly; only the explicitly configured canonical
         # roots above can be adopted through native locking and current scope.
         for row in self.db.listing('chat-profile', filters={'workspace': project['id']}, limit=None):
@@ -259,7 +263,7 @@ class SessionCenter:
         secrets_found = credentials(p['home'] or p['config_root'], extra, read_file=credential_bytes)
         from .native_local import configured,codex_history
         cfg=configured(self.runtime,p['provider'])
-        if p['provider']=='codex' and cfg and p['config_root']==cfg['config_root']:
+        if p['provider']=='codex' and cfg and p['config_root']==cfg['config_root'] and not getattr(self.runtime,'readonly_configuration_warning',lambda:None)():
             profile=next(v for v in self.runtime.operator['profiles'].values() if v['provider']=='codex')
             messages=redact(codex_history(dict(profile,**cfg),row['native']['cwd'],row['native']['session_id'],limit,query),secrets_found)
             return dict(workspace_id=workspace,handle=handle,messages=messages,history_source='canonical-native-api')
@@ -277,7 +281,7 @@ class SessionCenter:
 
     def prepare(self, request):
         self.runtime.check_operator()
-        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
+        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
             raise Invalid('Expected workspace, session handle or new, approved profile, prompt and permission')
         project = self.runtime.project(request['workspace'])
         source = self.runtime.validate_source(project['path'])
@@ -286,12 +290,13 @@ class SessionCenter:
         if not isinstance(request['prompt'], str) or not request['prompt'].strip() or len(request['prompt']) > 60000:
             raise Invalid('A bounded nonempty user message is required')
         selected=None
-        automatic = request.get('auto_verify', False)
+        direct = request.get('interaction') == 'click'
+        automatic = request.get('auto_verify', False) if not direct else False
         if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         if hasattr(self.runtime,'node_binding'):
             profile=self.runtime.operator['profiles'].get(request['profile'])
             if not profile:raise Invalid('请选择已登记的执行配置')
-            selected=self.runtime.node_binding(project['id'],dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission']),admission=not automatic)
+            selected=self.runtime.node_binding(project['id'],dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission']),admission=not (automatic or direct),direct=direct)
         handle, native_sha, cwd = request['handle'], None, project['path']
         if handle == 'new':
             p = self.runtime.operator['profiles'].get(request['profile'])
@@ -327,8 +332,8 @@ class SessionCenter:
                      binding=binding, cwd=cwd, prompt=prompt, user_prompt=request['prompt'], permission=request['permission'],
                      handle=handle, native_sha256=native_sha, profile=request['profile'],
                      mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),
-                     operator_sha256=self.runtime.operator_sha256,
-                     human_questions=['确认此消息、精确会话、模型、原 HOME/cwd 和本次工具权限。'])
+                     operator_sha256=self.runtime.operator_sha256, interaction='click' if direct else 'legacy',
+                     click_action='send' if direct else None, human_questions=['确认此消息、精确会话、模型、原 HOME/cwd 和本次工具权限。'])
         checks = []
         if automatic and selected:
             from .model_admission import ModelAdmission
@@ -342,13 +347,23 @@ class SessionCenter:
         with self.runtime.lock:
             self.runtime.check_operator()
             # consume is single-use and commits before any native side effects.
-            value, receipt = self.db.consume(permit, expected, [answer])
+            if answer == {'action':'send'}:
+                try:
+                    prior=self.db.get('session-permit',permit)
+                    if prior['sha256'] != expected: raise Conflict('重试请求与原授权身份不一致')
+                    return self.operation(prior['operation'],prior['workspace'])
+                except Invalid: pass
+                value, receipt = self.db.consume_click(permit, expected, 'send')
+            else:
+                value, receipt = self.db.consume(permit, expected, [answer])
             if value.get('purpose') != 'native-session':
                 raise Blocked('Permit is not a native-session authorization')
             self._recheck(value)
             op = dict(value, id=secrets.token_hex(16), state='QUEUED', created_at=time.time(),
                       cancel_requested=False, authorization=receipt)
             self.db.put('session-operation', op['id'], op)
+            if value.get('interaction') == 'click':
+                self.db.put('session-permit',permit,dict(sha256=expected,operation=op['id'],workspace=op['workspace']))
             self.db.put('chat-profile', profile_key(op['binding']),
                         dict(workspace=op['workspace'], binding=op['binding']))
             child=None;identity=None;owner='chat:'+op['id']
@@ -370,13 +385,16 @@ class SessionCenter:
 
     def _spawn(self, key):
         self.runtime.check_operator()
-        return subprocess.Popen([sys.executable, '-B', str(Path(__file__).with_name('session_worker.py')),
-            '--operator', str(self.runtime.operator_file), '--sha256', self.runtime.operator_sha256,
-            '--operation', key, *(['--candidate-sha256', self.runtime.candidate_sha256] if getattr(self.runtime, 'session_only', False) else []),
-            *(['--policy', str(self.runtime.policy_file), '--policy-sha256', self.runtime.policy_sha]
-              if hasattr(self.runtime, 'policy_file') else [])], cwd=Path(__file__).resolve().parents[2],
-            env=clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            close_fds=True, start_new_session=True)
+        from .preference_baseline import worker_baseline
+        env=clean_env()
+        with worker_baseline(self.runtime,env) as fds:
+            return subprocess.Popen([sys.executable, '-B', str(Path(__file__).with_name('session_worker.py')),
+                '--operator', str(self.runtime.operator_file), '--sha256', self.runtime.operator_sha256,
+                '--operation', key, *(['--candidate-sha256', self.runtime.candidate_sha256] if getattr(self.runtime, 'session_only', False) else []),
+                *(['--policy', str(self.runtime.policy_file), '--policy-sha256', self.runtime.policy_sha]
+                  if hasattr(self.runtime, 'policy_file') else [])], cwd=Path(__file__).resolve().parents[2],
+                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                close_fds=True, start_new_session=True,pass_fds=fds)
 
     def _recheck(self, value):
         if value['operator_sha256'] != self.runtime.operator_sha256:
@@ -391,8 +409,12 @@ class SessionCenter:
         with opened(value['cwd'], directory=True):
             pass
         if value['binding'].get('admission_policy'):
-            from .model_admission import ModelAdmission
-            ModelAdmission(self.runtime).require(value['binding'], value['cwd'])
+            if value.get('interaction') == 'click':
+                from .model_registration import ModelRegistration
+                ModelRegistration(self.runtime).require_direct(value['binding'])
+            else:
+                from .model_admission import ModelAdmission
+                ModelAdmission(self.runtime).require(value['binding'], value['cwd'])
 
     def operation(self, key, workspace):
         self.runtime.check_operator()
@@ -457,12 +479,15 @@ class SessionCenter:
                     raise Blocked('Cancelled before native spawn')
                 # Re-read exact transcript under the shared HOME lease.
                 self._recheck(value)
+                if b.get('provider')=='claude' and b.get('session_id'):
+                    from .native_local import require_safe_resume
+                    require_safe_resume(b,runtime=self.runtime,cwd=value['cwd'],native_sha=value['native_sha256'])
                 artifacts = self.runtime.storage / 'session-artifacts' / key
                 artifacts.mkdir(parents=True, mode=0o700)
                 schema = artifacts / 'reply.schema.json'
                 schema.write_bytes(canonical(REPLY_SCHEMA))
                 limits = dict(step_timeout_seconds=b.get('timeout_seconds', 1800), max_log_bytes=8_000_000)
-                if b.get('admission_policy'):
+                if b.get('admission_policy') and value.get('interaction') != 'click':
                     from .model_admission import ModelAdmission
                     verification=ModelAdmission(self.runtime).require(b,value['cwd'])
                 natural = hasattr(self.runtime, 'policy') and not value.get('diagnostic')
@@ -479,6 +504,17 @@ class SessionCenter:
                 summary.update(cwd=value['cwd'], home=b['home'], provider=b['provider'], profile=value['profile'])
                 self.db.update('session-operation', key, dict(state='CANCELLED' if journal.get(key)['data']['cancel_requested'] else 'COMPLETED',
                     receipt=summary, reply=safe_text(reply['report'].get('reply', ''))))
+                if b.get('execution_backend')=='native-local' and b['provider']=='claude' and not journal.get(key)['data']['cancel_requested']:
+                    from .managed_claude import record,require_managed
+                    try:
+                        actual=dict(b,session_id=summary['session_id']);snapshot=self.runtime.native_snapshot(value['workspace'],actual)
+                        record(self.runtime,actual,value['cwd'],snapshot['expected_native_sha256'],'session',key)
+                        require_managed(self.runtime,actual,value['cwd'],snapshot['expected_native_sha256'])
+                    except (Blocked,Invalid,OSError,ValueError,KeyError):
+                        # The Provider already completed. Keep that result and
+                        # fail closed on resume if its native history cannot be
+                        # tied to this exact journal and snapshot.
+                        self.db.update('session-operation',key,dict(resume_unavailable='原生历史身份未能核验；本次结果保留，会话只能只读查看。'))
         except (Blocked, Conflict, Invalid, OSError, ValueError) as exc:
             if value['binding'].get('admission_policy'):
                 from .model_admission import ModelAdmission

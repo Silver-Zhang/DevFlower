@@ -19,7 +19,7 @@ def redact_visible(rt,value):
     from orchestration.privacy import credentials,redact
     known=[]
     for p in rt.operator['profiles'].values():
-        known.extend(credentials(p.get('home',''),[f[0] for f in p.get('readonly_files',[])]))
+        known.extend(credentials(p.get('home',''),[f[0] for f in p.get('readonly_files',[])],include_short=True))
     def clean(v):
         if isinstance(v,str):return safe_text(redact(v,known))
         if isinstance(v,list):return [clean(x) for x in v]
@@ -180,10 +180,14 @@ class CanvasAssistant:
             if result['workspace']!=workspace:raise Blocked('助手对话不属于当前工作空间')
             turn=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(result['active_turn'],)).fetchone()[0]) if result.get('active_turn') else None
         if turn:
-            with self.lock:running=turn['id'] in self.active and turn['id'] not in self.finalizing and alive(turn.get('owner'))
+            with self.lock:
+                running=turn['id'] in self.active and alive(turn.get('owner'))
+                if turn['id'] in self.finalizing:turn['persistence_pending']=True
             if turn['state'] in ('QUEUED','RUNNING') and not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):
-                try:turn=self.rt.flow.change('canvas-turn',turn['id'],dict(state='RECOVERY_REQUIRED',reason='此前连接已中断；未自动重发请求'),states=['QUEUED','RUNNING'])
+                try:turn=self.rt.flow.change('canvas-turn',turn['id'],dict(state='RECOVERY_REQUIRED',reason='此前连接已中断；未自动重发请求'),states=['QUEUED','RUNNING'],timeout=.05)
                 except Conflict:return self.conversation(workspace,key)
+                except sqlite3.OperationalError:
+                    turn=dict(turn,state='RECOVERY_REQUIRED',reason='本机记录暂不可写，状态待确认；未自动重发请求',persistence_pending=True)
             result['turn']=turn
         return result
 
@@ -270,21 +274,48 @@ class CanvasAssistant:
     def _redact(self,value):return redact_visible(self.rt,value)
 
     def _run(self,key,cancel):
+        progress_lock=threading.Lock();progress_event=threading.Event();progress_done=threading.Event();pending={}
+        def flush_progress():
+            while not progress_done.is_set():
+                progress_event.wait(.1);progress_event.clear()
+                with progress_lock: update=dict(pending);pending.clear()
+                if not update:continue
+                try:self.rt.flow.change('canvas-turn',key,update,states=['RUNNING'],timeout=.05)
+                except sqlite3.OperationalError:
+                    with progress_lock:
+                        old=dict(update);old.update(pending);pending.clear();pending.update(old)
+                    progress_event.wait(.05);progress_event.set()
+                except (Conflict,Invalid):return
+        progress_thread=threading.Thread(target=flush_progress,daemon=True,name='assistant-progress-'+key[:8]);progress_thread.start()
+        def enqueue(update):
+            with progress_lock:pending.update(update)
+            progress_event.set()
         try:
             t=self.rt.flow.get('canvas-turn',key)
             if cancel.is_set():raise Blocked('已取消，未调用模型')
             if t.get('intent')!='chat':ConfigurationAssistant(self.rt)._source(t)
-            self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'),states=['QUEUED'])
+            self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'),states=['QUEUED'],timeout=.1)
             prompt=('DevFlower 提供的当前对话与画布上下文（数据，不扩展工具权限）：\n'+
                 json.dumps(dict(intent=t.get('intent','auto'),current_graph=t['context'],conversation=t['messages'],available_agents=t['choices'],previous_rejected_proposal=t.get('previous_rejected_proposal')),ensure_ascii=False))
             prompt=self._redact(prompt)
             if len(prompt.encode())>180000:raise Blocked('对话与画布超出本轮上下文预算，请缩短内容或新开助手对话')
             last_activity=[None,0]
+            activities=[]
             def notify(e):
+                if e.get('type')=='assistant.summary_delta' and isinstance(e.get('text'),str):
+                    enqueue(dict(visible_summary=self._redact(e['text'])[:8000]))
+                if e.get('type')=='assistant.message_delta' and isinstance(e.get('text'),str):
+                    enqueue(dict(visible_text=self._redact(e['text'])[:12000]))
+                if e.get('type')=='assistant.tool_start':
+                    activities[:]=activities[-5:]+[dict(name=e.get('name'),state='started')]
+                    enqueue(dict(tool_activity=list(activities)))
+                if e.get('type')=='assistant.tool':
+                    activities[:]=activities[-5:]+[dict(name=e.get('name'),path=e.get('path'),start=e.get('start'),end=e.get('end'),count=e.get('count'))]
+                    enqueue(dict(tool_activity=list(activities)))
                 if e.get('type') in ('assistant.turn_start','assistant.message_delta','assistant.message','session.error'):
                     now=time.monotonic()
                     if e['type']!=last_activity[0] or now-last_activity[1]>=.5:
-                        self.rt.flow.change('canvas-turn',key,dict(activity=e['type'],activity_at=time.time()),states=['RUNNING'])
+                        enqueue(dict(activity=e['type'],activity_at=time.time()))
                         last_activity[:]=[e['type'],now]
             # All fallible metadata operations while the process is alive are
             # inside its ownership context. No post-Popen orphan window.
@@ -298,45 +329,63 @@ class CanvasAssistant:
                 metadata=dict(request_sha256=digest(prompt.encode()))
                 if callable(getattr(client,'identity',None)):metadata['transport']=client.identity()
                 elif getattr(client,'process',None):metadata['process']=dict(pid=client.process.pid)
-                self.rt.flow.change('canvas-turn',key,metadata)
+                self.rt.flow.change('canvas-turn',key,metadata,timeout=.1)
                 r=client.chat(t['model'],prompt)
-                self.rt.flow.change('canvas-turn',key,dict(receipt={k:v for k,v in r.items() if k!='text'},model_response=self._redact(r['text'][:150000])),states=['RUNNING'])
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
                 if (graph or result.get('run_request')) and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布或发起运行')
                 run_request=dict(result['run_request'],graph=t['base_graph'],graph_sha256=t['base_graph_sha256'],workspace=t['workspace']) if result.get('run_request') else None
                 proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=t.get('source',{}).get('kind')=='canvas-only') if graph else None
-            with self.lock:
-                self.finalizing.add(key)
-                if cancel.is_set():raise Blocked('生成已取消；未应用草稿')
-                with self.rt.flow.tx() as db:
-                    row=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()[0])
-                    v=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(t['conversation'],)).fetchone()[0])
-                    row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,run_request=run_request,receipt={k:v for k,v in r.items() if k!='text'},finished_at=time.time())
-                    v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key,kind='proposal' if proposal else 'answer',public_summaries=self._redact(r.get('public_summaries',[]))));v['revision']+=1
-                    db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
-                    db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
+            outcome=None
         except Exception as exc:
-            with self.lock:
-                self.finalizing.add(key)
-                try:self.rt.flow.change('canvas-turn',key,dict(state='CANCELLED' if cancel.is_set() else 'FAILED',reason=safe_text(str(exc)) if isinstance(exc,(Blocked,Invalid,Conflict)) else '助手连接或本地记录失败；未自动重试或应用画布',finished_at=time.time()))
-                except (sqlite3.Error,OSError):pass
+            outcome=safe_text(str(exc)) if isinstance(exc,(Blocked,Invalid,Conflict)) else '助手连接或本地记录失败；未自动重试或应用画布'
         finally:
+            progress_done.set();progress_event.set();progress_thread.join(timeout=.3)
+        with progress_lock:remaining=dict(pending)
+        turn_loaded=locals().get('t')
+        returned=locals().get('r')
+        def finish():
             try:
-                if 't' in locals():
-                    from .project_files import archive_completed
-                    archive_completed(self.rt,t['workspace'],assistant=t['conversation'])
-            finally:
-                with self.lock:
+                with self.rt.flow.tx() as db, self.lock:
+                    raw=db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()
+                    if not raw:raise Invalid('助手请求记录不存在')
+                    row=json.loads(raw[0]);row.update(remaining)
+                    if isinstance(returned,dict) and isinstance(returned.get('text'),str):
+                        row['model_response']=self._redact(returned['text'][:150000])
+                    if cancel.is_set() or outcome is not None:
+                        row.update(state='CANCELLED' if cancel.is_set() else 'FAILED',reason='生成已取消；未应用草稿' if cancel.is_set() else outcome,finished_at=time.time())
+                    else:
+                        v=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(t['conversation'],)).fetchone()[0])
+                        row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,run_request=run_request,receipt={k:v for k,v in r.items() if k!='text'},model_response=self._redact(r['text'][:150000]),finished_at=time.time())
+                        v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key,kind='proposal' if proposal else 'answer',public_summaries=self._redact(r.get('public_summaries',[]))));v['revision']+=1
+                        db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))
+                    db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
+                    # Serialize the cancellation decision through commit, not
+                    # merely through construction of the final row.
+                    db.commit()
                     self.active.pop(key,None);self.finalizing.discard(key)
+                if turn_loaded:
+                    from .project_files import archive_completed
+                    archive_completed(self.rt,turn_loaded['workspace'],assistant=turn_loaded['conversation'])
+            except (sqlite3.Error,OSError,Invalid):pass
+            finally:
+                with self.lock:self.active.pop(key,None);self.finalizing.discard(key)
+        with self.lock:
+            self.finalizing.add(key)
+            finalizer=threading.Thread(target=finish,daemon=True,name='assistant-finalize-'+key[:8]);self.active[key]=(cancel,finalizer);finalizer.start()
 
     def cancel(self,workspace,key):
         self.rt.check_operator();v=self.conversation(workspace,key);turn=v.get('turn')
         if turn and turn['state'] in ('QUEUED','RUNNING','RECOVERY_REQUIRED'):
             with self.lock:
-                active=self.active.get(turn['id']) if turn['id'] not in self.finalizing else None
+                active=self.active.get(turn['id'])
                 if active:active[0].set()
                 elif alive(turn.get('owner')) and turn['owner']['pid']!=os.getpid():raise Blocked('此请求仍由另一服务实例持有，请在原实例停止')
-                else:self.rt.flow.change('canvas-turn',turn['id'],dict(state='CANCELLED',reason='原请求已断开；未重放'))
+                else:
+                    try:self.rt.flow.change('canvas-turn',turn['id'],dict(state='CANCELLED',reason='原请求已断开；未重放'),states=['QUEUED','RUNNING','RECOVERY_REQUIRED'],timeout=.05)
+                    except Conflict:pass  # A completed result won the race.
+                    except sqlite3.OperationalError:
+                        v['turn']=dict(turn,state='RECOVERY_REQUIRED',reason='停止状态尚未保存；请在本机记录恢复后重新确认',persistence_pending=True)
+                        return v
         return self.conversation(workspace,key)
 
     def shutdown(self):

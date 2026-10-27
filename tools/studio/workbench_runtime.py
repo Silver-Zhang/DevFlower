@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextvars import ContextVar
 from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash, workspace_hash
 from orchestration.process import execute, group_alive, stop
 from orchestration.store import alive, process_identity, lease
@@ -24,6 +25,7 @@ from .native_local import profile_key
 
 ROOT = Path(__file__).resolve().parents[2]
 END = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
+READONLY_VIEW = ContextVar('workbench_readonly_view',default=False)
 
 
 class WorkbenchRuntime(SessionRuntime):
@@ -38,6 +40,10 @@ class WorkbenchRuntime(SessionRuntime):
             raise Blocked('工作台策略字段不受支持')
         for profile in self.policy.get('external_steps',{}).values():
             validate_profile(profile)
+        from .preference_baseline import original
+        with opened(clean_path(str(operator))) as fd: operator_raw=os.read(fd,131073)
+        if digest(operator_raw)!=operator_sha:raise Blocked('Development operator binding changed')
+        self.preference_baseline=original(json.loads(operator_raw))
         super().__init__(operator, operator_sha, candidate_sha)
         from .native_local import configured
         local=self.operator.get('native_local',{})
@@ -97,6 +103,34 @@ class WorkbenchRuntime(SessionRuntime):
         for profile in self.policy.get('external_steps',{}).values():
             validate_profile(profile)
 
+    def dependency_accepted(self, path, sha):
+        actual=self.identity_cache.file(path)
+        if actual==sha:return True
+        # A Codex auth overlay is a mutable credential input, not a permission
+        # policy. Still refuse drift if the same path has any executable,
+        # readable-code or external-adapter role. No operator hash is changed.
+        profiles=list(self.operator['profiles'].values())
+        mutable=any(p['provider']=='codex' and any(src==path and dest=='.codex/auth.json' for src,dest in p['readonly_files']) for p in profiles)
+        fixed=any(path==p['executable'] or path in p['read_paths'] or any(src==path and not (p['provider']=='codex' and dest=='.codex/auth.json') for src,dest in p['readonly_files']) for p in profiles)
+        fixed=fixed or any(path in v.get('dependencies',{}) or path in v.get('dependency_trees',{}) or path in v.get('read_paths',[]) or path in v.get('write_paths',[]) or path==v.get('argv',[None])[0] for v in self.policy.get('external_steps',{}).values())
+        local=self.operator.get('native_local',{}).get('codex',{})
+        config=str(Path(local.get('config_root','/'))/'config.toml') if isinstance(local,dict) else None
+        hard_fixed=(path in (str(self.operator_file),str(self.policy_file)) or any(path==p['executable'] for p in profiles) or any(path in v.get('dependencies',{}) or path in v.get('dependency_trees',{}) or path in v.get('read_paths',[]) or path in v.get('write_paths',[]) or path==v.get('argv',[None])[0] for v in self.policy.get('external_steps',{}).values()))
+        from .preference_baseline import preference_only
+        if path==config and not hard_fixed and preference_only(self.preference_baseline,path):return True
+        if READONLY_VIEW.get() and path==config and not hard_fixed:
+            return True
+        return mutable and not fixed
+
+    def readonly_configuration_warning(self):
+        local=self.operator.get('native_local',{}).get('codex',{})
+        if not isinstance(local,dict) or not local.get('config_root'):return None
+        path=str(Path(local['config_root'])/'config.toml');expected=self.operator['dependencies'].get(path)
+        from .preference_baseline import preference_only
+        if expected and self.identity_cache.file(path)!=expected and not preference_only(self.preference_baseline,path):
+            return '本机 Codex 配置已变化：当前仅供查看，执行前需要重新核验固定配置。'
+        return None
+
     def release_identity(self):
         """Public identity only; never expose private approval paths or references."""
         self.check_operator()
@@ -153,10 +187,11 @@ class WorkbenchRuntime(SessionRuntime):
         policy = view_policy(self,row['path'])
         row['protected_container'] = policy['protected_container']
         # Reuse an existing hosted view cache; never silently abandon its data.
-        row.update(record_location='project',records_directory=row['path'],record_notice=None)
-        self.db.put('workspace',row['id'],row)
         if policy['hosted_records'] or old.get('record_location')=='host':
             self.hosted_project_records(row,policy['reason'] or old.get('record_notice'))
+        else:
+            row.update(record_location='project',records_directory=row['path'],record_notice=None)
+            self.db.put('workspace',row['id'],row)
         try: row['project_storage'] = self.project_files(row['id']).initialize()
         except (OSError,ValueError,Blocked,Invalid) as exc:
             if row['record_location']=='host': raise
@@ -233,18 +268,18 @@ class WorkbenchRuntime(SessionRuntime):
         try: return Path(identity(cwd)['common_dir']) / 'devflower-writer.lock'
         except Blocked: return self.storage / ('source-' + digest(cwd.encode()) + '.lock')
 
-    def node_binding(self, workspace, node, *, admission=True):
+    def node_binding(self, workspace, node, *, admission=True, direct=False):
         project = self.session_center.workspace(workspace)
         self.validate_source(project['path'])
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
         try:auth=self.flow.get('auth-probe',node['profile'])
         except Invalid:auth=None
-        if auth and time.time()-auth.get('at',0)<300 and auth.get('logged_in') is False:
+        if not direct and auth and time.time()-auth.get('at',0)<300 and auth.get('logged_in') is False:
             raise Blocked('原生工具报告尚未认证；请通过本机原生登录后刷新模型')
         try:cli=self.flow.get('cli-probe',node['profile'])
         except Invalid:cli=None
-        if cli and (not cli['available'] or not cli.get('machine_output')):
+        if not direct and cli and (not cli['available'] or not cli.get('machine_output')):
             raise Blocked('该原生CLI尚未通过当前版本接口探测，不能只修改界面字段执行')
         model, effort = node.get('model', profile['model']), node.get('effort', profile['effort'])
         from .model_registration import ModelRegistration
@@ -252,6 +287,17 @@ class WorkbenchRuntime(SessionRuntime):
         registration=registry.choices(workspace,node['profile']).get(model)
         known = self.policy.get('models', {}).get(profile['provider'], [])
         if registration:known=[*known,dict(id=model,efforts=[registration['effort']])]
+        if direct:
+            try: catalog=self.flow.get('model-discovery',node['profile'])
+            except Invalid: catalog=None
+            if catalog and not catalog.get('error'):
+                from .model_registration import profile_identity
+                from .model_catalog import selectable_efforts
+                if catalog.get('environment_sha256')==profile_identity(profile):
+                    discovered=next((row for row in catalog.get('models',[]) if row.get('id')==model),None)
+                    if discovered:
+                        efforts,_=selectable_efforts(self,node['profile'],profile,discovered)
+                        known=[*known,dict(id=model,efforts=efforts)]
         if not any(v['id'] == model and effort in v.get('efforts', []) for v in known) and (model, effort) != (profile['model'], profile['effort']):
             raise Invalid('模型/强度尚未发现或显式登记，请刷新能力或选择已批准配置')
         handle = node.get('session', 'new');native_sha = None;cwd = project['path']
@@ -287,18 +333,21 @@ class WorkbenchRuntime(SessionRuntime):
             raise Invalid('Codex当前由原生工具集和强制工作区隔离控制，不能承诺逐工具过滤')
         binding.update(model=model, effort=effort, role='implementer' if write else 'reviewer',
             responsibility=node.get('responsibility') or node.get('role', '通用 Agent'), tools=['native'] if profile['provider'] == 'codex' else tools,
-            timeout_seconds=node.get('timeout', 300), execution_mode=node.get('mode','Ask'),
+            timeout_seconds=node.get('timeout', profile.get('timeout_seconds', 1800)), execution_mode=node.get('mode','Ask'),
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
         if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and binding.get('session_id'):
             from .native_codex_rpc import metadata
             turns=metadata(binding,cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
             if turns:binding['expected_native_turn_id']=turns[-1]['id']
-        if registration:
+        if registration and not direct:
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
         from .agent_extensions import AgentExtensions
         AgentExtensions(self).bind(workspace,node,binding)
         if binding.get('execution_backend')=='native-local' and (binding.get('skills') or binding.get('subagents') not in (None,'disabled')):
             raise Blocked('本机模式的定制 Skill 挂载/子Agent边界尚未验证；不会假装旧隔离挂载仍然有效')
+        if direct:
+            from .model_registration import profile_identity
+            binding['direct_environment_sha256']=profile_identity(binding)
         if admission:
             from .model_admission import ModelAdmission
             ModelAdmission(self).require(binding, cwd)
@@ -381,7 +430,8 @@ class WorkbenchRuntime(SessionRuntime):
 
     def prepare_flow(self, request):
         self.check_operator();workspace=request['workspace'];project=self.session_center.workspace(workspace)
-        automatic = request.get('auto_verify', False)
+        direct = request.get('interaction') == 'click'
+        automatic = request.get('auto_verify', False) if not direct else False
         if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         graph=validate_graph(request['graph']);task=request.get('task', '')
         if not isinstance(task,str) or not 1 <= len(task.strip()) <= 50000: raise Invalid('请填写本次任务')
@@ -390,7 +440,7 @@ class WorkbenchRuntime(SessionRuntime):
             for n in g['nodes']:
                 if n['kind']=='agent' or n['kind']=='router' and n.get('classifier'):
                     from .routing import classifier_node
-                    try:bindings[prefix+n['id']]=self.node_binding(workspace,classifier_node(n) if n['kind']=='router' else n,admission=not automatic)
+                    try:bindings[prefix+n['id']]=self.node_binding(workspace,classifier_node(n) if n['kind']=='router' else n,admission=not (automatic or direct),direct=direct)
                     except (Invalid,Blocked) as exc:
                         exc.node=prefix+n['id'];raise
                 if n['kind']=='loop': inspect(n['body'],prefix+n['id']+'/')
@@ -415,26 +465,35 @@ class WorkbenchRuntime(SessionRuntime):
             if current['graph'] != graph: raise Conflict('运行图和已保存草稿不一致，请先保存')
         return self.db.prepare(dict(purpose='workbench-v3',workspace=workspace,graph=graph,task=task,bindings=bindings,
             draft_id=draft_id,admission_checks=list(checks.values()),automatic_admission=automatic,
+            interaction='click' if direct else 'legacy',click_action='start' if direct else None,
             graph_sha256=digest(canonical(graph)),candidate_sha256=self.candidate_sha256,operator_sha256=self.operator_sha256,
             policy_sha256=self.policy_sha,source_sha256=workspace_hash(project['path']),
             human_questions=['确认本次目标、外部模型使用、各节点权限与调用预算。'+
                 (f' 将检查 {len(checks)} 个连接；已有有效结果会复用，未验证或过期配置至多进行一次只读原生诊断，不发送源码。长运行中已通过的连接如过期，会在节点执行前检查，额外调用计入本次运行预算；失败/撤销不自动重试。' if checks else '')]))
 
     def launch_flow(self, key, expected, answer):
+        with self.lock:
+            return self._launch_flow(key, expected, answer)
+
+    def _launch_flow(self, key, expected, answer):
         self.check_operator()
         try:
             prior=self.flow.get('permit',key)
             if prior.get('sha256')!=expected:raise Conflict('重试请求与原授权身份不一致')
             return self.snapshot(prior['run'])
         except Invalid: pass
-        value, receipt=self.db.consume(key,expected,[answer])
-        if value.get('purpose')!='workbench-v3' or value['candidate_sha256']!=self.candidate_sha256 or value['policy_sha256']!=self.policy_sha:
+        value, receipt=(self.db.consume_click(key,expected,'start') if answer == {'action':'start'} else self.db.consume(key,expected,[answer]))
+        if value.get('purpose')!='workbench-v3' or value['candidate_sha256']!=self.candidate_sha256 or value['policy_sha256']!=self.policy_sha or value['operator_sha256']!=self.operator_sha256:
             raise Blocked('授权不属于此工作台候选')
         project=self.session_center.workspace(value['workspace'])
         if workspace_hash(project['path'])!=value['source_sha256']: raise Conflict('工作区在预览后发生变化，请重新确认')
         from .model_admission import ModelAdmission
         for selected in value['bindings'].values():
-            ModelAdmission(self).require(selected['binding'], selected['cwd'])
+            if value.get('interaction') == 'click':
+                from .model_registration import ModelRegistration
+                ModelRegistration(self).require_direct(selected['binding'])
+            else:
+                ModelAdmission(self).require(selected['binding'], selected['cwd'])
         run=secrets.token_hex(16);row=dict(value,id=run,run=run,state='QUEUED',calls=0,paused=False,cancel_requested=False,
                                         created_at=time.time(),authorization=receipt)
         with self.flow.tx() as db:
@@ -452,11 +511,14 @@ class WorkbenchRuntime(SessionRuntime):
         self.check_operator()
         child=None;identity=None
         try:
-            child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('workbench_worker.py')),
-                '--operator',str(self.operator_file),'--operator-sha256',self.operator_sha256,'--candidate-sha256',self.candidate_sha256,
-                '--policy',str(self.policy_file),'--policy-sha256',self.policy_sha,'--run',run],
-                cwd=ROOT,env=clean_env(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
-                start_new_session=True,close_fds=True)
+            from .preference_baseline import worker_baseline
+            env=clean_env()
+            with worker_baseline(self,env) as fds:
+                child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('workbench_worker.py')),
+                    '--operator',str(self.operator_file),'--operator-sha256',self.operator_sha256,'--candidate-sha256',self.candidate_sha256,
+                    '--policy',str(self.policy_file),'--policy-sha256',self.policy_sha,'--run',run],
+                    cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
+                    start_new_session=True,close_fds=True,pass_fds=fds)
             self.children[run]=child
             identity=process_identity(child.pid)
             if identity is None:raise Blocked('工作流进程身份未确认')

@@ -173,3 +173,31 @@ class NativeLocalTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class ClaudeExternalResumeSafety(unittest.TestCase):
+    def setUp(self):
+        self.helper=NativeLocalTests();self.helper.setUp();self.addCleanup(self.helper.doCleanups)
+        self.rt=self.helper.rt;self.workspace=self.helper.base.project;self.home=self.helper.home
+    def test_unmanaged_claude_transcript_cannot_be_adopted_even_if_no_process_is_seen(self):
+        from studio.native_local import configured
+        cfg=configured(self.rt,'claude');sid='00000000-0000-4000-8000-000000000001'
+        handle=dict(profile=dict(provider='claude',home=cfg['home'],config_root=cfg['config_root']),native=dict(cwd=self.workspace['path'],cwd_changed=False,session_id=sid),ambiguous=False)
+        with patch('studio.native_local.own_busy',return_value=False):binding,reason=self.rt.session_center._binding(handle,self.workspace)
+        self.assertIsNone(binding);self.assertIn('只读',reason)
+    def test_new_claude_conversation_remains_available(self):
+        selected=self.rt.node_binding(self.workspace['id'],dict(profile='default-claude',mode='Ask'),admission=False,direct=True)
+        self.assertIsNone(selected['binding']['session_id'])
+    def test_native_claude_existing_uuid_is_rejected_at_dispatch_not_a_process_scan(self):
+        from studio.native_local import require_safe_resume
+        from studio.native_local import bind
+        b=bind(self.rt,self.rt.operator['profiles']['default-claude'],self.workspace['id']);b['session_id']='00000000-0000-4000-8000-000000000001'
+        with self.assertRaisesRegex(Blocked,'只读'):require_safe_resume(b)
+        b['session_id']=None;require_safe_resume(b)
+    def test_managed_old_uuid_is_not_reopened_after_terminal_exit(self):
+        from studio.native_local import configured,bind
+        cfg=configured(self.rt,'claude');sid='00000000-0000-4000-8000-000000000001'
+        binding=bind(self.rt,self.rt.operator['profiles']['default-claude'],self.workspace['id']);binding.update(runtime_profile='default-claude',session_id=sid)
+        self.rt.db.put('chat-profile','old-managed',dict(workspace=self.workspace['id'],binding=binding))
+        handle=dict(profile=dict(provider='claude',home=cfg['home'],config_root=cfg['config_root']),native=dict(cwd=self.workspace['path'],cwd_changed=False,session_id=sid),ambiguous=False)
+        selected,reason=self.rt.session_center._binding(handle,self.workspace)
+        self.assertIsNone(selected);self.assertIn('只读',reason)

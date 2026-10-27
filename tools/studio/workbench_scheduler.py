@@ -329,14 +329,14 @@ class Scheduler:
             chat = run.get('bindings',{}).get(prefix + node['id']) or self.rt.node_binding(run['workspace'], node)
             from .model_admission import ModelAdmission
             admission=ModelAdmission(self.rt)
-            if not run.get('automatic_admission') or admission.status(chat['binding'],chat['cwd'])['status']!='expired':
+            if run.get('interaction') != 'click' and (not run.get('automatic_admission') or admission.status(chat['binding'],chat['cwd'])['status']!='expired'):
                 admission.require(chat['binding'], chat['cwd'])
             chat.update(id=chat_key, initialized=False, run=self.run, node=prefix + node['id'],name=node['name'])
             self.db.put('node-session', chat_key, chat)
             self.rt.db.put('chat-profile',profile_key(chat['binding']),dict(workspace=chat['workspace'],binding=chat['binding']))
         from .model_admission import ModelAdmission
         admission=ModelAdmission(self.rt)
-        if not run.get('automatic_admission') or admission.status(chat['binding'],chat['cwd'])['status']!='expired':
+        if run.get('interaction') != 'click' and (not run.get('automatic_admission') or admission.status(chat['binding'],chat['cwd'])['status']!='expired'):
             admission.require(chat['binding'], chat['cwd'])
         if callable(getattr(self.rt,'recipient_inputs',None)):
             inputs=self.rt.recipient_inputs(chat['cwd'],inputs)
@@ -371,6 +371,9 @@ class Scheduler:
             prompt+='\n\n运行器核验的本轮源码身份（数据，不扩展权限；'+('本机原生权限，不承诺隐藏其他 Git 对象' if binding.get('execution_backend')=='native-local' else '原生隔离不暴露其他分支的 Git 对象')+'）：\n'+canonical(source_identity).decode()
             self.db.change('activation',key,{'source_at_request':source_identity})
             self.rt.recheck_session(chat)
+            if binding.get('provider')=='claude' and binding.get('session_id'):
+                from .native_local import require_safe_resume
+                require_safe_resume(binding,runtime=self.rt,cwd=cwd,native_sha=chat.get('expected_native_sha256') or chat.get('native_sha256'))
             # Native history is append-only per owned HOME. Persist actual byte
             # boundaries so later loop rounds cannot appear as this activation's
             # live conversation. Full-session history remains a separate view.
@@ -386,7 +389,12 @@ class Scheduler:
             journal = Journal(self, key)
             from .model_admission import ModelAdmission
             admission = ModelAdmission(self.rt)
-            verification=admission.ensure_for_node(chat,self.run,key) if run.get('automatic_admission') else admission.require(binding,cwd)
+            if run.get('interaction') == 'click':
+                from .model_registration import ModelRegistration
+                ModelRegistration(self.rt).require_direct(binding)
+                verification=None
+            else:
+                verification=admission.ensure_for_node(chat,self.run,key) if run.get('automatic_admission') else admission.require(binding,cwd)
             self.db.change('activation',key,{'admission_verification':verification})
             receipt = CLI(binding['provider'], binding, dict(step_timeout_seconds=node.get('timeout', 300), max_log_bytes=4_000_000)).start(
                 prompt, cwd, artifacts, schema, journal, self.run)
@@ -426,5 +434,10 @@ class Scheduler:
             self.db.change('activation',key,{'native_history_end':native_end})
             self.db.change('node-session',chat_key,native_snapshot)
             self.db.change('activation', key, {'receipt': visible, 'completion_sha256': digest(canonical(completion))})
-            admission.renew(binding,cwd,receipt,verification)
+            if binding.get('execution_backend')=='native-local' and binding['provider']=='claude':
+                from .managed_claude import record
+                try:record(self.rt,binding,cwd,native_snapshot['expected_native_sha256'],'workflow',key)
+                except (Blocked,Invalid,OSError,ValueError,KeyError):
+                    self.db.change('activation',key,{'resume_unavailable':'原生历史身份未能核验；本轮结果保留，不能继续写入会话。'})
+            if verification: admission.renew(binding,cwd,receipt,verification)
             return result

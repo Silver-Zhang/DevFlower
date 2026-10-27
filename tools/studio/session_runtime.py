@@ -121,11 +121,14 @@ class SessionRuntime:
         if self.identity_cache.tree(ROOT) != self.candidate_sha256:
             raise Blocked('Development candidate changed; restart with the independently pinned candidate hash')
         for path, sha in self.operator['dependencies'].items():
-            if self.identity_cache.file(clean_path(path)) != sha:
+            if not self.dependency_accepted(clean_path(path), sha):
                 raise Blocked('Approved native executable or configuration changed')
         for path, sha in self.operator.get('dependency_trees', {}).items():
             if self.identity_cache.tree(clean_path(path)) != sha:
                 raise Blocked('Approved native dependency tree changed')
+
+    def dependency_accepted(self, path, sha):
+        return self.identity_cache.file(path) == sha
 
     def readable_directory(self, path):
         try:
@@ -166,6 +169,12 @@ class SessionRuntime:
             row = dict(path=path, head=None, branch=None, execution_allowed=False, execution_reason=str(exc))
         row.update(id=digest(row['path'].encode())[:32], environment='wsl' if os.environ.get('WSL_DISTRO_NAME') else 'local',
                    repository=None, unsupported_environments=['wsl-uri', 'remote-uri'])
+        # Reopening must not publish an intermediate workspace without its
+        # authoritative project library while status reads are concurrent.
+        try: old=self.db.get('workspace',row['id'])
+        except Invalid: old={}
+        for key in ('project_storage','record_location','records_directory','record_notice'):
+            if key in old:row[key]=old[key]
         self.db.put('workspace', row['id'], row)
         return row
 

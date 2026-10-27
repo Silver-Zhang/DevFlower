@@ -21,11 +21,11 @@ export function useWorkspaceLayout(){
 }
 export function ResizeHandle({name,axis='vertical',value,onPointerDown,onKeyDown,className=''}){return <div role="separator" aria-label={name} aria-orientation={axis} aria-valuenow={Math.round(value)} tabIndex={0} title="拖动调整大小，方向键微调，Home 恢复默认" className={'resize-handle '+axis+' '+className} onPointerDown={onPointerDown} onKeyDown={onKeyDown}/>}
 export function SidebarToggle({collapsed,onClick}){const Icon=collapsed?PanelLeftOpen:PanelLeftClose;return <button className="sidebar-toggle" aria-label={collapsed?'展开导航栏':'收起导航栏'} title={collapsed?'展开导航栏':'收起导航栏'} onClick={onClick}><Icon size={15}/></button>}
-export function ThemePicker(){
+export function ThemePicker({onResolvedTheme}){
  const [theme,setTheme]=useState(()=>{const value=localStorage.getItem('devflower-theme');return ['light','dark','system'].includes(value)?value:'system'}),[dark,setDark]=useState(matchMedia('(prefers-color-scheme: dark)').matches);
  useEffect(()=>{const media=matchMedia('(prefers-color-scheme: dark)'),change=()=>setDark(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[]);
  const resolved=theme==='system'?(dark?'dark':'light'):theme;
- useLayoutEffect(()=>{document.documentElement.dataset.theme=resolved;document.documentElement.style.colorScheme=resolved;localStorage.setItem('devflower-theme',theme)},[theme,resolved]);
+ useLayoutEffect(()=>{document.documentElement.dataset.theme=resolved;document.documentElement.style.colorScheme=resolved;localStorage.setItem('devflower-theme',theme);onResolvedTheme?.(resolved)},[theme,resolved,onResolvedTheme]);
  const Icon=theme==='system'?Monitor:resolved==='dark'?Moon:Sun;
  return <label className="theme-picker" title="外观不影响工作流或 Agent 配置"><Icon size={14}/><select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>;
 }

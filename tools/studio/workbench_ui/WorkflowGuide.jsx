@@ -1,0 +1,23 @@
+import React,{useState} from 'react';
+import { X, ListChecks, Sparkles } from 'lucide-react';
+import './workflow-guide.css';
+
+export function WorkflowGuide({open,onClose,onFolder,onTemplates,onNodes,onTask,onCheck,onHistory,workspace,graph,task}) {
+ const [expanded,setExpanded]=useState(false);
+ if(!open)return null;
+ const step=!workspace?['打开工作区',onFolder]:!graph?.nodes?.length?['选择模板或添加节点',onTemplates]:!task?.trim()?['填写本次任务',onTask]:['检查工作流',onCheck];
+ return <section className="workflow-guide" aria-label="工作流新手向导">
+  <header><strong>新手向导</strong><button onClick={step[1]}>下一步：{step[0]}</button><button aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'收起步骤':'查看步骤'}</button><button aria-label="关闭新手向导" onClick={onClose}><X size={15}/></button></header>
+  {expanded&&<ol><li><button onClick={onFolder} aria-label="向导：打开文件夹">打开文件夹</button>，选择任务所在工作区。</li><li><button onClick={onTemplates} aria-label="向导：选择示例模板">选择示例模板</button>，或从空白画布开始。</li><li><button onClick={onNodes} aria-label="向导：添加节点">添加节点</button>，点击节点配置模型与提示词，拖动连接点连线。</li><li><button onClick={onTask} aria-label="向导：填写本次任务">填写本次任务</button>，说明希望完成什么。</li><li><button onClick={onCheck} aria-label="向导：检查工作流">检查工作流</button>，修复错误，再点击顶部“开始运行”。</li><li>查看底部活动和结果；<button onClick={onHistory} aria-label="向导：整轮对话">整轮对话</button>保留历史。需要新任务时使用“下一任务”；模板可收藏。</li></ol>}
+ </section>;
+}
+export function WorkflowIssues({result,stale,onLocate,onAssistant,onClose}) {
+ const [expanded,setExpanded]=useState(false);
+ if(!result)return null;
+ const errors=result.issues.filter(i=>i.severity==='error').length;
+ return <section className="workflow-issues" aria-label="工作流检查结果" role="region"><header><strong><ListChecks size={15}/>检查结果 · {errors} 个错误 · {result.issues.length-errors} 条提醒</strong><button onClick={onClose} aria-label="关闭检查结果"><X size={15}/></button></header>
+ {stale&&<p role="status">草稿或任务已变化，请重新检查。</p>}
+ <ul>{(expanded?result.issues:result.issues.slice(0,1)).map((issue,index)=><li key={index} className={issue.severity}><span>{issue.severity==='error'?'错误':'提醒'}</span><button onClick={()=>onLocate(issue)}>{issue.message}</button></li>)}</ul>
+ {result.issues.length>1&&<button aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'收起问题':'查看全部问题'}</button>}
+ <button onClick={onAssistant}><Sparkles size={14}/>发给 DevFlower 助手</button></section>;
+}

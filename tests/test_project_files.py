@@ -62,6 +62,30 @@ class ProjectFilesTests(unittest.TestCase):
         self.rt.open_workspace(str(self.base.source))
         with self.files.library() as store: self.assertEqual(store.get('draft','saved')['graph']['name'], 'local newest')
 
+    def test_status_during_reopen_keeps_authoritative_local_draft(self):
+        import threading
+        from urllib.request import Request,urlopen
+        from studio.workbench_server import create_server
+        row=self.files.save_draft('reopen-race',self.g,None)
+        with self.rt.flow.tx() as db:db.execute("DELETE FROM records WHERE kind='draft' AND id=?",(row['id'],))
+        entered=threading.Event();release=threading.Event();original=ProjectFiles.initialize;errors=[]
+        def held(files):
+            entered.set();release.wait(3);return original(files)
+        def reopen():
+            try:self.rt.open_workspace(str(self.base.source))
+            except Exception as exc:errors.append(exc)
+        server,token=create_server(self.rt);threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        with patch.object(ProjectFiles,'initialize',held):
+            worker=threading.Thread(target=reopen);worker.start()
+            try:
+                self.assertTrue(entered.wait(2));drafts,problems=self.rt.project_drafts()
+                self.assertFalse(problems);self.assertIn(row,drafts)
+                with urlopen(Request('http://127.0.0.1:'+str(server.server_port)+'/api/status',headers={'Authorization':'Bearer '+token})) as response:status=json.load(response)
+                self.assertIn(row,status['drafts']);self.assertFalse(status['project_errors'])
+            finally:release.set();worker.join(4)
+        self.assertFalse(worker.is_alive());self.assertFalse(errors)
+
     def test_deleted_draft_is_not_resurrected_by_migration(self):
         row = self.files.save_draft('saved', self.g, None)
         self.files.delete_draft('saved', row['revision'])

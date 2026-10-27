@@ -27,8 +27,8 @@ class WorkbenchStore:
         self.path.chmod(0o600)
 
     @contextmanager
-    def tx(self, *, read=False):
-        db = sqlite3.connect(self.path, timeout=20)
+    def tx(self, *, read=False, timeout=20):
+        db = sqlite3.connect(self.path, timeout=timeout)
         try:
             # Polling uses a committed snapshot, never reserves the sole writer.
             db.execute('BEGIN' if read else 'BEGIN IMMEDIATE')
@@ -54,8 +54,8 @@ class WorkbenchStore:
             db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)', (kind, key, canonical(data).decode()))
         return data
 
-    def change(self, kind, key, changes, *, states=None, event=None):
-        with self.tx() as db:
+    def change(self, kind, key, changes, *, states=None, event=None, timeout=20):
+        with self.tx(timeout=timeout) as db:
             row = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (kind, key)).fetchone()
             if not row: raise Invalid('记录不存在')
             data = json.loads(row[0])

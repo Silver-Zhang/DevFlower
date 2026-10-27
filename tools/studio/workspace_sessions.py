@@ -72,6 +72,7 @@ class WorkspaceSessions:
                 raise Invalid('Project root must be an accessible absolute directory without symlinks') from None
             self.roots[identity(self.machine, root)] = root
         profiles = cfg.get('profiles', [])
+        native_defaults = set()
         if not isinstance(profiles, list) or len(profiles) > 32:
             raise Invalid('Register at most 32 storage profiles')
         if type(cfg.get('defaults', True)) is not bool:
@@ -80,8 +81,11 @@ class WorkspaceSessions:
             home = env.get('HOME')
             if home:
                 for provider, name in [('codex', 'CODEX_HOME'), ('claude', 'CLAUDE_CONFIG_DIR')]:
-                    profiles = [*profiles, dict(provider=provider, home=home,
-                        config_root=env.get(name) or str(Path(home)/('.'+provider)), origin='default')]
+                    profile = dict(provider=provider, home=home,
+                        config_root=env.get(name) or str(Path(home)/('.'+provider)), origin='default')
+                    if provider == 'claude' and not env.get(name):
+                        native_defaults.add(id(profile))
+                    profiles = [*profiles, profile]
             for root in self.roots.values():
                 # Only these immediate, explicit source roots; never crawl a project or HOME.
                 for provider in ('codex', 'claude','copilot'):
@@ -120,7 +124,7 @@ class WorkspaceSessions:
                 raise Invalid('The Studio index and native storage roots must be disjoint')
             profile = dict(id=identity(provider, config_root, home, target, original, ids, settings), provider=provider,
                            session_ids=ids, settings_file=settings,
-                           config_root=config_root, home=home, workspace=target, original=original,
+                           native_default=id(value) in native_defaults, config_root=config_root, home=home, workspace=target, original=original,
                            origin=value.get('origin') if value.get('origin') in ('default', 'nested') else 'registered')
             if any(x['id'] == profile['id'] for x in self.profiles):
                 continue
@@ -190,8 +194,12 @@ class WorkspaceSessions:
         # An unknown HOME or changed/mismatched cwd cannot reconstruct the original environment.
         if verified and association in ('cwd', 'registered_origin') and profile['home'] and disclosed and profile['provider']!='copilot':
             provider = profile['provider']
-            assignments = ['env', 'HOME='+profile['home'],
-                           ('CODEX_HOME=' if provider == 'codex' else 'CLAUDE_CONFIG_DIR=')+profile['config_root']]
+            assignments = ['env']
+            if provider == 'claude' and profile['native_default']:
+                assignments += ['-u', 'CLAUDE_CONFIG_DIR']
+            assignments.append('HOME='+profile['home'])
+            if provider == 'codex' or not profile['native_default']:
+                assignments.append(('CODEX_HOME=' if provider == 'codex' else 'CLAUDE_CONFIG_DIR=')+profile['config_root'])
             argv = assignments+(['codex', '--cd', cwd, 'resume', native['session_id']] if provider == 'codex'
                                 else ['claude', '--resume', native['session_id']])
             if profile['settings_file']:

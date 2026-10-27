@@ -64,6 +64,17 @@ def profile_key(binding):
     return key(binding) if binding.get('execution_backend')=='native-local' else digest(binding['home'].encode())
 
 
+def require_safe_resume(binding, *, runtime=None, cwd=None, native_sha=None):
+    # This permits only a proven product-owned session. The caller must hold
+    # session_lease and recheck the transcript; external CLI clients do not
+    # participate in that lock and are not claimed to be controlled.
+    if binding.get('execution_backend')=='native-local' and binding.get('provider')=='claude' and binding.get('session_id'):
+        if runtime is None or cwd is None or native_sha is None:
+            raise Blocked('此 Claude 原生会话只能只读查看；缺少受管记录和历史身份。')
+        from .managed_claude import require_managed
+        require_managed(runtime,binding,cwd,native_sha)
+
+
 def _open_native_lock(binding,sid,*,create=False):
     """Pin a private directory; no link following and no file-content writes."""
     root=Path(binding['local_lock_root'])
@@ -189,7 +200,13 @@ def profiles(runtime, project, existing):
         if cache is None:runtime.native_local_index={};cache=runtime.native_local_index
         cache_key=(provider,project['path']);prior=cache.get(cache_key)
         if not prior or time.monotonic()-prior[0]>2:
-            if provider=='codex':
+            if provider=='codex' and getattr(runtime,'readonly_configuration_warning',lambda:None)():
+                # Do not launch an app-server under an unverified config while
+                # answering a read-only request. Existing known IDs stay visible.
+                ids=list(prior[1]) if prior else []
+                if not hasattr(runtime,'native_local_errors'):runtime.native_local_errors={}
+                runtime.native_local_errors[cache_key]='本机配置待核验；仅显示已知会话。'
+            elif provider=='codex':
                 from .native_codex_rpc import metadata
                 try:
                     values=metadata(binding,project['path'],'thread/list',dict(cwd=project['path'],limit=200,

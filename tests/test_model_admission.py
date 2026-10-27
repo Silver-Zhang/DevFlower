@@ -118,12 +118,12 @@ class AdmissionTests(unittest.TestCase):
  def test_launch_rechecks_certificate_after_preview(self):
   from studio.workbench_examples import examples
   # Seed the second provider only through the same synthetic native boundary.
-  self.verify()
+  self.verify(self.permit(timeout=300))
   p=self.rt.operator['profiles']['default-claude']
   with patch('studio.model_catalog.proxy_models',return_value=[dict(id=p['model'],efforts=[],source='proxy /v1/models')]):
-   self.verify(self.permit(profile='default-claude',model=p['model'],effort=p['effort']))
+   self.verify(self.permit(profile='default-claude',model=p['model'],effort=p['effort'],timeout=300))
   permit=self.rt.prepare_flow(dict(workspace=self.w,graph=examples(self.rt.operator['profiles'])[0],task='Synthetic no spawn after revoked admission'))
-  selected=self.selected();self.gate.invalidate(selected['binding'],selected['cwd'])
+  selected=self.selected(dict(self.node,timeout=300));self.gate.invalidate(selected['binding'],selected['cwd'])
   with patch.object(self.rt,'spawn') as spawn,self.assertRaises(Blocked):self.rt.launch_flow(permit['id'],permit['sha256'],'Synthetic authorized run')
   spawn.assert_not_called();self.assertEqual(self.rt.flow.list('run'),[])
  def test_actual_session_call_failure_revokes_certificate(self):

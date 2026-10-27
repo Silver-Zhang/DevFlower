@@ -15,7 +15,7 @@ from studio.copilot_client import CopilotRPC
 
 class SyntheticBackend:
     calls=[];entered=0;closed=0;delay=0
-    def __init__(self,cwd,**kw):self.cwd=cwd;self.cancelled=kw.get('cancelled',lambda:False);self.process=type('P',(),{'pid':os.getpid()})()
+    def __init__(self,cwd,**kw):self.cwd=cwd;self.cancelled=kw.get('cancelled',lambda:False);self.notify=kw.get('notify',lambda e:None);self.process=type('P',(),{'pid':os.getpid()})()
     def __enter__(self):type(self).entered+=1;return self
     def __exit__(self,*a):type(self).closed+=1
     def catalog(self):return dict(provider='devflower-agent',source='SYNTHETIC catalog; not native inference',models=[dict(id='auto',name='Synthetic Auto')],observed_at=time.time(),inference_calls=0,execution_verified=False)
@@ -25,6 +25,12 @@ class SyntheticBackend:
             if self.cancelled():raise Blocked('Synthetic cancel')
             time.sleep(.01)
         ctx=type(self).calls[-1]
+        if ctx['conversation'][-1]['text']=='SYNTHETIC-STREAM-UI':
+            self.notify(dict(type='assistant.message_delta',text='正在检查工作流配置。'))
+            until=time.monotonic()+4
+            while time.monotonic()<until:
+                if self.cancelled():raise Blocked('Synthetic cancel')
+                time.sleep(.01)
         if ctx.get('intent')=='chat':return dict(text=json.dumps(dict(reply='SYNTHETIC 普通解释，没有修改画布',plan=None)),public_summaries=[dict(source='provider-public-summary',text='SYNTHETIC 公开依据')])
         name='Synthetic '+ctx['conversation'][-1]['text'][:40];profile,choice=next(iter(ctx['available_agents'].items()));m=choice['models'][0]
         nodes=[]
@@ -101,6 +107,13 @@ class CanvasAssistantTests(unittest.TestCase):
         self.assertEqual(len(SyntheticBackend.calls),1)
     def test_cancel_does_not_publish_or_apply_proposal(self):
         SyntheticBackend.delay=.5;v=self.ai.start(self.data());self.ai.cancel(self.w,v['id']);done=self.wait(v['id']);self.assertEqual(done['turn']['state'],'CANCELLED');self.assertIsNone(done['turn']['proposal']);self.assertEqual(self.rt.flow.list('run'),[])
+    def test_late_cancel_cannot_overwrite_completed_turn(self):
+        v=self.run_turn();stale=copy.deepcopy(v);stale['turn']['state']='RUNNING'
+        actual=self.ai.conversation
+        with patch.object(self.ai,'conversation',side_effect=[stale,actual(self.w,v['id'])]):
+            self.ai.cancel(self.w,v['id'])
+        self.assertEqual(self.ai.conversation(self.w,v['id'])['turn']['state'],'COMPLETED')
+        self.assertEqual(len(SyntheticBackend.calls),1)
     def test_recovery_does_not_replay_or_infer(self):
         v=self.run_turn();key=v['turn']['id'];self.rt.flow.change('canvas-turn',key,dict(state='RUNNING'));recovered=self.ai.conversation(self.w,v['id']);self.assertEqual(recovered['turn']['state'],'RECOVERY_REQUIRED');self.ai.cancel(self.w,v['id']);self.assertEqual(self.ai.conversation(self.w,v['id'])['turn']['state'],'CANCELLED');self.assertEqual(len(SyntheticBackend.calls),1)
     def test_edit_during_generation_refuses_apply(self):

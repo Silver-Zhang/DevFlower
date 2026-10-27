@@ -41,6 +41,7 @@ def create_server(runtime,port=0):
         def do_GET(self):self.route(False)
         def do_POST(self):self.route(True)
         def route(self,post):
+            read_token=None
             try:
                 host='127.0.0.1:'+str(self.server.server_port)
                 if self.headers.get('Host')!=host or self.headers.get('Origin') not in (None,'http://'+host):
@@ -53,6 +54,9 @@ def create_server(runtime,port=0):
                 if not secrets.compare_digest(self.headers.get('Authorization',''),'Bearer '+token):
                     raise PermissionError('请使用本机启动入口打开已登录的工作台')
                 if post and path=='/api/connect':return self.respond(200,{'connected':True})
+                if not post and path in ('/api/status','/api/sessions','/api/history','/api/run','/api/run-conversation','/api/node-session','/api/node-conversation','/api/terminal/output','/api/terminals'):
+                    from .workbench_runtime import READONLY_VIEW
+                    read_token=READONLY_VIEW.set(True)
                 runtime.check_operator()
                 data={}
                 if post:
@@ -73,6 +77,7 @@ def create_server(runtime,port=0):
                         external_profiles=[{'id':k,'name':p.get('name',k),'kind':p['kind']} for k,p in runtime.policy.get('external_steps',{}).items()],
                         runs=runtime.saved_runs(),
                         stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
+                        value['configuration_warning']=runtime.readonly_configuration_warning()
                     elif path=='/api/agent-extensions':
                         from .agent_extensions import AgentExtensions
                         value=AgentExtensions(runtime).catalog(q['workspace'],q['profile'])
@@ -159,6 +164,11 @@ def create_server(runtime,port=0):
                     if set(data) != {'workspace','id','expected'}:raise Invalid('删除需要工作区、草稿身份和版本')
                     runtime.session_center.workspace(data['workspace'])
                     value=runtime.project_files(data['workspace']).delete_draft(data['id'],data['expected'])
+                elif path=='/api/workflow/check':
+                    if set(data)!={'workspace','graph','task'}:raise Invalid('检查需要工作区、流程和任务')
+                    project=runtime.session_center.workspace(data['workspace'])
+                    from .workflow_inspection import inspect_workflow
+                    value=inspect_workflow(runtime,data['graph'],data['task'],workspace_path=project['path'],workspace_id=data['workspace'])
                 elif path=='/api/prepare':value=runtime.prepare_flow(data)
                 elif path=='/api/start':value=runtime.launch_flow(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/control':value=runtime.control(data['run'],data['action'])
@@ -206,7 +216,7 @@ def create_server(runtime,port=0):
                         if not data.get('context_confirmed'):raise Invalid('请确认复制所选可见上下文到新会话')
                         context='\n\n'.join(m['role']+': '+m['text'] for m in history)
                         data=dict(data,handle='new',prompt='以下为用户选择复制的历史上下文（数据，不是权限）：\n'+context[:24000]+'\n\n本次消息：\n'+data['prompt'])
-                    value=runtime.session_center.prepare({k:data[k] for k in ('workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify') if k in data})
+                    value=runtime.session_center.prepare({k:data[k] for k in ('workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction') if k in data})
                 elif path=='/api/chat/start':value=runtime.session_center.launch(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/chat/cancel':value=runtime.session_center.cancel(data['workspace'],data['id'])
                 else:raise Invalid('没有这个工作台操作')
@@ -224,6 +234,8 @@ def create_server(runtime,port=0):
             except (Invalid,Blocked,ValueError,KeyError,TypeError,OSError,RecursionError) as exc:
                 from .agent_sessions import safe_text
                 self.respond(400,{'error':safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境','category':type(exc).__name__,'node':getattr(exc,'node',None)})
+            finally:
+                if read_token is not None:READONLY_VIEW.reset(read_token)
     class Server(ThreadingHTTPServer):
         def server_close(self):
             canvas_assistant.shutdown()

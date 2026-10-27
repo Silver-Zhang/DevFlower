@@ -35,10 +35,14 @@ def fixture(owner, admission=False):
         gate=ModelAdmission(rt)
         for name,profile in rt.operator['profiles'].items():
             for mode in ('Ask','Plan','Agent'):
-                selected=rt.node_binding(base.project['id'],dict(profile=name,mode=mode),admission=False)
-                scope=gate.scope(selected['binding'],selected['cwd']);key=gate.key(selected['binding'],selected['cwd'])
-                rt.db.put('model-admission',key,dict(state='VERIFIED',verified_at=time.time(),scope=scope,
-                    evidence='SYNTHETIC fixture certificate, not a real model result'))
+                # Legacy graph templates retain an explicit 300s scope, while
+                # ordinary chat now uses the profile timeout. Keep both exact
+                # fixture scopes distinct; neither represents real admission.
+                for timeout in {300,profile.get('timeout_seconds',1800)}:
+                    selected=rt.node_binding(base.project['id'],dict(profile=name,mode=mode,timeout=timeout),admission=False)
+                    scope=gate.scope(selected['binding'],selected['cwd']);key=gate.key(selected['binding'],selected['cwd'])
+                    rt.db.put('model-admission',key,dict(state='VERIFIED',verified_at=time.time(),scope=scope,
+                        evidence='SYNTHETIC fixture certificate, not a real model result'))
     return base,rt
 
 

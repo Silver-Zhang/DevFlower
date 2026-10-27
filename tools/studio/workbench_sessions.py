@@ -56,7 +56,7 @@ class WorkbenchSessions:
             request_sections=redact(item.get('request_sections', []), secret),
             messages=[],activity=[],summaries=[],session=None,history_status='waiting')
         try:
-            if binding.get('execution_backend')=='native-local' and binding['provider']=='codex':
+            if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not getattr(self.rt,'readonly_configuration_warning',lambda:None)():
                 from .native_local import codex_history
                 turn=item.get('native_turn_id') or item.get('receipt',{}).get('native_turn_id')
                 if not turn:raise Invalid('原生回合身份尚未返回')
@@ -640,7 +640,7 @@ class WorkbenchSessions:
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
                 execution_backend='native-local' if local else 'isolated',
                 inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and not local,subagents=extensions['subagents'] and not local,extensions=extensions,
-                model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))
+                model=profile['model'],effort=profile['effort'],timeout_seconds=profile.get('timeout_seconds',1800),resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
         if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):
             result.append(dict(id='copilot',provider='copilot',available=False,installed=bool(__import__('shutil').which('copilot')),

@@ -95,6 +95,7 @@ def wrap_native_cli(binding,cwd,home,scratch,argv,readonly_dirs=(),hidden_paths=
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('operator','operator-sha256','candidate-sha256','policy','policy-sha256','workspace','handle'):p.add_argument('--'+key,required=True)
+    p.add_argument('--terminal-id')
     a=p.parse_args();rt=WorkbenchRuntime(a.operator,a.operator_sha256,a.candidate_sha256,a.policy,a.policy_sha256)
     parent=os.environ.get('DEVFLOWER_TERMINAL_PARENT_PID')
     if parent:
@@ -108,8 +109,12 @@ def main():
     binding,reason=rt.session_center._binding(row,project)
     if not binding or WorkbenchSessions(rt).busy(binding,row['native']['session_id']):raise Blocked(reason or '会话占用状态未确认')
     cwd=row['native']['cwd'];home=Path(binding['home']);sid=row['native']['session_id']
+    record=rt.flow.get('terminal',a.terminal_id) if a.terminal_id else None
+    direct=bool(record and record.get('interaction')=='click' and record.get('workspace')==a.workspace and record.get('handle')==a.handle and record.get('session_id')==sid and record.get('state') in ('STARTING','RUNNING'))
     selected=rt.node_binding(a.workspace,dict(profile=binding['runtime_profile'],model=binding['model'],
-        effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')))
+        effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not direct,direct=direct)
+    if direct and (record.get('native_sha256') != row['native']['sha256'] or record.get('execution_environment_sha256') != selected['binding'].get('direct_environment_sha256')):
+        raise Blocked('原生会话或配置在终端启动后发生变化，未启动CLI')
     binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='native-local' if binding.get('execution_backend')=='native-local' else 'bwrap')
     from orchestration.native_features import native_args,skill_mounts
     extension_args,extension_env=native_args(binding)
@@ -120,9 +125,18 @@ def main():
     with source_lease(rt.source_lock(cwd),False),session_lease(binding),tempfile.TemporaryDirectory(prefix='df-terminal-') as scratch,tempfile.TemporaryDirectory(prefix='df-skills-') as pack_root,transport as (extra,_):
         # All runtime/source mounts are readonly; only this native HOME and the
         # private temporary directory are writable. No PTY is attached in HTTP.
-        rt.check_operator();rt.session_center.resolve(a.workspace,a.handle)
+        rt.check_operator();_,current=rt.session_center.resolve(a.workspace,a.handle)
+        if current['native']['sha256']!=row['native']['sha256']:raise Blocked('原生历史在获取写锁前发生变化；未启动终端')
+        if native_local and binding['provider']=='claude':
+            from studio.native_local import require_safe_resume
+            require_safe_resume(binding,runtime=rt,cwd=cwd,native_sha=current['native']['sha256'])
         from studio.model_admission import ModelAdmission
-        verification=ModelAdmission(rt).require(selected['binding'],cwd)
+        if direct:
+            from studio.model_registration import ModelRegistration
+            ModelRegistration(rt).require_direct(selected['binding'])
+            verification=None
+        else:
+            verification=ModelAdmission(rt).require(selected['binding'],cwd)
         from studio.native_preferences import inherit_claude_display
         if native_local:
             wrapped=[*argv,*extra]
@@ -134,8 +148,38 @@ def main():
         if native_local:
             from studio.native_local import native_environment
             env.update(native_environment(binding))
-        code=subprocess.call(wrapped,cwd=cwd,env=env)
-        if code:
+        prior=None
+        if native_local and binding['provider']=='claude' and record and parent:
+            from studio.managed_claude import _identity
+            wrapper=process_identity(os.getpid())
+            # The HTTP parent publishes its Popen identity immediately after
+            # spawning us. Do not race that publication or guess ownership.
+            end=time.monotonic()+2
+            while time.monotonic()<end:
+                record=rt.flow.get('terminal',a.terminal_id)
+                published=record.get('process') or {}
+                if record.get('state')=='RUNNING' and wrapper and all(published.get(k)==wrapper.get(k) for k in ('pid','start','boot_id','host','pgid','sid')):break
+                time.sleep(.02)
+            else:raise Blocked('原生终端进程所有权未确认；未启动CLI')
+            prior=rt.db.get('managed-claude',_identity(binding,cwd))
+        child=subprocess.Popen(wrapped,cwd=cwd,env=env)
+        physical=process_identity(child.pid)
+        code=child.wait()
+        if code==0 and prior and physical and physical.get('pgid')==wrapper['pid'] and physical.get('sid')==wrapper['pid']:
+            # The supervisor still holds the native lease here. A durable claim
+            # only becomes usable after the parent records this wrapper's own
+            # normal exit; a lost/terminated wrapper never grants a resume.
+            try:
+                from studio.managed_claude import record as record_managed
+                rt.check_operator()
+                if direct:ModelRegistration(rt).require_direct(selected['binding'])
+                snap=rt.native_snapshot(a.workspace,binding)
+                sha=snap['expected_native_sha256']
+                rt.db.put('managed-terminal',a.terminal_id,dict(prior=prior,wrapper=record['process'],child=physical,argv=argv,exit=code,native_sha256=sha))
+                record_managed(rt,binding,cwd,sha,'terminal',a.terminal_id)
+            except (Blocked,OSError,ValueError,KeyError):
+                print('终端已退出，但原生历史未能封存；后续仅可只读查看。',file=sys.stderr)
+        if code and verification:
             ModelAdmission(rt).invalidate_verification(selected['binding'],cwd,verification)
         return code
 

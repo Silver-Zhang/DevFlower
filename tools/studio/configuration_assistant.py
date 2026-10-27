@@ -106,12 +106,18 @@ class ConfigurationAssistant:
         return dict(workspace=data['workspace'],source=source,source_sha256=None if canvas_only else workspace_hash(project['path']),base_graph=copy.deepcopy(g),base_graph_sha256=digest(canonical(g)),choices=self.choices(data['workspace']))
 
     def prepare(self,data):
-        if set(data)!={'workspace','graph','goal','profile','model','effort'}:raise Invalid('请提供任务说明、当前画布与配置助手Agent')
+        if set(data)-{'interaction'}!={'workspace','graph','goal','profile','model','effort'}:raise Invalid('请提供任务说明、当前画布与配置助手Agent')
+        direct=data.get('interaction')=='click'
         if not isinstance(data['goal'],str) or not 1<=len(data['goal'].strip())<=6000:raise Invalid('请简要描述想完成的工作流')
         base=self._base(data);selection=dict(workspace=data['workspace'],profile=data['profile'],model=data['model'],effort=data['effort'],mode='Ask',permission='read',timeout=120,context='configuration')
-        ModelAdmission.validate_request(selection);chosen=ModelAdmission(self.rt).select(selection)
-        return self.rt.db.prepare(dict(base,purpose='configuration-generation',goal=safe_text(data['goal']),selection=selection,chosen=chosen,
-            admission_checks=[ModelAdmission(self.rt).pending_check(chosen,include_valid=True)],
+        ModelAdmission.validate_request(selection)
+        if direct:
+            chosen=self.rt.node_binding(data['workspace'],dict(selection,session='new'),admission=False,direct=True)
+            cwd=self.rt.storage/'configuration-context'/digest(data['workspace'].encode());cwd.mkdir(parents=True,exist_ok=True,mode=0o700)
+            chosen['cwd']=str(cwd);chosen['binding'].update(no_tools=True,execution_context='configuration',tools=[],role='reviewer')
+        else:chosen=ModelAdmission(self.rt).select(selection)
+        return self.rt.db.prepare(dict(base,purpose='configuration-generation',interaction='click' if direct else 'legacy',click_action='generate' if direct else None,goal=safe_text(data['goal']),selection=selection,chosen=chosen,
+            admission_checks=[] if direct else [ModelAdmission(self.rt).pending_check(chosen,include_valid=True)],
             human_questions=['发送任务说明与当前节点/提示词给所选外部模型生成配置提案；不读取工作区文件，不启动工作流。生成1次调用，必要连接检查另计；上限120秒，不自动重试。']))
 
     def _source(self,value):
@@ -122,17 +128,37 @@ class ConfigurationAssistant:
         if self.rt.validate_source(project['path'])!=value['source'] or workspace_hash(project['path'])!=value['source_sha256']:raise Conflict('工作区源码已变化，请重新生成或导入配置')
 
     def start(self,id,sha256,answer):
-        self.rt.check_operator();v,receipt=self.rt.db.consume(id,sha256,[answer])
+        with self.rt.lock:return self._start(id,sha256,answer)
+
+    def _start(self,id,sha256,answer):
+        self.rt.check_operator()
+        if answer=={'action':'generate'}:
+            try:
+                prior=self.rt.db.get('configuration-permit',id)
+                if prior['sha256']!=sha256:raise Conflict('配置请求身份已变化')
+                return self.status(prior['workspace'],prior['job'])
+            except Invalid:pass
+            v,receipt=self.rt.db.consume_click(id,sha256,'generate')
+        else:v,receipt=self.rt.db.consume(id,sha256,[answer])
         if v.get('purpose')!='configuration-generation':raise Blocked('不是AI配置确认')
-        self._source(v);selected=v['chosen'];ModelAdmission(self.rt).require(selected['binding'],selected['cwd']);key=secrets.token_hex(16)
+        self._source(v);selected=v['chosen']
+        if v.get('interaction')=='click':
+            from .model_registration import ModelRegistration
+            ModelRegistration(self.rt).require_direct(selected['binding'])
+        else:ModelAdmission(self.rt).require(selected['binding'],selected['cwd'])
+        key=secrets.token_hex(16)
         value=dict(v,id=key,state='QUEUED',created_at=time.time(),permission='read',diagnostic=True,configuration=True,
             binding=selected['binding'],cwd=selected['cwd'],profile=v['selection']['profile'],handle='new',cancel_requested=False,authorization=receipt)
         self.rt.db.put('session-operation',key,value)
+        if v.get('interaction')=='click':self.rt.db.put('configuration-permit',id,dict(sha256=sha256,workspace=v['workspace'],job=key))
         argv=[sys.executable,'-B',str(Path(__file__).with_name('configuration_worker.py'))]
         for name,val in dict(operator=self.rt.operator_file,operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=self.rt.policy_file,policy_sha256=self.rt.policy_sha,job=key).items():argv+=['--'+name.replace('_','-'),str(val)]
         child=None;identity=None;owner='configuration:'+key
         try:
-            child=subprocess.Popen(argv,cwd=Path(__file__).parents[2],env=clean_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            from .preference_baseline import worker_baseline
+            env=clean_env()
+            with worker_baseline(self.rt,env) as fds:
+                child=subprocess.Popen(argv,cwd=Path(__file__).parents[2],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,pass_fds=fds)
             self.rt.children[owner]=child
             identity=process_identity(child.pid)
             if identity is None:raise Blocked('配置助手进程身份未确认')
@@ -153,10 +179,15 @@ class ConfigurationAssistant:
         attempted=False;admission_record=None;journal=None
         try:
             if v.get('cancel_requested'):raise Blocked('配置生成已在排队期间取消；未调用模型')
-            self.rt.check_operator();self._source(v);b=v['binding'];verification=ModelAdmission(self.rt).require(b,v['cwd'])
-            admission_record=self.rt.db.get('model-admission',verification['key'])
-            if admission_record.get('state')!='VERIFIED' or admission_record.get('id')!=verification.get('verification_id'):
-                raise Blocked('配置助手连接状态已变化；未调用模型')
+            self.rt.check_operator();self._source(v);b=v['binding'];verification=None
+            if v.get('interaction')=='click':
+                from .model_registration import ModelRegistration
+                ModelRegistration(self.rt).require_direct(b)
+            else:
+                verification=ModelAdmission(self.rt).require(b,v['cwd'])
+                admission_record=self.rt.db.get('model-admission',verification['key'])
+                if admission_record.get('state')!='VERIFIED' or admission_record.get('id')!=verification.get('verification_id'):
+                    raise Blocked('配置助手连接状态已变化；未调用模型')
             out=self.rt.storage/'configuration-artifacts'/key;out.mkdir(parents=True,mode=0o700);sf=out/'schema.json';sf.write_bytes(canonical(schema(v['choices'])))
             from orchestration.privacy import credentials,redact
             context={k:copy.deepcopy(value) for k,value in v['base_graph'].items() if k in {'version','name','nodes','edges','budget'}};fields={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility'}
@@ -167,8 +198,10 @@ class ConfigurationAssistant:
             prompt=safe_text(redact(prompt,known))
             self.rt.db.update('session-operation',key,dict(actual_request=prompt,actual_request_sha256=digest(prompt.encode())))
             with lease(Path(b['home']).parent/(digest(str(Path(b['home']).resolve()).encode())+'.session.lock')):
-                ModelAdmission(self.rt).require(b,v['cwd'])
-                if self.rt.db.get('model-admission',verification['key'])!=admission_record:raise Blocked('配置助手连接在启动前变化；未调用模型')
+                if v.get('interaction')=='click':ModelRegistration(self.rt).require_direct(b)
+                else:
+                    ModelAdmission(self.rt).require(b,v['cwd'])
+                    if self.rt.db.get('model-admission',verification['key'])!=admission_record:raise Blocked('配置助手连接在启动前变化；未调用模型')
                 if not self._claim_dispatch(key):
                     raise Blocked('配置生成已在启动前取消；未调用模型')
                 attempted=True
@@ -182,7 +215,7 @@ class ConfigurationAssistant:
                 return value
             r['report']=sanitize(r['report'])
             graph=plan_graph(r['report'],v['choices']);self._source(v)
-            if not ModelAdmission(self.rt).renew(b,v['cwd'],r,verification,unless_cancelled=key):
+            if verification and not ModelAdmission(self.rt).renew(b,v['cwd'],r,verification,unless_cancelled=key):
                 if self._finish_cancelled(key):return
                 raise Blocked('配置助手连接已被撤销或回执不匹配；未发布提案')
             # Cancellation and publication are ordered in the same transaction.
@@ -194,7 +227,7 @@ class ConfigurationAssistant:
                 self._finish_dispatch(db,current)
                 db.execute("UPDATE objects SET data=? WHERE kind='session-operation' AND id=?",(canonical(current).decode(),key))
         except (Blocked,Invalid,ValueError,OSError,Conflict,sqlite3.Error) as e:
-            if attempted:
+            if attempted and admission_record:
                 # A cancellation before a process exists vetoes revocation in
                 # the same certificate transaction, not via a stale snapshot.
                 ModelAdmission(self.rt).invalidate(b,v['cwd'],'configuration-call-failed',expected_record=admission_record,
@@ -265,7 +298,7 @@ class ConfigurationAssistant:
         self.rt.db.put('session-operation',key,v);return self.status(data['workspace'],key)
 
     def apply(self,data):
-        if set(data)!={'workspace','id','graph','answer'} or not isinstance(data['answer'],str) or not data['answer'].strip():raise Invalid('请确认将提案应用到当前画布；这不会开始运行')
+        if set(data)!={'workspace','id','graph','answer'} or not (data['answer']=={'action':'apply-proposal'} or isinstance(data['answer'],str) and data['answer'].strip()):raise Invalid('请确认将提案应用到当前画布；这不会开始运行')
         self.rt.check_operator();v=self.rt.db.get('session-operation',data['id'])
         if v['workspace']!=data['workspace'] or not v.get('configuration') or v['state']!='COMPLETED':raise Blocked('没有可应用的当前工作区提案')
         self._source(v)
