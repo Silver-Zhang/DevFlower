@@ -29,7 +29,7 @@ def configured(runtime, provider):
         with opened(path,directory=True) as fd:
             if os.fstat(fd).st_uid != os.getuid(): raise Blocked('原生根目录不属于当前本机用户')
     return dict(home=home, config_root=root, execution_backend='native-local',
-                local_lock_root=str(runtime.storage/'native-session-locks'))
+                local_lock_root=str(Path(root)/'.devflower-writer-locks'))
 
 
 def bind(runtime, profile, workspace):
@@ -48,6 +48,13 @@ def preferred_profile(runtime,provider):
     return choices[0]
 
 
+def native_environment(binding):
+    # CLAUDE_CONFIG_DIR=~/.claude is NOT equivalent to leaving it unset:
+    # Claude then moves ~/.claude.json into that directory, losing native
+    # onboarding/account preferences. Canonical local mode uses native defaults.
+    return {'CODEX_HOME':binding['config_root']} if binding['provider']=='codex' else {}
+
+
 def key(binding, sid=None):
     return digest(canonical([binding['provider'],binding.get('config_root'),
                             binding['home'],sid if sid is not None else binding.get('session_id')]))
@@ -64,6 +71,9 @@ def session_lease(binding):
         with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')): yield
         return
     root=Path(binding['local_lock_root']);root.mkdir(mode=0o700,exist_ok=True)
+    with opened(root,directory=True) as fd:
+        info=os.fstat(fd)
+        if info.st_uid!=os.getuid() or info.st_mode&0o077:raise Blocked('原生会话锁目录不是本机私有目录')
     # A new conversation has no common identity yet. An independent nonce keeps
     # unrelated conversations in the same HOME from excluding each other.
     sid=binding.get('session_id') or 'new:'+secrets.token_hex(16)

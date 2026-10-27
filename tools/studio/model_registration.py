@@ -27,7 +27,7 @@ def profile_identity(profile):
         files.append([source, target, digest(raw)])
     if profile.get('execution_backend')=='native-local':
         root=Path(profile['config_root'])
-        for name in ('config.toml',) if profile['provider']=='codex' else ('settings.json','settings.local.json'):
+        for name in ('config.toml',) if profile['provider']=='codex' else ('settings.json','settings.local.json','.credentials.json'):
             path=root/name
             try:
                 with opened(path) as fd:raw=os.read(fd,200001)

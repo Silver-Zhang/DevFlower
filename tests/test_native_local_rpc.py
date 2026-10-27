@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from orchestration.common import Blocked
 from studio.local_codex_adapter import LocalCodex
+from studio.local_claude_adapter import LocalClaude
 from studio.native_codex_rpc import CodexRPC,metadata
 
 SID='00000000-0000-4000-8000-000000000001'
@@ -87,6 +88,18 @@ class NativeLocalProtocolTests(unittest.TestCase):
 
     def test_observer_metadata_refuses_mutating_methods(self):
         with self.assertRaises(Blocked):metadata(self.binding,str(self.home),'thread/resume',{'threadId':SID})
+
+    def test_real_claude_launch_boundary_keeps_default_native_configuration(self):
+        binding=dict(self.binding,provider='claude',config_root=str(self.home/'.claude'))
+        def native(argv,*args,**kw):
+            self.assertNotIn('CLAUDE_CONFIG_DIR',kw['env_extra'])
+            self.assertEqual(argv[argv.index('--permission-mode')+1],'plan')
+            self.assertFalse(kw['isolate']);self.assertEqual(kw['backend'],'native-local')
+            result=dict(type='result',subtype='success',is_error=False,session_id=SID,result='Native reply')
+            return dict(exit=0,timeout=False,overflow=False,cancelled=False),json.dumps(result).encode(),b''
+        with patch('studio.local_claude_adapter.execute',side_effect=native):
+            value=LocalClaude(binding,dict(step_timeout_seconds=10,max_log_bytes=50000)).start('question',self.home,self.home)
+        self.assertEqual(value['session_id'],SID);self.assertEqual(value['report']['reply'],'Native reply')
 
     def test_protocol_output_budget_stops_and_reaps_only_its_child(self):
         exe=self.home/'protocol-stub'

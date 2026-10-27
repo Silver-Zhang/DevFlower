@@ -550,7 +550,8 @@ class WorkbenchSessions:
             from .workbench_rpc import request
             from orchestration.common import clean_env
             env=clean_env(cfg['home']);env['TMPDIR']='/tmp'
-            env['CODEX_HOME' if binding['provider']=='codex' else 'CLAUDE_CONFIG_DIR']=cfg['config_root']
+            from .native_local import native_environment
+            env.update(native_environment(dict(binding,**cfg)))
             reply=request(binding['executable'],method,params,env=env)
             if 'error' in reply:raise Blocked('原生能力探测未完成')
             return reply['result']

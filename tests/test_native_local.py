@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 sys.path[:0]=[str(Path(__file__).parent),str(Path(__file__).resolve().parents[1]/'tools')]
 from test_workbench_runtime import fixture,structured_session
-from studio.native_local import configured,bind,profile_key,session_lease,native_busy,codex_history,preferred_profile
+from studio.native_local import configured,bind,profile_key,session_lease,native_busy,codex_history,preferred_profile,native_environment
 from orchestration.common import Blocked,save,digest
 
 
@@ -55,6 +55,18 @@ class NativeLocalTests(unittest.TestCase):
         name,p=preferred_profile(self.rt,'codex')
         self.assertEqual(name,'default-codex');self.assertNotEqual(p['model'],'different')
 
+    def test_canonical_claude_does_not_redirect_the_global_onboarding_file(self):
+        b=bind(self.rt,self.rt.operator['profiles']['default-claude'],self.base.project['id'])
+        self.assertNotIn('CLAUDE_CONFIG_DIR',native_environment(b))
+        self.assertEqual(native_environment(self.binding),{'CODEX_HOME':str(self.home/'.codex')})
+
+    def test_native_claude_auth_rotation_invalidates_exact_scope(self):
+        from studio.model_admission import ModelAdmission
+        b=bind(self.rt,self.rt.operator['profiles']['default-claude'],self.base.project['id']);gate=ModelAdmission(self.rt)
+        f=self.home/'.claude/.credentials.json';f.write_text('{"accessToken":"synthetic-one"}')
+        before=gate.key(b,str(self.base.source));f.write_text('{"accessToken":"synthetic-two"}')
+        self.assertNotEqual(before,gate.key(b,str(self.base.source)))
+
     def test_unavailable_native_mutation_does_not_leave_pending_journal(self):
         from studio.workbench_sessions import WorkbenchSessions
         manager=WorkbenchSessions(self.rt)
@@ -69,6 +81,17 @@ class NativeLocalTests(unittest.TestCase):
             with session_lease(b):pass
             with self.assertRaises(Blocked):
                 with session_lease(a):pass
+
+    def test_two_workbench_instances_share_the_same_native_writer_lease(self):
+        from types import SimpleNamespace
+        other=SimpleNamespace(operator=self.rt.operator,storage=self.rt.storage/'another-installation')
+        first=bind(self.rt,self.rt.operator['profiles']['default-claude'],self.base.project['id'])
+        second=bind(other,self.rt.operator['profiles']['default-claude'],self.base.project['id'])
+        first['session_id']=second['session_id']='00000000-0000-4000-8000-000000000001'
+        self.assertEqual(first['local_lock_root'],second['local_lock_root'])
+        with session_lease(first):
+            with self.assertRaises(Blocked):
+                with session_lease(second):pass
 
     def test_native_store_lock_blocks_only_the_owned_thread(self):
         root=self.home/'.codex/thread-writer-locks';root.mkdir()

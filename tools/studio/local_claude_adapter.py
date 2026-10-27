@@ -6,6 +6,7 @@ from orchestration.adapters import CLI,native_errors
 from orchestration.common import Blocked,canonical,digest
 from orchestration.privacy import credentials,redact
 from orchestration.process import execute
+from .native_local import native_environment
 
 
 class LocalClaude:
@@ -31,7 +32,7 @@ class LocalClaude:
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
         process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
             cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
-            env_extra={'CLAUDE_CONFIG_DIR':b['config_root'],'CLAUDE_CODE_MAX_RETRIES':'0'},
+            env_extra=dict(native_environment(b),CLAUDE_CODE_MAX_RETRIES='0'),
             context={'provider':'claude','agent_role':b['role'],'transport':'native-local'})
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)

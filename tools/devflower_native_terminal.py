@@ -131,7 +131,9 @@ def main():
             mounts,masks=skill_mounts(binding,cwd,pack_root)
             wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra],mounts,masks)
         env=clean_env(home);env.update(extension_env);env['TMPDIR']=scratch;env['TERM']=os.environ.get('TERM','xterm-256color')
-        if native_local:env['CODEX_HOME' if binding['provider']=='codex' else 'CLAUDE_CONFIG_DIR']=binding['config_root']
+        if native_local:
+            from studio.native_local import native_environment
+            env.update(native_environment(binding))
         code=subprocess.call(wrapped,cwd=cwd,env=env)
         if code:
             ModelAdmission(rt).invalidate_verification(selected['binding'],cwd,verification)
