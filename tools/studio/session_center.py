@@ -314,12 +314,21 @@ class SessionCenter:
             self.db.put('session-operation', op['id'], op)
             self.db.put('chat-profile', digest(op['binding']['home'].encode()),
                         dict(workspace=op['workspace'], binding=op['binding']))
+            child=None;identity=None;owner='chat:'+op['id']
             try:
                 child = self._spawn(op['id'])
-                self.db.update('session-operation', op['id'], dict(worker=process_identity(child.pid)))
-                self.runtime.children['chat:' + op['id']] = child
-            except OSError:
-                self.db.update('session-operation', op['id'], dict(state='FAILED', reason='Native supervisor could not start'))
+                self.runtime.children[owner]=child
+                identity=process_identity(child.pid)
+                if identity is None:raise Blocked('Native supervisor identity unavailable')
+                self.db.update('session-operation', op['id'], dict(worker=identity))
+            except BaseException as exc:
+                from .spawn_ownership import reap_unpublished,failure_record
+                if child is not None:
+                    reap_unpublished(child,identity);self.runtime.children.pop(owner,None)
+                failure_record(lambda:self.db.update('session-operation', op['id'], dict(
+                    state='RECOVERY_REQUIRED' if child is not None else 'FAILED',
+                    reason='Native supervisor launch uncertain; owned process reaped, no automatic retry')))
+                if not isinstance(exc,Exception):raise
             return self.operation(op['id'], op['workspace'])
 
     def _spawn(self, key):

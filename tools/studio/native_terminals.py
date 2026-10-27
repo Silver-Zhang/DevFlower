@@ -103,22 +103,40 @@ class NativeTerminals:
             env = clean_env(); env.update(TERM='xterm-256color', COLORTERM='truecolor',
                                          DEVFLOWER_TERMINAL_PARENT_PID=str(os.getpid()),
                                          DEVFLOWER_TERMINAL_PARENT_START=process_identity(os.getpid())['start'])
+            process=None;identity=None;entry=None
             try:
                 process = subprocess.Popen(argv, cwd=value['cwd'], env=env, stdin=slave, stdout=slave, stderr=slave,
                                            start_new_session=True, close_fds=True)
+                self.rt.children['terminal:'+key]=process
+                os.set_blocking(master, False)
+                identity = process_identity(process.pid)
+                if identity is None:raise Blocked('原生终端进程身份未确认')
+                secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
+                entry = dict(proc=process, master=master, process=identity, home=binding['home'], text='', first=0, next=0,
+                    execution_binding=value['execution_binding'], cwd=value['cwd'], admission_verification=verification,
+                    total=0, filter=TerminalText(secret), inputs={}, deadline=time.monotonic()+1800, state='RUNNING')
+                self.entries[key] = entry
+                self.rt.flow.change('terminal', key, {'state': 'RUNNING', 'process': identity})
+                entry['thread']=threading.Thread(target=self._read, args=(key, entry), daemon=True, name='native-pty-'+key[:6])
+                entry['thread'].start()
+                self.rt.children.pop('terminal:'+key,None)  # The reader now owns it.
             except BaseException:
-                os.close(master); self.rt.flow.change('terminal', key, {'state': 'FAILED', 'reason': '原生终端未启动'}); raise
+                from .spawn_ownership import reap_unpublished,failure_record
+                reaped=process is None
+                try:
+                    if process is not None:reap_unpublished(process,identity);reaped=True
+                finally:
+                    if reaped:
+                        self.entries.pop(key,None);self.rt.children.pop('terminal:'+key,None)
+                    elif entry is not None:entry['state']='RECOVERY_REQUIRED'
+                    # A reader that actually started owns its FD until finally.
+                    thread=entry.get('thread') if entry else None
+                    if thread is None or thread.ident is None:os.close(master)
+                failure_record(lambda:self.rt.flow.change('terminal',key,dict(
+                    state='RECOVERY_REQUIRED' if process is not None else 'FAILED',
+                    reason='原生终端启动未确认；自有进程已回收，未自动重试')))
+                raise
             finally: os.close(slave)
-            os.set_blocking(master, False)
-            identity = process_identity(process.pid)
-            secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
-            entry = dict(proc=process, master=master, process=identity, home=binding['home'], text='', first=0, next=0,
-                execution_binding=value['execution_binding'], cwd=value['cwd'], admission_verification=verification,
-                total=0, filter=TerminalText(secret), inputs={}, deadline=time.monotonic()+1800, state='RUNNING')
-            self.entries[key] = entry
-            self.rt.flow.change('terminal', key, {'state': 'RUNNING', 'process': identity})
-            entry['thread']=threading.Thread(target=self._read, args=(key, entry), daemon=True, name='native-pty-'+key[:6])
-            entry['thread'].start()
             return self.snapshot(value['workspace'], key)
 
     def _append(self, entry, raw, final=False):
@@ -225,11 +243,11 @@ class NativeTerminals:
         with self.lock:
             self.snapshot(workspace,key);entry=self.entries.get(key)
             if entry and entry['proc'].poll() is None:entry['cancelled']=True;stop(entry['process'])
-        if entry and entry.get('thread') is not threading.current_thread():entry['thread'].join(timeout=5)
+        if entry and entry.get('thread') and entry['thread'].ident is not None and entry['thread'] is not threading.current_thread():entry['thread'].join(timeout=5)
         return dict(stopped=bool(entry),history_preserved=True)
 
     def shutdown(self):
         for entry in list(self.entries.values()):
             if entry['proc'].poll() is None:stop(entry['process'])
         for entry in list(self.entries.values()):
-            if entry.get('thread') is not threading.current_thread():entry['thread'].join(timeout=5)
+            if entry.get('thread') and entry['thread'].ident is not None and entry['thread'] is not threading.current_thread():entry['thread'].join(timeout=5)

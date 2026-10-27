@@ -130,10 +130,21 @@ class ConfigurationAssistant:
         self.rt.db.put('session-operation',key,value)
         argv=[sys.executable,'-B',str(Path(__file__).with_name('configuration_worker.py'))]
         for name,val in dict(operator=self.rt.operator_file,operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=self.rt.policy_file,policy_sha256=self.rt.policy_sha,job=key).items():argv+=['--'+name.replace('_','-'),str(val)]
+        child=None;identity=None;owner='configuration:'+key
         try:
             child=subprocess.Popen(argv,cwd=Path(__file__).parents[2],env=clean_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-            self.rt.db.update('session-operation',key,dict(worker=process_identity(child.pid)))
-        except OSError:self.rt.db.update('session-operation',key,dict(state='FAILED',reason='配置助手进程未能启动'))
+            self.rt.children[owner]=child
+            identity=process_identity(child.pid)
+            if identity is None:raise Blocked('配置助手进程身份未确认')
+            self.rt.db.update('session-operation',key,dict(worker=identity))
+        except BaseException as exc:
+            from .spawn_ownership import reap_unpublished,failure_record
+            if child is not None:
+                reap_unpublished(child,identity);self.rt.children.pop(owner,None)
+            failure_record(lambda:self.rt.db.update('session-operation',key,dict(
+                state='RECOVERY_REQUIRED' if child is not None else 'FAILED',
+                reason='配置助手启动未确认；自有进程已回收，未自动重试')))
+            if not isinstance(exc,Exception):raise
         return self.status(v['workspace'],key)
 
     def execute(self,key):

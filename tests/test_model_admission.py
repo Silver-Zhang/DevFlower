@@ -129,7 +129,12 @@ class AdmissionTests(unittest.TestCase):
  def test_actual_session_call_failure_revokes_certificate(self):
   self.verify();center=self.rt.session_center
   permit=center.prepare(dict(workspace=self.w,handle='new',profile=self.name,prompt='Synthetic failure',permission='read',model=self.p['model'],effort=self.p['effort'],mode='Ask'))
-  with patch.object(center,'_spawn'):
+  # This test drives the inner call synchronously. Represent its local test
+  # driver with an inspectable PID instead of an uninspectable MagicMock PID.
+  # Real post-Popen publication faults are covered by test_supervisor_spawn.
+  from types import SimpleNamespace
+  import os
+  with patch.object(center,'_spawn',return_value=SimpleNamespace(pid=os.getpid())):
    op=center.launch(permit['id'],permit['sha256'],'Synthetic authorized call')
   with patch('studio.session_center.CLI.start',side_effect=Blocked('Synthetic real-call boundary failure')):center.execute(op['id'])
   self.assertEqual(center.operation(op['id'],self.w)['state'],'FAILED')

@@ -416,13 +416,25 @@ class WorkbenchRuntime(SessionRuntime):
 
     def spawn(self, run):
         self.check_operator()
-        child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('workbench_worker.py')),
-            '--operator',str(self.operator_file),'--operator-sha256',self.operator_sha256,'--candidate-sha256',self.candidate_sha256,
-            '--policy',str(self.policy_file),'--policy-sha256',self.policy_sha,'--run',run],
-            cwd=ROOT,env=clean_env(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
-            start_new_session=True,close_fds=True)
-        self.flow.change('run',run,{'worker':process_identity(child.pid)})
-        self.children[run]=child
+        child=None;identity=None
+        try:
+            child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('workbench_worker.py')),
+                '--operator',str(self.operator_file),'--operator-sha256',self.operator_sha256,'--candidate-sha256',self.candidate_sha256,
+                '--policy',str(self.policy_file),'--policy-sha256',self.policy_sha,'--run',run],
+                cwd=ROOT,env=clean_env(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,
+                start_new_session=True,close_fds=True)
+            self.children[run]=child
+            identity=process_identity(child.pid)
+            if identity is None:raise Blocked('工作流进程身份未确认')
+            self.flow.change('run',run,{'worker':identity})
+        except BaseException:
+            from .spawn_ownership import reap_unpublished,failure_record
+            if child is not None:
+                reap_unpublished(child,identity);self.children.pop(run,None)
+            failure_record(lambda:self.flow.change('run',run,dict(
+                state='RECOVERY_REQUIRED' if child is not None else 'FAILED',
+                reason='工作流启动未确认；自有进程已回收，未自动重试')))
+            raise
 
     def snapshot(self, run, after=0):
         row=self.flow.get('run',run);nodes=[n for n in self.flow.list('activation') if n['run']==run]
