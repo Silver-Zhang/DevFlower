@@ -20,13 +20,14 @@ from .session_sources import opened, clean_path
 from .workbench_graph import validate_graph
 from .workbench_store import WorkbenchStore
 from .workbench_external import validate_profile,validate_receipt
+from .native_local import profile_key
 
 ROOT = Path(__file__).resolve().parents[2]
 END = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 
 
 class WorkbenchRuntime(SessionRuntime):
-    operator_metadata_fields = frozenset({'stable'})
+    operator_metadata_fields = frozenset({'stable','native_local'})
 
     def __init__(self, operator, operator_sha, candidate_sha, policy, policy_sha):
         self.policy_file, self.policy_sha = Path(clean_path(str(policy))), policy_sha
@@ -38,6 +39,10 @@ class WorkbenchRuntime(SessionRuntime):
         for profile in self.policy.get('external_steps',{}).values():
             validate_profile(profile)
         super().__init__(operator, operator_sha, candidate_sha)
+        from .native_local import configured
+        local=self.operator.get('native_local',{})
+        if not isinstance(local,dict) or set(local)-{'codex','claude'}:raise Blocked('不支持的本机原生 Provider 配置')
+        for provider in local:configured(self,provider)
         for profile in self.policy.get('external_steps',{}).values():
             self.protected.extend(Path(p) for p in [*profile.get('dependencies',{}),
                 *profile.get('dependency_trees',{}), *profile.get('write_paths',[])])
@@ -264,10 +269,15 @@ class WorkbenchRuntime(SessionRuntime):
             binding = dict(profile, home=str(self.native / secrets.token_hex(16)), session_id=None,
                            isolation='bwrap', external_sandbox=profile['provider'] == 'codex', project=workspace,
                            runtime_profile=node['profile'])
+            from .native_local import bind
+            native=bind(self,profile,workspace)
+            if native:binding=dict(native,runtime_profile=node['profile'])
         if node.get('mode','Ask') not in ('Ask','Plan','Agent'):raise Invalid('工作方式请选择 Ask、Plan 或 Agent')
         write = node.get('permission', 'workspace-write' if node.get('mode') == 'Agent' else 'read') == 'workspace-write'
         if write and node.get('mode') != 'Agent': raise Invalid('Ask / Plan 必须保持只读权限')
         if write and cwd != project['path']: raise Blocked('原冻结目录不能授予写权限')
+        if binding.get('execution_backend')=='native-local' and profile['provider']=='claude' and write:
+            raise Blocked('本机 Claude 写入边界尚未验证；请选择 Ask/Plan 或保留的旧隔离配置')
         if profile['provider']=='copilot' and (write or node.get('mode','Ask')=='Agent' or node.get('tools')):
             raise Blocked('Copilot 当前仅支持 Ask/Plan 上下文分析，尚未开放写入或原生工具')
         allowed = [] if profile['provider']=='copilot' else ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if write else ['Read', 'Glob', 'Grep']
@@ -279,10 +289,16 @@ class WorkbenchRuntime(SessionRuntime):
             responsibility=node.get('responsibility') or node.get('role', '通用 Agent'), tools=['native'] if profile['provider'] == 'codex' else tools,
             timeout_seconds=node.get('timeout', 300), execution_mode=node.get('mode','Ask'),
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
+        if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and binding.get('session_id'):
+            from .native_codex_rpc import metadata
+            turns=metadata(binding,cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
+            if turns:binding['expected_native_turn_id']=turns[-1]['id']
         if registration:
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
         from .agent_extensions import AgentExtensions
         AgentExtensions(self).bind(workspace,node,binding)
+        if binding.get('execution_backend')=='native-local' and (binding.get('skills') or binding.get('subagents') not in (None,'disabled')):
+            raise Blocked('本机模式的定制 Skill 挂载/子Agent边界尚未验证；不会假装旧隔离挂载仍然有效')
         if admission:
             from .model_admission import ModelAdmission
             ModelAdmission(self).require(binding, cwd)
@@ -320,7 +336,12 @@ class WorkbenchRuntime(SessionRuntime):
             if row['session_id']==binding['session_id']:
                 internal=self.db.get('session-handle',row['handle'])
                 if internal['profile']['home']==binding['home']:
-                    return dict(native_path=internal['native']['path'],expected_native_sha256=internal['native']['sha256'])
+                    value=dict(native_path=internal['native']['path'],expected_native_sha256=internal['native']['sha256'])
+                    if binding.get('execution_backend')=='native-local' and binding['provider']=='codex':
+                        from .native_codex_rpc import metadata
+                        turns=metadata(binding,internal['native']['cwd'],'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
+                        if turns:value['expected_native_turn_id']=turns[-1]['id']
+                    return value
         raise Blocked('真实原生回执已有 UUID，但记录无法唯一核验；禁止下一轮自动重发')
 
     def attachments(self, cwd, refs):
@@ -373,6 +394,8 @@ class WorkbenchRuntime(SessionRuntime):
                     except (Invalid,Blocked) as exc:
                         exc.node=prefix+n['id'];raise
                 if n['kind']=='loop': inspect(n['body'],prefix+n['id']+'/')
+                if n['kind']=='delivery' and self.operator.get('native_local'):
+                    raise Blocked('本机原生模式的自动交付保护尚未独立验收；请由固定外部可信流程完成交付')
                 if n['kind'] in ('verify','delivery') and n.get('profile') not in self.policy.get('external_steps',{}):
                     raise Invalid('请为验证/交付节点选择固定外部执行配置：'+n['name'])
         inspect(graph)
@@ -484,7 +507,7 @@ class WorkbenchRuntime(SessionRuntime):
                         raise Blocked('源码与最后的可靠完成回执不同，禁止自动重发')
                     self.flow.change('activation',n['id'],{'state':'COMPLETED','output':completion['output']})
                     binding=dict(chat['binding'],session_id=completion['session_id'])
-                    self.db.put('chat-profile',digest(binding['home'].encode()),dict(workspace=chat['workspace'],binding=binding))
+                    self.db.put('chat-profile',profile_key(binding),dict(workspace=chat['workspace'],binding=binding))
                     self.flow.change('node-session',chat['id'],{'binding':binding,'initialized':True,'native_sha256':None,
                                      **self.native_snapshot(chat['workspace'],binding)})
                 self.spawn(run)

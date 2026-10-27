@@ -66,7 +66,7 @@ def create_server(runtime,port=0):
                     if path=='/api/status':
                         release=runtime.release_identity()
                         drafts, project_errors=runtime.project_drafts()
-                        value=dict(version=3,label=release['channel']+' · Agent 工作台',candidate=runtime.candidate_sha256,release=release,
+                        value=dict(version=3,label=release['channel']+' · Agent 工作台'+(' · 本机原生' if runtime.operator.get('native_local') else ''),candidate=runtime.candidate_sha256,release=release,
                         profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=drafts,project_errors=project_errors,
                         archive_status=runtime.db.listing('project-archive-status',limit=100),
                         project_migrations=runtime.db.listing('project-migration',limit=100),
@@ -210,9 +210,7 @@ def create_server(runtime,port=0):
                 elif path=='/api/chat/start':value=runtime.session_center.launch(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/chat/cancel':value=runtime.session_center.cancel(data['workspace'],data['id'])
                 else:raise Invalid('没有这个工作台操作')
-                # Observation must not create project-side transcript copies.
-                # Completed managed turns are archived by their explicit runtime
-                # completion path; opening a native view only reads the source.
+                # Observing native history has no project-side archive writes.
                 if path in ('/api/canvas-assistant/manage','/api/canvas-assistant/conversation'):
                     from .project_files import archive_completed
                     archive_completed(runtime,data.get('workspace',q.get('workspace')),assistant=data.get('id',q.get('id')))

@@ -81,13 +81,16 @@ class NativeTerminals:
             if workspace_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
             from .model_admission import ModelAdmission
             verification=ModelAdmission(self.rt).require(value['execution_binding'], project['path'])
-            if any(e['home'] == binding['home'] and e['proc'].poll() is None for e in self.entries.values()): raise Blocked('同一HOME已有终端')
+            if any(e['home'] == binding['home'] and e['proc'].poll() is None and
+                   (binding.get('execution_backend')!='native-local' or e.get('session_id')==value['session_id'])
+                   for e in self.entries.values()): raise Blocked('同一原生会话已有终端')
             if sum(e['proc'].poll() is None for e in self.entries.values()) >= 4: raise Blocked('已达到本机4个原生终端的上限')
             for old in list(self.entries):
                 if len(self.entries) < 16: break
                 if self.entries[old]['proc'].poll() is not None: del self.entries[old]
             key = secrets.token_hex(16)
             record = dict(id=key, workspace=value['workspace'], handle=value['handle'], provider=value['provider'],
+                execution_backend=binding.get('execution_backend','isolated'),
                 cwd=value['cwd'], session_id=value['session_id'], model=value['model'], effort=value['effort'], state='STARTING', created_at=time.time(),
                     input_sequence=0, input_owner='workbench', input_generation=0,
                     authorization_sha256=digest(canonical(receipt)), candidate_sha256=self.rt.candidate_sha256)
@@ -114,7 +117,7 @@ class NativeTerminals:
                 identity = process_identity(process.pid)
                 if identity is None:raise Blocked('原生终端进程身份未确认')
                 secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
-                entry = dict(proc=process, master=master, process=identity, home=binding['home'], text='', first=0, next=0,
+                entry = dict(proc=process, master=master, process=identity, home=binding['home'], session_id=value['session_id'], text='', first=0, next=0,
                     execution_binding=value['execution_binding'], cwd=value['cwd'], admission_verification=verification,
                     total=0, filter=TerminalText(secret), inputs={}, owner='workbench', generation=0,
                     deadline=time.monotonic()+1800, state='RUNNING')

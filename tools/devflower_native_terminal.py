@@ -49,6 +49,11 @@ def bind_parent_lifetime(parent, expected_start=None):
 
 def native_cli_argv(binding,sid):
     if binding['provider']=='codex':
+        if binding.get('execution_backend')=='native-local':
+            return [binding['executable'],'--no-daemon','resume',sid,'--model',binding['model'],
+                    '--no-alt-screen','--sandbox','read-only','--ask-for-approval','never',
+                    '-c','features.multi_agent=false','-c','check_for_update_on_startup=false',
+                    '-c','model_reasoning_effort='+json.dumps(binding['effort'])]
         # The mandatory OUTER wrapper is read-only. A second native bwrap tries
         # to build writable runtime paths inside it and cannot run read tools.
         # This matches the already-probed external-sandbox Codex execution mode;
@@ -105,22 +110,28 @@ def main():
     cwd=row['native']['cwd'];home=Path(binding['home']);sid=row['native']['session_id']
     selected=rt.node_binding(a.workspace,dict(profile=binding['runtime_profile'],model=binding['model'],
         effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')))
-    binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='bwrap')
+    binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='native-local' if binding.get('execution_backend')=='native-local' else 'bwrap')
     from orchestration.native_features import native_args,skill_mounts
     extension_args,extension_env=native_args(binding)
     argv=native_cli_argv(binding,sid)+extension_args
-    transport=(nullcontext(([],{})) if binding['provider']=='codex' else claude_transport(binding,timeout=3600))
-    with source_lease(rt.source_lock(cwd),False),lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')),tempfile.TemporaryDirectory(prefix='df-terminal-') as scratch,tempfile.TemporaryDirectory(prefix='df-skills-') as pack_root,transport as (extra,_):
+    native_local=binding.get('execution_backend')=='native-local'
+    transport=(nullcontext(([],{})) if native_local or binding['provider']=='codex' else claude_transport(binding,timeout=3600))
+    from studio.native_local import session_lease
+    with source_lease(rt.source_lock(cwd),False),session_lease(binding),tempfile.TemporaryDirectory(prefix='df-terminal-') as scratch,tempfile.TemporaryDirectory(prefix='df-skills-') as pack_root,transport as (extra,_):
         # All runtime/source mounts are readonly; only this native HOME and the
         # private temporary directory are writable. No PTY is attached in HTTP.
         rt.check_operator();rt.session_center.resolve(a.workspace,a.handle)
         from studio.model_admission import ModelAdmission
         verification=ModelAdmission(rt).require(selected['binding'],cwd)
         from studio.native_preferences import inherit_claude_display
-        inherit_claude_display(binding,rt.native)
-        mounts,masks=skill_mounts(binding,cwd,pack_root)
-        wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra],mounts,masks)
+        if native_local:
+            wrapped=[*argv,*extra]
+        else:
+            inherit_claude_display(binding,rt.native)
+            mounts,masks=skill_mounts(binding,cwd,pack_root)
+            wrapped=wrap_native_cli(binding,cwd,home,scratch,[*argv,*extra],mounts,masks)
         env=clean_env(home);env.update(extension_env);env['TMPDIR']=scratch;env['TERM']=os.environ.get('TERM','xterm-256color')
+        if native_local:env['CODEX_HOME' if binding['provider']=='codex' else 'CLAUDE_CONFIG_DIR']=binding['config_root']
         code=subprocess.call(wrapped,cwd=cwd,env=env)
         if code:
             ModelAdmission(rt).invalidate_verification(selected['binding'],cwd,verification)
