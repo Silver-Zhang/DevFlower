@@ -20,13 +20,13 @@ Sim实际参考commit `0721dd66d6bb3aee628a5b397a0385c09b54fa95`、Impeccable `d
 
 ## 3. 决策记录
 
-Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKED和旧预算完全保留。新R1实际启动时把新UUID误作resume，CLI1.026秒exit1、未推理；原件保留并计1次恢复。纠正为新建明确UUID `ec86ce04-40e7-4a5f-a73a-7f29a23f3e2f`，Opus5.5 1M/high，独立持久HOME和只读stage7副本；当前审核进行中、verdict=null，不批准阶段8。
+Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKED和旧预算完全保留。新R1实际启动时把新UUID误作resume，CLI1.026秒exit1、未推理；原件保留并计1次恢复。纠正为新建明确UUID `ec86ce04-40e7-4a5f-a73a-7f29a23f3e2f`，Opus5.5 1M/high，独立持久HOME和只读stage7副本；第一次实际审核在1800.192秒超时、exit-15；同UUID最终恢复也在360.127秒超时、exit-15，均无终局裁决。基础设施恢复2/2已耗尽，verdict=null，不批准阶段8。新源码修复后只能以新候选新源码轮送审，不延长旧运行。
 
-真实产品任务 K 已在固定旧 Stable 5816 的画布中提交并启动，run `5807154ccb6046459b6f654123340256`。实际操作者为获授权的 Codex，不冒充用户本人点击。任务绑定c842阶段8基线，修复真实助手诊断、原生工具/插件边界、检查交接身份、技能预检与长会话续接；独立 Development clone 开发。Developer真实PID/CLI/argv Terra/high已观察。其首轮127.765秒exit0但status BLOCKED，只完成部分实现；旧Controller实际停止，未验证/审核/交付。外部监督查明无.git是预期隔离副本而非必须用户介入的障碍，按原HOME/cwd/UUID继续剩余源码实现，原BLOCKED不修改。该子任务至多2个源码审核轮并计入Task15总5轮，只允许正常开发分支/Draft PR交付，不批准整版main/Stable。三个父进程机械断言与真实模型/外层全回归分列。
+真实产品任务 K 已在固定旧 Stable 5816 的画布中提交并启动，run `5807154ccb6046459b6f654123340256`。实际操作者为获授权的 Codex，不冒充用户本人点击。任务绑定c842阶段8基线，修复真实助手诊断、原生工具/插件边界、检查交接身份、技能预检与长会话续接；独立 Development clone 开发。Developer真实PID/CLI/argv Terra/high已观察。其首轮127.765秒exit0但status BLOCKED，只完成部分实现；旧Controller实际停止，未验证/审核/交付。按原UUID继续1640.423秒exit0后仍BLOCKED：已补诊断批次、长Claude证明链、Skill漂移与检查交接身份及相关机械反例，Codex工具配置重载问题尚未关闭。外部监督查明无.git是预期隔离副本而非必须用户介入的障碍，按原HOME/cwd/UUID继续剩余源码实现，原BLOCKED不修改。该子任务至多2个源码审核轮并计入Task15总5轮，只允许正常开发分支/Draft PR交付，不批准整版main/Stable。三个父进程机械断言与真实模型/外层全回归分列。
 
 ## 4. 结论与边界
 
-当前继续实施与独立审核，尚未正式验收。main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`/tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` 与旧Stable保留；PR19/20/21均Draft，新任务PR尚未创建。当前未合并、未晋升、未删分支。
+当前继续真实产品修复，尚未正式验收。main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`/tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` 与旧Stable保留；PR19/20/21均Draft，整版收尾 [PR #22](https://github.com/Silver-Zhang/DevFlower/pull/22) 已创建并保持Draft，以main为base且完整继承旧源码。当前未合并、未晋升、未删分支。
 
 须完成当前真实产品修复及反馈闭环、最终同候选全回归/真实运行/逐页测试、独立硬 ACCEPT、固定旧 Gate、云端CI和真实PR读回，才能整合和晋升。外部任意Claude CLI的并发不可被产品合作锁保证；旧无来源证明的会话继续只读。不能靠文案、旧测试、未知会话恢复或伪造审批关闭阻塞。
 
@@ -36,6 +36,8 @@ Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKE
 |---|---|
 | 2026-10-28 | 核验main、PR19/20/21与所有worktree，创建独立任务/合同和源码分支；旧用户34915预览未覆盖。 |
 | 2026-10-28 | 实际NativeCodex连续实施8阶段；阶段6超时与所有PARTIAL/环境失败保留。阶段7完整同候选回归通过，阶段8保存并同步开发源码。 |
-| 2026-10-28 | 真实Provider续聊和内置助手测试，发现实际诊断/工具缺陷；新Claude源码R1运行中，原错误启动保存。固定旧Stable画布实际发起产品K，首轮开发返回BLOCKED，外部按原UUID继续源码实现；旧运行不改写。 |
+| 2026-10-28 | 真实Provider续聊和内置助手测试，发现实际诊断/工具缺陷；新Claude源码R1及最终恢复均超时、无裁决；原错误启动保存。固定旧Stable画布实际发起产品K，首轮开发返回BLOCKED，外部按原UUID继续源码实现；旧运行不改写。实际重复打开当前助手历史造成零GET并永久加载的HTTP/Chromium反例已独立保存。 |
+
+新增原生能力实验：原HOME/原CODEX_HOME使用CLI支持的exec忽略本次用户工具配置，Terra/high/read-only真实读取公开测试文件成功，8.029秒exit0，原配置不变；不是产品适配或最终验收。bwrap固定配置元数据成功但嵌套命令失败，不作为可用方案。实际Codex同原K UUID正在实施新的原生业务调用适配及历史卡住修复。
 
 原始授权、进程/输出、故障、截图和原生会话只在本机archives/test；公开分支仅此五节说明、合同与机器摘要。progress.json保存候选和实际计数，不将中间结果冒充最终通过。

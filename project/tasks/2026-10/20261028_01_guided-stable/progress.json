@@ -10,7 +10,7 @@
   "main_merged": false,
   "stable_promoted": false,
   "source_review_rounds": 1,
-  "infrastructure_recoveries": 1,
+  "infrastructure_recoveries": 2,
   "implementation": {
     "status": "PARTIAL",
     "native_session_id": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
@@ -130,10 +130,9 @@
     "user_personal_acceptance": false
   },
   "records_sync": {
-    "commit": "db855bad4ee3dcc060665dd610119b53d2ec393e",
+    "previous_commit": "e3475e5bfe6c63abec8178408116c8e3c9da22b0",
     "branch": "project/devflower",
-    "remote_readback": true,
-    "note": "Latest interim test totals added after this checkpoint, not yet pushed."
+    "note": "This summary is a new checkpoint; commit/push readback recorded externally."
   },
   "latest_interim_candidate": {
     "sha256": "be1cfd4e0c0edf93cb6bf0076d6f9b84b96533562f7a4a3c35e33fc6b2459fc5",
@@ -228,5 +227,59 @@
       "supervisor": "fixed old Stable CLI under parent Task15 scope",
       "old_controller_record_unchanged": true
     }
+  },
+  "pr_url": "https://github.com/Silver-Zhang/DevFlower/pull/22",
+  "pr_draft": true,
+  "independent_review_current": {
+    "round": 1,
+    "candidate": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
+    "verdict": null,
+    "state": "NO_FINAL_VERDICT",
+    "attempts": [
+      {
+        "reason": "new UUID incorrectly resumed before inference",
+        "exit": 1,
+        "seconds": 1.026
+      },
+      {
+        "reason": "supervised timeout",
+        "exit": -15,
+        "seconds": 1800.192
+      },
+      {
+        "reason": "final allowed recovery timeout",
+        "exit": -15,
+        "seconds": 360.127
+      }
+    ],
+    "infrastructure_recoveries_used": 2,
+    "limit": 2
+  },
+  "product_k_continuation1": {
+    "status": "BLOCKED",
+    "exit": 0,
+    "seconds": 1640.423,
+    "focused_python": 60,
+    "stream_python": 9,
+    "js": 60,
+    "mechanical": 3,
+    "browser": 2,
+    "evidence": "synthetic/provider-mechanical; not final real product acceptance"
+  },
+  "product_k_continuation2": {
+    "status": "RUNNING",
+    "session_id": "01a17f04-1387-7741-b06e-7af23bf44003",
+    "purpose": "native execution tools/configuration and current assistant history counterexample"
+  },
+  "external_native_capability_experiment": {
+    "session": "01a17f38-5369-7a61-9ecd-085df436e777",
+    "model": "gpt-6.1-terra",
+    "effort": "high",
+    "exit": 0,
+    "seconds": 8.029,
+    "real_file_read": true,
+    "original_home_and_store": true,
+    "global_config_unchanged": true,
+    "product_adaptation_acceptance": false
   }
 }
