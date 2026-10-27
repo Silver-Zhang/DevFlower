@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261027_03_workspace-session-usability",
+  "date": "2026-10-27",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
+      "commit": "f22ae7582aa6ff6cf37507e93853cbcc54c41bb7",
+      "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+      "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+      "files": 241,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

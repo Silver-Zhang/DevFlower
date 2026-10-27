@@ -1,0 +1,293 @@
+{
+  "task": "20261027_03_workspace-session-usability",
+  "source": {
+    "head": "f22ae7582aa6ff6cf37507e93853cbcc54c41bb7",
+    "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+    "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+    "files": 241,
+    "base_commit": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
+    "remote_sha": "f22ae7582aa6ff6cf37507e93853cbcc54c41bb7",
+    "remote_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+    "source_unchanged": true
+  },
+  "checks": [
+    {
+      "id": "python",
+      "tests": 921,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "log_sha256": "4f2801e80f27cf82252386387fef3c539ea9ba5ab57c3572145ea6e6d5b79f5c"
+    },
+    {
+      "id": "host",
+      "tests": 6,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "log_sha256": "01fcf25073ceffed25fb8e66190d864ab6db74a8d86443f25b73e99b48ab0c94"
+    },
+    {
+      "id": "chromium-http",
+      "tests": 230,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "breakdown": {
+        "existing_main": 106,
+        "other_existing": 119,
+        "new_ui": 5
+      }
+    },
+    {
+      "id": "javascript",
+      "tests": 59,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "log_sha256": "e2ebced925d1a4c6af414d13b152a841d8d0b5b1a808091bdd152f5cc7b7fa7c"
+    }
+  ],
+  "baseline": {
+    "exit": 0
+  },
+  "syntax": {
+    "commands": 6,
+    "exit": 0
+  },
+  "build": {
+    "exit": 0,
+    "byte_identical_outputs": [
+      "workbench.js",
+      "workbench.css"
+    ]
+  },
+  "privacy": {
+    "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+    "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+    "files": 241,
+    "known_credential_matches": [],
+    "forbidden_runtime_files": [],
+    "source_unchanged": true,
+    "passed": true
+  },
+  "targeted": {
+    "tests": 18,
+    "exit": 0,
+    "included_in_python_total": true
+  },
+  "before_fix": {
+    "tests": 17,
+    "exit": 1,
+    "failures": 2,
+    "errors": 8
+  },
+  "prior_intermediate_cas": {
+    "exit": 1,
+    "error": "NameError: Conflict not imported",
+    "after_exit": 0
+  },
+  "retained_failed_attempts": [
+    "initial Python920: two obsolete behavior assertions, adapted with explicit no-run/no-admission assertions",
+    "initial new browser harness used incorrect folder label and omitted workflow grouping",
+    "new browser recovery exposed stale collection controls; production fixed, same-candidate final5 passed",
+    "CAS draft harness initially missed tx read keyword, corrected before actual old-candidate NameError reproduction"
+  ],
+  "real": {
+    "passed": true,
+    "run": "345e4f6eeeef5c9cbb7ea6f0f2e481de",
+    "draft": "43c9271e7e53d9635e7cebbe0d1445fd",
+    "workspace": "69dc622fd632675b5b5780580f491486",
+    "executor": "Codex, authorized local automated test; not user personal acceptance",
+    "selected_user_folder": {
+      "path": "/home/workspace/claude_workspace/DevFlower测试",
+      "execution_allowed": true,
+      "record_location": "project"
+    },
+    "claude_effort_choices": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "business_native_turns": 2,
+    "connection_checks": 2,
+    "assistant_api_operations": 1,
+    "agents": [
+      {
+        "node": "review",
+        "session_id": "ee93e714-d5e0-464e-b5e1-866bc81c4878",
+        "requested_model": "claude-opus-5-5[1m]",
+        "requested_effort": "high",
+        "resolved_model": "claude-opus-5-5[1m]",
+        "resolved_effort": "unknown",
+        "process_exit": 0
+      },
+      {
+        "node": "analyze",
+        "session_id": "01a17bb8-2ed2-7100-a193-aed61e77ee6a",
+        "requested_model": "gpt-6.1-sol",
+        "requested_effort": "xhigh",
+        "resolved_model": "unknown",
+        "resolved_effort": "unknown",
+        "process_exit": 0
+      }
+    ],
+    "handoff": {
+      "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+      "run": "345e4f6eeeef5c9cbb7ea6f0f2e481de",
+      "upstream_activation": "a52055a49085ea7bda69e6c0fb2baa31bf19a275b6f61620c739d92689a5463b",
+      "downstream_activation": "a835615dd78cf1861dc2b82c33599331e4c323e867ab75a80db1633fdf2506fd",
+      "source_activation_matches": true,
+      "run_matches": true,
+      "exact_answer": true,
+      "actual_request_sha256": "6a6b6e5b9ccf835f55fcd5b9fa327e3ed42903996df883cca9904ed6f82ff640",
+      "actual_request_hash_valid": true,
+      "input_sent_matches": true
+    }
+  },
+  "audit": [
+    {
+      "round": 1,
+      "session_id": "cb546a04-4259-406a-a8fe-44fc5fadb79b",
+      "requested_model": "claude-opus-5-5[1m]",
+      "requested_effort": "high",
+      "effective_effort": "unknown",
+      "physical_backend": "unknown",
+      "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+      "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+      "contract_sha256": "830443b28449c955634411bd0e74144d019d52b532eaa545c6876798add81f01",
+      "complete": false,
+      "verdict": null,
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 300.178,
+        "exit": -15,
+        "operation_id": "PROCESS",
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 1148996,
+          "pid": 1148996,
+          "sid": 1148996,
+          "start": "164298036",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "seconds": 300.4523687369656,
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "source_unchanged": true,
+      "credentials_unchanged": true
+    },
+    {
+      "round": 2,
+      "session_id": "e64e8b71-c4e3-4820-a479-429e5e8ef39a",
+      "requested_model": "claude-opus-5-5[1m]",
+      "requested_effort": "high",
+      "effective_effort": "unknown",
+      "physical_backend": "unknown",
+      "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+      "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+      "contract_sha256": "830443b28449c955634411bd0e74144d019d52b532eaa545c6876798add81f01",
+      "complete": false,
+      "verdict": null,
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 0
+        },
+        "cancelled": false,
+        "duration": 180.11,
+        "exit": -15,
+        "operation_id": "PROCESS",
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 1154919,
+          "pid": 1154919,
+          "sid": 1154919,
+          "start": "164337728",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "timeout": true
+      },
+      "seconds": 180.36133724614047,
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "source_unchanged": true,
+      "credentials_unchanged": true
+    }
+  ],
+  "claude_designed_tests": {
+    "tests": 4,
+    "exit": 0,
+    "executor": "Codex controlled runner",
+    "fixture_correction": "nonhex request_id r repeated32 replaced with valid hex a repeated32; original preserved",
+    "not_a_claude_verdict": true,
+    "log_sha256": "e233b20c3c16a5059626db77a4816faeb0fee338804fa75c95a9c3b041e15ddf"
+  },
+  "gate": {
+    "additional_gap": "Native Codex implementation verification 180sec plus same-UUID90sec resume returned no final report; actual business workflow succeeded separately",
+    "exit": 2,
+    "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "gate_invoked": true,
+    "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+    "independent_verdict": null,
+    "primary_gap": "Claude source R1 300sec / R2 180sec timed out without final report; two recovery budget exhausted",
+    "reason": "$: wrong type",
+    "round": 2,
+    "run_id": "9ed527257af18a845a5bf6b13bcdd1da",
+    "source_candidate": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+    "stable_replaced": false,
+    "status": "BLOCKED"
+  },
+  "delivery": {
+    "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20",
+    "draft": true,
+    "base": "flow/workbench-user-experience",
+    "source_pushed": true,
+    "main_merged": false,
+    "stable_replaced": false
+  },
+  "local_evidence": "/home/workspace/claude_workspace/DevFlower测试/.devflower-tests/20261027-workspace-session-usability",
+  "native_evidence": "/home/workspace/DevFlower/archives/devflower-workspace-usability-20261027",
+  "launcher": "python3 /home/workspace/DevFlower/.local/open-devflower-agent.py",
+  "personal_user_acceptance": false,
+  "ci": [
+    {
+      "name": "Studio contracts",
+      "id": 40453525464,
+      "conclusion": "success"
+    },
+    {
+      "name": "Usable regression",
+      "id": 40453525477,
+      "conclusion": "success"
+    }
+  ]
+}
