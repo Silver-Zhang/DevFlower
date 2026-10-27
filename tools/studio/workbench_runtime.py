@@ -144,15 +144,18 @@ class WorkbenchRuntime(SessionRuntime):
         from .workspace_access import browse_directory
         return browse_directory(path)
 
-    def validate_source(self, path):
-        from .workspace_access import view_policy, selected_scope
+    def validate_source(self, path, *, ordinary=False):
+        from .workspace_access import view_policy, selected_scope, native_workspace_view
         from orchestration.common import workspace_metadata
         path = self.readable_directory(path)
-        if view_policy(self,path)['protected_container']:
+        policy=view_policy(self,path)
+        partial=(ordinary and not self.trust and policy['contains'] and not policy['inside'] and not policy['system'] and bool(self.operator.get('native_local',{}).get('codex')))
+        if policy['protected_container'] and not partial:
             raise Blocked('文件夹已打开，但此位置包含系统或工作台保护数据；运行 Agent 请选择具体的项目代码目录。')
         if not (any(Path(path).is_relative_to(p) for p in self.operator['allowed_roots']) or selected_scope(self,path)):
             raise Blocked('请先通过“打开文件夹”选择此项目，再确认本次任务的运行权限。')
         if self.trust: self.trust.permits(path, self.operator_file)
+        if partial:return native_workspace_view(self,path)
         try:
             workspace_metadata(path,check_git=True)
             # General conversations/workflows also work in ordinary folders.
@@ -179,12 +182,18 @@ class WorkbenchRuntime(SessionRuntime):
         from .workspace_access import view_policy, selected_scope
         path=self.readable_directory(path)
         self.check_operator()
-        if not view_policy(self,path)['protected_container']:
+        policy=view_policy(self,path)
+        if not policy['protected_container'] or (path!='/home' and policy['contains'] and not policy['inside'] and not policy['system'] and not self.trust and self.operator.get('native_local',{}).get('codex')):
             selected_scope(self,path,grant=True)
         try: old=self.db.get('workspace',digest(path.encode())[:32])
         except Invalid: old={}
         row = super().open_workspace(path)
         policy = view_policy(self,row['path'])
+        if policy['contains'] and not policy['inside'] and not policy['system'] and not self.trust and self.operator.get('native_local',{}).get('codex'):
+            try:
+                self.validate_source(path,ordinary=True)
+                row.update(execution_allowed=True,execution_reason='仅普通本机 Codex；运行前检查受保护目录。',execution_scope='native-codex-only')
+            except Blocked:pass
         row['protected_container'] = policy['protected_container']
         # Reuse an existing hosted view cache; never silently abandon its data.
         if policy['hosted_records'] or old.get('record_location')=='host':
@@ -268,11 +277,19 @@ class WorkbenchRuntime(SessionRuntime):
         try: return Path(identity(cwd)['common_dir']) / 'devflower-writer.lock'
         except Blocked: return self.storage / ('source-' + digest(cwd.encode()) + '.lock')
 
+    def source_view_hash(self,path,view=None):
+        if view:
+            from .workspace_access import native_workspace_hash
+            if view.get('root')!=path or self.validate_source(path,ordinary=True)!=view:
+                raise Blocked('工作区保护范围已变化，请重新准备。')
+            return native_workspace_hash(self,view)
+        return workspace_hash(path)
+
     def node_binding(self, workspace, node, *, admission=True, direct=False):
         project = self.session_center.workspace(workspace)
-        self.validate_source(project['path'])
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
+        self.validate_source(project['path'],ordinary=bool(direct and profile['provider']=='codex' and self.operator.get('native_local',{}).get('codex')))
         try:auth=self.flow.get('auth-probe',node['profile'])
         except Invalid:auth=None
         if not direct and auth and time.time()-auth.get('at',0)<300 and auth.get('logged_in') is False:
@@ -335,7 +352,7 @@ class WorkbenchRuntime(SessionRuntime):
             responsibility=node.get('responsibility') or node.get('role', '通用 Agent'), tools=['native'] if profile['provider'] == 'codex' else tools,
             timeout_seconds=node.get('timeout', profile.get('timeout_seconds', 1800)), execution_mode=node.get('mode','Ask'),
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
-        if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and binding.get('session_id'):
+        if not direct and binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and binding.get('session_id'):
             from .native_codex_rpc import metadata
             turns=metadata(binding,cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
             if turns:binding['expected_native_turn_id']=turns[-1]['id']
@@ -368,7 +385,15 @@ class WorkbenchRuntime(SessionRuntime):
                 contexts.append(dict(path=ref,sha256=digest(raw),text=safe_text(raw.decode())))
         return dict(binding=binding, cwd=cwd, handle=handle, native_sha256=native_sha, workspace=workspace,contexts=contexts)
 
-    def recheck_session(self, chat):
+    def recheck_session(self, chat, *, native_latest=False):
+        if native_latest:
+            binding=chat['binding']
+            if binding.get('execution_backend')!='native-local' or binding.get('provider')!='codex' or not binding.get('session_id'):
+                raise Blocked('原生最新历史仅适用于明确的本机 Codex 会话')
+            current=self.native_snapshot(chat['workspace'],binding)
+            if current.get('native_cwd')!=chat['cwd'] or chat.get('native_path') and current.get('native_path')!=chat['native_path']:
+                raise Conflict('原生会话的位置或身份已变化；未启动新回合')
+            return
         if chat.get('native_path') and chat.get('expected_native_sha256'):
             with opened(chat['native_path']) as fd:
                 import hashlib
@@ -384,8 +409,11 @@ class WorkbenchRuntime(SessionRuntime):
         for row in listing['discovery']['sessions']:
             if row['session_id']==binding['session_id']:
                 internal=self.db.get('session-handle',row['handle'])
-                if internal['profile']['home']==binding['home']:
-                    value=dict(native_path=internal['native']['path'],expected_native_sha256=internal['native']['sha256'])
+                if (internal['profile']['home']==binding['home'] and internal['profile']['provider']==binding['provider'] and
+                        (not binding.get('config_root') or internal['profile']['config_root']==binding['config_root'])):
+                    if internal.get('ambiguous') or not internal.get('authorized_read') or internal['native'].get('cwd_changed'):
+                        raise Blocked('原生会话身份不唯一或工作目录未确认；未启动新回合')
+                    value=dict(native_path=internal['native']['path'],native_cwd=internal['native']['cwd'],expected_native_sha256=internal['native']['sha256'])
                     if binding.get('execution_backend')=='native-local' and binding['provider']=='codex':
                         from .native_codex_rpc import metadata
                         turns=metadata(binding,internal['native']['cwd'],'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
@@ -396,14 +424,20 @@ class WorkbenchRuntime(SessionRuntime):
     def attachments(self, cwd, refs):
         if not isinstance(refs, list) or len(refs) > 50: raise Invalid('产物引用数量超限')
         result = []
+        from .workspace_access import view_policy,native_workspace_view
+        policy=view_policy(self,cwd)
+        view=native_workspace_view(self,cwd) if policy['contains'] and not policy['inside'] and not policy['system'] else None
         for ref in refs:
             if not isinstance(ref, str): raise Invalid('产物引用必须为路径文本')
             path = Path(ref) if ref.startswith('/') else Path(cwd) / ref
             accessible = path.is_relative_to(cwd) and '..' not in path.parts and '.devflower' not in path.relative_to(cwd).parts
+            if accessible and view:
+                rel=path.relative_to(cwd).as_posix()
+                accessible=not any(rel==x or rel.startswith(x+'/') for x in view['excluded'])
             try:
                 if accessible:
                     with opened(path) as fd:
-                        meta = os.fstat(fd); accessible = meta.st_size < 4_000_000
+                        meta = os.fstat(fd); accessible = meta.st_size < 4_000_000 and (not view or meta.st_nlink==1)
                         sha = digest(os.read(fd, 4_000_001)) if accessible else None
                 else: sha = None
             except (OSError, ValueError): accessible=False;sha=None
@@ -431,6 +465,8 @@ class WorkbenchRuntime(SessionRuntime):
     def prepare_flow(self, request):
         self.check_operator();workspace=request['workspace'];project=self.session_center.workspace(workspace)
         direct = request.get('interaction') == 'click'
+        source=self.validate_source(project['path'],ordinary=direct)
+        view=source if source.get('kind')=='native-workspace-view-v1' else None
         automatic = request.get('auto_verify', False) if not direct else False
         if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         graph=validate_graph(request['graph']);task=request.get('task', '')
@@ -444,11 +480,15 @@ class WorkbenchRuntime(SessionRuntime):
                     except (Invalid,Blocked) as exc:
                         exc.node=prefix+n['id'];raise
                 if n['kind']=='loop': inspect(n['body'],prefix+n['id']+'/')
+                if view and n['kind'] in ('verify','delivery'):
+                    raise Blocked('父工作区的部分视图不能用于外部验证或交付。')
                 if n['kind']=='delivery' and self.operator.get('native_local'):
                     raise Blocked('本机原生模式的自动交付保护尚未独立验收；请由固定外部可信流程完成交付')
                 if n['kind'] in ('verify','delivery') and n.get('profile') not in self.policy.get('external_steps',{}):
                     raise Invalid('请为验证/交付节点选择固定外部执行配置：'+n['name'])
         inspect(graph)
+        if view and (not bindings or any(x['binding'].get('execution_backend')!='native-local' or x['binding'].get('provider')!='codex' for x in bindings.values())):
+            raise Blocked('父工作区仅支持本机 Codex 普通工作流。')
         from .model_admission import ModelAdmission
         checks = {}
         if automatic:
@@ -467,7 +507,7 @@ class WorkbenchRuntime(SessionRuntime):
             draft_id=draft_id,admission_checks=list(checks.values()),automatic_admission=automatic,
             interaction='click' if direct else 'legacy',click_action='start' if direct else None,
             graph_sha256=digest(canonical(graph)),candidate_sha256=self.candidate_sha256,operator_sha256=self.operator_sha256,
-            policy_sha256=self.policy_sha,source_sha256=workspace_hash(project['path']),
+            policy_sha256=self.policy_sha,source_view=view,source_sha256=self.source_view_hash(project['path'],view),
             human_questions=['确认本次目标、外部模型使用、各节点权限与调用预算。'+
                 (f' 将检查 {len(checks)} 个连接；已有有效结果会复用，未验证或过期配置至多进行一次只读原生诊断，不发送源码。长运行中已通过的连接如过期，会在节点执行前检查，额外调用计入本次运行预算；失败/撤销不自动重试。' if checks else '')]))
 
@@ -486,7 +526,7 @@ class WorkbenchRuntime(SessionRuntime):
         if value.get('purpose')!='workbench-v3' or value['candidate_sha256']!=self.candidate_sha256 or value['policy_sha256']!=self.policy_sha or value['operator_sha256']!=self.operator_sha256:
             raise Blocked('授权不属于此工作台候选')
         project=self.session_center.workspace(value['workspace'])
-        if workspace_hash(project['path'])!=value['source_sha256']: raise Conflict('工作区在预览后发生变化，请重新确认')
+        if self.source_view_hash(project['path'],value.get('source_view'))!=value['source_sha256']: raise Conflict('工作区在预览后发生变化，请重新确认')
         from .model_admission import ModelAdmission
         for selected in value['bindings'].values():
             if value.get('interaction') == 'click':
@@ -554,6 +594,8 @@ class WorkbenchRuntime(SessionRuntime):
         elif action=='resume':
             if row['candidate_sha256']!=self.candidate_sha256 or row['policy_sha256']!=self.policy_sha or row['operator_sha256']!=self.operator_sha256:
                 raise Conflict('旧版本运行只能查看；新候选不能复用旧授权恢复')
+            if row.get('source_view'):
+                self.source_view_hash(row['source_view']['root'],row['source_view'])
             if row['state'] in END:
                 raise Blocked('本运行已持久化为状态未确认；不能自动重发。请查看原生会话和完成回执，另行授权新运行')
             if not alive(row.get('worker')):
@@ -565,7 +607,7 @@ class WorkbenchRuntime(SessionRuntime):
                     completion=json.loads(file.read_text())
                     if completion['run']!=run or completion['activation']!=n['id']: raise Blocked('完成回执身份不一致')
                     chat=self.flow.get('node-session',completion['chat_key'])
-                    if workspace_hash(chat['cwd'])!=completion['source_after']:
+                    if self.source_view_hash(chat['cwd'],row.get('source_view'))!=completion['source_after']:
                         raise Blocked('源码与最后的可靠完成回执不同，禁止自动重发')
                     self.flow.change('activation',n['id'],{'state':'COMPLETED','output':completion['output']})
                     binding=dict(chat['binding'],session_id=completion['session_id'])

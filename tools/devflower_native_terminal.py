@@ -50,9 +50,16 @@ def bind_parent_lifetime(parent, expected_start=None):
 def native_cli_argv(binding,sid):
     if binding['provider']=='codex':
         if binding.get('execution_backend')=='native-local':
+            if not binding.get('native_interactive'):
+                return [binding['executable'],'--no-daemon','resume',sid,'--model',binding['model'],
+                        '--no-alt-screen','--sandbox','read-only','--ask-for-approval','never',
+                        '-c','features.multi_agent=false','-c','check_for_update_on_startup=false',
+                        '-c','model_reasoning_effort='+json.dumps(binding['effort'])]
+            from studio.native_codex_exec import permission_profile_args
+            protected=binding.get('native_protected')
+            if not protected:raise Blocked('原生终端的权威保护路径未绑定；未启动CLI')
             return [binding['executable'],'--no-daemon','resume',sid,'--model',binding['model'],
-                    '--no-alt-screen','--sandbox','read-only','--ask-for-approval','never',
-                    '-c','features.multi_agent=false','-c','check_for_update_on_startup=false',
+                    '--no-alt-screen',*permission_profile_args(protected,True),
                     '-c','model_reasoning_effort='+json.dumps(binding['effort'])]
         # The mandatory OUTER wrapper is read-only. A second native bwrap tries
         # to build writable runtime paths inside it and cannot run read tools.
@@ -63,6 +70,13 @@ def native_cli_argv(binding,sid):
                 '-c','features.multi_agent=false','-c','check_for_update_on_startup=false',
                 '-c','model_reasoning_effort='+json.dumps(binding['effort'])]
     if binding['provider']=='claude':
+        if binding.get('execution_backend')=='native-local' and binding.get('native_interactive'):
+            # Until per-path Claude tool rules have been mechanically verified,
+            # offer conversation without filesystem/shell tools or external MCP.
+            return [binding['executable'],'--resume',sid,'--model',binding['model'],'--effort',binding['effort'],
+                    '--permission-mode','plan','--tools','',
+                    '--settings','{"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}',
+                    '--strict-mcp-config','--mcp-config','{"mcpServers":{}}']
         return [binding['executable'],'--resume',sid,'--model',binding['model'],'--effort',binding['effort'],
                 '--permission-mode','plan','--tools','Read,Glob,Grep','--setting-sources','user',
                 '--settings','{"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}',
@@ -111,13 +125,18 @@ def main():
     cwd=row['native']['cwd'];home=Path(binding['home']);sid=row['native']['session_id']
     record=rt.flow.get('terminal',a.terminal_id) if a.terminal_id else None
     direct=bool(record and record.get('interaction')=='click' and record.get('workspace')==a.workspace and record.get('handle')==a.handle and record.get('session_id')==sid and record.get('state') in ('STARTING','RUNNING'))
+    if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not (direct and parent):
+        raise Blocked('本机 Codex 终端需要工作台内明确接管；旧授权不自动改变。')
     selected=rt.node_binding(a.workspace,dict(profile=binding['runtime_profile'],model=binding['model'],
         effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not direct,direct=direct)
     if direct and (record.get('native_sha256') != row['native']['sha256'] or record.get('execution_environment_sha256') != selected['binding'].get('direct_environment_sha256')):
         raise Blocked('原生会话或配置在终端启动后发生变化，未启动CLI')
-    binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='native-local' if binding.get('execution_backend')=='native-local' else 'bwrap')
+    binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='native-local' if binding.get('execution_backend')=='native-local' else 'bwrap',native_interactive=direct)
+    if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and direct:
+        from studio.native_codex_exec import protected_paths
+        binding['native_protected']=protected_paths(rt,binding)
     from orchestration.native_features import native_args,skill_mounts
-    extension_args,extension_env=native_args(binding)
+    extension_args,extension_env=([],{}) if binding.get('execution_backend')=='native-local' and direct else native_args(binding)
     argv=native_cli_argv(binding,sid)+extension_args
     native_local=binding.get('execution_backend')=='native-local'
     transport=(nullcontext(([],{})) if native_local or binding['provider']=='codex' else claude_transport(binding,timeout=3600))
@@ -130,6 +149,28 @@ def main():
         if native_local and binding['provider']=='claude':
             from studio.native_local import require_safe_resume
             require_safe_resume(binding,runtime=rt,cwd=cwd,native_sha=current['native']['sha256'])
+            if direct:
+                try:
+                    (Path(scratch)/'tmp').mkdir(mode=0o700,exist_ok=True)
+                    check=subprocess.run([binding['executable'],'--help'],cwd=scratch,env=clean_env(scratch),stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
+                    helptext=check.stdout.decode('utf-8','replace')
+                    if check.returncode or any(option not in helptext for option in ('--strict-mcp-config','--mcp-config','--tools','--permission-mode','--settings')):
+                        raise Blocked('本机 Claude CLI 不支持所需的终端工具限制；未启动终端。')
+                except subprocess.TimeoutExpired:raise Blocked('本机 Claude CLI 工具能力检查超时；未启动终端。') from None
+        if native_local and binding['provider']=='codex':
+            from studio.native_codex_exec_probe import require_exec_capability
+            require_exec_capability(binding['executable'],scratch)
+            if direct:
+                from studio.native_codex_exec_probe import require_native_write_capability
+                require_native_write_capability(binding['executable'],scratch,True)
+                rt.check_operator()
+                _,after_probe=rt.session_center.resolve(a.workspace,a.handle)
+                if after_probe['native']['sha256']!=row['native']['sha256']:
+                    raise Blocked('原生历史在终端能力检查期间发生变化；未启动CLI')
+                if record.get('source_view') and rt.source_view_hash(cwd,record['source_view'])!=record.get('source_sha256'):
+                    raise Blocked('工作区在终端能力检查期间变化；未启动CLI')
+                from studio.native_codex_exec import check_protected_hardlinks
+                check_protected_hardlinks(binding['native_protected'])
         from studio.model_admission import ModelAdmission
         if direct:
             from studio.model_registration import ModelRegistration

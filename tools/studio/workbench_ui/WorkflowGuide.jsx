@@ -19,5 +19,5 @@ export function WorkflowIssues({result,stale,onLocate,onAssistant,onClose}) {
  {stale&&<p role="status">草稿或任务已变化，请重新检查。</p>}
  <ul>{(expanded?result.issues:result.issues.slice(0,1)).map((issue,index)=><li key={index} className={issue.severity}><span>{issue.severity==='error'?'错误':'提醒'}</span><button onClick={()=>onLocate(issue)}>{issue.message}</button></li>)}</ul>
  {result.issues.length>1&&<button aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'收起问题':'查看全部问题'}</button>}
- <button onClick={onAssistant}><Sparkles size={14}/>发给 DevFlower 助手</button></section>;
+ <button disabled={Boolean(stale)} onClick={onAssistant}><Sparkles size={14}/>发给 DevFlower 助手</button></section>;
 }

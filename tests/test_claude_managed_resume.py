@@ -49,6 +49,11 @@ class ClaudeManagedResume(unittest.TestCase):
   exe.write_text('''#!/usr/bin/python3
 import sys,os,json,re,time
 from pathlib import Path
+a=sys.argv
+if '--help' in a:
+ print('--strict-mcp-config --mcp-config --tools --permission-mode --settings');sys.exit(0)
+if sys.stdin.isatty():
+ assert '--strict-mcp-config' in a and a[a.index('--tools')+1]=='' and json.loads(a[a.index('--mcp-config')+1])=={'mcpServers':{}}
 a=sys.argv;flag='--resume' if '--resume' in a else '--session-id';sid=a[a.index(flag)+1];cwd=os.getcwd();root=Path(os.environ['HOME'])/'.claude'/'projects'/re.sub(r'[^a-zA-Z0-9]','-',cwd);root.mkdir(parents=True,exist_ok=True)
 time.sleep(.3)
 with (root/(sid+'.jsonl')).open('a') as f:
@@ -120,3 +125,35 @@ print(json.dumps(result))
   with self.assertRaises(Blocked):self.rt.session_center.prepare(dict(workspace=self.workspace['id'],handle=after['handle'],profile='default-claude',prompt='not sent',permission='read',mode='Ask',interaction='click'))
   self.rt.db.put('managed-terminal',terminal_id,evidence)
   resumed=run(after['handle']);self.assertEqual(resumed['state'],'COMPLETED',resumed.get('reason'))
+
+ def test_long_terminal_chain_and_invalid_links(self):
+  from unittest.mock import patch
+  from studio.managed_claude import require_managed
+  from types import SimpleNamespace
+  cwd=self.workspace['path'];b=self.binding;sid=self.sid
+  identity=dict(workspace=b['project'],home=b['home'],config_root=b['config_root'],cwd=cwd,session_id=sid)
+  physical=dict(pid=1,start=1,boot_id='boot',host='host',pgid=1,sid=1)
+  process=dict(operation_id='p',exit=0,process=physical)
+  receipt=dict(session_id=sid,home=b['home'],cwd=cwd,provider='claude',permission_mode='native-plan/read-tools',process=process,requested_model=b.get('model'),requested_effort=b.get('effort'))
+  op=dict(state='COMPLETED',workspace=b['project'],cwd=cwd,binding=b,native_session=sid,requested_session=sid,process_result=process,receipt=receipt)
+  steps=[dict(kind='AGENT_REQUEST',status='AGENT_COMPLETED',data=dict(requested_session=sid,actual_session=sid)),dict(kind='PROCESS',status='EXITED',data=dict(operation_id='p',process=physical,cwd=cwd,context=dict(provider='claude'),argv=[b['executable'],'--resume',sid]))]
+  prior=dict(identity,native_sha256='base',kind='session',origin='base');evidences={};terminals={}
+  for i in range(70):
+   origin=str(i);sha='sha'+origin
+   evidences[origin]=dict(exit=0,native_sha256=sha,child=physical,wrapper=physical,argv=['cli'],prior=prior)
+   terminals[origin]=dict(state='COMPLETED',exit=0,workspace=b['project'],cwd=cwd,session_id=sid,provider='claude',process=physical)
+   prior=dict(identity,native_sha256=sha,kind='terminal',origin=origin)
+  def get(kind,key):
+   if kind=='managed-claude':return prior
+   if kind=='managed-terminal':return evidences[key]
+   if kind=='session-operation':return op
+   raise KeyError(key)
+  fake=SimpleNamespace(db=SimpleNamespace(get=get,listing=lambda *a,**k:steps),flow=SimpleNamespace(get=lambda kind,key:terminals[key]))
+  with patch('devflower_native_terminal.native_cli_argv',return_value=['cli']):
+   require_managed(fake,b,cwd,'sha69')
+   original=evidences['0']['prior'];evidences['0']['prior']=dict(original,session_id='other')
+   with self.assertRaises(Blocked):require_managed(fake,b,cwd,'sha69')
+   evidences['0']['prior']=prior
+   with self.assertRaises(Blocked):require_managed(fake,b,cwd,'sha69')
+   evidences['0']['prior']=dict(original,origin='missing',kind='terminal')
+   with self.assertRaises(Blocked):require_managed(fake,b,cwd,'sha69')

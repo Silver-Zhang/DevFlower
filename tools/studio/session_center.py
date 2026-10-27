@@ -283,14 +283,16 @@ class SessionCenter:
         self.runtime.check_operator()
         if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
             raise Invalid('Expected workspace, session handle or new, approved profile, prompt and permission')
-        project = self.runtime.project(request['workspace'])
-        source = self.runtime.validate_source(project['path'])
+        direct = request.get('interaction') == 'click'
+        profile=self.runtime.operator['profiles'].get(request['profile'])
+        ordinary=bool(direct and hasattr(self.runtime,'policy') and profile and profile['provider']=='codex' and self.runtime.operator.get('native_local',{}).get('codex'))
+        project = self.workspace(request['workspace']) if ordinary else self.runtime.project(request['workspace'])
+        source = self.runtime.validate_source(project['path'],ordinary=True) if ordinary else self.runtime.validate_source(project['path'])
         if request['permission'] not in ('read', 'workspace-write'):
             raise Invalid('Unsupported session permission')
         if not isinstance(request['prompt'], str) or not request['prompt'].strip() or len(request['prompt']) > 60000:
             raise Invalid('A bounded nonempty user message is required')
         selected=None
-        direct = request.get('interaction') == 'click'
         automatic = request.get('auto_verify', False) if not direct else False
         if type(automatic) is not bool: raise Invalid('自动连接检查标记必须为布尔值')
         if hasattr(self.runtime,'node_binding'):
@@ -318,6 +320,8 @@ class SessionCenter:
             native_sha, cwd = row['native']['sha256'], row['native']['cwd']
         if selected:
             binding,cwd,native_sha=selected['binding'],selected['cwd'],selected['native_sha256']
+        if source.get('kind')=='native-workspace-view-v1' and (binding.get('execution_backend')!='native-local' or binding.get('provider')!='codex'):
+            raise Blocked('此父工作区仅支持经过能力检查的本机 Codex 普通会话。')
         # No writable access to a frozen Controller candidate or baseline.
         if request['permission'] == 'workspace-write' and cwd != project['path']:
             raise Blocked('Frozen Controller sources can only be continued with read permission')
@@ -328,7 +332,11 @@ class SessionCenter:
         prompt=request['prompt']
         if 'mode' in request and not hasattr(self.runtime, 'policy'):
             mode=request['mode'];prompt=prompt+'\n\n工作方式：'+mode+'。'+('只读制定计划，不执行修改。' if mode=='Plan' else '只读回答，不执行修改。' if mode=='Ask' else '仅在已授权工作区和工具范围内执行。')
-        value = dict(workspace=project['id'], source=source, source_sha256=workspace_hash(source['root']),
+        if source.get('kind')=='native-workspace-view-v1':
+            from .workspace_access import native_workspace_hash
+            source_sha=native_workspace_hash(self.runtime,source)
+        else:source_sha=workspace_hash(source['root'])
+        value = dict(workspace=project['id'], source=source, source_sha256=source_sha,
                      binding=binding, cwd=cwd, prompt=prompt, user_prompt=request['prompt'], permission=request['permission'],
                      handle=handle, native_sha256=native_sha, profile=request['profile'],
                      mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),
@@ -399,12 +407,23 @@ class SessionCenter:
     def _recheck(self, value):
         if value['operator_sha256'] != self.runtime.operator_sha256:
             raise Blocked('Approved operator profile changed')
-        project = self.runtime.project(value['workspace'])
-        if self.runtime.validate_source(project['path']) != value['source'] or workspace_hash(project['path']) != value['source_sha256']:
+        partial=value['source'].get('kind')=='native-workspace-view-v1'
+        project = self.workspace(value['workspace']) if partial else self.runtime.project(value['workspace'])
+        if partial:
+            from .workspace_access import native_workspace_hash
+            if value.get('interaction')!='click' or value['binding'].get('execution_backend')!='native-local' or value['binding'].get('provider')!='codex':raise Blocked('工作区视图不适用于此运行')
+            actual=self.runtime.validate_source(project['path'],ordinary=True)
+            source_sha=native_workspace_hash(self.runtime,actual)
+        else:
+            actual=self.runtime.validate_source(project['path']);source_sha=workspace_hash(project['path'])
+        if actual != value['source'] or source_sha != value['source_sha256']:
             raise Conflict('Workspace changed after the session preview')
         if value['handle'] != 'new':
             _, row = self.resolve(value['workspace'], value['handle'])
-            if row['native']['sha256'] != value['native_sha256']:
+            ordinary=(value.get('interaction')=='click' and value['binding'].get('execution_backend')=='native-local' and value['binding'].get('provider')=='codex')
+            if ordinary and (row['native'].get('cwd_changed') or row['native']['session_id']!=value['binding'].get('session_id') or row['native']['cwd']!=value['cwd'] or row['profile']['provider']!=value['binding']['provider'] or row['profile']['home']!=value['binding']['home'] or row['profile']['config_root']!=value['binding']['config_root']):
+                raise Conflict('原生会话身份或目录已变化；未发送任务')
+            if not ordinary and row['native']['sha256'] != value['native_sha256']:
                 raise Conflict('Native session changed after preview')
         with opened(value['cwd'], directory=True):
             pass
@@ -441,7 +460,7 @@ class SessionCenter:
                     model=b['model'], effort=b['effort'], cwd=display(row['cwd']), permission=row['permission'],
                     process=process, alive=alive(process), worker_alive=alive(row.get('worker')),
                     reason=row.get('reason'), error_category=row.get('error_category'),
-                    process_result=row.get('process_result'), receipt=receipt, reply=reply,
+                    process_result=row.get('process_result'), receipt=receipt, reply=reply, native_tool_activity=row.get('native_tool_activity',[]),
                     user_message=safe_text(redact(row.get('user_prompt',row.get('prompt','')),secret)))
 
     def cancel(self, workspace, key):
@@ -459,6 +478,9 @@ class SessionCenter:
         """Detached worker entry; no Controller state or Stable approval writes."""
         value = self.db.update('session-operation', key, dict(state='STARTING'), states={'QUEUED'})
         journal = SessionJournal(self.db, key)
+        def check_before_spawn():
+            self.runtime.check_operator();self._recheck(value)
+        journal.check_before_spawn=check_before_spawn
         verification=None
         try:
             self.runtime.check_operator()
@@ -491,7 +513,10 @@ class SessionCenter:
                     from .model_admission import ModelAdmission
                     verification=ModelAdmission(self.runtime).require(b,value['cwd'])
                 natural = hasattr(self.runtime, 'policy') and not value.get('diagnostic')
-                chat_binding = dict(b, conversation_format='text') if natural else b
+                chat_binding = dict(b, conversation_format='text') if natural else dict(b)
+                if value.get('interaction')=='click' and b.get('execution_backend')=='native-local' and b.get('provider')=='codex':
+                    from .native_codex_exec import protected_paths
+                    chat_binding.update(native_interaction='ordinary',native_protected=protected_paths(self.runtime,b))
                 reply = CLI(b['provider'], chat_binding, limits).start(value['prompt'] if natural else value['prompt'] +
                     '\nReturn a JSON object with your visible answer in the string field reply.',
                     value['cwd'], artifacts, None if natural else schema, journal, key)
@@ -500,7 +525,7 @@ class SessionCenter:
                     ModelAdmission(self.runtime).renew(b,value['cwd'],reply,verification)
                 # Pin receipt to the actual UUID, requested environment and process.
                 summary = {k: reply.get(k) for k in ('session_id', 'requested_model', 'requested_effort',
-                    'resolved_model', 'resolved_effort', 'permission_mode', 'process', 'usage','native_turn_id')}
+                    'resolved_model', 'resolved_effort', 'permission_mode', 'process', 'usage','native_turn_id','transport')}
                 summary.update(cwd=value['cwd'], home=b['home'], provider=b['provider'], profile=value['profile'])
                 self.db.update('session-operation', key, dict(state='CANCELLED' if journal.get(key)['data']['cancel_requested'] else 'COMPLETED',
                     receipt=summary, reply=safe_text(reply['report'].get('reply', ''))))
@@ -544,6 +569,11 @@ class SessionJournal:
         if kind == 'AGENT_REQUEST' and data.get('requested_session'):
             self.db.update('session-operation', self.operation, dict(requested_session=data['requested_session']))
         return key
+
+    def native_tool_event(self, event):
+        row=self.db.get('session-operation',self.operation)
+        events=(row.get('native_tool_activity') or [])[-39:]+[event]
+        self.db.update('session-operation',self.operation,dict(native_tool_activity=events))
 
     def bind_session(self, sid):
         if not isinstance(sid, str) or not UUID.fullmatch(sid):

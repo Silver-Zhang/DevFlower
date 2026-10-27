@@ -125,3 +125,13 @@ class WorkflowInspectionTests(unittest.TestCase):
  def test_fixed_executor_and_permissions_are_inspected(self):
   base,rt=self.base,self.rt;graph=examples(rt.operator['profiles'])[0];node=next(n for n in graph['nodes'] if n['kind']=='agent');node.update(kind='delivery',profile='missing-fixed-executor')
   issues=inspect_workflow(rt,graph,'task')['issues'];self.assertTrue(any(i.get('node')==node['id'] and i.get('field')=='profile' and i['severity']=='error' for i in issues))
+ def test_selected_skill_content_drift_missing_and_unsupported(self):
+  from orchestration.common import canonical,digest
+  graph=examples(self.rt.operator['profiles'])[0];node=next(n for n in graph['nodes'] if n['kind']=='agent');skill='a'*64;node['skills']=[skill]
+  folder=self.base.source/'skills'/'chosen';folder.mkdir(parents=True);f=folder/'SKILL.md';f.write_text('---\nname: chosen\ndescription: Example\n---\nOriginal\n')
+  sha=digest(canonical({'SKILL.md':digest(f.read_bytes())}));self.rt.flow.put('skill-source',skill,dict(workspace=self.w,profile=node['profile'],path=str(folder),sha256=sha))
+  def issues():return [i for i in inspect_workflow(self.rt,graph,'task',workspace_path=str(self.base.source),workspace_id=self.w)['issues'] if i.get('node')==node['id'] and i.get('field')=='skills' and i['severity']=='error']
+  self.assertFalse(issues())
+  f.write_text('---\nname: chosen\ndescription: Example\n---\nChanged\n');self.assertTrue(any('变化' in i['message'] for i in issues()))
+  f.unlink();self.assertTrue(any('缺失' in i['message'] for i in issues()))
+  f.write_text('---\nname: chosen\ndescription: Example\nallowed-tools: all\n---\n');self.assertTrue(any('不支持' in i['message'] for i in issues()))

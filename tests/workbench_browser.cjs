@@ -75,12 +75,57 @@ await test('guide-check-and-send-issues-preserves-assistant-draft',async p=>{
  await p.getByRole('button',{name:'AI 助手',exact:true}).click();const input=p.getByLabel('配置需求',{exact:true});await input.fill('保留我的草稿');
  await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();assert((await results.innerText()).includes('本次任务'));await results.getByRole('button',{name:'发给 DevFlower 助手'}).click();await until(async()=>(await input.inputValue()).includes('本次任务'));assert((await input.inputValue()).startsWith('保留我的草稿'));
 });
+await test('assistant-reopen-current-history-reads-again-without-replay',async p=>{
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');
+ await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();
+ let posts=0,reads=0;p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))posts++;if(r.method()==='GET'&&r.url().includes('/api/canvas-assistant/conversation?'))reads++});
+ await dock.getByLabel('配置需求',{exact:true}).fill('SYNTHETIC current history');await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>(await dock.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));
+ const previous=reads;await dock.getByLabel('助手会话历史',{exact:true}).click();await dock.locator('.assistant-history-open').filter({hasText:'SYNTHETIC current history'}).click();
+ await until(async()=>reads>previous&&(await dock.getByRole('log').innerText()).includes('SYNTHETIC current history'));assert.equal(await dock.getByText('正在读取会话…',{exact:true}).count(),0);assert.equal(posts,1);
+ await p.reload();await p.getByRole('button',{name:'AI 助手',exact:true}).click();await until(async()=>(await p.getByTestId('assistant-dock').getByRole('log').innerText()).includes('SYNTHETIC current history'));assert.equal(posts,1);
+});
+await test('assistant-reopen-running-history-does-not-resend',async p=>{
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();
+ let posts=0,reads=0;p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))posts++;if(r.method()==='GET'&&r.url().includes('/api/canvas-assistant/conversation?'))reads++});
+ await dock.getByLabel('配置需求',{exact:true}).fill('SYNTHETIC-STREAM-UI');await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>await dock.getByRole('button',{name:'停止本次生成',exact:true}).isVisible());
+ const previous=reads;await dock.getByLabel('助手会话历史',{exact:true}).click();await dock.locator('.assistant-history-open').filter({hasText:'SYNTHETIC-STREAM-UI'}).click();await until(async()=>reads>previous&&(await dock.getByRole('log').innerText()).includes('SYNTHETIC-STREAM-UI'));
+ assert.equal(await dock.getByText('正在读取会话…',{exact:true}).count(),0);assert.equal(posts,1);
+});
+await test('assistant-late-history-read-cannot-replace-newer-selection',async p=>{
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();
+ let posts=0;p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))posts++});
+ for(const text of ['SYNTHETIC history A','SYNTHETIC history B']){if(text.endsWith('B'))await dock.getByLabel('新建助手对话',{exact:true}).click();await dock.getByLabel('配置需求',{exact:true}).fill(text);await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>(await dock.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));}
+ await dock.getByLabel('助手会话历史',{exact:true}).click();let release,arrived,delivered;const hold=new Promise(r=>release=r),seen=new Promise(r=>arrived=r),done=new Promise(r=>delivered=r);let first=true;
+ await p.route('**/api/canvas-assistant/conversation?*',async route=>{if(!first)return route.continue();first=false;const response=await route.fetch();arrived();await hold;await route.fulfill({response});delivered()});
+ await dock.locator('.assistant-history-open').filter({hasText:'SYNTHETIC history A'}).click();await seen;await dock.getByLabel('助手会话历史',{exact:true}).click();await dock.locator('.assistant-history-open').filter({hasText:'SYNTHETIC history B'}).click();
+ await until(async()=>(await dock.getByRole('log').innerText()).includes('SYNTHETIC history B'));release();await done;await p.unroute('**/api/canvas-assistant/conversation?*');assert((await dock.getByRole('log').innerText()).includes('SYNTHETIC history B'));assert.equal(posts,2);
+});
+await test('inspection-late-response-is-not-attached-to-new-task',async p=>{
+ await openWorkspace(p);await p.getByLabel('本次任务',{exact:true}).fill('旧检查任务');
+ let release,arrived;const hold=new Promise(r=>release=r),seen=new Promise(r=>arrived=r);
+ await p.route('**/api/workflow/check',async route=>{const response=await route.fetch();arrived();await hold;await route.fulfill({response})});
+ await p.getByRole('button',{name:'检查工作流',exact:true}).click();await seen;
+ await p.getByLabel('本次任务',{exact:true}).fill('新检查任务');release();
+ await until(async()=>(await p.locator('.alert').allTextContents()).some(v=>v.includes('检查期间草稿或任务已变化')));
+ assert.equal(await p.getByLabel('工作流检查结果',{exact:true}).count(),0);
+});
+await test('inspection-handoff-sends-versioned-issues-over-real-http',async p=>{
+ await openWorkspace(p);await p.getByLabel('本次任务',{exact:true}).fill('检查身份测试');
+ await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();
+ await results.getByRole('button',{name:'发给 DevFlower 助手'}).click();const panel=p.getByTestId('assistant-dock');
+ await panel.getByLabel('助手模型',{exact:true}).selectOption('auto');await panel.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await panel.getByRole('checkbox',{name:/允许发送.*对话/}).check();
+ let sent; p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))sent=r.postDataJSON()});
+ await panel.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>Boolean(sent));
+ assert.equal(sent.inspection.workspace,access.workspace);assert.equal(sent.inspection.task,'检查身份测试');assert.deepEqual(sent.inspection.graph,sent.graph);assert(sent.inspection.issues.length>0);
+ await until(async()=>(await panel.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));
+ assert(await panel.getByText('检查身份与结构位置（高级）',{exact:true}).isVisible());
+});
 await test('workflow-check-locates-nested-prompt-and-expires-after-edit',async p=>{
  await openWorkspace(p);await example(p,2);await p.getByLabel('本次任务',{exact:true}).fill('Synthetic nested validation');
  await p.locator('.react-flow__node[data-id="cycle"]').getByRole('button',{name:'编辑循环内流程'}).click();await p.locator('.react-flow__node[data-id="proposal"]').click();await p.getByRole('button',{name:'提示词',exact:true}).click();await p.getByLabel('每轮提示词',{exact:true}).fill('');await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();await p.getByRole('button',{name:'返回外层'}).click();
  await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();if(await results.getByRole('button',{name:'查看全部问题'}).count())await results.getByRole('button',{name:'查看全部问题'}).click();
  const problem=results.getByRole('button',{name:/提出或修订方案.*每轮提示词/});await problem.waitFor();await problem.click();assert((await p.locator('.loop-breadcrumb').innerText()).includes('cycle'));assert.equal(await p.locator('.react-flow__node[data-id="proposal"].selected').count(),1);assert.equal(await p.getByLabel('每轮提示词',{exact:true}).inputValue(),'');await until(async()=>await p.evaluate(()=>document.activeElement?.getAttribute('aria-label'))==='每轮提示词');
- const checked=await p.evaluate(()=>JSON.stringify(JSON.parse(localStorage.getItem('devflower-workbench-view')).graph));await p.getByLabel('每轮提示词',{exact:true}).fill('修复提示词');assert((await results.innerText()).includes('草稿或任务已变化'));
+ const checked=await p.evaluate(()=>JSON.stringify(JSON.parse(localStorage.getItem('devflower-workbench-view')).graph));await p.getByLabel('每轮提示词',{exact:true}).fill('修复提示词');assert((await results.innerText()).includes('草稿或任务已变化'));assert(await results.getByRole('button',{name:'发给 DevFlower 助手'}).isDisabled());
  await p.getByRole('button',{name:'撤销',exact:true}).click();await until(async()=>await p.evaluate(()=>JSON.stringify(JSON.parse(localStorage.getItem('devflower-workbench-view')).graph))===checked);assert((await results.innerText()).includes('草稿或任务已变化'));await p.getByRole('button',{name:'检查工作流',exact:true}).click();await until(async()=>!(await results.innerText()).includes('草稿或任务已变化'));
 });
 await test('direct-click-workflow-start-no-probe-or-written-answer',async p=>{
@@ -572,11 +617,19 @@ await test('product-run-checks-connection-after-one-confirmation-and-stops-on-fa
 await test('product-node-default-is-readable-conversation-original-evidence-remains',async p=>{
  await p.setViewportSize({width:1512,height:1080});await openWorkspace(p);await p.getByLabel('历史运行',{exact:true}).selectOption('dialog-plain-run');await until(async()=>await p.locator('.react-flow__node[data-id="analyze"]').count()===1);await p.locator('.react-flow__node[data-id="analyze"]').click();
  const view=p.getByLabel('Agent 运行对话',{exact:true});await until(async()=>(await view.innerText()).includes('SYNTHETIC dialog-plain final answer 1'));assert.equal(await p.locator('.advanced-run-evidence').getAttribute('open'),null);assert(!(await view.innerText()).includes('HIDDEN_RESULT_REASONING'));assert(!(await view.innerText()).includes('A. 初始化提示词'));
- await p.locator('.advanced-run-evidence>summary').click();assert(await p.getByTestId('actual-provider-request').isVisible());await p.screenshot({path:out+'/product-readable-conversation.png'});
+ await p.locator('.advanced-run-evidence>summary').click();const request=p.getByTestId('actual-provider-request');assert(await request.isVisible());assert((await request.innerText()).includes('本轮发送给原生 CLI 的可见输入'));if(await request.getAttribute('open')===null)await request.locator('summary').first().click();await request.getByRole('button',{name:'E 本轮输入',exact:true}).click();assert((await request.innerText()).includes('不是完整 Provider 上下文'));await p.screenshot({path:out+'/product-readable-conversation.png'});
 });
 await test('product-handoff-shows-names-and-content-once-per-real-stage',async p=>{
  await openWorkspace(p);await p.route('**/api/run?**',async route=>{const res=await route.fetch(),v=await res.json();if(v.run.id==='A'){const e={at:1,run:'A',edge:'edge1',source:'analyze',node:'review',activation:'A',target_activation:'review-round',target_round:[],iteration_path:[],attempt:1,content_sha256:'a'.repeat(64),content:{answer:'CLEAR_UPSTREAM_CONTENT'}};v.events=[{...e,seq:1,kind:'handoff-ready'},{...e,seq:2,kind:'handoff-sent'}]}await route.fulfill({json:v})});
  await p.getByLabel('历史运行',{exact:true}).selectOption('A');await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()==='运行 A');await p.getByRole('button',{name:'活动',exact:true}).click();await p.getByRole('button',{name:'交接内容',exact:true}).click();assert.equal(await p.locator('.activity-content>details').count(),1);assert((await p.locator('.activity-content').innerText()).includes('CLEAR_UPSTREAM_CONTENT'));assert((await p.locator('.activity-content').innerText()).includes('分析 A'));assert(!(await p.locator('.activity-content').innerText()).includes('a'.repeat(64)));
+});
+await test('native-ordinary-terminal-label-and-close-preserve-live-pty',async p=>{
+ await openWorkspace(p);await p.locator('.session-main').filter({hasText:'Synthetic dialog-native'}).click();
+ const row={id:'NATIVE-ORDINARY-PTY',handle:access.sessions['dialog-native'].handle,workspace:access.workspace,provider:'codex',execution_backend:'native-local',state:'RUNNING',process_alive:true,input_sequence:0,input_owner:'workbench',input_generation:0};let stops=0;
+ await p.route('**/api/terminals?**',route=>route.fulfill({json:{terminals:[row]}}));await p.route('**/api/terminal/output?**',route=>route.fulfill({json:{...row,output:'synthetic output',next:16,reset:false}}));await p.route('**/api/terminal/resize',route=>route.fulfill({json:{resized:true}}));
+ p.on('request',r=>{if(r.url().endsWith('/api/terminal/close'))stops++});await p.getByRole('button',{name:'原生终端',exact:true}).click();await until(async()=>await p.getByLabel('原生CLI终端',{exact:true}).getAttribute('data-connected')==='true');
+ const panel=await p.locator('.native-terminal').innerText();assert(panel.includes('交互式原生 CLI · 权限由 CLI 管理'));assert(!panel.includes('该终端强制只读'));
+ await p.getByRole('button',{name:'关闭终端视图',exact:true}).click();assert.equal(stops,0);
 });
 await test('native-local-attach-ui-observes-then-explicitly-reclaims',async p=>{
  await openWorkspace(p);await p.locator('.session-main').filter({hasText:'Synthetic dialog-A'}).click();
@@ -663,14 +716,15 @@ await test('r1-two-workspaces-cannot-delete-rebind-or-own-a-legacy-draft',async 
  await openWorkspace(p);const path=require('path'),{spawnSync}=require('child_process'),headers={Authorization:'Bearer '+access.token};
  const graph=JSON.parse(JSON.stringify((await (await p.request.get(access.url+'/api/status',{headers})).json()).examples[0]));graph.name='R1 未分配旧工作流';
  const dbPath=path.join(path.dirname(access.path),'session-studio','workbench.sqlite');assert(fs.existsSync(dbPath),'Only seed the known synthetic browser fixture database');
- const seeded=spawnSync('python',['-B','-c',`import sys,json,sqlite3,hashlib
+ const python=process.env.WORKBENCH_TEST_PYTHON||'python3';
+ const seeded=spawnSync(python,['-B','-c',`import sys,json,sqlite3,hashlib
 p=sys.argv[1];g=json.load(sys.stdin);raw=lambda v:json.dumps(v,ensure_ascii=False,sort_keys=True,separators=(',',':'))
 v={'id':'r1-legacy-unassigned','workspace':None,'revision':hashlib.sha256(raw(g).encode()).hexdigest(),'graph':g}
 with sqlite3.connect(p) as d:
  d.execute("INSERT INTO records VALUES('draft',?,?)",(v['id'],raw(v)))
  d.execute('INSERT INTO drafts VALUES(?,?,?)',(v['id'],v['revision'],raw(v)))
 print(raw(v))`,dbPath],{input:JSON.stringify(graph),encoding:'utf8',env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});
- assert.equal(seeded.status,0,seeded.stderr);const legacy=JSON.parse(seeded.stdout),bPath=path.join(access.path,'r1-workspace-B');fs.mkdirSync(bPath,{recursive:true});fs.writeFileSync(path.join(bPath,'README.md'),'Synthetic second workspace; not a model task');
+ assert.ifError(seeded.error);assert.equal(seeded.status,0,seeded.stderr);const legacy=JSON.parse(seeded.stdout),bPath=path.join(access.path,'r1-workspace-B');fs.mkdirSync(bPath,{recursive:true});fs.writeFileSync(path.join(bPath,'README.md'),'Synthetic second workspace; not a model task');
  const bResponse=await p.request.post(access.url+'/api/workspace',{headers,data:{path:bPath}});assert.equal(bResponse.status(),200);const b=await bResponse.json();assert.notEqual(b.id,access.workspace);
  const outcomes=[];
  for(const workspace of [access.workspace,b.id]){
@@ -694,11 +748,11 @@ print(raw(v))`,dbPath],{input:JSON.stringify(graph),encoding:'utf8',env:{...proc
  await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()===graph.name);assert((await p.locator('.notice').innerText()).includes('新副本'));
  const saved=p.waitForResponse(r=>r.url().endsWith('/api/draft')&&r.request().method()==='POST');await p.getByRole('button',{name:'保存',exact:true}).click();const save=await saved;assert.equal(save.status(),200);const copy=await save.json();assert.notEqual(copy.id,legacy.id);assert.equal(copy.workspace,b.id);assert.equal(save.request().postDataJSON().id,undefined);
  const status=await (await p.request.get(access.url+'/api/status',{headers})).json();assert.deepEqual(status.drafts.find(d=>d.id===legacy.id),legacy);assert.deepEqual(status.drafts.find(d=>d.id===ownedA.id),ownedA,'A missing: '+JSON.stringify({project_errors:status.project_errors,drafts:status.drafts.map(d=>({id:d.id,workspace:d.workspace}))}));assert.deepEqual(status.drafts.find(d=>d.id===ownedB.id),ownedB);
- const preserved=spawnSync('python',['-B','-c',`import sys,json,sqlite3
+ const preserved=spawnSync(python,['-B','-c',`import sys,json,sqlite3
 with sqlite3.connect(sys.argv[1]) as d:
  row=d.execute("SELECT data FROM drafts WHERE id=? AND revision=?",(sys.argv[2],sys.argv[3])).fetchone()
  assert row
- print(row[0])`,dbPath,legacy.id,legacy.revision],{encoding:'utf8',env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});assert.equal(preserved.status,0,preserved.stderr);assert.deepEqual(JSON.parse(preserved.stdout),legacy);
+ print(row[0])`,dbPath,legacy.id,legacy.revision],{encoding:'utf8',env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});assert.ifError(preserved.error);assert.equal(preserved.status,0,preserved.stderr);assert.deepEqual(JSON.parse(preserved.stdout),legacy);
  fs.writeFileSync(out+'/r1-workspace-closure.json',JSON.stringify({outcomes,original:legacy,scoped_A:ownedA.id,scoped_B:ownedB.id,explicit_new_copy:copy.id,copy_workspace:copy.workspace,legacy_revision_preserved:true},null,2));
 });
 await test('r1-handoff-trace-keeps-exact-targets-and-never-guesses-unknown',async p=>{
@@ -791,6 +845,9 @@ await test('folder-late-load-does-not-replace-new-location',async p=>{
 });
 await test('assistant-general-chat-public-summary-does-not-change-design',async p=>{
  await openWorkspace(p);const before=await p.getByLabel('工作流名称',{exact:true}).inputValue();await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();await dock.getByLabel('配置需求',{exact:true}).fill('解释汇合，不改流程');await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>(await dock.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));assert.equal(await p.getByLabel('工作流名称',{exact:true}).inputValue(),before);await dock.getByText('模型公开推理',{exact:true}).click();assert((await dock.getByRole('log').innerText()).includes('SYNTHETIC 公开依据'));assert.equal(await dock.getByText('本次画布变更',{exact:false}).count(),0);
+});
+await test('assistant-source-tool-failure-visible-without-undefined-path',async p=>{
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();await dock.getByLabel('配置需求',{exact:true}).fill('SYNTHETIC-TOOL-ERROR-UI');await dock.getByRole('button',{name:'发送',exact:true}).click();const activity=dock.locator('details.assistant-change').filter({hasText:'公开源码读取活动'});await until(async()=>await activity.count()===1);assert((await activity.locator('summary').innerText()).includes('有失败'));await activity.locator('summary').click();const text=await activity.innerText();assert(text.includes('公开源码读取 · 失败'));assert(text.includes('参数无效'));assert(!text.includes('undefined'));
 });
 await test('assistant-live-turn-survives-reload-without-resending',async p=>{
  await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();let dock=p.getByTestId('assistant-dock'),sends=0;

@@ -25,6 +25,9 @@ class SyntheticBackend:
             if self.cancelled():raise Blocked('Synthetic cancel')
             time.sleep(.01)
         ctx=type(self).calls[-1]
+        if ctx['conversation'][-1]['text']=='SYNTHETIC-TOOL-ERROR-UI':
+            self.notify(dict(type='assistant.tool_start',name='read_public_source'))
+            self.notify(dict(type='assistant.tool_error',name='read_public_source',error='公开源码工具参数无效或为空。'))
         if ctx['conversation'][-1]['text']=='SYNTHETIC-STREAM-UI':
             self.notify(dict(type='assistant.message_delta',text='正在检查工作流配置。'))
             until=time.monotonic()+4
@@ -230,3 +233,74 @@ while True:
                 self.assertFalse(group_alive(identity))
 
 if __name__=='__main__':unittest.main()
+
+class InspectionHandoffTests(unittest.TestCase):
+    setUp=CanvasAssistantTests.setUp
+    data=CanvasAssistantTests.data
+    wait=CanvasAssistantTests.wait
+    run_turn=CanvasAssistantTests.run_turn
+    def test_inspection_is_bound_and_rechecked_with_full_locations(self):
+        from studio.workflow_inspection import inspect_workflow
+        graph=copy.deepcopy(self.g);edge=graph['edges'][0];edge['field']='example'
+        task='diagnose';checked=inspect_workflow(self.rt,graph,task,workspace_path=self.base.project['path'],workspace_id=self.w)
+        attachment=dict(workspace=self.w,graph=copy.deepcopy(graph),task=task,issues=checked['issues'])
+        data=self.data(graph=graph,intent='chat',inspection=attachment,message='请分析检查结果')
+        result=self.run_turn(data);self.assertEqual(result['turn']['state'],'COMPLETED')
+        received=SyntheticBackend.calls[-1]['conversation'][-1]['inspection'];self.assertEqual(received['issues'],checked['issues']);self.assertEqual(received['workspace'],self.w)
+        self.assertIn('graph_sha256',received);self.assertIn('task_sha256',received)
+        self.assertEqual(SyntheticBackend.calls[-1]['current_graph']['edges'][0]['id'],edge['id'])
+        bad=self.data(graph=graph,intent='chat',inspection=dict(attachment,workspace='different'))
+        with self.assertRaises(Exception):self.ai.start(bad)
+        bad=self.data(graph=graph,intent='chat',inspection=dict(attachment,issues=[]))
+        with self.assertRaises(Exception):self.ai.start(bad)
+        changed=copy.deepcopy(graph);changed['name']='another';bad=self.data(graph=changed,intent='chat',inspection=attachment)
+        with self.assertRaises(Exception):self.ai.start(bad)
+
+    def test_invalid_checked_graph_can_be_explained_and_proposal_uses_cas(self):
+        from studio.workflow_inspection import inspect_workflow
+        from studio.server import Conflict
+        graph=copy.deepcopy(self.g);node=next(n for n in graph['nodes'] if n['kind']=='agent');node['mode']='unsupported'
+        task='diagnose';issues=inspect_workflow(self.rt,graph,task,workspace_path=self.base.project['path'],workspace_id=self.w)['issues']
+        self.assertTrue(any(i['node']==node['id'] and i['field']=='mode' for i in issues))
+        data=self.data(graph=graph,inspection=dict(workspace=self.w,graph=copy.deepcopy(graph),task=task,issues=issues),message='请修复检查结果')
+        started=self.ai.start(data)
+        for _ in range(500):
+            turn=self.rt.flow.get('canvas-turn',data['request_id'])
+            if turn['state'] in ('COMPLETED','FAILED','CANCELLED'):break
+            time.sleep(.01)
+        self.assertEqual(turn['state'],'COMPLETED',turn.get('reason'))
+        proposal=turn['proposal'];self.assertTrue(proposal)
+        altered=copy.deepcopy(graph);altered['name']='edited after check'
+        with self.assertRaises(Conflict):ConfigurationAssistant(self.rt).apply(dict(workspace=self.w,id=proposal['id'],graph=altered,answer={'action':'apply-proposal'}))
+        applied=ConfigurationAssistant(self.rt).apply(dict(workspace=self.w,id=proposal['id'],graph=graph,answer={'action':'apply-proposal'}))
+        self.assertFalse(applied['execution_started'])
+
+    def test_failed_diagnosis_keeps_public_evidence(self):
+        evidence=dict(path='tools/studio/workbench_graph.py',start=1,end=1,text='1: public excerpt',candidate_sha256='synthetic')
+        def failed(client,model,prompt):
+            client.notify(dict(type='assistant.tool',name='read_public_source',path=evidence['path'],start=1,end=1,evidence=evidence))
+            raise Blocked('模型在预算用尽后仍请求工具；请重新诊断')
+        with patch.object(SyntheticBackend,'chat',failed):
+            data=self.data(intent='chat',message='解释错误');self.ai.start(data)
+            for _ in range(500):
+                turn=self.rt.flow.get('canvas-turn',data['request_id'])
+                if turn['state'] in ('FAILED','COMPLETED','CANCELLED'):break
+                time.sleep(.01)
+        self.assertEqual(turn['state'],'FAILED');self.assertEqual(turn['tool_activity'][-1]['evidence'],evidence);self.assertIn('预算',turn['reason'])
+
+    def test_tool_failure_activity_survives_failed_turn_and_http_reload(self):
+        from studio.workbench_server import create_server
+        from urllib.request import Request,urlopen
+        server,token=create_server(self.rt);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        self.addCleanup(thread.join);self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        def failed(client,model,prompt):
+            client.notify(dict(type='assistant.tool_start',name='read_public_source'))
+            client.notify(dict(type='assistant.tool_error',name='read_public_source',error='参数无效 token=sk-'+'x'*32))
+            raise Blocked('模型连接失败；未自动重试')
+        with patch.object(SyntheticBackend,'chat',failed):
+            data=self.data(intent='chat',message='解释错误');self.ai.start(data);result=self.wait(data['conversation'])
+        self.assertEqual(result['turn']['state'],'FAILED');activity=result['turn']['tool_activity'][-1]
+        self.assertEqual(activity['state'],'failed');self.assertEqual(activity['name'],'read_public_source');self.assertIn('参数无效',activity['error']);self.assertNotIn('sk-'+'x'*32,json.dumps(activity))
+        url='http://127.0.0.1:'+str(server.server_port)+'/api/canvas-assistant/conversation?workspace='+self.w+'&id='+data['conversation']
+        with urlopen(Request(url,headers={'Authorization':'Bearer '+token})) as response:remote=json.load(response)
+        self.assertEqual(remote['turn']['tool_activity'][-1],activity);self.assertEqual(remote['turn']['state'],'FAILED')

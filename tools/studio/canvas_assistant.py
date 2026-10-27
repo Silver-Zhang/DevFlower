@@ -184,7 +184,7 @@ class CanvasAssistant:
                 running=turn['id'] in self.active and alive(turn.get('owner'))
                 if turn['id'] in self.finalizing:turn['persistence_pending']=True
             if turn['state'] in ('QUEUED','RUNNING') and not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):
-                try:turn=self.rt.flow.change('canvas-turn',turn['id'],dict(state='RECOVERY_REQUIRED',reason='此前连接已中断；未自动重发请求'),states=['QUEUED','RUNNING'],timeout=.05)
+                try:turn=self.rt.flow.change('canvas-turn',turn['id'],dict(state='RECOVERY_REQUIRED',reason='此前连接已中断；未自动重发请求'),states=['QUEUED','RUNNING'],timeout=.5)
                 except Conflict:return self.conversation(workspace,key)
                 except sqlite3.OperationalError:
                     turn=dict(turn,state='RECOVERY_REQUIRED',reason='本机记录暂不可写，状态待确认；未自动重发请求',persistence_pending=True)
@@ -193,10 +193,22 @@ class CanvasAssistant:
 
     def start(self,data):
         required={'workspace','conversation','request_id','expected','message','graph','model','allow_context'}
-        if set(data)-{'intent','images'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        if set(data)-{'intent','images','inspection'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
         from .assistant_images import AssistantImages
         images=AssistantImages(self.rt).resolve(data['workspace'],data.get('images',[]))
         image_meta=[v['meta'] for v in images]
+        inspection=None
+        if 'inspection' in data:
+            supplied=data['inspection']
+            if (not isinstance(supplied,dict) or set(supplied)!={'workspace','graph','task','issues'} or
+                supplied['workspace']!=data['workspace'] or canonical(supplied['graph'])!=canonical(data['graph']) or
+                not isinstance(supplied['task'],str) or len(supplied['task'])>50000):
+                raise Conflict('检查结果与当前工作区、画布或任务不匹配，请重新检查')
+            project=self.rt.session_center.workspace(data['workspace'])
+            from .workflow_inspection import inspect_workflow
+            fresh=inspect_workflow(self.rt,data['graph'],supplied['task'],workspace_path=project['path'],workspace_id=data['workspace'])
+            if supplied['issues']!=fresh['issues']:raise Conflict('检查结果已变化，请重新检查')
+            inspection=self._redact(dict(workspace=data['workspace'],graph_sha256=digest(canonical(data['graph'])),task_sha256=digest(supplied['task'].encode()),issues=fresh['issues']))
         intent=data.get('intent','auto')
         if intent not in ('auto','chat','workflow'):raise Invalid('助手工作方式无效')
         if (not isinstance(data['request_id'],str) or len(data['request_id'])!=32 or any(c not in '0123456789abcdef' for c in data['request_id']) or
@@ -207,12 +219,12 @@ class CanvasAssistant:
         if intent=='chat':
             self.rt.session_center.workspace(data['workspace']);g=copy.deepcopy(data['graph'])
             if not isinstance(g,dict) or len(canonical(g))>150000 or not isinstance(g.get('nodes'),list) or not isinstance(g.get('edges'),list) or g.get('version')!=3 or not isinstance(g.get('name'),str):raise Invalid('画布快照无效')
-            if g['nodes']:
+            if g['nodes'] and not inspection:
                 from .workbench_graph import validate_graph
                 validate_graph(g)
-            elif g['edges']:raise Invalid('空画布不能有未绑定连线')
+            elif not g['nodes'] and g['edges'] and not inspection:raise Invalid('空画布不能有未绑定连线')
             base=dict(workspace=data['workspace'],source=None,source_sha256=None,base_graph=g,base_graph_sha256=digest(canonical(g)),choices={})
-        else:base=ConfigurationAssistant(self.rt)._base(data,canvas_only=True)
+        else:base=ConfigurationAssistant(self.rt)._base(data,canvas_only=True,allow_invalid=bool(inspection))
         for name,p in base['choices'].items():
             profile=self.rt.operator['profiles'][name];p.update(default_model=profile['model'],default_effort=profile['effort'])
         connection_sha=None
@@ -225,16 +237,18 @@ class CanvasAssistant:
         # The exact original graph remains local for CAS. Only declared fields
         # and redacted visible text are sent to the inference backend.
         nodes={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility','test','strategy','max_rounds','until','input_contract','output_contract'}
-        def visible_graph(graph):
-            ctx={k:graph[k] for k in ('version','name')};ctx['nodes']=[]
-            for n in graph['nodes']:
+        def visible_graph(graph,depth=0):
+            if not isinstance(graph,dict) or depth>2:return {}
+            ctx={k:graph.get(k) for k in ('version','name')};ctx['nodes']=[]
+            for n in graph.get('nodes',[]) if isinstance(graph.get('nodes'),list) else []:
+                if not isinstance(n,dict):continue
                 v={k:value for k,value in n.items() if k in nodes}
-                if n.get('kind')=='loop':v['body']=visible_graph(n['body'])
+                if n.get('kind')=='loop':v['body']=visible_graph(n.get('body'),depth+1)
                 ctx['nodes'].append(v)
-            ctx['edges']=[{k:value for k,value in e.items() if k in {'source','target','label','transfer','when','field','max_chars'}} for e in graph['edges']]
+            ctx['edges']=[{k:value for k,value in e.items() if k in {'id','source','target','label','transfer','when','field','max_chars'}} for e in (graph.get('edges') if isinstance(graph.get('edges'),list) else []) if isinstance(e,dict)]
             return ctx
         context=visible_graph(g)
-        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,images=image_meta,graph=base['base_graph_sha256'],expected=data['expected'],**({'intent':intent} if 'intent' in data else {}))))
+        binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,images=image_meta,graph=base['base_graph_sha256'],expected=data['expected'],inspection=inspection,**({'intent':intent} if 'intent' in data else {}))))
         with self.lock:
             if self.closed:raise Blocked('助手服务正在关闭')
             with self.rt.flow.tx() as db:
@@ -259,8 +273,8 @@ class CanvasAssistant:
                     if prior['state']=='FAILED' and isinstance(prior.get('model_response'),str) and len(prior['model_response'].encode())<=50000:
                         rejected=dict(response=prior['model_response'],validation_error=prior.get('reason'),authority=False)
                 v.setdefault('created_at',time.time());v.setdefault('title',clean[:60]);v['updated_at']=time.time()
-                v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id,images=image_meta))
-                t=dict(base,id=turn_id,previous_rejected_proposal=rejected,images=image_meta,intent=intent,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
+                v['revision']+=1;v['active_turn']=turn_id;v['messages'].append(dict(role='user',text=clean,at=time.time(),turn=turn_id,images=image_meta,**({'inspection':inspection} if inspection else {})))
+                t=dict(base,id=turn_id,inspection=inspection,previous_rejected_proposal=rejected,images=image_meta,intent=intent,connection_sha256=connection_sha,conversation=key,binding=binding,state='QUEUED',owner=process_identity(os.getpid()),message=clean,model=data['model'],context=context,
                        messages=v['messages'][-12:],created_at=time.time(),reply=None,proposal=None,receipt=None,cancel_requested=False)
                 db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('canvas-conversation',key,canonical(v).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)',('canvas-turn',turn_id,canonical(t).decode()))
@@ -310,7 +324,10 @@ class CanvasAssistant:
                     activities[:]=activities[-5:]+[dict(name=e.get('name'),state='started')]
                     enqueue(dict(tool_activity=list(activities)))
                 if e.get('type')=='assistant.tool':
-                    activities[:]=activities[-5:]+[dict(name=e.get('name'),path=e.get('path'),start=e.get('start'),end=e.get('end'),count=e.get('count'))]
+                    activities[:]=activities[-5:]+[dict(name=e.get('name'),path=e.get('path'),start=e.get('start'),end=e.get('end'),count=e.get('count'),evidence=self._redact(e.get('evidence')))]
+                    enqueue(dict(tool_activity=list(activities)))
+                if e.get('type')=='assistant.tool_error':
+                    activities[:]=activities[-5:]+[dict(name=e.get('name'),state='failed',error=safe_text(self._redact(e.get('error') or '公开源码工具失败。'))[:500])]
                     enqueue(dict(tool_activity=list(activities)))
                 if e.get('type') in ('assistant.turn_start','assistant.message_delta','assistant.message','session.error'):
                     now=time.monotonic()
@@ -334,7 +351,7 @@ class CanvasAssistant:
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
                 if (graph or result.get('run_request')) and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布或发起运行')
                 run_request=dict(result['run_request'],graph=t['base_graph'],graph_sha256=t['base_graph_sha256'],workspace=t['workspace']) if result.get('run_request') else None
-                proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=t.get('source',{}).get('kind')=='canvas-only') if graph else None
+                proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=(t.get('source') or {}).get('kind')=='canvas-only',allow_invalid=bool(t.get('inspection'))) if graph else None
             outcome=None
         except Exception as exc:
             outcome=safe_text(str(exc)) if isinstance(exc,(Blocked,Invalid,Conflict)) else '助手连接或本地记录失败；未自动重试或应用画布'

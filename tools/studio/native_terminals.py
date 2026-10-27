@@ -46,8 +46,15 @@ class NativeTerminals:
         binding, reason = self.rt.session_center._binding(row, project)
         if not binding or binding['provider'] not in ('codex', 'claude'):
             raise Blocked(reason or '该 Provider 尚未支持原生终端')
+        if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and data.get('interaction')!='click':
+            raise Blocked('本机 Codex 终端尚无法隔离原生配置中的未授权工具，暂不能打开；会话历史仍可只读查看。')
         if self.sessions.busy(binding, row['native']['session_id']): raise Blocked('此会话已有写入者，请先停止原回合或连接已有终端')
         direct=data.get('interaction')=='click'
+        view=None
+        if callable(getattr(self.rt,'validate_source',None)):
+            ordinary=direct and binding.get('execution_backend')=='native-local' and binding['provider']=='codex'
+            source=self.rt.validate_source(project['path'],ordinary=True) if ordinary else self.rt.validate_source(project['path'])
+            view=source if source.get('kind')=='native-workspace-view-v1' else None
         selected=self.rt.node_binding(data['workspace'],dict(profile=binding['runtime_profile'],
             model=binding['model'],effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not (direct or data.get('auto_verify',False)),direct=direct)
         from .model_admission import ModelAdmission
@@ -55,10 +62,10 @@ class NativeTerminals:
         value = dict(purpose='native-terminal', interaction='click' if direct else 'legacy',click_action='open-terminal' if direct else None, workspace=data['workspace'], handle=data['handle'],
             provider=binding['provider'], model=binding['model'], effort=binding['effort'],
             cwd=row['native']['cwd'], session_id=row['native']['session_id'], native_sha256=row['native']['sha256'],
-            home=binding['home'], source_sha256=workspace_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
+            home=binding['home'], source_view=view, source_sha256=self.rt.source_view_hash(project['path'],view) if view else workspace_hash(project['path']), candidate_sha256=self.rt.candidate_sha256,
             execution_binding=selected['binding'],admission_checks=[check] if check else [],
             operator_sha256=self.rt.operator_sha256, policy_sha256=self.rt.policy_sha,
-            human_questions=['在原生只读CLI中打开此明确会话；使用原目录和HOME，并独占该会话写入锁。'])
+            human_questions=['打开交互式原生 CLI；权限由 CLI 管理，并使用原目录、HOME 和会话锁。'] if direct else ['在原生只读CLI中打开此明确会话；使用原目录和HOME，并独占该会话写入锁。'])
         return self.rt.db.prepare(value)
 
     def start(self, data):
@@ -77,9 +84,13 @@ class NativeTerminals:
             project, row = self.rt.session_center.resolve(value['workspace'], value['handle'])
             binding, reason = self.rt.session_center._binding(row, project)
             if not binding or self.sessions.busy(binding, value['session_id']): raise Blocked(reason or '原生会话已占用')
+            if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and value.get('interaction')!='click':
+                raise Blocked('本机 Codex 终端尚无法隔离原生配置中的未授权工具，未启动终端。')
             if (binding['home'], row['native']['cwd'], row['native']['session_id'], row['native']['sha256']) != (
                     value['home'], value['cwd'], value['session_id'], value['native_sha256']): raise Conflict('原生身份或历史在确认后变化')
-            if workspace_hash(project['path']) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
+            view=value.get('source_view')
+            if view and (value.get('interaction')!='click' or binding.get('execution_backend')!='native-local' or binding['provider']!='codex'):raise Blocked('此终端不能使用父工作区视图。')
+            if (self.rt.source_view_hash(project['path'],view) if view else workspace_hash(project['path'])) != value['source_sha256']: raise Conflict('工作区在终端预览后变化，请重新确认')
             from .model_admission import ModelAdmission
             if value.get('interaction') == 'click':
                 from .model_registration import ModelRegistration
@@ -97,6 +108,7 @@ class NativeTerminals:
             key = secrets.token_hex(16)
             record = dict(id=key, workspace=value['workspace'], handle=value['handle'], provider=value['provider'],
                 execution_backend=binding.get('execution_backend','isolated'),
+                source_view=value.get('source_view'),source_sha256=value['source_sha256'],
                 cwd=value['cwd'], session_id=value['session_id'], model=value['model'], effort=value['effort'], state='STARTING', created_at=time.time(),
                     input_sequence=0, input_owner='workbench', input_generation=0,
                     authorization_sha256=digest(canonical(receipt)), interaction=value.get('interaction'), permit=data['id'], execution_environment_sha256=value['execution_binding'].get('direct_environment_sha256'), native_sha256=value['native_sha256'], candidate_sha256=self.rt.candidate_sha256)

@@ -14,10 +14,11 @@ if not isinstance(_manifest,list) or len(_manifest)>512 or len(set(_manifest))!=
 PUBLIC_FILES=frozenset(_manifest)
 class PublicSourceReader:
     def __init__(self,rt,cancelled=lambda:False,deadline=None):
-        self.rt=rt;self.calls=0;self.bytes=0;self.cancelled=cancelled;self.deadline=min(time.monotonic()+60,deadline or float('inf'))
+        self.rt=rt;self.calls=0;self.bytes=0;self.cancelled=cancelled;self.deadline=time.monotonic()+60 if deadline is None else deadline
     def _budget(self):
         if self.cancelled():raise Invalid('公开源码查询已取消。')
-        if self.calls>=3 or time.monotonic()>self.deadline:raise Invalid('本轮公开源码读取预算已用完。')
+        if time.monotonic()>=self.deadline:raise Invalid('本轮助手请求已达到时间上限。')
+        if self.calls>=3:raise Invalid('本轮公开源码读取预算已用完。')
     def _open(self,path):
         if not isinstance(path,str) or path not in PUBLIC_FILES:raise Invalid('只允许读取公开源码清单中的文件。')
         with opened(ROOT/path) as fd:
@@ -29,7 +30,7 @@ class PublicSourceReader:
     def read(self,path,start,end):
         self._budget()
         if type(start) is not int or type(end) is not int or not 1<=start<=end<=10000 or end-start>=100:raise Invalid('每次最多读取100行。')
-        self.rt.check_operator();lines,_=self._open(path);self.rt.check_operator()
+        self.rt.check_operator();lines,_=self._open(path);self.rt.check_operator();self._budget()
         text=safe_text('\n'.join(f'{i}: {line}' for i,line in enumerate(lines[start-1:end],start)))
         if len(text.encode())>12000 or self.bytes+len(text.encode())>24000:raise Invalid('本轮源码摘录超过字节预算，请缩小行范围。')
         self.calls+=1;self.bytes+=len(text.encode())
@@ -39,16 +40,18 @@ class PublicSourceReader:
         if not isinstance(query,str) or not 3<=len(query.strip())<=120 or '\n' in query or '\r' in query:raise Invalid('请输入3–120字的单行原文搜索词。')
         self.rt.check_operator();matches=[];scanned=0;end=min(self.deadline,time.monotonic()+3);needle=query.casefold()
         for path in sorted(PUBLIC_FILES):
-            if self.cancelled():raise Invalid('公开源码查询已取消。')
+            self._budget()
             if time.monotonic()>end:raise Invalid('公开源码搜索超时，请缩短搜索范围。')
             lines,size=self._open(path);scanned+=size
+            self._budget()
+            if time.monotonic()>=end:raise Invalid('公开源码搜索超时，请缩短搜索范围。')
             if scanned>8000000:raise Invalid('公开源码搜索超出读取预算。')
             for number,line in enumerate(lines,1):
                 if needle in line.casefold():
                     matches.append(dict(path=path,line=number,text=safe_text(line[:400])))
                     if len(matches)>=12:break
             if len(matches)>=12:break
-        self.rt.check_operator();encoded=json.dumps(matches,ensure_ascii=False).encode()
+        self.rt.check_operator();self._budget();encoded=json.dumps(matches,ensure_ascii=False).encode()
         if self.bytes+len(encoded)>24000:raise Invalid('本轮源码摘录超过字节预算。')
         self.calls+=1;self.bytes+=len(encoded)
         return dict(matches=matches,limited=len(matches)>=12,candidate_sha256=self.rt.candidate_sha256)

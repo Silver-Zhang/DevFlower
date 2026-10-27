@@ -75,7 +75,7 @@ def main():
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     access=out/'access.json';access.write_text(json.dumps(dict(url='http://127.0.0.1:'+str(server.server_port),token=token,workspace=workspace,path=str(base.source),sessions=session_rows,lost_run=lost)))
     access.chmod(0o600)
-    try:return subprocess.run([a.node,str(Path(__file__).with_suffix('.cjs')),str(out)],timeout=900,env=dict(os.environ,CHROMIUM=a.chromium,PLAYWRIGHT_MODULE=a.playwright_module)).returncode
+    try:return subprocess.run([a.node,str(Path(__file__).with_suffix('.cjs')),str(out)],timeout=900,env=dict(os.environ,CHROMIUM=a.chromium,PLAYWRIGHT_MODULE=a.playwright_module,WORKBENCH_TEST_PYTHON=sys.executable)).returncode
     finally:server.shutdown();server.server_close();thread.join();owner.doCleanups()
 
 

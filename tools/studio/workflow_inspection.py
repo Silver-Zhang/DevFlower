@@ -258,6 +258,22 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                             except Invalid:source=None
                             if not source or source.get('workspace')!=workspace_id or source.get('profile')!=n.get('profile'):
                                 add('error',f'「{name}」的 Skill 不属于当前工作区或 Provider，请刷新后重新选择。',node=path,field='skills')
+                            elif not source.get('path') or not source.get('sha256'):
+                                add('warning',f'「{name}」的 Skill 内容身份不完整，无法预检；请刷新后重新选择。',node=path,field='skills')
+                            else:
+                                from .agent_extensions import skill_files
+                                from orchestration.common import canonical,digest
+                                try:
+                                    folder=Path(source['path'])
+                                    if not folder.is_dir() or not (folder/'SKILL.md').is_file():
+                                        add('error',f'「{name}」的所选 Skill 内容缺失，请刷新后重新选择。',node=path,field='skills')
+                                    else:
+                                        files=skill_files(folder)
+                                        sha=digest(canonical({key:digest(value) for key,value in files.items()}))
+                                        if sha!=source['sha256']:
+                                            add('error',f'「{name}」的所选 Skill 内容已变化，请刷新后重新选择。',node=path,field='skills')
+                                except (OSError,ValueError,UnicodeError,Blocked,Invalid):
+                                    add('error',f'「{name}」的所选 Skill 包含不支持的内容或无法安全读取，请刷新后重新选择。',node=path,field='skills')
                     add('warning',f'「{name}」使用了 Skill；启动前仍会核对其内容和权限。',node=path,field='skills')
             if kind in ('condition','loop','router'):
                 tests=([n.get('test',{})] if kind=='condition' else [n.get('until',{})] if kind=='loop' else [r.get('test',{}) for r in n.get('routes',[]) if isinstance(r,dict)] if isinstance(n.get('routes',[]),list) else [])

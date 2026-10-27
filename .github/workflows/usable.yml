@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs tests/workbench_user_experience.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
+          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs tests/workbench_user_experience.test.mjs tests/inspection_identity.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
       - name: Real host isolation probes
         shell: bash
         run: |
@@ -110,6 +110,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Create public browser evidence directory in the container
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-browser-evidence"
+          printf 'PUBLIC_BROWSER_EVIDENCE=%s\n' "$RUNNER_TEMP/public-browser-evidence" >> "$GITHUB_ENV"
       - name: Install pinned browser test driver outside the source tree
         shell: bash
         run: |
@@ -127,34 +133,35 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser; do
-            if ! python3 "tests/$suite.py" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
-              status=1
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser; do
+            if python3 "tests/$suite.py" --chromium "$CHROMIUM" --node node --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
+              :
+            else
+              code=$?
+              if [ "$status" -eq 0 ]; then status=$code; fi
             fi
           done
           exit "$status"
+      - name: Collect public browser results and screenshots
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser; do
+            mkdir -p "$PUBLIC_BROWSER_EVIDENCE/$suite"
+            for file in "$RUNNER_TEMP/$suite/"*results.json "$RUNNER_TEMP/$suite/"*.png; do
+              if [[ -f "$file" && ! -L "$file" ]]; then
+                cp -- "$file" "$PUBLIC_BROWSER_EVIDENCE/$suite/"
+              fi
+            done
+          done
       - name: Preserve synthetic browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: usable-browser-evidence-${{ github.run_id }}
-          # Only results/screenshots, never generated auth/config or native records.
-          path: |
-            ${{ runner.temp }}/studio_races/*results.json
-            ${{ runner.temp }}/studio_races/*.png
-            ${{ runner.temp }}/studio_identity_races/*results.json
-            ${{ runner.temp }}/studio_identity_races/*.png
-            ${{ runner.temp }}/workspace_browser/*results.json
-            ${{ runner.temp }}/workspace_browser/*.png
-            ${{ runner.temp }}/usable_browser/*results.json
-            ${{ runner.temp }}/usable_browser/*.png
-            ${{ runner.temp }}/template_browser/*results.json
-            ${{ runner.temp }}/template_browser/*.png
-            ${{ runner.temp }}/session_browser/*results.json
-            ${{ runner.temp }}/session_browser/*.png
-            ${{ runner.temp }}/workbench_browser/*results.json
-            ${{ runner.temp }}/workbench_browser/*.png
-            ${{ runner.temp }}/workbench_stable_browser/*results.json
-            ${{ runner.temp }}/workbench_stable_browser/*.png
+          # This path is emitted from the container's actual RUNNER_TEMP.
+          path: ${{ env.PUBLIC_BROWSER_EVIDENCE }}/
           retention-days: 7
           if-no-files-found: error

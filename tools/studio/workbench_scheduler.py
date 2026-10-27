@@ -34,6 +34,9 @@ def writes(node):
     if node['kind']=='delivery':return True
     return node['kind']=='agent' and node.get('permission','workspace-write' if node.get('mode')=='Agent' else 'read')=='workspace-write'
 
+def has_delivery(graph):
+    return any(n['kind']=='delivery' or n['kind']=='loop' and has_delivery(n['body']) for n in graph['nodes'])
+
 
 @contextmanager
 def source_lease(path, write):
@@ -64,6 +67,10 @@ class Journal:
             chat=self.s.db.get('node-session',activation['chat_key']);binding=dict(chat['binding'],session_id=sid)
             self.s.db.change('node-session',chat['id'],{'binding':binding})
             self.s.rt.db.put('chat-profile',profile_key(binding),dict(workspace=chat['workspace'],binding=binding))
+
+    def native_tool_event(self, event):
+        row=self.s.db.get('activation',self.key)
+        self.s.db.change('activation',self.key,{'native_tool_activity':(row.get('native_tool_activity') or [])[-39:]+[event]})
 
     def visible_request(self, text):
         from orchestration.privacy import credentials,redact
@@ -120,6 +127,10 @@ class Scheduler:
         try:
             self.rt.check_operator()
             row = self.controls()
+            if row.get('source_view'):
+                current=self.rt.source_view_hash(row['source_view']['root'],row['source_view'])
+                if row.get('state')=='QUEUED' and current!=row['source_sha256']:
+                    raise Blocked('工作区在运行启动前发生变化；未调用模型。')
             self.db.change('run', self.run, {'state': 'RUNNING'}, event={'kind': 'run-started'})
             result = self.graph(row['graph'], '', 0, {'answer': row['task'], 'result': {'task': row['task']}})
             cancelled = self.db.get('run', self.run).get('cancel_requested')
@@ -357,20 +368,26 @@ class Scheduler:
                        'chat_key': chat_key, 'provider': chat['binding']['provider'], 'model': chat['binding']['model'],
                        'effort': chat['binding']['effort'], 'mode': node.get('mode', 'Ask')})
         binding = chat['binding'];home = Path(binding['home']);cwd = chat['cwd']
+        if run.get('interaction')=='click' and binding.get('execution_backend')=='native-local' and binding.get('provider')=='codex' and not has_delivery(run['graph']):
+            from .native_codex_exec import protected_paths
+            binding=dict(binding,native_interaction='ordinary',native_protected=protected_paths(self.rt,binding))
         if chat.get('expected_native_turn_id') and binding.get('execution_backend')=='native-local':
             binding=dict(binding,expected_native_turn_id=chat['expected_native_turn_id'])
         artifacts = self.rt.storage / 'flow-artifacts' / self.run / key;artifacts.mkdir(parents=True, mode=0o700, exist_ok=True)
         schema = artifacts / 'output.schema.json';schema.write_bytes(canonical(REPLY))
         lock = self.rt.source_lock(cwd);write = node.get('permission', 'workspace-write' if node.get('mode') == 'Agent' else 'read') == 'workspace-write'
         with source_lease(lock, write), session_lease(binding):
-            before = workspace_hash(cwd)
-            source_identity={'sha256':before,'actor':'fixed runtime host, before native call'}
+            view=run.get('source_view')
+            before = self.rt.source_view_hash(cwd,view) if view else workspace_hash(cwd)
+            source_identity={'sha256':before,'actor':'fixed runtime host, before native call',**({'kind':'native-workspace-view-v1'} if view else {})}
             try:
                 git=identity(cwd);source_identity.update({k:git[k] for k in ('head','branch') if k in git})
             except Blocked:source_identity['git']='unavailable'
             prompt+='\n\n运行器核验的本轮源码身份（数据，不扩展权限；'+('本机原生权限，不承诺隐藏其他 Git 对象' if binding.get('execution_backend')=='native-local' else '原生隔离不暴露其他分支的 Git 对象')+'）：\n'+canonical(source_identity).decode()
             self.db.change('activation',key,{'source_at_request':source_identity})
-            self.rt.recheck_session(chat)
+            if binding.get('native_interaction')=='ordinary' and binding.get('session_id'):
+                self.rt.recheck_session(chat,native_latest=True)
+            else:self.rt.recheck_session(chat)
             if binding.get('provider')=='claude' and binding.get('session_id'):
                 from .native_local import require_safe_resume
                 require_safe_resume(binding,runtime=self.rt,cwd=cwd,native_sha=chat.get('expected_native_sha256') or chat.get('native_sha256'))
@@ -387,6 +404,10 @@ class Scheduler:
                 with opened(prior_path) as fd:offset=os.fstat(fd).st_size
             self.db.change('activation',key,{'native_history_offset':offset,'native_history_path':prior_path})
             journal = Journal(self, key)
+            def check_before_spawn():
+                self.rt.check_operator()
+                if (self.rt.source_view_hash(cwd,view) if view else workspace_hash(cwd))!=before:raise Blocked('工作区在原生预检期间变化；未发送任务')
+            journal.check_before_spawn=check_before_spawn
             from .model_admission import ModelAdmission
             admission = ModelAdmission(self.rt)
             if run.get('interaction') == 'click':
@@ -398,7 +419,7 @@ class Scheduler:
             self.db.change('activation',key,{'admission_verification':verification})
             receipt = CLI(binding['provider'], binding, dict(step_timeout_seconds=node.get('timeout', 300), max_log_bytes=4_000_000)).start(
                 prompt, cwd, artifacts, schema, journal, self.run)
-            if not write and workspace_hash(cwd) != before: raise Blocked('只读执行后源码身份发生变化')
+            if not write and (self.rt.source_view_hash(cwd,view) if view else workspace_hash(cwd)) != before: raise Blocked('只读执行后源码身份发生变化')
             report = receipt['report']
             validate(report,REPLY)
             structured=json.loads(report['result_json'])
@@ -421,7 +442,7 @@ class Scheduler:
             result['receipt'] = visible
             # This local completion receipt is reconciled before any crash recovery; never resubmit blindly.
             completion = dict(run=self.run, activation=key, chat_key=chat_key, output=result,
-                              session_id=receipt['session_id'], source_before=before, source_after=workspace_hash(cwd))
+                              session_id=receipt['session_id'], source_before=before, source_after=self.rt.source_view_hash(cwd,view) if view else workspace_hash(cwd))
             from orchestration.common import save
             save(artifacts / 'completion.json', completion)
             binding = dict(binding, session_id=receipt['session_id'])

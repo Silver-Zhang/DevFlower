@@ -29,8 +29,9 @@ class CodexRPC:
         env = clean_env(self.home); env.update(CODEX_HOME=str(self.config_root), TMPDIR='/tmp')
         # Configuration overrides apply only to this client. Native user config,
         # authentication and relay files are never written by DevFlower.
-        argv = [executable, '-c', 'mcp_servers={}', '-c', 'features.multi_agent=false',
-                '-c', 'features.apps=false', '-c', 'features.code_mode_host=false',
+        argv = [executable, '-c', 'features.multi_agent=false', '-c', 'features.plugins=false',
+                '-c', 'features.apps=false', '-c', 'features.browser_use=false',
+                '-c', 'features.computer_use=false', '-c', 'features.code_mode_host=false',
                 '-c', 'check_for_update_on_startup=false', 'app-server', '--stdio']
         parent=os.getpid()
         def child_setup():
@@ -73,6 +74,15 @@ class CodexRPC:
         return json.loads(line)
 
     def request(self, method, params):
+        # App-server reloads user/project configuration when a thread starts.
+        # An MCP server added after discovery can therefore start before a
+        # client-side check or per-name override can see it. Until the CLI
+        # offers a pinned/isolated config layer, do not start a tool-bearing
+        # native thread using the user's mutable configuration.
+        if method in ('thread/start','thread/resume','turn/start'):
+            if method=='thread/resume':
+                raise Blocked('原生 Codex 工具配置无法固定；exec 续聊也不能在同一原生写锁内原子核验上一回合。此会话暂只能只读查看，请勿盲目重发。')
+            raise Blocked('原生 Codex 工具配置无法固定：外部 MCP 或插件可能在启动时进入本次会话。为保护工作区，暂不能发送或运行；模型目录和历史仍可只读查看。')
         self.next_id += 1; request_id = self.next_id
         self.send(method, params, request_id)
         while True:

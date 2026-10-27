@@ -112,3 +112,45 @@ class NativeLocalProtocolTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class UnpinnedNativeConfigTests(unittest.TestCase):
+    def test_tool_turn_is_refused_before_any_rpc_is_sent(self):
+        rpc=CodexRPC.__new__(CodexRPC)
+        with patch.object(rpc,'send',side_effect=AssertionError('must not send')):
+            for method in ('thread/start','thread/resume','turn/start'):
+                with self.subTest(method=method),self.assertRaisesRegex(Blocked,'工具配置无法固定'):
+                    rpc.request(method,{})
+
+class NativeConfigReloadEvidence(unittest.TestCase):
+    """Actual local CLI, synthetic home and MCP; never invokes a model."""
+    def test_app_server_reloads_mcp_after_config_read(self):
+        import os,subprocess,time,shutil
+        executable=shutil.which('codex');self.assertTrue(executable,'Codex CLI required')
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);marker=root/'started';helper=root/'server.py';config=root/'config.toml'
+            helper.write_text('from pathlib import Path\nimport time\nPath('+repr(str(marker))+').write_text("started")\ntime.sleep(2)\n');config.write_text('')
+            env=dict(os.environ,HOME=folder,CODEX_HOME=folder)
+            argv=[executable,'--disable','plugins','--disable','apps','--enable','code_mode_host','--enable','shell_tool','app-server','--stdio']
+            process=subprocess.Popen(argv,cwd=folder,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+            self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+            def request(value):
+                process.stdin.write(json.dumps(value)+'\n');process.stdin.flush()
+                while True:
+                    line=process.stdout.readline();self.assertTrue(line,'app-server closed unexpectedly');reply=json.loads(line)
+                    if reply.get('id')==value['id']:return reply
+            try:
+                request(dict(id=1,method='initialize',params=dict(clientInfo=dict(name='fixture',version='1'),capabilities=dict(experimentalApi=True))))
+                process.stdin.write('{"method":"initialized"}\n');process.stdin.flush()
+                before=request(dict(id=2,method='config/read',params=dict(cwd=folder)))['result']['config']
+                self.assertFalse(before.get('mcp_servers'));self.assertFalse(before['features']['apps']);self.assertFalse(before['features']['plugins']);self.assertTrue(before['features']['code_mode_host']);self.assertTrue(before['features']['shell_tool'])
+                cmdline=Path('/proc',str(process.pid),'cmdline').read_bytes().replace(b'\0',b' ');self.assertIn(b'code_mode_host',cmdline);self.assertIn(b'plugins',cmdline)
+                config.write_text('[mcp_servers.injected]\ncommand="/usr/bin/python3"\nargs=['+json.dumps(str(helper))+']\n')
+                after=request(dict(id=3,method='config/read',params=dict(cwd=folder)))['result']['config'];self.assertTrue(after['mcp_servers']['injected']['enabled'])
+                reply=request(dict(id=4,method='thread/start',params=dict(cwd=folder,model='synthetic',approvalPolicy='never',sandbox='read-only',ephemeral=True)))
+                self.assertNotIn('error',reply)
+                for _ in range(100):
+                    if marker.exists():break
+                    time.sleep(.02)
+                self.assertTrue(marker.exists(),'late server was not started; re-evaluate CLI configuration semantics')
+            finally:
+                process.stdin.close();process.wait(timeout=8);process.stdout.close()

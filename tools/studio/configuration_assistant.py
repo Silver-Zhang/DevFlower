@@ -93,7 +93,7 @@ class ConfigurationAssistant:
         return {p['id']:dict(provider=p['provider'],modes=p.get('modes',['Ask','Plan']),models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
                 for p in WorkbenchSessions(self.rt).capabilities(False,workspace=workspace) if p.get('available')}
 
-    def _base(self,data,*,canvas_only=False):
+    def _base(self,data,*,canvas_only=False,allow_invalid=False):
         self.rt.check_operator();project=self.rt.session_center.workspace(data['workspace'])
         source=dict(root=project['path'],kind='canvas-only') if canvas_only else self.rt.validate_source(project['path'])
         g=data['graph']
@@ -101,8 +101,8 @@ class ConfigurationAssistant:
             set(g)-{'version','name','nodes','edges','budget','viewport'} or not isinstance(g.get('nodes'),list) or not isinstance(g.get('edges'),list)):
             raise Invalid('当前画布快照无效或过大')
         # A blank graph is a legitimate editor state, not an executable graph.
-        if g['nodes']:validate_graph(g)
-        elif g['edges']:raise Invalid('空画布不能有未绑定连线')
+        if g['nodes'] and not allow_invalid:validate_graph(g)
+        elif not g['nodes'] and g['edges'] and not allow_invalid:raise Invalid('空画布不能有未绑定连线')
         return dict(workspace=data['workspace'],source=source,source_sha256=None if canvas_only else workspace_hash(project['path']),base_graph=copy.deepcopy(g),base_graph_sha256=digest(canonical(g)),choices=self.choices(data['workspace']))
 
     def prepare(self,data):
@@ -180,6 +180,9 @@ class ConfigurationAssistant:
         try:
             if v.get('cancel_requested'):raise Blocked('配置生成已在排队期间取消；未调用模型')
             self.rt.check_operator();self._source(v);b=v['binding'];verification=None
+            if v.get('interaction')=='click' and b.get('execution_backend')=='native-local' and b.get('provider')=='codex':
+                from .native_codex_exec import protected_paths
+                b=dict(b,native_interaction='ordinary',native_protected=protected_paths(self.rt,b))
             if v.get('interaction')=='click':
                 from .model_registration import ModelRegistration
                 ModelRegistration(self.rt).require_direct(b)
@@ -206,6 +209,10 @@ class ConfigurationAssistant:
                     raise Blocked('配置生成已在启动前取消；未调用模型')
                 attempted=True
                 journal=ConfigurationJournal(self.rt.db,key)
+                def check_before_spawn():
+                    self.rt.check_operator();self._source(v)
+                    if v.get('interaction')=='click':ModelRegistration(self.rt).require_direct(b)
+                journal.check_before_spawn=check_before_spawn
                 r=CLI(b['provider'],b,dict(step_timeout_seconds=120,max_log_bytes=2_000_000)).start(prompt,v['cwd'],out,sf,journal,key)
             if self._finish_cancelled(key):return
             def sanitize(value):
@@ -291,9 +298,9 @@ class ConfigurationAssistant:
         self.rt.session_center.cancel(workspace,key)
         return self.status(workspace,key)
 
-    def external(self,data,*,canvas_only=False):
+    def external(self,data,*,canvas_only=False,allow_invalid=False):
         if set(data)!={'workspace','graph','plan'}:raise Invalid('外部提案只接受工作区、当前画布和版本化配置计划，不接受命令/凭据/授权')
-        base=self._base(data,canvas_only=canvas_only);graph=plan_graph(data['plan'],base['choices']);key=secrets.token_hex(16)
+        base=self._base(data,canvas_only=canvas_only,allow_invalid=allow_invalid);graph=plan_graph(data['plan'],base['choices']);key=secrets.token_hex(16)
         v=dict(base,id=key,configuration=True,source_kind='external-unverified',diagnostic=True,state='COMPLETED',proposed_graph=graph,plan=data['plan'],summary=safe_text(data['plan']['summary']),created_at=time.time())
         self.rt.db.put('session-operation',key,v);return self.status(data['workspace'],key)
 
