@@ -476,5 +476,46 @@
     }
   ],
   "github_ci_all_success": true,
-  "records_delivery": "project/devflower; normal commit/push; raw sessions/logs kept local"
+  "records_delivery": "project/devflower; normal commit/push; raw sessions/logs kept local",
+  "late_review": {
+    "verdict": "NEEDS_CORRECTION",
+    "candidate_sha256": "5ee475f7c4976c563bca68077bbc22e756c9a5ae64a55eaaba325f67873d0009",
+    "session_id": "33983e27-0cdf-4c4b-9f96-69dde484a096",
+    "duration": 583.876,
+    "exit": 0,
+    "findings": [
+      {
+        "contract_ids": [
+          "N1",
+          "N3"
+        ],
+        "evidence_refs": [
+          "tools/studio/workbench_ui/NativeTerminal.jsx:27 (mount automatically fetches /api/history)",
+          "tools/studio/workbench_server.py:214-220 (successful /api/history request persists the visible history)",
+          "tools/studio/project_files.py:229-237 (writes session archive under project records)",
+          "review-r1-recovery2-long/scratch-reviewer/history_observe_write.py (executed: archive count 0→1 from view-only GET; native transcript unchanged)"
+        ],
+        "id": "F1-view-only-history-write",
+        "severity": "P1",
+        "status": "OPEN",
+        "title": "View-only terminal observation copies history into the workspace"
+      }
+    ],
+    "raw_report": "review-r1-original.json",
+    "recovery": 2,
+    "user_authorized_long_wait": true
+  },
+  "pending_current_candidate_review": true,
+  "F1_fix_candidate": {
+    "commit": "ad4699925336cfe869e256b42249c2f51fe366ef",
+    "candidate_sha256": "81a6c55d267060745e7e4087f478fddceaef8e5b6184272d5c02c93b37f009f8",
+    "git_tree": "a9d402444e72d40254e8015b546a28cf0336e053",
+    "independent_reaudit": "not performed on this intermediate candidate; Task14 is separate",
+    "self_tests": {
+      "python": 933,
+      "chromium_main": 109,
+      "exit": 0
+    },
+    "original_counterexample_retest": "0→0"
+  }
 }

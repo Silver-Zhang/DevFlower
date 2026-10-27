@@ -4,6 +4,7 @@
 
 | 日期 | 任务 | 模式 | 状态 |
 |---|---|---|---|
+| 2026-10-27 | [20261027_05_native-local-sessions](tasks/2026-10/20261027_05_native-local-sessions/README.md) | B | 阻塞 |
 | 2026-10-27 | [20261027_04_native-session-interop](tasks/2026-10/20261027_04_native-session-interop/README.md) | B | 阻塞 |
 | 2026-10-27 | [20261027_03_workspace-session-usability](tasks/2026-10/20261027_03_workspace-session-usability/README.md) | B | 阻塞 |
 | 2026-10-27 | [20261027_02_claude-recovery-finalization](tasks/2026-10/20261027_02_claude-recovery-finalization/README.md) | B | 阻塞 |

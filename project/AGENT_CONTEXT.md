@@ -1,11 +1,19 @@
 # DevFlower 接续入口
 
-先读STATUS与tasks/2026-10/20261027_04_native-session-interop/{README.md,contract.txt,evidence-summary.json,readiness.json}。本轮新Task13，不续Task12或更早审核预算。
+Task14 tasks/2026-10/20261027_05_native-local-sessions：合同L1–L6，4/5源码轮，基础设施恢复0/2，已停止于正式BLOCKED。原Task13 NEEDS_CORRECTION、旧候选/预算/Gate保持。
 
-源码/home/workspace/DevFlower/development/native-session-interop，flow/native-session-interop，3fbf2bac7f0e71a68276b0dc21cba38e1ef1f05f/tree8e24fc88e57064c307800f07081c3986c9c127e1/CF5ee475f7c4976c563bca68077bbc22e756c9a5ae64a55eaaba325f67873d0009，245文件。DraftPR21→PR20→PR19，不合并main，不晋升Stable。
+当前flow/native-local-sessions与已推送flow/native-session-interop均f67737a；tree ae5512038584aa130c1c99bbc2093cb0d0194065；CF3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb，252文件。PR21 Draft→PR20→PR19，base为当前7092922祖先。main e0a0f92 /旧Stable5816ba4776b3未改，不合并、不删旧数据。
 
-实现本地Unix接管既有原生PTY，默认只读、明确CAS接管、旧代次拒绝、断连不重放；脚本tools/devflower_attach.py不启动第二CLI。真实非Git新建对话common_dir异常修复；复用原source_lock。完整932/6/233/59全过、245文件隐私通过；真实Codex/Claude同UUID双端回答和切换通过。监督PID与原生子PID区分。
+本机模式复用原HOME/.codex/.claude/中转，无额外容器或会话HOME、不复制导入。Claude不设置冗余CLAUDE_CONFIG_DIR。锁采用目录FD/NOFOLLOW/类型/nlink/属主检查，观察无写；续聊按实际Provider时钟/native turn ID去重。
 
-完整目标仍BLOCKED：Codex桌面独占stdio，无可连control socket，read_thread找不到实际UUID；未改其HOME/启动/DB。工作流活动回合不能热接管，需现有HOME锁释放。Claude源码审核UUID33983e27-0cdf-4c4b-9f96-69dde484a096，固定旧Stable监督，240s+120s恢复均超时、原始verdict=null；1源码轮+1基础设施恢复后因无完成证据停止。没有独立动态反例裁决。固定旧Gate exit2，缺审核报告且原生实施完成回执未伪造。不要把此任务写成ACCEPT/完整K或用户本人验收。
+同候选965Python/6host/233合成Chromium/59JS全部通过；Baseline/6语法/2字节构建/隐私过。真实Codex与Claude各2回合同UUID及上文；桌面read_thread同UUID/turn，notLoaded不代表窗口实时接管；Codex真锁竞争/原客户端退出后接续过。Claude原生终端身份正确但60秒仅output/exit2，普通chat300秒上限；未验证Claude写入/额外挂载/自动交付不开。
 
-新启动入口/home/workspace/DevFlower/.local/open-native-session-interop.py，Development41663；旧open-devflower-agent.py/40893保留。原始证据/HOME在archives/devflower-native-interop-20261027；测试在/home/workspace/claude_workspace/DevFlower测试/native-interop。R2和R3预览直接共用原测试storage/native，未复制会话或数据库；原服务安全退出后才切换自有测试候选。旧Stable和所有用户/历史数据不删。
+原始审核：R1 BLOCKED；R2 NEEDS_CORRECTION（F4真实链接改写反例）；R3 BLOCKED但所称独立日志不存在，只保留静态审核/已有自验，不伪造反例；R4 NEEDS_CORRECTION，实际13+3检查通过、首次fixture错误保留。F1/F4 CLOSED，F2真实两个外部Claude同UUID并发均exit0，F3缺根交互实施原生IMPLEMENTED且旧Gate实际exit2，F5云端Chromium首轮TypeError未关。R4报告引用笔误原样保留，不回写历史。
+
+审核UUID a43ac6a3-ba81-4afc-bf9a-84d7dd8e10eb，持久HOME archives/devflower-native-local-20261027/review-r1/home；当前cwd candidate-r7/candidate；原生jsonl仍在初始candidate-r3所属project目录。opus5.5 1M/high，CLI回报型号同请求；物理后端/有效effort unknown。固定旧Stable监督，当前Controller不自批。恢复使用同HOME+明确UUID+固定监督器，先确认旧PID已退出，不能--last。
+
+云端contracts/Studio成功；Chromium首次prepare无data导致测试TypeError，受控重跑一次目前安装依赖；本地单例/全例通过不替代CI。不要反复重跑直到绿或用额外审核迫使ACCEPT。
+
+入口.local/open-devflower-native.py→Development34915，实际已检查。原生Codex配置变化后旧服务正确拒绝；保留旧绑定，仅停自有闲置QA预览，新绑定preview-r7-rebound复用同权威库/原生库，不改全局配置，不复用旧执行证书。新配置另各Provider一次真实原UUID恢复和浏览器2项过；不等于Stable批准。
+
+原始大日志/截图/会话/HOME仅archives/devflower-native-local-20261027与/home/workspace/claude_workspace/DevFlower测试/native-local-sessions。下一步需要解决原生Claude不受管单写的外部协作条件、真实根实施回执与CI失败；不能偷偷续第6轮或改合同强行通过。当前先完成记录同步和Draft PR说明，不自动扩大功能。

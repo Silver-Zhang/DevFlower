@@ -1,0 +1,494 @@
+{
+  "task": "20261027_05_native-local-sessions",
+  "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+  "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+  "source_commit": "f67737a9016b45d5a64896445e322ba3e32c926b",
+  "files": 252,
+  "contract_sha256": "bf145ba69ce34c64f97d65bda80eed1891a9dabcb46fb17c81594381d8b855bd",
+  "source_branch": "flow/native-session-interop",
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/21",
+  "draft": true,
+  "merged": false,
+  "remote_head_verified": true,
+  "regression": {
+    "python_total": 965,
+    "host_total": 6,
+    "synthetic_browser_total": 233,
+    "javascript_total": 59,
+    "baseline": {
+      "exit": 0,
+      "structural_only": true
+    },
+    "syntax": {
+      "commands": 6,
+      "exit": 0
+    },
+    "byte_identical_build": {
+      "exit": 0,
+      "assets": 2
+    },
+    "privacy": {
+      "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+      "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+      "files": 252,
+      "symlinks": 0,
+      "special_files": 0,
+      "credential_matches": 0,
+      "complete_manifest_unchanged": true
+    }
+  },
+  "test_failures": 0,
+  "test_errors": 0,
+  "test_skipped": 0,
+  "synthetic_test_exit": 0,
+  "real": [
+    {
+      "provider": "codex",
+      "home": "/home/silver",
+      "config_root": "/home/silver/.codex",
+      "cwd": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions/public-workspace",
+      "session_id": "01a17e1d-b52f-7573-a62a-06e642e82aef",
+      "requested_model": "gpt-6.1-sol",
+      "requested_effort": "xhigh",
+      "physical_backend": "unknown",
+      "effective_effort": "unknown",
+      "complete": true,
+      "same_session": true,
+      "real_context": true,
+      "first_process": {
+        "exit": 0,
+        "timeout": false,
+        "overflow": false,
+        "cancelled": false,
+        "duration": 16.033,
+        "process": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 702232,
+          "start": "3754709",
+          "state": "R",
+          "pgid": 702232,
+          "sid": 702232
+        },
+        "backend": "native-local"
+      },
+      "second_process": {
+        "exit": 0,
+        "timeout": false,
+        "overflow": false,
+        "cancelled": false,
+        "duration": 7.975,
+        "process": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 706362,
+          "start": "3756313",
+          "state": "R",
+          "pgid": 706362,
+          "sid": 706362
+        },
+        "backend": "native-local"
+      }
+    },
+    {
+      "provider": "claude",
+      "home": "/home/silver",
+      "config_root": "/home/silver/.claude",
+      "cwd": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions/public-workspace",
+      "session_id": "5c44d32f-ce68-4783-9a75-dd15e9eebc29",
+      "requested_model": "claude-opus-5-5[1m]",
+      "requested_effort": "high",
+      "physical_backend": "unknown",
+      "effective_effort": "unknown",
+      "complete": true,
+      "same_session": true,
+      "real_context": true,
+      "first_process": {
+        "operation_id": "PROCESS",
+        "exit": 0,
+        "process": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 708814,
+          "start": "3757112",
+          "state": "R",
+          "pgid": 708814,
+          "sid": 708814
+        },
+        "timeout": false,
+        "overflow": false,
+        "cancelled": false,
+        "bytes": {
+          "stdout": 1611,
+          "stderr": 446
+        },
+        "sha256": {
+          "stdout": "f7f6d5d51b5ddac864cef80fe0b38e717f976813668c76ec6cb1b870ad85e5e3",
+          "stderr": "cb84d898a2a49e649bfda0e87cff7870fbae03ad32fe3dfe5937b436ead56555"
+        },
+        "duration": 25.783
+      },
+      "second_process": {
+        "operation_id": "PROCESS",
+        "exit": 0,
+        "process": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 717415,
+          "start": "3759692",
+          "state": "R",
+          "pgid": 717415,
+          "sid": 717415
+        },
+        "timeout": false,
+        "overflow": false,
+        "cancelled": false,
+        "bytes": {
+          "stdout": 1626,
+          "stderr": 446
+        },
+        "sha256": {
+          "stdout": "3ef72452d5758f970541b4f1ad6564bc1a623424bbe8e491cc8848d0e0ee062f",
+          "stderr": "cb84d898a2a49e649bfda0e87cff7870fbae03ad32fe3dfe5937b436ead56555"
+        },
+        "duration": 27.086
+      }
+    }
+  ],
+  "native_writer": {
+    "another_server_rejected": true,
+    "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+    "config_root": "/home/silver/.codex",
+    "cwd": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions/public-workspace",
+    "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+    "handoff_after_release": true,
+    "home": "/home/silver",
+    "observer_same_actual_history": true,
+    "processes_exit_zero": true,
+    "session_id": "01a17dd9-2bb5-7011-8530-af4b546501be",
+    "studio_second_writer_rejected": true
+  },
+  "native_terminal_status": [
+    {
+      "provider": "codex",
+      "session_id": "01a17dd9-2bb5-7011-8530-af4b546501be",
+      "phase": "ready",
+      "passed": true,
+      "same_uuid": true,
+      "home_same": true,
+      "config_root_same": true,
+      "config_dir_overridden": null,
+      "native_pid": 736964,
+      "supervisor_pid": 736463,
+      "close": {
+        "history_preserved": true,
+        "stopped": true
+      }
+    },
+    {
+      "provider": "claude",
+      "session_id": "377dc6b7-1e3f-4f1c-8d2d-98e1383b190d",
+      "phase": "output",
+      "passed": false,
+      "same_uuid": true,
+      "home_same": true,
+      "config_root_same": true,
+      "config_dir_overridden": false,
+      "native_pid": 744175,
+      "supervisor_pid": 743720,
+      "close": {
+        "history_preserved": true,
+        "stopped": true
+      }
+    }
+  ],
+  "real_browser": {
+    "candidate": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "desktopPersonalAcceptance": false
+  },
+  "reviews": [
+    {
+      "round": 1,
+      "source": "75302def0144f163f4c19a387c8b133823714fa3c333082f3840eba2740bc003",
+      "verdict": "BLOCKED",
+      "exit": 0,
+      "raw_report": "review-r1-original.json"
+    },
+    {
+      "round": 2,
+      "source": "d279b48bc63969be89c375b25879e30829d2c210aee00fa7e3e7788e6c9ac6af",
+      "verdict": "NEEDS_CORRECTION",
+      "exit": 0,
+      "raw_report": "review-r2-original.json"
+    },
+    {
+      "round": 3,
+      "source": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+      "verdict": "BLOCKED",
+      "exit": 0,
+      "raw_report": "review-r3-original.json",
+      "provenance_status": "INCOMPLETE: referenced independent test log absent; raw report preserved"
+    },
+    {
+      "round": 4,
+      "source": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+      "verdict": "NEEDS_CORRECTION",
+      "exit": 0,
+      "duration_seconds": 775.05,
+      "raw_report": "review-r4-original.json",
+      "independent_dynamic_checks": [
+        {
+          "log": "round4_independent_negatives.log",
+          "checks": 13,
+          "failed": 0
+        },
+        {
+          "log": "round4_projection_negatives.log",
+          "checks": 3,
+          "failed": 0
+        }
+      ],
+      "note": "R3 nonexistent dynamic log remains marked incomplete; R4 actual probes are new, not backdated. Raw report citation typos are not rewritten."
+    }
+  ],
+  "current_review": {
+    "round": 4,
+    "status": "COMPLETED",
+    "session_id": "a43ac6a3-ba81-4afc-bf9a-84d7dd8e10eb",
+    "home": "/home/workspace/DevFlower/archives/devflower-native-local-20261027/review-r1/home",
+    "config_root": "/home/workspace/DevFlower/archives/devflower-native-local-20261027/review-r1/home/.claude",
+    "cwd": "/home/workspace/DevFlower/archives/devflower-native-local-20261027/candidate-r7/candidate",
+    "requested_model": "claude-opus-5-5[1m]",
+    "requested_effort": "high",
+    "physical_backend": "unknown",
+    "effective_effort": "unknown",
+    "verdict": "NEEDS_CORRECTION",
+    "reported_model": "claude-opus-5-5[1m]",
+    "native_records": [
+      "/home/workspace/DevFlower/archives/devflower-native-local-20261027/review-r1/home/.claude/projects/-home-workspace-DevFlower-archives-devflower-native-local-20261027-candidate-r3-candidate/a43ac6a3-ba81-4afc-bf9a-84d7dd8e10eb.jsonl"
+    ],
+    "source_unchanged": true,
+    "credentials_unchanged": true,
+    "actual_process": {
+      "bytes": {
+        "stderr": 0,
+        "stdout": 22872
+      },
+      "cancelled": false,
+      "duration": 775.05,
+      "exit": 0,
+      "operation_id": "PROCESS",
+      "overflow": false,
+      "process": {
+        "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+        "host": "silver-work-station",
+        "pgid": 840953,
+        "pid": 840953,
+        "sid": 840953,
+        "start": "3864841",
+        "state": "R"
+      },
+      "sha256": {
+        "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "4b4a92f0bb836114fb95b6553b0861525abf6db02a505ffe3d755d47ca9ff40e"
+      },
+      "timeout": false
+    },
+    "resume_method": "Use fixed old Stable CLI with this same persistent HOME, explicit native UUID and current frozen cwd; old PID must have exited first. No --last or global-HOME substitution. Actual R2/R3/R4 resumes are the evidence."
+  },
+  "budget": {
+    "source_rounds_started": 4,
+    "source_round_limit": 5,
+    "infrastructure_recoveries": 0,
+    "infrastructure_limit": 2,
+    "stopped": true,
+    "source_rounds_remaining": 1,
+    "stop_reason": "Actual unmanaged native Claude double-write fails L3; native root implementation receipt missing; hosted Chromium not green. Further unchanged verdict solicitation cannot satisfy these prerequisites."
+  },
+  "formal_acceptance": false,
+  "user_personal_acceptance": false,
+  "stable_approved": false,
+  "raw_local_root": "/home/workspace/DevFlower/archives/devflower-native-local-20261027",
+  "test_root": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions",
+  "full_test_summary_sha256": "9eb39a00f9cbac7087490aa6e548451410db8e345a90de2754da708ba7d6dee2",
+  "launcher": "python3 /home/workspace/DevFlower/.local/open-devflower-native.py",
+  "base_url": "http://127.0.0.1:34915",
+  "external_Claude_double_writer": {
+    "reproduced": true,
+    "native_processes": 2,
+    "same_native_session": true,
+    "both_exits": 0,
+    "qa_expected_refusal_failed": true,
+    "test_exit": 2,
+    "source_requested": false,
+    "proof_sha256": "6366ae4d03ef5364f38370d76ea1cb507ce8664f6c090d5a0d9a366bbb58e2b1"
+  },
+  "fixed_gate": {
+    "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+    "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+    "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+    "gate_source_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "passed": false,
+    "source_changed": false,
+    "exit": 2,
+    "verdict": "BLOCKED",
+    "reason": "unsuccessful actual agent process",
+    "additional_required_review_blocks": [
+      {
+        "id": "L3",
+        "status": "FAIL"
+      },
+      {
+        "id": "L5",
+        "status": "BLOCKED"
+      },
+      {
+        "id": "L6",
+        "status": "BLOCKED"
+      }
+    ],
+    "required_findings_not_closed": [
+      {
+        "id": "F2-claude-external-writer-race",
+        "status": "OPEN"
+      },
+      {
+        "id": "F3-fixed-gate-and-native-implementation-receipt",
+        "status": "BLOCKED"
+      },
+      {
+        "id": "F5-hosted-Chromium-regression",
+        "status": "OPEN"
+      }
+    ]
+  },
+  "ci": {
+    "commit": "f67737a9016b45d5a64896445e322ba3e32c926b",
+    "contracts": "SUCCESS",
+    "studio": "SUCCESS",
+    "chromium_first": "FAILURE",
+    "first_failed_job": 122311254670,
+    "original_failure": "terminal/prepare missing data; TypeError in tests/workbench_browser.cjs:561",
+    "chromium_retry": "IN_PROGRESS_DEPENDENCY_INSTALL",
+    "retry_count": 1
+  },
+  "configuration_refresh": {
+    "original_operator_preserved": true,
+    "original_guard_refused": true,
+    "changed_file": "/home/silver/.codex/config.toml",
+    "global_config_written": false,
+    "approved_profiles_unchanged": true,
+    "permissions_expanded": false,
+    "old_admission_not_reused": true,
+    "new_operator_sha256": "a3d8aa8d516e24a3f2dce6e981b8636a62de5880f8ae1cd9a20bcf5eff45f003",
+    "same_authority_storage": true,
+    "history_copied": false,
+    "real_provider_same_uuid_resumes": [
+      {
+        "provider": "codex",
+        "session_id": "01a17e1d-b52f-7573-a62a-06e642e82aef",
+        "operator_sha256": "a3d8aa8d516e24a3f2dce6e981b8636a62de5880f8ae1cd9a20bcf5eff45f003",
+        "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+        "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+        "cwd": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions/public-workspace",
+        "requested_model": "gpt-6.1-sol",
+        "requested_effort": "xhigh",
+        "physical_backend": "unknown",
+        "effective_effort": "unknown",
+        "complete": true,
+        "process_identity": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 907125,
+          "start": "3935274",
+          "state": "R",
+          "pgid": 907125,
+          "sid": 907125
+        },
+        "same_session": true,
+        "process": {
+          "exit": 0,
+          "timeout": false,
+          "overflow": false,
+          "cancelled": false,
+          "duration": 7.169,
+          "process": {
+            "host": "silver-work-station",
+            "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+            "pid": 907125,
+            "start": "3935274",
+            "state": "R",
+            "pgid": 907125,
+            "sid": 907125
+          },
+          "backend": "native-local"
+        },
+        "reply": "{\"reply\":\"NATIVE_R7_SAME_STORE_OK CURRENT_CONFIG_RESUME_OK\"}"
+      },
+      {
+        "provider": "claude",
+        "session_id": "5c44d32f-ce68-4783-9a75-dd15e9eebc29",
+        "operator_sha256": "a3d8aa8d516e24a3f2dce6e981b8636a62de5880f8ae1cd9a20bcf5eff45f003",
+        "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+        "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+        "cwd": "/home/workspace/claude_workspace/DevFlower测试/native-local-sessions/public-workspace",
+        "requested_model": "claude-opus-5-5[1m]",
+        "requested_effort": "high",
+        "physical_backend": "unknown",
+        "effective_effort": "unknown",
+        "complete": true,
+        "process_identity": {
+          "host": "silver-work-station",
+          "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+          "pid": 908095,
+          "start": "3935992",
+          "state": "R",
+          "pgid": 908095,
+          "sid": 908095
+        },
+        "same_session": true,
+        "process": {
+          "operation_id": "PROCESS",
+          "exit": 0,
+          "process": {
+            "host": "silver-work-station",
+            "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295",
+            "pid": 908095,
+            "start": "3935992",
+            "state": "R",
+            "pgid": 908095,
+            "sid": 908095
+          },
+          "timeout": false,
+          "overflow": false,
+          "cancelled": false,
+          "bytes": {
+            "stdout": 1658,
+            "stderr": 446
+          },
+          "sha256": {
+            "stdout": "48e713c2aca5240504525373819342f839efe2ab42d16d73fdc373024ee89f09",
+            "stderr": "cb84d898a2a49e649bfda0e87cff7870fbae03ad32fe3dfe5937b436ead56555"
+          },
+          "duration": 4.859
+        },
+        "reply": "NATIVE_R7_SAME_STORE_OK CURRENT_CONFIG_RESUME_OK"
+      }
+    ],
+    "real_browser": {
+      "candidate": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "desktopPersonalAcceptance": false
+    },
+    "note": "New Development startup binding after observed native Codex config drift. Source unchanged; not a new Stable or Gate approval."
+  },
+  "source_delivery_status": "DRAFT_PUSHED",
+  "readiness": "BLOCKED"
+}

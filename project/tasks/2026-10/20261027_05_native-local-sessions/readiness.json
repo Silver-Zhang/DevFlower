@@ -1,0 +1,56 @@
+{
+  "task": "20261027_05_native-local-sessions",
+  "head": "f67737a9016b45d5a64896445e322ba3e32c926b",
+  "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+  "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+  "contract_sha256": "bf145ba69ce34c64f97d65bda80eed1891a9dabcb46fb17c81594381d8b855bd",
+  "status": "BLOCKED",
+  "latest_independent_verdict": "NEEDS_CORRECTION",
+  "latest_round": 4,
+  "gate": {
+    "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+    "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+    "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+    "gate_source_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "passed": false,
+    "source_changed": false,
+    "exit": 2,
+    "verdict": "BLOCKED",
+    "reason": "unsuccessful actual agent process",
+    "additional_required_review_blocks": [
+      {
+        "id": "L3",
+        "status": "FAIL"
+      },
+      {
+        "id": "L5",
+        "status": "BLOCKED"
+      },
+      {
+        "id": "L6",
+        "status": "BLOCKED"
+      }
+    ],
+    "required_findings_not_closed": [
+      {
+        "id": "F2-claude-external-writer-race",
+        "status": "OPEN"
+      },
+      {
+        "id": "F3-fixed-gate-and-native-implementation-receipt",
+        "status": "BLOCKED"
+      },
+      {
+        "id": "F5-hosted-Chromium-regression",
+        "status": "OPEN"
+      }
+    ]
+  },
+  "source_delivered": true,
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/21",
+  "draft": true,
+  "merged": false,
+  "stable_promoted": false,
+  "user_personal_acceptance": false,
+  "all_required_findings_closed": false
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261027_05_native-local-sessions",
+  "date": "2026-10-27",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "base": "3fbf2bac7f0e71a68276b0dc21cba38e1ef1f05f",
+      "worktree": "/home/workspace/DevFlower/development/native-local-sessions",
+      "result": "f67737a9016b45d5a64896445e322ba3e32c926b",
+      "branch": "flow/native-session-interop",
+      "git_tree": "ae5512038584aa130c1c99bbc2093cb0d0194065",
+      "candidate_sha256": "3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb",
+      "implementation_branch": "flow/native-local-sessions"
+    }
+  ]
+}
