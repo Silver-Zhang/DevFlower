@@ -1,11 +1,11 @@
 # 当前状态
 
-Task12工作区/会话/助手运行和强度选择已实施、自验及真实顺序流程通过；正式源码审核/Gate仍BLOCKED。
+Task13 本地 CLI 同一PTY双端观察/独占接管已实施并真实验证，完整任务仍BLOCKED。
 
-最新源70929224355f05c0c01976e289c22c490cb67b5e/tree34faa15ffda94ca649328e1ee2e05bca62630128/CFcad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5，241文件；已正常推送并读回DraftPR20，依赖PR19。两个最新CI成功。
+源码3fbf2bac7f0e71a68276b0dc21cba38e1ef1f05f，tree8e24fc88e57064c307800f07081c3986c9c127e1，CF5ee475f7c4976c563bca68077bbc22e756c9a5ae64a55eaaba325f67873d0009，245文件；DraftPR21依赖PR20→PR19，已推送读回。
 
-最终922Python、6隔离、231Chromium/HTTP、59JS全部exit0、FAIL/ERROR/SKIP0；Baseline/语法/构建/隐私通过。真实预登记1M模型目录漏项时max选择成功仍不授权；目录过期自动刷新。当前真实助手+Codex/Claude run5c294bca7bcc420e8fa40898a914335b COMPLETED；中断后原存储读回，无新模型调用。
+最终932 Python、6隔离、233 Chromium/HTTP、59JS全部exit0/FAIL/ERROR/SKIP0；基线/语法/构建/隐私通过。同一最终候选Codex和Claude的原UUID/PTY、双端回答、接管和旧端拒绝真实通过。原生子PID未单列，监督PID如实记录。
 
-旧089375的Claude源码R1/R2超时/verdict=null与NativeCodex核验超时保留，不能批准新cad0候选。原2次基础设施恢复预算已尽，不借修复重置；新候选未审核，固定旧Gate仍exit2/BLOCKED。旧Task04/10/11、SC08和完整产品K限制不改写。
+Codex桌面仍为独占stdio且control socket不存在，桌面查不到该UUID；工作流活动回合热接管未完成。没有复制历史、改全局认证或重启桌面。Claude源码R1 240s和同UUID恢复120s均超时/null；原负面证据保留。固定旧Gate exit2，未伪造实施回执或批准。
 
-入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development40893，实际检查通过。手测可打开/home/workspace/claude_workspace/DevFlower测试/工作台体验。main/Stable/旧会话/旧版本不覆盖；原始日志和NativeHOME仍在本地。
+新入口 python3 /home/workspace/DevFlower/.local/open-native-session-interop.py（Development41663）；原入口/Development40893、main/Stable保持。Task12及更早BLOCKED/预算不改。下一步需受支持的桌面共享后端和独立终审；不能把CLI共用当桌面同步。

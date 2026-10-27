@@ -1,13 +1,11 @@
 # DevFlower 接续入口
 
-先读STATUS和tasks/2026-10/20261027_03_workspace-session-usability/README.md、evidence-summary.json、readiness.json、contract.txt。旧Task04/10/11结论与预算不改。
+先读STATUS与tasks/2026-10/20261027_04_native-session-interop/{README.md,contract.txt,evidence-summary.json,readiness.json}。本轮新Task13，不续Task12或更早审核预算。
 
-源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD70929224355f05c0c01976e289c22c490cb67b5e/tree34faa15ffda94ca649328e1ee2e05bca62630128/CFcad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5，241文件，DraftPR20依赖PR19，两CI成功。main仍e0a0f92f，Stable不替换。
+源码/home/workspace/DevFlower/development/native-session-interop，flow/native-session-interop，3fbf2bac7f0e71a68276b0dc21cba38e1ef1f05f/tree8e24fc88e57064c307800f07081c3986c9c127e1/CF5ee475f7c4976c563bca68077bbc22e756c9a5ae64a55eaaba325f67873d0009，245文件。DraftPR21→PR20→PR19，不合并main，不晋升Stable。
 
-Task12修复便携saved:阅读副本整组回收、CAS及恢复；分类切换清除旧卡片；按工作流/任务/节点看历史；Claude CLI强度选择不等于模型执行准入；显式选中正常目录建立本机身份绑定；助手只提出绑定画布的运行预览，保留启动确认和安全隔离。完整922/6/231/59、自有真实助手+Codex/Claude流程COMPLETED；真实上游内容、activation/run和请求/input_sent哈希核对通过。
+实现本地Unix接管既有原生PTY，默认只读、明确CAS接管、旧代次拒绝、断连不重放；脚本tools/devflower_attach.py不启动第二CLI。真实非Git新建对话common_dir异常修复；复用原source_lock。完整932/6/233/59全过、245文件隐私通过；真实Codex/Claude同UUID双端回答和切换通过。监督PID与原生子PID区分。
 
-两源码Claude请求均超时无verdict；额外NativeCodex实施核验及同UUID恢复也无最终回执；固定旧Gate BLOCKED。新任务5源码轮预算已用2、2基础设施恢复已用尽；不能偷偷继续外部调用或把受控runner4/4写成Claude ACCEPT。实际物理backend/effective effort unknown。
+完整目标仍BLOCKED：Codex桌面独占stdio，无可连control socket，read_thread找不到实际UUID；未改其HOME/启动/DB。工作流活动回合不能热接管，需现有HOME锁释放。Claude源码审核UUID33983e27-0cdf-4c4b-9f96-69dde484a096，固定旧Stable监督，240s+120s恢复均超时、原始verdict=null；1源码轮+1基础设施恢复后因无完成证据停止。没有独立动态反例裁决。固定旧Gate exit2，缺审核报告且原生实施完成回执未伪造。不要把此任务写成ACCEPT/完整K或用户本人验收。
 
-入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py，Development40893。实际测试/home/workspace/claude_workspace/DevFlower测试，自有子工作区原始日志在.devflower-tests/20261027-workspace-session-usability；NativeHOME/运行权威在/home/workspace/DevFlower/archives/devflower-workspace-usability-20261027。保留既有.devflower、会话、认证与旧版本。源只正常推flow/copilot-canvas-assistant，记录只推project/devflower；不触CodeWeave/RMC，不入库私有URL/token/原生日志。
-
-最新cache-followup修复目录漏掉已登记1M模型时的强度选择及过期目录自动刷新。新候选未审核；不要混用旧089375的超时/原生业务证据。当前实际run5c294bca7bcc420e8fa40898a914335b完成，中断后只读恢复无重放；19针对性/922总Python，浏览器107+119+5。当前证据在前述本地目录/cache-followup，Native证据在archives对应目录/cache-followup；手测干净目录为/home/workspace/claude_workspace/DevFlower测试/工作台体验。
+新启动入口/home/workspace/DevFlower/.local/open-native-session-interop.py，Development41663；旧open-devflower-agent.py/40893保留。原始证据/HOME在archives/devflower-native-interop-20261027；测试在/home/workspace/claude_workspace/DevFlower测试/native-interop。R2和R3预览直接共用原测试storage/native，未复制会话或数据库；原服务安全退出后才切换自有测试候选。旧Stable和所有用户/历史数据不删。

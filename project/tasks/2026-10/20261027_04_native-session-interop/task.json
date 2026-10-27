@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261027_04_native-session-interop",
+  "date": "2026-10-27",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/native-session-interop",
+      "base": "70929224355f05c0c01976e289c22c490cb67b5e",
+      "commit": "3fbf2bac7f0e71a68276b0dc21cba38e1ef1f05f",
+      "git_tree": "8e24fc88e57064c307800f07081c3986c9c127e1",
+      "candidate_sha256": "5ee475f7c4976c563bca68077bbc22e756c9a5ae64a55eaaba325f67873d0009",
+      "files": 245,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/21"
+    }
+  ]
+}
