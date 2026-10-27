@@ -64,20 +64,58 @@ def profile_key(binding):
     return key(binding) if binding.get('execution_backend')=='native-local' else digest(binding['home'].encode())
 
 
+def _open_native_lock(binding,sid,*,create=False):
+    """Pin a private directory; no link following and no file-content writes."""
+    root=Path(binding['local_lock_root'])
+    try:
+        if create:
+            with opened(root.parent,directory=True) as parent:
+                try:os.mkdir(root.name,0o700,dir_fd=parent)
+                except FileExistsError:pass
+        with opened(root,directory=True) as directory:
+            info=os.fstat(directory)
+            if info.st_uid!=os.getuid() or info.st_mode&0o077:raise Blocked('原生会话锁目录不是本机私有目录')
+            flags=os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC|(os.O_RDWR|os.O_CREAT if create else os.O_RDONLY)
+            fd=os.open(key(binding,sid)+'.lock',flags,0o600,dir_fd=directory)
+            try:
+                info=os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_uid!=os.getuid():
+                    raise Blocked('原生会话锁不是本机独占常规文件；未启动 Agent')
+                return fd
+            except BaseException:
+                os.close(fd);raise
+    except FileNotFoundError:
+        if not create:return None
+        raise Blocked('原生会话锁位置不存在；未启动 Agent') from None
+    except OSError:
+        raise Blocked('原生会话锁位置不安全或不可读；未启动 Agent') from None
+
+
+def _native_lease_busy(binding,sid):
+    fd=_open_native_lock(binding,sid)
+    if fd is None:return False
+    try:
+        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return True
+        fcntl.flock(fd,fcntl.LOCK_UN);return False
+    finally:os.close(fd)
+
+
 @contextmanager
 def session_lease(binding):
     if binding.get('execution_backend') != 'native-local':
         home=Path(binding['home'])
         with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')): yield
         return
-    root=Path(binding['local_lock_root']);root.mkdir(mode=0o700,exist_ok=True)
-    with opened(root,directory=True) as fd:
-        info=os.fstat(fd)
-        if info.st_uid!=os.getuid() or info.st_mode&0o077:raise Blocked('原生会话锁目录不是本机私有目录')
     # A new conversation has no common identity yet. An independent nonce keeps
     # unrelated conversations in the same HOME from excluding each other.
     sid=binding.get('session_id') or 'new:'+secrets.token_hex(16)
-    with lease(root/(key(binding,sid)+'.lock')): yield
+    fd=_open_native_lock(binding,sid,create=True)
+    try:
+        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise Blocked('live lease held') from None
+        yield
+    finally:os.close(fd)
 
 
 def native_busy(binding, sid):
@@ -87,7 +125,7 @@ def native_busy(binding, sid):
         # This is the native store's own lock, also used by Desktop. No file is
         # created, replaced or unlocked on another process's behalf.
         path=Path(binding['config_root'])/'thread-writer-locks'/(sid+'.lock')
-        try: fd=os.open(path,os.O_RDWR|os.O_NOFOLLOW)
+        try: fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
         except FileNotFoundError:return False
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):raise Blocked('原生写锁类型未确认')
@@ -113,11 +151,7 @@ def own_busy(runtime, binding, sid):
         current=row.get('native_session') or row.get('requested_session') or row['binding'].get('session_id')
         if current==sid and row['state'] not in ('COMPLETED','FAILED','CANCELLED'):
             return True
-    root=Path(binding['local_lock_root']);path=root/(key(binding,sid)+'.lock')
-    if path.exists():
-        try:
-            with lease(path):pass
-        except Blocked:return True
+    if _native_lease_busy(binding,sid):return True
     return native_busy(binding,sid)
 
 
@@ -135,7 +169,12 @@ def codex_history(binding, cwd, sid, limit=200, query='', *, turn_id=None):
             elif item['type']=='agentMessage':text=item.get('text','');role='assistant'
             else:continue  # Reasoning is never reconstructed from native data.
             if not query or query.casefold() in text.casefold():
-                rows.append(dict(role=role,text=text,turn_id=turn['id'],native_item=item['id']))
+                # Preserve the Provider's real turn clock, not a guessed time or
+                # lifecycle verdict. Mixed managed/native history deliberately
+                # hides undated protocol; dropping this field hid real native
+                # continuations from the default conversation after a Studio turn.
+                rows.append(dict(role=role,text=text,turn_id=turn['id'],native_item=item['id'],
+                    native_at=turn.get('startedAt'),native_time_source='provider-turn-start'))
     return rows[-limit:]
 
 

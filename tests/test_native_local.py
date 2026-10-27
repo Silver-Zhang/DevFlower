@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 sys.path[:0]=[str(Path(__file__).parent),str(Path(__file__).resolve().parents[1]/'tools')]
 from test_workbench_runtime import fixture,structured_session
-from studio.native_local import configured,bind,profile_key,session_lease,native_busy,codex_history,preferred_profile,native_environment
+from studio.native_local import configured,bind,profile_key,session_lease,native_busy,codex_history,preferred_profile,native_environment,own_busy,key
 from orchestration.common import Blocked,save,digest
 
 
@@ -93,6 +93,31 @@ class NativeLocalTests(unittest.TestCase):
             with self.assertRaises(Blocked):
                 with session_lease(second):pass
 
+    def test_busy_probe_does_not_create_a_lock_directory_or_file(self):
+        sid='00000000-0000-4000-8000-000000000001'
+        self.assertFalse(own_busy(self.rt,self.binding,sid))
+        self.assertFalse(Path(self.binding['local_lock_root']).exists())
+
+    def test_busy_probe_leaves_existing_lock_bytes_unchanged(self):
+        sid='00000000-0000-4000-8000-000000000001';root=Path(self.binding['local_lock_root']);root.mkdir(mode=0o700)
+        path=root/(key(self.binding,sid)+'.lock');path.write_bytes(b'existing native lease metadata\n')
+        self.assertFalse(own_busy(self.rt,self.binding,sid));self.assertEqual(path.read_bytes(),b'existing native lease metadata\n')
+
+    def check_unsafe_lock(self,hardlink):
+        b=dict(self.binding,session_id='00000000-0000-4000-8000-000000000001');root=Path(b['local_lock_root']);root.mkdir(mode=0o700)
+        victim=self.home/'.claude/.credentials.json';before=b'{"accessToken":"SYNTHETIC_KEEP_UNCHANGED"}\n';victim.write_bytes(before)
+        target=root/(key(b)+'.lock')
+        if hardlink:os.link(victim,target)
+        else:target.symlink_to(victim)
+        with self.assertRaises(Blocked):own_busy(self.rt,b,b['session_id'])
+        self.assertEqual(victim.read_bytes(),before)
+        with self.assertRaises(Blocked):
+            with session_lease(b):pass
+        self.assertEqual(victim.read_bytes(),before)
+
+    def test_symlinked_lease_never_changes_credential_bytes(self):self.check_unsafe_lock(False)
+    def test_hardlinked_lease_never_changes_credential_bytes(self):self.check_unsafe_lock(True)
+
     def test_native_store_lock_blocks_only_the_owned_thread(self):
         root=self.home/'.codex/thread-writer-locks';root.mkdir()
         a='00000000-0000-4000-8000-000000000001';b='00000000-0000-4000-8000-000000000002'
@@ -117,6 +142,26 @@ class NativeLocalTests(unittest.TestCase):
         value=dict(thread=dict(id='other',cwd='/other',turns=[]))
         with patch('studio.native_codex_rpc.metadata',return_value=value):
             with self.assertRaises(Blocked):codex_history(self.binding,str(self.base.source),'00000000-0000-4000-8000-000000000001')
+
+    def test_provider_turn_clock_keeps_external_native_continuation_in_default_view(self):
+        from studio.conversation_projection import native_turns
+        sid='00000000-0000-4000-8000-000000000001';cwd=str(self.base.source)
+        value=dict(thread=dict(id=sid,cwd=cwd,turns=[dict(id='external-turn',startedAt=100,completedAt=110,items=[
+            dict(type='userMessage',id='u',content=[dict(type='text',text='from native client')]),
+            dict(type='agentMessage',id='a',text='real external answer')])]))
+        with patch('studio.native_codex_rpc.metadata',return_value=value):rows=codex_history(self.binding,cwd,sid)
+        turns=native_turns([],[],rows,rows,True)
+        self.assertEqual([t['messages'][0]['text'] for t in turns],['from native client','real external answer'])
+        self.assertEqual(turns[0]['created_at'],100)
+        self.assertEqual(turns[1]['created_at'],100)
+
+    def test_exact_native_turn_identity_beats_coarse_process_time_windows(self):
+        from studio.conversation_projection import native_turns
+        rows=[dict(role=role,text=text,turn_id=turn,native_at=100) for turn in ('managed','external')
+              for role,text in [('user',turn+' question'),('assistant',turn+' answer')]]
+        operation=dict(receipt={'native_turn_id':'managed'},native_started_at=99.9,native_finished_at=101.2)
+        turns=native_turns([], [operation], rows, rows, True)
+        self.assertEqual([t['messages'][0]['text'] for t in turns],['external question','external answer'])
 
     def test_claude_write_mode_is_not_declared_verified_from_a_prompt(self):
         with self.assertRaises(Blocked):self.rt.node_binding(self.base.project['id'],dict(profile='default-claude',mode='Agent'),admission=False)

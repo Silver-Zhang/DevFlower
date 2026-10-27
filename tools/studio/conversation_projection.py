@@ -66,12 +66,18 @@ def native_turns(related,operations,messages,original_messages,has_managed):
                 return parsed.timestamp() if parsed.tzinfo is not None else None
             except (ValueError,OverflowError,OSError):pass
         return None
-    ranges=[];windows=[];patterns=[]
+    ranges=[];windows=[];patterns=[];managed_turns=set()
     for a,_ in related:
+        turn=a.get('native_turn_id') or (a.get('receipt') or {}).get('native_turn_id')
+        if isinstance(turn,str) and turn:
+            managed_turns.add(turn);continue
         start,end=a.get('native_history_offset'),a.get('native_history_end')
         if type(start) is int and type(end) is int and 0<=start<=end:ranges.append((start,end))
         elif isinstance(a.get('actual_request'),str) and a['actual_request']:patterns.append(a['actual_request'])
     for op in operations:
+        turn=op.get('native_turn_id') or (op.get('receipt') or {}).get('native_turn_id')
+        if isinstance(turn,str) and turn:
+            managed_turns.add(turn);continue
         start,end=seconds(op.get('native_started_at')),seconds(op.get('native_finished_at'))
         if start is not None and end is not None and end>=start:windows.append((start,end))
         elif isinstance(op.get('prompt'),str) and op['prompt']:patterns.append(op['prompt'])
@@ -79,6 +85,8 @@ def native_turns(related,operations,messages,original_messages,has_managed):
     remaining=Counter(patterns)
     result=[];managed_request=False
     for index,m in enumerate(messages):
+        if m.get('turn_id') in managed_turns:
+            managed_request=False;continue
         offset=m.get('native_offset');at=seconds(m.get('native_at'));body=raw.get(offset,m['text'])
         if m['role']=='user':
             matched=next((p for p,n in remaining.items() if n and p in body),None)
