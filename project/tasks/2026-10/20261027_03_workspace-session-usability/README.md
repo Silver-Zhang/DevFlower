@@ -2,11 +2,17 @@
 
 任务 `20261027_03_workspace-session-usability`，独立于已结束的 Task11。状态为“阻塞”指最终源码审核/Gate未通过，不代表本轮功能与自验未实施。
 
+最终更新：源码70929224355f05c0c01976e289c22c490cb67b5e，tree34faa15ffda94ca649328e1ee2e05bca62630128，CFcad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5，241文件。补齐“目录成功但漏掉1M默认模型的强度选择”和“目录过期自动刷新”；首轮089375负例确实失败，最终真实max配置选择成功但未授予执行权限，未冒称max真实推理通过。
+
+最终同候选922Python、6隔离、231Chromium/HTTP、59JS均exit0、FAIL/ERROR/SKIP0，Baseline/语法/构建/隐私及两个最新CI成功。19项针对性测试已包含在922中。真实助手+Codex→Claude任务5c294bca7bcc420e8fa40898a914335b完成。观察与服务被会话中断终止后，使用原候选/原存储恢复读回同一run，恢复时新增模型调用0；中断中的Python/浏览器原日志保留，完整重跑922/107成功。原始补证在cache-followup子目录。
+
+新候选尚未独立审核：旧两轮超时属于089375，不能复用为新代码结论；原2次恢复预算不重置，未再调用审核。固定旧Gate对当前缺报告实际BLOCKED/exit2。保留Draft，不合并或晋升。此前各阶段原记录如下，不能把旧测试/裁决当作新候选审核。
+
 ## 1. 目标与范围
 
 处理用户2026-10-27七点反馈：助手记录位置、整组会话删除、按工作流分区浏览、Claude强度、助手发起运行、选中正常项目后可运行，以及指定测试目录。源码基线742c61f4/tree7e1992f7、工作树开始干净；main e0a0f92f未变。PR20仍依赖PR19，不合并或晋升Stable。
 
-结果源码 f22ae7582aa6ff6cf37507e93853cbcc54c41bb7，tree7d5cc7b76ec2a32e287b739f5701bc40acd6160e，241文件CF089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6。冻结来自旧HEAD，提交后tree/完整文件身份一致；已正常push并fetch读回同一commit/tree。项目记录不进源码分支。
+首轮候选源码 f22ae7582aa6ff6cf37507e93853cbcc54c41bb7，tree7d5cc7b76ec2a32e287b739f5701bc40acd6160e，241文件CF089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6。冻结来自旧HEAD，提交后tree/完整文件身份一致；已正常push并fetch读回同一commit/tree。项目记录不进源码分支。
 
 ## 2. 做法与证据
 
@@ -34,7 +40,7 @@
 
 已实施、自验通过、真实两节点业务流程通过、源码和研发摘要同步云端；独立源码最终裁决缺失，Gate BLOCKED，PR20保留Draft。旧Task04/10/11负面裁决、SC08及复杂产品闭环尚未独立关闭，不改写历史。用户本人体验验收仍待本人操作；main/旧Stable/原生会话/旧版本不动。
 
-本机入口：`python3 /home/workspace/DevFlower/.local/open-devflower-agent.py`，实际`--check`通过，Development089375e58697，http://127.0.0.1:36989（私有凭据URL不入库）。打开测试或正常项目目录，右侧AI助手提出需求；运行建议点击“查看并确认运行”，历史进入“整轮对话”后按工作流/任务/节点查看。详细操作见源码docs/WORKBENCH.md。
+本机入口：`python3 /home/workspace/DevFlower/.local/open-devflower-agent.py`，实际`--check`通过，Developmentcad0d605eede，http://127.0.0.1:40893（私有凭据URL不入库）。打开测试或正常项目目录，右侧AI助手提出需求；运行建议点击“查看并确认运行”，历史进入“整轮对话”后按工作流/任务/节点查看。详细操作见源码docs/WORKBENCH.md。
 
 原始日志、截图、脚本、失败结果在本地/home/workspace/claude_workspace/DevFlower测试/.devflower-tests/20261027-workspace-session-usability；原生HOME及审核证据在/home/workspace/DevFlower/archives/devflower-workspace-usability-20261027。云端只放本README、合同、候选清单和脱敏机器摘要。
 
@@ -47,3 +53,5 @@
 |2026-10-27|最终921/6/230/59和两CI通过；真实助手/连接检查/两Agent交接成功。|
 |2026-10-27|Claude源码两轮无最终裁决；Codex核验及明确UUID恢复超时；受控执行Claude设计反例4/4；固定Gate拒绝，预算耗尽停止外部调用。|
 |2026-10-27|源码f22ae75正常提交/push/fetch读回；DraftPR20更新，项目摘要同步project/devflower，原始证据留本地。|
+
+本机另备干净手测目录 /home/workspace/claude_workspace/DevFlower测试/工作台体验，包含未执行的双Agent草稿和收藏模板，可直接打开体验；不与原始日志目录混用。

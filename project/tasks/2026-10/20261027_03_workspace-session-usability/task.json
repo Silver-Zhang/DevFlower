@@ -14,6 +14,16 @@
       "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
       "files": 241,
       "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    },
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "f22ae7582aa6ff6cf37507e93853cbcc54c41bb7",
+      "commit": "70929224355f05c0c01976e289c22c490cb67b5e",
+      "git_tree": "34faa15ffda94ca649328e1ee2e05bca62630128",
+      "candidate_sha256": "cad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5",
+      "files": 241,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
     }
   ]
 }

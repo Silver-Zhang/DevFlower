@@ -1,20 +1,19 @@
 {
   "task": "20261027_03_workspace-session-usability",
-  "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
-  "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
+  "candidate_sha256": "cad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5",
+  "git_tree": "34faa15ffda94ca649328e1ee2e05bca62630128",
   "implemented": true,
   "self_test_passed": true,
   "real_sequence_passed": true,
   "independent_final_verdict": null,
+  "current_candidate_reviewed": false,
   "gate": "BLOCKED",
-  "reason": "Claude source R1 300sec / R2 180sec timed out without final report; two recovery budget exhausted",
-  "additional_gap": "Native Codex implementation verification 180sec plus same-UUID90sec resume returned no final report; actual business workflow succeeded separately",
+  "reason": "Current corrected candidate requires fresh independent review; previous two timeouts bound to089375 cannot approve it. Recovery budget exhausted, not reset.",
   "source_pushed": true,
   "pr_draft": true,
   "main_merged": false,
   "stable_promoted": false,
   "infra_recoveries_used": 2,
   "source_attempts": 2,
-  "records_branch": "project/devflower",
-  "records_delivery_receipt": "Local delivery-receipt.json after commit and remote readback"
+  "records_branch": "project/devflower"
 }

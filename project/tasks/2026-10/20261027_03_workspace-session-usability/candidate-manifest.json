@@ -1,6 +1,6 @@
 {
   "branch": "flow/copilot-canvas-assistant",
-  "candidate_sha256": "089375e58697a5b89ff10889dd5f2f1dc8fbc48e201f615ad195b59a2d6099b6",
+  "candidate_sha256": "cad0d605eedeaeea1d089aec89c4e67cb9ae5b975d280f6c75a7fa3b1b7111f5",
   "files": [
     {
       "mode": "100644",
@@ -509,8 +509,8 @@
     {
       "mode": "100644",
       "path": "tests/test_workspace_usability.py",
-      "sha256": "6d07ff975924f6d5bb5c96bc3d21993c391a27380168b9d86432d766259f47a2",
-      "size": 10460
+      "sha256": "cd857d618aaecdfbf851b8a9433f4b93b56cd2b6f5347fe80551e115e59c86f6",
+      "size": 11597
     },
     {
       "mode": "100644",
@@ -527,8 +527,8 @@
     {
       "mode": "100644",
       "path": "tests/workbench_browser.cjs",
-      "sha256": "4b2ec5a63f503229f1bd27c3080099c89e51744d57213da0374db761942b443f",
-      "size": 147213
+      "sha256": "91d171a705e15abc729e50bf869e77568226e3d618b46261e22c0c92b90a1825",
+      "size": 147948
     },
     {
       "mode": "100644",
@@ -845,8 +845,8 @@
     {
       "mode": "100644",
       "path": "tools/studio/model_registration.py",
-      "sha256": "960074e9d6b2fd7a0bff3d3ee1386b44b5b5ee06df0d17100e3d1abad8ab5ec5",
-      "size": 7448
+      "sha256": "4cb3c8261aaae3208e1a3b1dd0f60bd5d6c2a8e96c919a83832cda148d2d0374",
+      "size": 7974
     },
     {
       "mode": "100644",
@@ -989,8 +989,8 @@
     {
       "mode": "100644",
       "path": "tools/studio/static/workbench.js",
-      "sha256": "748da556dd798ce07b95a25e3947bbcb58937ed9853d6ec90790c151f24f695a",
-      "size": 1173446
+      "sha256": "7d28d16d94f252a3855abdba1a2f997767e07e46960c42cbc179acd74e9127b1",
+      "size": 1173458
     },
     {
       "mode": "100644",
@@ -1199,8 +1199,8 @@
     {
       "mode": "100644",
       "path": "tools/studio/workbench_ui/ModelSelector.jsx",
-      "sha256": "c13495aa354194b1e65aa6eb88bfa44c79eaebc7af032ac9eb4214fa2cd002ca",
-      "size": 7808
+      "sha256": "1734248f952ab331646868b57b36b664d79133e3fd51879770b07640628b6899",
+      "size": 7824
     },
     {
       "mode": "100644",
@@ -1449,7 +1449,7 @@
       "size": 13200
     }
   ],
-  "git_tree": "7d5cc7b76ec2a32e287b739f5701bc40acd6160e",
-  "head": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
-  "status": "M docs/WORKBENCH.md\n M tests/test_project_files.py\n M tests/test_provider_assistant.py\n M tests/test_workspace_journal.py\n M tests/workbench_browser.cjs\n M tests/workbench_user_experience.test.mjs\n M tools/studio/canvas_assistant.py\n M tools/studio/devflower_agent.py\n M tools/studio/model_catalog.py\n M tools/studio/model_registration.py\n M tools/studio/session_batch.py\n M tools/studio/static/workbench.css\n M tools/studio/static/workbench.js\n M tools/studio/workbench_rpc.py\n M tools/studio/workbench_runtime.py\n M tools/studio/workbench_sessions.py\n M tools/studio/workbench_ui/CanvasAssistant.jsx\n M tools/studio/workbench_ui/ModelSelector.jsx\n M tools/studio/workbench_ui/RunJournal.jsx\n M tools/studio/workbench_ui/SessionList.jsx\n M tools/studio/workbench_ui/index.jsx\n M tools/studio/workbench_ui/journal.css\n M tools/studio/workspace_access.py\n?? tests/test_workspace_usability.py\n?? tools/studio/workbench_ui/journal_groups.mjs"
+  "git_tree": "34faa15ffda94ca649328e1ee2e05bca62630128",
+  "head": "f22ae7582aa6ff6cf37507e93853cbcc54c41bb7",
+  "status": "M tests/test_workspace_usability.py\n M tests/workbench_browser.cjs\n M tools/studio/model_registration.py\n M tools/studio/static/workbench.js\n M tools/studio/workbench_ui/ModelSelector.jsx"
 }
