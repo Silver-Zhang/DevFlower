@@ -210,14 +210,9 @@ def create_server(runtime,port=0):
                 elif path=='/api/chat/start':value=runtime.session_center.launch(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/chat/cancel':value=runtime.session_center.cancel(data['workspace'],data['id'])
                 else:raise Invalid('没有这个工作台操作')
-                # Reading native history keeps a bounded portable reading copy,
-                # never the HOME, protocol envelope or an execution receipt.
-                if path=='/api/history' and not q.get('query') and not q['handle'].startswith('saved:'):
-                    try:
-                        selected=next(s for view in ('active','archived','trash') for s in sessions.listing(q['workspace'],view)['sessions'] if s['handle']==q['handle'])
-                        runtime.project_files(q['workspace']).session(selected,value)
-                    except (StopIteration,OSError,ValueError,Invalid,Blocked):
-                        value=dict(value,project_save_error='本机历史可读，但项目内阅读副本未保存，请检查 .devflower 权限')
+                # Observation must not create project-side transcript copies.
+                # Completed managed turns are archived by their explicit runtime
+                # completion path; opening a native view only reads the source.
                 if path in ('/api/canvas-assistant/manage','/api/canvas-assistant/conversation'):
                     from .project_files import archive_completed
                     archive_completed(runtime,data.get('workspace',q.get('workspace')),assistant=data.get('id',q.get('id')))
