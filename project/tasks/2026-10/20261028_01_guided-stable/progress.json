@@ -4,7 +4,7 @@
   "contract_sha256": "e9dea223528b3da15e8eafc0f419cfb8a1596ab77814ed6eb470ed581830e5eb",
   "source_base": "f67737a9016b45d5a64896445e322ba3e32c926b",
   "implementation_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
-  "status": "IMPLEMENTING_PRODUCT_K",
+  "status": "IMPLEMENTING_NATIVE_BOUNDARIES",
   "formal_acceptance": false,
   "user_personal_acceptance": false,
   "main_merged": false,
@@ -63,9 +63,62 @@
         "status": "PARTIAL",
         "exit": 0,
         "seconds": 779.68
+      },
+      {
+        "phase": 9,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "尚未在云端重跑 CI 或读回九套浏览器 artifact；云端原失败缺少错误详情，不能断言本次复现是其唯一根因。",
+          "Task15 仍为 PARTIAL：既有原生恢复原子性和 TUI 工具边界阻塞未由本补丁解决。完整回归、独立审查、Gate 和交付由父监督继续。"
+        ]
+      },
+      {
+        "phase": 10,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "交互式原生终端由用户的 CLI 配置管理权限。如果用户在 CLI 中允许写入工作区外的位置，工作台没有额外隔离来保证权威文件不可写；可信自动交付仍须使用原有隔离监督路径。",
+          "当前环境禁止创建内层 user namespace，真实 Codex 只读和工作区写入边界探测均被阻断。需要在宿主验证；未将阻断视为通过。",
+          "最终候选的真实 Codex/Claude 模型调用、原生终端接管与争用、宿主完整回归、独立审查和 Gate 仍由外层执行。Claude 外部裸 CLI 不受工作台租约控制。",
+          "CLI 内部 Provider 级重试行为尚未在真实 Provider 上核验；自验确认 DevFlower 调度层在模拟失败后没有重发。"
+        ]
+      },
+      {
+        "phase": 11,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "交互式 TUI 仍使用用户自己的 CLI 权限设置；其内置工具尚未接入并验证同一受保护 profile。外部 MCP 也不能被称为受工作台文件权限约束。",
+          "包含权威目录的父工作区仍被现有预检拒绝运行；尚未实现使用受保护 profile 安全授权该父目录。",
+          "当前受控环境无法完成实际 CLI 的 sandbox 和模型可见工具探测。父监督提供的宿主九字段结果是旧参数的独立证据；最终源码新增的链接反例和实际工具路径仍需在宿主验证。",
+          "真实模型、完整回归、独立复核、Gate 和 Stable 验收仍由外层执行；本次未调用真实模型或签发批准。"
+        ]
+      },
+      {
+        "phase": 12,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "包含受保护子目录的父工作区仍被通用源校验拒绝。需要区分普通原生运行与严格交付路径，并处理源码快照对受保护子目录的遍历，才能安全放行。",
+          "受管 Claude 交互终端尚未补齐本轮要求的 strict MCP 和工具约束。",
+          "Codex TUI 已传入具名 profile，但用户可在原生 CLI 内改变权限，外部 MCP 不受该配置保证；最终源码的内置工具、链接和受保护路径行为仍需在正常宿主实际验证。",
+          "外层完整回归、真实 Provider 和终端验收、独立复核及 Stable 发布均未执行。"
+        ]
+      },
+      {
+        "phase": 13,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "父工作区部分视图目前只接入普通 Codex 对话。工作流、原生终端、暂停和恢复尚未统一使用该视图；这些入口仍保留严格拒绝，不能宣称本阶段源码完成。",
+          "Claude 终端已传入空内置工具集和严格空 MCP 参数，并检查 CLI 是否声明所需选项；当前环境没有 Claude 可执行文件，真实 CLI 是否按这些参数封闭工具和 MCP 尚未验证，逐路径读写能力也未实现。",
+          "最终源码需在正常宿主运行 Codex 具名 profile 的实际工具及符号链接、硬链接反例。当前受控环境拒绝创建内层 user namespace。",
+          "外层完整回归、真实模型验收、独立复核及 Git/Stable 交付均未执行。"
+        ]
       }
     ],
-    "active_phase": null
+    "active_phase": 14
   },
   "controlled_targeted_tests": [
     {
@@ -203,10 +256,10 @@
     "round": 1,
     "candidate": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
     "session": "ec86ce04-40e7-4a5f-a73a-7f29a23f3e2f",
-    "state": "RUNNING",
+    "state": "NO_FINAL_VERDICT",
     "verdict": null,
     "first_attempt": "CLI exit1 before inference: nonexistent UUID incorrectly passed as resume; original kept",
-    "recovery": 1
+    "recovery": 2
   },
   "product_K": {
     "run_id": "5807154ccb6046459b6f654123340256",
@@ -222,7 +275,7 @@
     "first_implementation_session": "01a17f04-1387-7741-b06e-7af23bf44003",
     "first_implementation_seconds": 127.765,
     "continuation": {
-      "state": "RUNNING",
+      "state": "BLOCKED",
       "same_native_session": true,
       "supervisor": "fixed old Stable CLI under parent Task15 scope",
       "old_controller_record_unchanged": true
@@ -267,9 +320,19 @@
     "evidence": "synthetic/provider-mechanical; not final real product acceptance"
   },
   "product_k_continuation2": {
-    "status": "RUNNING",
+    "status": "BLOCKED",
     "session_id": "01a17f04-1387-7741-b06e-7af23bf44003",
-    "purpose": "native execution tools/configuration and current assistant history counterexample"
+    "snapshot_sha256": "30d8fed06de5800c55eeb2d8ade3d5780e95b5edebed3a12c6bca3773e5d5300",
+    "git_tree": "13c1e61fe4ed6d8c3dab9bd64481d96b6326ecb3",
+    "files": 275,
+    "python_suites": [
+      26,
+      45
+    ],
+    "js": 60,
+    "mechanical": 3,
+    "chromium_http": 3,
+    "old_records_unchanged": true
   },
   "external_native_capability_experiment": {
     "session": "01a17f38-5369-7a61-9ecd-085df436e777",
@@ -281,5 +344,73 @@
     "original_home_and_store": true,
     "global_config_unchanged": true,
     "product_adaptation_acceptance": false
-  }
+  },
+  "ci_c842": {
+    "run_id": 40585568242,
+    "python": 1044,
+    "host": 6,
+    "js": 59,
+    "contracts": "success",
+    "browser_workbench": {
+      "tests": 114,
+      "failures": 1,
+      "skipped": 0
+    },
+    "browser_job": "failure",
+    "public_artifact_files": 1,
+    "original_failed_case_detail_missing": true
+  },
+  "phase9": {
+    "status": "PARTIAL",
+    "scope": "CI/test interpreter portability only",
+    "original_failure_preserved": true,
+    "targeted_chromium": 1,
+    "project_files_chromium": 9,
+    "js": 60,
+    "cloud_recheck": "pending"
+  },
+  "phase10": {
+    "state": "PARTIAL",
+    "source_writer_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
+    "scope": "ordinary native CLI semantics per user no-isolation preference; strong delivery gates retained",
+    "contract_changed": false,
+    "gate_or_review_approved": false
+  },
+  "host_native_stage12": {
+    "candidate_sha256": "04c51bc5fc693af70aa283577e81b36ed3513306ac1d0b1fd8af95f8ed8f3855",
+    "kind": "real CLI plus local synthetic Provider; zero real model calls; interim immutable snapshot",
+    "results": [
+      {
+        "case": "write-lock-tools",
+        "passed": true,
+        "value": true,
+        "seconds": 6.026
+      },
+      {
+        "case": "native-read-only",
+        "passed": false,
+        "error_type": "Blocked",
+        "reason": "原生 Codex 文件沙箱能力未通过本机探测；未调用模型：实际权限矩阵不匹配：{\"读取工作区\": true, \"写入工作区\": false, \"写入外部\": false, \"读取外部\": true, \"写入项目记录\": false, \"读取项目记录\": true, \"读取权威\": false, \"写入权威\": false, \"读取认证\": false, \"经软链接读取认证\": false, \"经软链接读取权威\": false, \"经软链接写入权威\": false, \"经硬链接读取认证\": true, \"经硬链接读取权威\": true}",
+        "seconds": 0.057
+      },
+      {
+        "case": "native-workspace-write",
+        "passed": false,
+        "error_type": "Blocked",
+        "reason": "原生 Codex 文件沙箱能力未通过本机探测；未调用模型：实际权限矩阵不匹配：{\"读取工作区\": true, \"写入工作区\": true, \"写入外部\": false, \"读取外部\": true, \"写入项目记录\": true, \"读取项目记录\": true, \"读取权威\": false, \"写入权威\": false, \"读取认证\": false, \"经软链接读取认证\": false, \"经软链接读取权威\": false, \"经软链接写入权威\": false, \"经硬链接读取认证\": true, \"经硬链接读取权威\": true}",
+        "seconds": 0.051
+      }
+    ]
+  },
+  "host_hardlink_creation": {
+    "actual_cli": true,
+    "synthetic_files": true,
+    "real_model_calls": 0,
+    "create_alias": "PermissionError errno13",
+    "direct_read": "denied",
+    "direct_write": "denied",
+    "does_not_close_preexisting_alias_issue": true
+  },
+  "source_worktree_dirty": true,
+  "latest_source_not_pushed": true
 }

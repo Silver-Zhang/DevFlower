@@ -1,11 +1,11 @@
 # 当前状态
 
-Task15 `tasks/2026-10/20261028_01_guided-stable`：实施真实产品修复 K，保留独立 Claude 对stage7的无终局记录。用户五项需求、D01–D12、最多5源码审核/2基础设施恢复；当前1源码轮/2恢复（恢复已耗尽），verdict=null。旧负面与预算保留。
+Task15 `tasks/2026-10/20261028_01_guided-stable`：仍在实施，不是正式验收。原D01–D12、旧K/BLOCKED/负面原件保留；源码审核1/5、基础设施恢复2/2已耗尽，R1无终局裁决。新候选必须新源码轮复核。
 
-开发源码已正常推送 `flow/workbench-guided-stable`：c842e84413b1b68be8c6e00e133d20f6281994f7 / tree aac25dc171c64a38f0e33968b3d643a5e4052443 / CF be1cfd4e0c0edf93cb6bf0076d6f9b84b96533562f7a4a3c35e33fc6b2459fc5。未验收、Draft PR #22 已创建。
+main/origin main重新fetch读回e0a0f92fed7f94bfef3a01b1298f8465c008023d，tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039，main干净。PR19→20→21保留Draft，完整继承后的Draft PR22 head c842e84413b1b68be8c6e00e133d20f6281994f7。后续源码在guided-stable工作树，尚未推送，不覆盖旧Stable或用户34915页。
 
-阶段7另一个固定候选完整1039 Python/6host/59JS/233 ChromiumHTTP/16旧Studio检查均exit0、无失败错误跳过；阶段8及最终候选不能直接复用。真实4调用双Provider原UUID续聊成功，内置助手复杂草稿成功但诊断失败；Terra真实列目录暴露code-mode-host禁用及未选插件可达，进入K修复。
+原生Codex唯一源码写者为父任务原UUID01a17e69-7d98-7aa1-80fa-cca9423e5bd5，固定外部Stable监督。阶段10–13均PARTIAL；阶段14继续接通父工作区工作流/终端/恢复，以及受保护文件已有硬链接的启动完整性检查。旧K两次续接仍BLOCKED；已完成的真实源修复逐字节接回父树，不伪造旧K通过。
 
-K首轮实际BLOCKED（仅部分实施，exit0），未进入审核/交付；外部监督按原UUID继续剩余源码，旧记录不改写。K通过固定旧Stable5816画布启动，run5807154ccb6046459b6f654123340256，开发副本在用户指定test目录。Codex Terra/high为当前唯一源码写者，实际子PID/argv已观察；主开发worktree当前干净不并行修改。K最多2源码轮并计总预算，Draft交付不等于全版批准。
+外层实际CLI：原生同会话写锁/工具配置通过，硬链接保护负例真实失败；进一步证实运行中新建别名被拒绝，需补启动前保护。阶段12不可变中间快照正在完整回归。阶段7的1039Python/6host/59JS/233HTTPChromium不是最新源码验收，云端c842浏览器仍1FAIL。
 
-main e0a0f92、旧Stable、PR19→20→21、原生会话和用户Development34915均保留。尚未正式Gate、main合并、Stable晋升或分支删除。下一步监督K原生工具与历史卡住修复，随后新候选新源码轮送审，最终同候选完整验证/逐页与真实运行/独立硬ACCEPT/旧Gate/云端CI，再按已有授权交付与整理。
+下一关：完成当前具体修复，冻结新候选、同版本完整回归/真实模型/22类逐页UI与复杂工作流/产品K、新独立硬ACCEPT及旧Gate；通过后才可按既有授权main整合、正式Stable晋升和已合并闲置分支清理。尚未合并/晋升/删分支。

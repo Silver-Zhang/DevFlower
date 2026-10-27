@@ -24,6 +24,10 @@ Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKE
 
 真实产品任务 K 已在固定旧 Stable 5816 的画布中提交并启动，run `5807154ccb6046459b6f654123340256`。实际操作者为获授权的 Codex，不冒充用户本人点击。任务绑定c842阶段8基线，修复真实助手诊断、原生工具/插件边界、检查交接身份、技能预检与长会话续接；独立 Development clone 开发。Developer真实PID/CLI/argv Terra/high已观察。其首轮127.765秒exit0但status BLOCKED，只完成部分实现；旧Controller实际停止，未验证/审核/交付。按原UUID继续1640.423秒exit0后仍BLOCKED：已补诊断批次、长Claude证明链、Skill漂移与检查交接身份及相关机械反例，Codex工具配置重载问题尚未关闭。外部监督查明无.git是预期隔离副本而非必须用户介入的障碍，按原HOME/cwd/UUID继续剩余源码实现，原BLOCKED不修改。该子任务至多2个源码审核轮并计入Task15总5轮，只允许正常开发分支/Draft PR交付，不批准整版main/Stable。三个父进程机械断言与真实模型/外层全回归分列。
 
+原生模式语义澄清：用户此前已明确“DevFlower不用隔离运行”。D08要求受支持入口单写，并未要求本机原生CLI无法读取工作区外所有文件。当前继续修正把普通原生模式当强隔离验证而全面拦截的实现：普通chat/TUI必须真实标注原生权限与可提供的接管能力，不伪造锁内历史CAS；强隔离探针、权威状态和自动交付门禁保持，无法验证的原生模式禁止自行批准自动交付。任意外部裸Claude CLI不能全局互斥的原始事实不改写。此澄清不等于缺陷已关闭或审核批准，最终由独立复核判断。初始D01–D12、旧K及预算不修改。
+
+云端PR22/c842：1044 Python/6host/59JS通过，浏览器114中1FAIL；artifact只有studio_races的一份结果，未获得该失败完整error，不能称唯一原因已确定。父进程A/B在无python别名环境同一跨工作区案例失败，仅添加解释器别名后通过。原生父任务阶段9已修复显式解释器及9套CI公开证据收集，并加inspection JS：定向HTTP Chromium1、项目文件9、JS60通过；故意无效解释器负面保留。云端尚未重跑。当前初始Codex UUID沿父任务实施普通原生语义修正，不与K源并行写入。
+
 ## 4. 结论与边界
 
 当前继续真实产品修复，尚未正式验收。main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`/tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` 与旧Stable保留；PR19/20/21均Draft，整版收尾 [PR #22](https://github.com/Silver-Zhang/DevFlower/pull/22) 已创建并保持Draft，以main为base且完整继承旧源码。当前未合并、未晋升、未删分支。
@@ -38,6 +42,10 @@ Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKE
 | 2026-10-28 | 实际NativeCodex连续实施8阶段；阶段6超时与所有PARTIAL/环境失败保留。阶段7完整同候选回归通过，阶段8保存并同步开发源码。 |
 | 2026-10-28 | 真实Provider续聊和内置助手测试，发现实际诊断/工具缺陷；新Claude源码R1及最终恢复均超时、无裁决；原错误启动保存。固定旧Stable画布实际发起产品K，首轮开发返回BLOCKED，外部按原UUID继续源码实现；旧运行不改写。实际重复打开当前助手历史造成零GET并永久加载的HTTP/Chromium反例已独立保存。 |
 
-新增原生能力实验：原HOME/原CODEX_HOME使用CLI支持的exec忽略本次用户工具配置，Terra/high/read-only真实读取公开测试文件成功，8.029秒exit0，原配置不变；不是产品适配或最终验收。bwrap固定配置元数据成功但嵌套命令失败，不作为可用方案。实际Codex同原K UUID正在实施新的原生业务调用适配及历史卡住修复。
+新增原生能力实验：原HOME/原CODEX_HOME使用CLI支持的exec忽略本次用户工具配置，Terra/high/read-only真实读取公开测试文件成功，8.029秒exit0，原配置不变；不是产品适配或最终验收。bwrap固定配置元数据成功但嵌套命令失败，不作为可用方案。K同UUID continuation2已结束：71项Python分两套、60JS、3机械及3 Chromium/HTTP定向检查通过，仍真实BLOCKED于原生读取隔离、续聊CAS和TUI。固定275文件快照CF `30d8fed06de5800c55eeb2d8ade3d5780e95b5edebed3a12c6bca3773e5d5300` / tree `13c1e61fe4ed6d8c3dab9bd64481d96b6326ecb3`保存；该原件不改写。父任务已按清单逐字节接回开发树。
 
 原始授权、进程/输出、故障、截图和原生会话只在本机archives/test；公开分支仅此五节说明、合同与机器摘要。progress.json保存候选和实际计数，不将中间结果冒充最终通过。
+
+阶段10–13实际均返回PARTIAL，原始报告保留。已接普通Codex原UUID续聊、真正CLI具名权限、关闭未选插件/应用/浏览器/多agent工具、保护当前框架根；父工作区部分视图目前仅普通Codex对话贯穿prepare/launch/worker，工作流/终端/恢复尚未统一，阶段14正在实施。Claude TUI已加入严格空MCP/工具参数，实际二进制验证仍待外层。
+
+外层宿主阶段12实际CLI机械检查（零模型）：同会话写锁/工具配置通过；read-only和workspace-write保护探针均失败，原因是启动前已有硬链接仍可读取认证/权威的合成文件。进一步实际CLI证明运行中新建该硬链接被PermissionError13拒绝，直接读写也拒绝；不能删除已有硬链接负例或把此问题误报成宿主不支持。阶段14接收完整原始证据并修复启动前完整性保护。冻结阶段12中间278文件CF04c51bc5fc693af70aa283577e81b36ed3513306ac1d0b1fd8af95f8ed8f3855/tree9991dc8734efbb4aecff63a4377a8f8152b9eb0a开始外层完整回归，该快照并非最终候选。
