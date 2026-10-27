@@ -38,7 +38,7 @@ R4实际执行13项独立锁/投影检查及另3项投影检查，均无失败�
 
 F2现有真实反例：两个不受DevFlower锁管理的Claude CLI同时恢复同一新建QA UUID，开始tick相同、PID不同、均exit0并返回各自回答。可保证的受管接管与任意外部CLI不能混为一谈。F3固定旧Gate已实际运行，exit2 / BLOCKED，首先拒绝缺失的根交互实施原生终局回执；不伪造IMPLEMENTED。R4 L3 FAIL、L5/L6 BLOCKED；没有正式技术验收。
 
-云端contracts和Studio通过；Chromium首轮在终端prepare响应缺少data时测试抛TypeError。原失败已保留；本地同候选全109项及定向1项均通过，尚不能确定云端响应异常原因。仅重跑一次云端job，目前仍在安装依赖，F5保持OPEN，不称CI全绿。不消耗第5轮要求相同源码改判。
+云端contracts和Studio通过；Chromium首轮在终端prepare响应缺少data时测试抛TypeError。原失败已保留；本地同候选全109项及定向1项均通过，尚不能确定云端响应异常原因。仅重跑一次云端job，依赖安装阶段约20分钟后被取消，浏览器步骤未执行，产物上传因无结果失败，F5保持OPEN，不称CI全绿。不消耗第5轮要求相同源码改判。
 
 本机Codex配置测试中从原hash发生变化（当前默认terra/high），旧预览正确拒绝继续；未改写原配置。保留旧启动绑定，检查无活动任务后仅停止自有闲置QA预览，重建一次当前配置绑定并复用原权威库/原生库，无复制。已批准显式QA模型/权限不变，旧执行验证不复用；新配置下Codex和Claude各一次真实原UUID恢复、当前浏览器2项与入口检查通过。此Development启动绑定不等于正式Stable/Gate批准。
 

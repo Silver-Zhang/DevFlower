@@ -373,8 +373,13 @@
     "chromium_first": "FAILURE",
     "first_failed_job": 122311254670,
     "original_failure": "terminal/prepare missing data; TypeError in tests/workbench_browser.cjs:561",
-    "chromium_retry": "IN_PROGRESS_DEPENDENCY_INSTALL",
-    "retry_count": 1
+    "chromium_retry": "CANCELLED_DURING_DEPENDENCY_INSTALL",
+    "retry_count": 1,
+    "retry_job": 122317449472,
+    "retry_browser_executed": false,
+    "retry_artifact_upload": "FAILED_NO_RESULTS",
+    "retry_original_log_sha256": "a6cdf11938c9bf0052d54b4ca760f9c3ae606962921cd61168a4040f302f3929",
+    "note": "Dependency installation ran about20min then canceled; browser step skipped by Actions, not changed to Skip in tests. First attempt test failure still OPEN. No third rerun."
   },
   "configuration_refresh": {
     "original_operator_preserved": true,

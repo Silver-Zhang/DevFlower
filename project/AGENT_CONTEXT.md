@@ -12,7 +12,7 @@ Task14 tasks/2026-10/20261027_05_native-local-sessions：合同L1–L6，4/5源�
 
 审核UUID a43ac6a3-ba81-4afc-bf9a-84d7dd8e10eb，持久HOME archives/devflower-native-local-20261027/review-r1/home；当前cwd candidate-r7/candidate；原生jsonl仍在初始candidate-r3所属project目录。opus5.5 1M/high，CLI回报型号同请求；物理后端/有效effort unknown。固定旧Stable监督，当前Controller不自批。恢复使用同HOME+明确UUID+固定监督器，先确认旧PID已退出，不能--last。
 
-云端contracts/Studio成功；Chromium首次prepare无data导致测试TypeError，受控重跑一次目前安装依赖；本地单例/全例通过不替代CI。不要反复重跑直到绿或用额外审核迫使ACCEPT。
+云端contracts/Studio成功；Chromium首次prepare无data导致测试TypeError，受控重跑一次在依赖安装约20分钟后取消，浏览器未执行/产物上传因无结果失败；本地单例/全例通过不替代CI。不要反复重跑直到绿或用额外审核迫使ACCEPT。
 
 入口.local/open-devflower-native.py→Development34915，实际已检查。原生Codex配置变化后旧服务正确拒绝；保留旧绑定，仅停自有闲置QA预览，新绑定preview-r7-rebound复用同权威库/原生库，不改全局配置，不复用旧执行证书。新配置另各Provider一次真实原UUID恢复和浏览器2项过；不等于Stable批准。
 
