@@ -1,15 +1,15 @@
 # 当前状态
 
-Task14本机原生模式已实施并推送；正式验收BLOCKED。新会话用原HOME/会话库/中转，无额外运行HOME或容器；旧会话/认证/Stable保留。
+Task15 `tasks/2026-10/20261028_01_guided-stable` 实施中。用户要求解决阻塞、免多余验证/手写确认、新人引导、助手诊断、全页面精修及条件满足后的正式Stable/分支整理。完整D01–D12见本任务合同。
 
-PR21 Draft：f67737a9016b45d5a64896445e322ba3e32c926b；tree ae5512038584aa130c1c99bbc2093cb0d0194065；CF3144d2e7637010ad5d864c49f44566f765a376f3a9095699e755affb556796eb，252文件，正常push已读回。依赖PR20→PR19，不合并main。
+独立源码worktree `development/guided-stable`，分支 `flow/workbench-guided-stable`，基于f67737a，完整继承PR19→20→21。旧17个worktree起始均干净，未覆盖旧版本/会话/认证。main仍e0a0f92，旧Stable5816ba4776b3保持。
 
-965 Python、6host、233合成Chromium/HTTP、59JS及Baseline/语法/字节构建/隐私通过；真实两Provider各2回合、桌面同UUID读取、Codex竞争/退出后接续、外部续聊默认视图通过。新配置重绑后另各1原UUID恢复及浏览器2项通过。均非用户本人验收。
+源码唯一写者为真实Codex CLI，gpt-6.1-terra/high，明确UUID 01a17e69-7d98-7aa1-80fa-cca9423e5bd5；固定旧Stable外部监督，独立持久HOME。阶段1/2真实终局均PARTIAL，现阶段3继续同UUID，主监督者不并行改源码。
 
-源码审核R1 BLOCKED、R2 NEEDS_CORRECTION、R3 BLOCKED（独立动态引用无效，已单列）、R4 NEEDS_CORRECTION。R4实际13+3独立检查通过；F1/F4 CLOSED；F2外部Claude双写已真实复现，F3原生实施回执/固定Gate BLOCKED，F5云端Chromium首次失败未关。旧Gate实际exit2。4/5轮、恢复0/2，停止索取同源码改判。
+已写入默认Claude原生恢复环境修复、普通工作流/聊天/终端的结构化点击路径（不冒充手写意见，不先发nonce探针）。完整性检查、新人引导和限量公开源码诊断正在实施。尚未冻结本轮最终候选。
 
-云端contracts/Studio成功；Chromium首次TypeError（prepare无data），仅重跑一次在依赖安装约20分钟后取消，浏览器未执行、产物上传无结果失败，不称全绿。Claude交互终端同身份但60秒仅output/exit2，未确认ready；桌面窗口热接管未完成；普通chat仍300秒。Claude写入/额外挂载/自动交付禁用。
+本机针对性6+34项exit0/无失败/错误/跳过；前6项为合成Provider边界，不代替真实模型。实施者环境限制产生的旧失败保留。stage3中间冻结版985 Python有1FAIL（工具集合旧断言未含新增公开源码工具）、6host/59JS及Baseline/构建通过；浏览器进行中。真实Edge代操作发现向导挤压画布与浅色ReactFlow仍dark等4项待修复。最终逐页/真实复杂流程/产品闭环、新Claude独立审核与固定Gate尚未完成。
 
-入口python3 /home/workspace/DevFlower/.local/open-devflower-native.py →Development34915。原生Codex配置变化导致旧预览拒绝，旧绑定保留；仅重启自有闲置QA预览并重绑当前配置，原库复用无复制、不改全局配置。main e0a0f92 /旧Stable5816ba4776b3保持。
+新Task15审核预算5源码轮/2基础设施恢复，当前0/0，旧Task14 R1–R4与BLOCKED完全保留。旧F2外部Claude并发、F3实施回执/Gate、F5云端浏览器和SC08需本轮实际处置及独立复核，不引用旧绿测试关闭。
 
-接续看Task14五节README/evidence-summary/readiness和各轮原始JSON。原始大日志截图HOME只本地；当前不能正式验收、合并或晋升Stable。
+当前用户入口仍为.local/open-devflower-native.py→Development34915，旧页面/用户草稿未代运行或覆盖。新Stable/main合并/分支清理均未执行。

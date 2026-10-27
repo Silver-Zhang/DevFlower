@@ -1,0 +1,92 @@
+{
+  "task": "20261028_01_guided-stable",
+  "run_id": "guided-stable-20261028-01",
+  "contract_sha256": "e9dea223528b3da15e8eafc0f419cfb8a1596ab77814ed6eb470ed581830e5eb",
+  "source_base": "f67737a9016b45d5a64896445e322ba3e32c926b",
+  "implementation_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
+  "status": "IMPLEMENTING",
+  "formal_acceptance": false,
+  "user_personal_acceptance": false,
+  "main_merged": false,
+  "stable_promoted": false,
+  "source_review_rounds": 0,
+  "infrastructure_recoveries": 0,
+  "implementation": {
+    "status": "PARTIAL",
+    "native_session_id": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
+    "completed_phases": [
+      {
+        "phase": 1,
+        "status": "PARTIAL",
+        "exit": 0,
+        "seconds": 114.702
+      },
+      {
+        "phase": 2,
+        "status": "PARTIAL",
+        "exit": 0,
+        "seconds": 485.205
+      },
+      {
+        "phase": 3,
+        "status": "PARTIAL",
+        "exit": 0,
+        "seconds": 550.623
+      }
+    ],
+    "active_phase": 4
+  },
+  "controlled_targeted_tests": [
+    {
+      "suite": "test_workbench_direct_actions.py",
+      "tests": 6,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "evidence_type": "synthetic-provider-boundary"
+    },
+    {
+      "suite": "test_workspace_sessions.py",
+      "tests": 34,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "interim_candidate": {
+    "sha256": "9bb9976ce63a86790be7ff26ff9cb45a6d6317528804279d1ef7b45ce34c85c7",
+    "git_tree": "2436d143425aa3f77d127521049711599e9fc91c",
+    "files": 260
+  },
+  "interim_regression": {
+    "python": {
+      "tests": 985,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 1
+    },
+    "host": {
+      "tests": 6,
+      "exit": 0
+    },
+    "js": {
+      "tests": 59,
+      "exit": 0
+    },
+    "browser": "RUNNING"
+  },
+  "visual_inspection": {
+    "executed_by": "Codex actual browser; synthetic fixtures",
+    "checks_passed": 4,
+    "open_findings": [
+      "VF01 guide/check canvas crowding",
+      "VF02 app light but ReactFlow dark",
+      "VF03 public source consent inaccurate",
+      "VF04 general send labelled design"
+    ],
+    "not_user_acceptance": true
+  }
+}
