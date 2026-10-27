@@ -1,0 +1,35 @@
+{
+  "state": "BLOCKED",
+  "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+  "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+  "source_self_test": true,
+  "independent_review": false,
+  "independent_verdict": null,
+  "source_rounds": 1,
+  "infrastructure_recoveries": 2,
+  "gate": {
+    "additional_gap": "Current-candidate positive complex native workflow still not passed",
+    "exit": 2,
+    "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "gate_invoked": true,
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "independent_verdict": null,
+    "primary_missing_evidence": "No successful structured Claude report; CLI prompt too long / empty compaction",
+    "raw_review_sha256": "b56097683cecaf394a662c58a554c18e9fe6f172593fc5eac370ccd465e93411",
+    "reason": "$: wrong type",
+    "round": 1,
+    "run_id": "c166b0c13ccd5a374e79653c2d0bf859",
+    "source_candidate": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "stable_replaced": false,
+    "status": "BLOCKED",
+    "verification_not_evaluated": "Gate rejected absent review at the schema check; mandatory verification specs retained, positive native test is explicitly failed."
+  },
+  "stable_promoted": false,
+  "user_personal_ux_acceptance": false,
+  "draft": true,
+  "remaining": [
+    "WX05: same final candidate positive complex Opus workflow has not completed; original bounded negative preserved, corrected-material run timed out600sec with invalid Read offsets",
+    "WX06/SUP01: no valid independent Claude source verdict; SC08 code repair not independently closed"
+  ],
+  "not_resolved_by_tests": "Model numeric arguments and context/compaction availability on the current gateway remain unreliable; physical backend and effective effort unknown"
+}

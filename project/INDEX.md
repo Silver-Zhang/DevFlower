@@ -4,6 +4,7 @@
 
 | 日期 | 任务 | 模式 | 状态 |
 |---|---|---|---|
+| 2026-10-27 | [20261027_02_claude-recovery-finalization](tasks/2026-10/20261027_02_claude-recovery-finalization/README.md) | B | 阻塞 |
 | 2026-10-27 | [20261027_01_workspace-images-skills-agents](tasks/2026-10/20261027_01_workspace-images-skills-agents/README.md) | B | 阻塞 |
 | 2026-10-26 | [20261026_05_workspace-local-project](tasks/2026-10/20261026_05_workspace-local-project/README.md) | B | 阻塞 |
 | 2026-10-26 | [20261026_04_workspace-assistant-run-journal](tasks/2026-10/20261026_04_workspace-assistant-run-journal/README.md) | B | 阻塞 |

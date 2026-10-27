@@ -1,13 +1,13 @@
 # DevFlower 接续入口
 
-先读STATUS、tasks/2026-10/20261027_01_workspace-images-skills-agents/README.md、evidence-summary.json、readiness.json、contract.txt。每任务一份五节README，原始日志/图片/会话不入库，不改写旧裁决。
+先读STATUS和tasks/2026-10/20261027_02_claude-recovery-finalization/README.md、evidence-summary.json、readiness.json、contract.txt。旧Task04 R5 NEEDS_CORRECTION、Task10 502/null及其预算不改。
 
-源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD007d34bcf7ef1bb3af40bf32267614c80b8d65e3，treeec742da6d997857f56dd201900770931031ff189，237文件CFdbe28848f475e1fdd5bd322984a156969df77740f9a68b3d8be524d7633f5847；Draft PR20依赖PR19。main仍e0a0f92fed7f94bfef3a01b1298f8465c008023d；Stable未替换。
+源码 /home/workspace/DevFlower/development/copilot-canvas-assistant，flow/copilot-canvas-assistant，HEAD742c61f4bda27e40d641a05ea5a364f6c2585c12，tree7e1992f75109ae5e542b87f97c5ea1cf24d772ef，CFe33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24，239文件；DraftPR20依赖PR19。main仍e0a0f92fed7f94bfef3a01b1298f8465c008023d，Stable不替换。
 
-Task10修复打开总目录误拦，浏览不能授予执行；项目优先.devflower，保护/未知/不可写位置托管不覆盖。图片PNG/JPEG显式发送；Skill完整内容哈希绑定/只读挂载/拒绝策略注入；连接诊断用公共占位不发业务Skill；Codex/Claude只读原生子Agent，写入任务单写者，Copilot不提供扩展。实际开关ON/OFF均测；不可把代理/原生未知参数猜成已生效。
+Task11修复SC08四外层Popen发布失败：引用先保留，失败精确停止并wait，无法写失败记录也先清理，保守未知不重发；终端FD/无reader失败处理。12实际OS子进程反例通过，旧候选8失败。903/6/225/57与同HEAD两CI最终通过。首主浏览器1次400根因未确认，原断言完整复跑106通过；保留原负面资料。
 
-最终同候选891/6/225/57零失败，真实图片9节点10边。r8复杂真实Codex4调用+1真实子Agent完成，r9只CSS/浏览器断言变化，分别绑定。r7 Codex+Claude6调用2轮旧证据保留；不能代替当前最终双Provider/独立审核。
+Opus5.5 1M/high nonce5.694秒成功，但复杂工具不稳定：本候选原生6业务调用两轮拒绝达到上限，后补证在Claude600秒超时，反复巨大Read.offset。本地3种数值SSE+真实CLI模拟输入正常，外部模型调用0，只排查传输不能作真实模型验收。图片DeepSeek实际9节点10边；助手模型不随Claude审核设置变化。
 
-固定旧Stable监督ClaudeR1及同UUID恢复均HTTP502 exit1、verdict=null，UUID72705bcc-99a5-4193-8b6c-b0c0543d0e1a，HOME/cwd/native路径见摘要。原生请求Opus5.5 1M/high，实际物理后端/effort unknown。基础设施恢复预算2已尽；不得新UUID/新候选偷续服务请求。当前正式验收BLOCKED、Gate未调用，继承SC08 P1未关；不自批Stable/合同K，不合并main。
+NativeCodex当前候选同UUID恢复后IMPLEMENTED。Claude源码审核R1 UUID7a25b60f-e153-43b3-8ea8-ccbd3d0a1972，PID979300，55.870秒exit1，Prompt too long / empty compaction，verdict=null。固定旧Gate实际exit2/BLOCKED，尚未独立关闭SC08、WX05/06。Task11已1源码轮/2基础设施恢复，不能偷续外部请求；新用户指令明确授权且满足恢复条件后才新受控身份/预算。当前不合并main或批准Stable。
 
-入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development /35837。旧页面/版本、原生HOME/认证和服务不删。所有后续新增工作流测试与保留证据统一 /home/workspace/DevFlower/test，任务本轮根 /home/workspace/DevFlower/test/20261027-workspace-images-skills-agents；普通单测临时文件/tmp自动清理。源码只推flow/copilot-canvas-assistant，记录只推project/devflower，不修改CodeWeave/RMC。
+入口 python3 /home/workspace/DevFlower/.local/open-devflower-agent.py 指Development /46579。工作区测试根 /home/workspace/DevFlower/test/20261027-claude-recovery-finalization；未来新增工作流/持久HOME/保留证据统一workspace/test，普通单测/tmp会自动清理。源分支只正常推flow/copilot-canvas-assistant，记录只推project/devflower；原始大日志/截图/会话/凭据不上云，不修改CodeWeave/RMC，不删除旧版本。

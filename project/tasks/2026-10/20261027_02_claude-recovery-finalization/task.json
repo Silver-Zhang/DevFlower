@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261027_02_claude-recovery-finalization",
+  "date": "2026-10-27",
+  "mode": "B",
+  "status": "阻塞",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/copilot-canvas-assistant",
+      "base": "007d34bcf7ef1bb3af40bf32267614c80b8d65e3",
+      "commit": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "files": 239,
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20"
+    }
+  ]
+}

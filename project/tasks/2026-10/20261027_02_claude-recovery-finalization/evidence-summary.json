@@ -1,0 +1,1262 @@
+{
+  "task": "20261027_02_claude-recovery-finalization",
+  "source": {
+    "commit": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "draft_only": true
+  },
+  "base": "007d34bcf7ef1bb3af40bf32267614c80b8d65e3",
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/20",
+  "source_files": 239,
+  "raw_local_root": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization",
+  "probe": {
+    "business_data_sent": false,
+    "complete": true,
+    "config_root": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-probe/.claude",
+    "context_window": "unknown",
+    "cwd": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/probe-1/empty-workspace",
+    "effective_effort": "unknown",
+    "home": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-probe",
+    "local_cli": {
+      "adapter_version": 1,
+      "auth_probe_scope": "local-cli-state-not-a-service-request",
+      "authenticated": true,
+      "available": true,
+      "machine_output": true,
+      "resume": true,
+      "version": "2.1.303 (Claude Code)"
+    },
+    "native_records": [
+      "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-probe/.claude/projects/-home-workspace-DevFlower-test-20261027-claude-recovery-finalization-probe-1-empty-workspace/947fac9a-5f8a-46b2-8b63-7ce756237439.jsonl"
+    ],
+    "physical_backend": "unknown",
+    "process": {
+      "bytes": {
+        "stderr": 447,
+        "stdout": 1702
+      },
+      "cancelled": false,
+      "duration": 5.694,
+      "exit": 0,
+      "operation_id": "PROCESS",
+      "overflow": false,
+      "process": {
+        "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+        "host": "silver-work-station",
+        "pgid": 865706,
+        "pid": 865706,
+        "sid": 865706,
+        "start": "162484230",
+        "state": "R"
+      },
+      "sha256": {
+        "stderr": "280ffe875580c09daccbb3a07cf2df82917551d284860d472a389c32bb2e1dcc",
+        "stdout": "a0908a99aa4f0b599a49fd3466d9246a838d98bbc183ddb6668c80f9369f901e"
+      },
+      "timeout": false
+    },
+    "reported_model": "claude-opus-5-5[1m]",
+    "requested_effort": "high",
+    "requested_model": "claude-opus-5-5[1m]",
+    "service_request_attempts": 1,
+    "service_working": true,
+    "session_id": "947fac9a-5f8a-46b2-8b63-7ce756237439",
+    "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+    "task": "20261027_02_claude-recovery-finalization",
+    "verdict": null
+  },
+  "regression": {
+    "python": {
+      "tests": 903,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "command": "PYTHONDONTWRITEBYTECODE=1 TMPDIR=/tmp python3 -B -m unittest discover -s tests -v",
+      "log_sha256": "e916b264ef034a561300c111d4fb52bb850b3051a4f9cd7184d8fc7b88c9bcd6"
+    },
+    "host": {
+      "tests": 6,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "command": "python3 -B tests/host_isolation.py",
+      "log_sha256": "25989c3f3af5f930a9450384f6a8e0d115daa1dc280a39c43f39fc9cc81e3c60"
+    },
+    "chromium_http": {
+      "tests": 225,
+      "main": 106,
+      "other": 119,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "evidence_type": "synthetic model boundaries; ordinary Chromium / real HTTP"
+    },
+    "javascript": {
+      "tests": 57,
+      "exit": 0,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted_sc08": {
+      "tests": 12,
+      "exit": 0,
+      "log_sha256": "3b6e81d706aefc648fb924673ea85df8e8dd90c99a41fc2b491f1e77de85a261"
+    },
+    "baseline": "exit0 structural checks only",
+    "build": "exit0 byte-identical rebuild",
+    "syntax": "6 checks exit0",
+    "commands": [
+      {
+        "name": "project_files_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/project_files_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/project_files_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 5.773468068102375,
+        "log": "project_files_browser-r2.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "studio_races-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/studio_races.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/studio_races-r2"
+        ],
+        "exit": 0,
+        "seconds": 3.519541986985132,
+        "log": "studio_races-r2.log",
+        "sha256": "45d33fb7331505e6417ee8b30bee4895318270d565ca2fbdd3e26c1819eea993"
+      },
+      {
+        "name": "studio_identity_races-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/studio_identity_races.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/studio_identity_races-r2"
+        ],
+        "exit": 0,
+        "seconds": 11.685693209990859,
+        "log": "studio_identity_races-r2.log",
+        "sha256": "189a22046579c8764576cd5b1966dfa11868ce3d573c28cb1c599632c6e449e3"
+      },
+      {
+        "name": "workspace_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/workspace_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/workspace_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 6.375424433965236,
+        "log": "workspace_browser-r2.log",
+        "sha256": "9b32dfa96405bc01badcd0794c9f61682684bfa6e173123b9a806b3e24916d5e"
+      },
+      {
+        "name": "usable_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/usable_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/usable_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 12.785812427988276,
+        "log": "usable_browser-r2.log",
+        "sha256": "8eca9a6363d3f9fbf00de67119ecc33fdb1b0685264f6ab51f6caaedcbe1fb6f"
+      },
+      {
+        "name": "template_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/template_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/template_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 3.469955577980727,
+        "log": "template_browser-r2.log",
+        "sha256": "62b2f3c89faf00ad8484cbbb1ff3ac08b0eeb80c082c51f6d60b9c867e93afb3"
+      },
+      {
+        "name": "session_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/session_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/session_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 7.977655677124858,
+        "log": "session_browser-r2.log",
+        "sha256": "16e7881f4f04e00ed1278c5bf20ad688abfb8e2bc3dfd0dd3839331189cfee23"
+      },
+      {
+        "name": "workbench_stable_browser-r2",
+        "command": [
+          "python3",
+          "-B",
+          "tests/workbench_stable_browser.py",
+          "--chromium",
+          "/home/silver/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+          "--playwright-module",
+          "/home/silver/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
+          "--node",
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--artifacts",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/workbench_stable_browser-r2"
+        ],
+        "exit": 0,
+        "seconds": 3.7699261009693146,
+        "log": "workbench_stable_browser-r2.log",
+        "sha256": "756831ae0005e153a194a77362cd09e767500a6dd5f35a57f133648f6e9cac5c"
+      },
+      {
+        "name": "javascript-r2",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--test",
+          "tests/workbench_editor.test.mjs",
+          "tests/workbench_projection.test.mjs",
+          "tests/workbench_user_experience.test.mjs"
+        ],
+        "exit": 0,
+        "seconds": 0.11395189398899674,
+        "log": "javascript-r2.log",
+        "sha256": "b0c0a5b5b8e0e34354b3c66ab70659bd5ee081b60c5808e884ef7742a350669a"
+      },
+      {
+        "name": "syntax-app.js",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--check",
+          "tools/studio/static/app.js"
+        ],
+        "exit": 0,
+        "seconds": 0.015580678125843406,
+        "log": "syntax-app.js.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "syntax-workspace.js",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--check",
+          "tools/studio/static/workspace.js"
+        ],
+        "exit": 0,
+        "seconds": 0.0156269408762455,
+        "log": "syntax-workspace.js.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "syntax-usable.js",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--check",
+          "tools/studio/static/usable.js"
+        ],
+        "exit": 0,
+        "seconds": 0.015710290055721998,
+        "log": "syntax-usable.js.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "syntax-usable_canvas.js",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--check",
+          "tools/studio/static/usable_canvas.js"
+        ],
+        "exit": 0,
+        "seconds": 0.015804694965481758,
+        "log": "syntax-usable_canvas.js.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "syntax-usable_sessions.js",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--check",
+          "tools/studio/static/usable_sessions.js"
+        ],
+        "exit": 0,
+        "seconds": 0.01576233794912696,
+        "log": "syntax-usable_sessions.js.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "syntax-workbench-r2",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "--input-type=module",
+          "--check"
+        ],
+        "exit": 0,
+        "seconds": 0.045525204157456756,
+        "log": "syntax-workbench-r2.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "build-r2",
+        "command": [
+          "/home/silver/.local/share/node-v22.14.0-linux-x64/bin/node",
+          "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/build-r2/ui/build.mjs"
+        ],
+        "exit": 0,
+        "seconds": 0.16388645791448653,
+        "log": "build-r2.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "first_browser_failure": {
+      "name": "native-unmount-discards-delayed-prepare-for-same-session",
+      "passed": false,
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n400 !== 200\n\n    at /home/workspace/DevFlower/test/20261027-claude-recovery-finalization/candidate-r2/candidate/tests/workbench_browser.cjs:267:29\n    at async /home/workspace/DevFlower/test/20261027-claude-recovery-finalization/candidate-r2/candidate/tests/workbench_browser.cjs:14:238\n    at async test (/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/candidate-r2/candidate/tests/workbench_browser.cjs:14:3)\n    at async /home/workspace/DevFlower/test/20261027-claude-recovery-finalization/candidate-r2/candidate/tests/workbench_browser.cjs:262:1",
+      "milliseconds": 5300
+    },
+    "original_browser_log_sha256": "2c2f336eb96a8d1ee3dd6dbf288df94e519d5f01b79cf02c354e127760888de5",
+    "original_python_failure": "r1:903 tests,1 ERROR due noninspectable MagicMock worker PID; test fixture fixed without removing assertions, production identical between r1/r2"
+  },
+  "cloud_ci": {
+    "head": "742c61f4bda27e40d641a05ea5a364f6c2585c12",
+    "workflow_runs": [
+      {
+        "id": 40425523496,
+        "name": "Studio contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 56,
+        "jobs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40425523496/jobs",
+        "logs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40425523496/logs",
+        "workflow_id": 389551712
+      },
+      {
+        "id": 40425523452,
+        "name": "Usable regression",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 64,
+        "jobs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40425523452/jobs",
+        "logs_url": "https://api.github.com/repos/Silver-Zhang/DevFlower/actions/runs/40425523452/logs",
+        "workflow_id": 391099208
+      }
+    ]
+  },
+  "implementation_verification": {
+    "session": {
+      "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "complete": true,
+      "cwd": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/implementation-r2/candidate",
+      "error": null,
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "home": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/codex-implementation-r2",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 28378
+        },
+        "cancelled": false,
+        "duration": 101.389,
+        "exit": 0,
+        "operation_id": "PROCESS",
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 963772,
+          "pid": 963772,
+          "sid": 963772,
+          "start": "162641963",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "068e672f7933b38c73fe732087a76c5945820a55662ff92d8ac26ed2a0a56f81"
+        },
+        "timeout": false
+      },
+      "recovery": 1,
+      "requested_effort": "xhigh",
+      "requested_model": "gpt-6.1-sol",
+      "requested_session": null,
+      "session_id": "01a17ab7-b80a-7272-b643-9b2733b62283",
+      "source_unchanged": true,
+      "status": "IMPLEMENTED",
+      "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+      "task": "20261027_02_claude-recovery-finalization"
+    },
+    "report": {
+      "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "checks": [
+        "Recomputed candidate digest and Git tree; all 239 manifest files match and source remained unchanged.",
+        "Inspected changes.diff, four supervisor start functions, spawn_ownership.py, and the test-only PID change.",
+        "Named admission test passed in the retained prior run; not repeated.",
+        "Single real terminal post-Popen SQLite fault passed: child reaped, both PTY descriptors closed, no readerless entry, conservative RECOVERY_REQUIRED state, and unrelated sentinel survived.",
+        "Evidence and original failed instrumentation logs retained in the recovery scratch directory."
+      ],
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "limitations": [
+        "Native implementation verification only; no independent Claude, Stable, Gate, whole-product or UX approval. Neither the 12-case set nor 903-case regression was repeated.",
+        "Snapshot lacks .git; branch and HEAD are manifest metadata."
+      ],
+      "status": "IMPLEMENTED"
+    },
+    "first_timeout": {
+      "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "complete": false,
+      "cwd": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/implementation-r2/candidate",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "home": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/codex-implementation-r2",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 297038
+        },
+        "cancelled": false,
+        "duration": 180.18,
+        "exit": -15,
+        "operation_id": "PROCESS",
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 937618,
+          "pid": 937618,
+          "sid": 937618,
+          "start": "162601789",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "0afff406f471a4c340c22ba4d39fd1561c910895ea7ce7739aff9c52ba909cc3"
+        },
+        "timeout": true
+      },
+      "requested_effort": "xhigh",
+      "requested_model": "gpt-6.1-sol",
+      "requested_session": null,
+      "session_id": null,
+      "source_unchanged": true,
+      "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+      "task": "20261027_02_claude-recovery-finalization"
+    }
+  },
+  "source_review": {
+    "session": {
+      "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "complete": false,
+      "config_root": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-source-r1/.claude",
+      "contract_sha256": "fc74b4202acb24146b129793797828f98237e48c0fcf5fdbc7371a49f8610616",
+      "credentials_unchanged": true,
+      "cwd": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/reviews/source-r1/candidate",
+      "effective_effort": "unknown",
+      "error": {
+        "reason": "CLI process failed, interrupted or truncated",
+        "type": "Blocked"
+      },
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "home": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-source-r1",
+      "implicit_retries_effective": "unknown",
+      "implicit_retries_requested": 0,
+      "native_records": [
+        "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/runtime/claude-source-r1/.claude/projects/-home-workspace-DevFlower-test-20261027-claude-recovery-finalization-reviews-source-r1-candidate/7a25b60f-e153-43b3-8ea8-ccbd3d0a1972.jsonl"
+      ],
+      "physical_backend": "unknown",
+      "process": {
+        "bytes": {
+          "stderr": 0,
+          "stdout": 1596
+        },
+        "cancelled": false,
+        "duration": 55.87,
+        "exit": 1,
+        "operation_id": "PROCESS",
+        "overflow": false,
+        "process": {
+          "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+          "host": "silver-work-station",
+          "pgid": 979300,
+          "pid": 979300,
+          "sid": 979300,
+          "start": "162740882",
+          "state": "R"
+        },
+        "sha256": {
+          "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "b56097683cecaf394a662c58a554c18e9fe6f172593fc5eac370ccd465e93411"
+        },
+        "timeout": false
+      },
+      "requested_effort": "high",
+      "requested_model": "claude-opus-5-5[1m]",
+      "round": 1,
+      "run_id": "c166b0c13ccd5a374e79653c2d0bf859",
+      "session_id": "7a25b60f-e153-43b3-8ea8-ccbd3d0a1972",
+      "source_unchanged": true,
+      "supervisor": "/home/workspace/DevFlower/stable/usable-v1-5816ba4776b3",
+      "task": "20261027_02_claude-recovery-finalization",
+      "verdict": null
+    },
+    "raw_error": "Prompt is too long · automatic compaction failed: summarization produced empty response",
+    "raw_sha256": "b56097683cecaf394a662c58a554c18e9fe6f172593fc5eac370ccd465e93411",
+    "verdict": null,
+    "interpretation": "Actual source request failed with prompt-too-long/empty automatic compaction, exit1 in55.870s; this is not a Claude BLOCKED or ACCEPT verdict"
+  },
+  "real_workflows": [
+    {
+      "kind": "real-workflow-r1",
+      "proof": {
+        "candidate_sha256": "22f83cdb40390a393322db22fe4cd1c5964ea161e93c9c2059763bdafa5fbcbe",
+        "git_tree": "acb641466440eaadeb9639ecc48bae4e1bc88215",
+        "run": "982b8260ba702ea51fd799ac91d0ccae",
+        "passed": false,
+        "state": "FAILED",
+        "actual_calls": 2,
+        "error": "Complex native workflow FAILED: CLI timeout; exit=-15"
+      },
+      "activations": [
+        {
+          "activation": "f4aa125ec88d11f27384750f8e77f3e8e188b3834887755e7a1794c4800521c8",
+          "node": "safety",
+          "provider": "claude",
+          "state": "FAILED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": null,
+          "process": {
+            "bytes": {
+              "stderr": 447,
+              "stdout": 0
+            },
+            "cancelled": false,
+            "duration": 240.069,
+            "exit": -15,
+            "operation_id": "a5b6ff8afa807326ad45f1e03c144e57",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 904632,
+              "pid": 904632,
+              "sid": 904632,
+              "start": "162562668",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "56005f0ce44c8344b7061c899de0052cfda828f55ba41ea571e771a4e54e4b96",
+              "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "timeout": true
+          },
+          "initialization_included": true,
+          "accepted": null
+        },
+        {
+          "activation": "0dd67669f32f1fb45a233cee89e910579762778a0fd54d72db7a8166071b6d0b",
+          "node": "ux",
+          "provider": "codex",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": "01a17ab1-a6d9-7882-894c-2c03bf14d295",
+          "process": {
+            "bytes": {
+              "stderr": 1820,
+              "stdout": 48423
+            },
+            "cancelled": false,
+            "duration": 175.265,
+            "exit": 0,
+            "operation_id": "5f486c7d554a4b5cfae0eb1f39693a3e",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 903860,
+              "pid": 903860,
+              "sid": 903860,
+              "start": "162562057",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "2d018f8d23b4b1033f5b02b3e885b468f228df36a4bb438ebc8bf62f9285edc4",
+              "stdout": "b0f453496c8b3351537fe94866de2173cab20c650561bb156d04a78aa30c3422"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": true
+        }
+      ],
+      "raw_snapshot_sha256": "5a5e5a0cdb45bade674b41a0670ab0d88d2b7394154e55ca4591bef85f3eaf31"
+    },
+    {
+      "kind": "real-workflow-r2",
+      "proof": {
+        "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+        "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+        "run": "f796fe334b14730e577bd9e8b83e9dfd",
+        "passed": false,
+        "state": "FAILED",
+        "actual_calls": 6,
+        "error": "Complex native workflow FAILED: 循环达到最大轮数，仍未满足退出条件"
+      },
+      "activations": [
+        {
+          "activation": "9cef3715c84a4af5a88703c0efb11cfe5e3967ca236b26f9faaafcd552924f02",
+          "node": "guide/reviewer",
+          "provider": "claude",
+          "state": "COMPLETED",
+          "round": 2,
+          "iteration_path": [
+            2
+          ],
+          "session_id": "08d23313-0e04-430a-abc4-c0b24675646a",
+          "process": {
+            "bytes": {
+              "stderr": 447,
+              "stdout": 6180
+            },
+            "cancelled": false,
+            "duration": 30.716,
+            "exit": 0,
+            "operation_id": "a8ab572c8e9bc5ed4bcbff7c41d967c9",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 967175,
+              "pid": 967175,
+              "sid": 967175,
+              "start": "162651860",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "4d0d3d4309a550a0ffb6175ce3e4ab2509b8b7987f4b999de981d0a7e7b9f776",
+              "stdout": "8cca72c0377caccf59fd67c847ed62c82dd3ae1220da5606b08516112702a9d9"
+            },
+            "timeout": false
+          },
+          "initialization_included": false,
+          "accepted": false
+        },
+        {
+          "activation": "e193a4997f37e524f3707f101b402e03be58a8b222e9b5fe86fd8847fcbde9a9",
+          "node": "guide/writer",
+          "provider": "codex",
+          "state": "COMPLETED",
+          "round": 2,
+          "iteration_path": [
+            2
+          ],
+          "session_id": "01a17abb-1a7b-7d83-9354-4dc52010e5fd",
+          "process": {
+            "bytes": {
+              "stderr": 1092,
+              "stdout": 23705
+            },
+            "cancelled": false,
+            "duration": 53.411,
+            "exit": 0,
+            "operation_id": "a3ebcd1382bd68a8e5feb71d20aaf60c",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 965595,
+              "pid": 965595,
+              "sid": 965595,
+              "start": "162646027",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "5a21f08991849263025124b7c2728c99cfcabed97fb09a4ac8ed0806bac6d30e",
+              "stdout": "7dde2fe52b9eee65dc17d9357e73f9322f99d7337a24bf9eac527f128a1227f0"
+            },
+            "timeout": false
+          },
+          "initialization_included": false,
+          "accepted": true
+        },
+        {
+          "activation": "915597dda8030e8b44cf57a22acd430c9124caa647e66c1a4c16e30bb2b555d6",
+          "node": "guide/reviewer",
+          "provider": "claude",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [
+            1
+          ],
+          "session_id": "08d23313-0e04-430a-abc4-c0b24675646a",
+          "process": {
+            "bytes": {
+              "stderr": 447,
+              "stdout": 5689
+            },
+            "cancelled": false,
+            "duration": 89.692,
+            "exit": 0,
+            "operation_id": "82d152699fd69f83dfdaf6193b885a8f",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 963254,
+              "pid": 963254,
+              "sid": 963254,
+              "start": "162635575",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "eaaabf8152460b925ac22a1536dabb6e5ed3e971aed39b9c5af23256ee02f583",
+              "stdout": "affa02d9540abda2166e21c3e70f530845e3fcf68bc8f610f070e7e1eeaa1fcb"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": false
+        },
+        {
+          "activation": "35e055c95d7678cd8a4ec2015ef5d7eab15a27bd56eb01e1c2fdacb08040b319",
+          "node": "guide/writer",
+          "provider": "codex",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [
+            1
+          ],
+          "session_id": "01a17abb-1a7b-7d83-9354-4dc52010e5fd",
+          "process": {
+            "bytes": {
+              "stderr": 910,
+              "stdout": 593176
+            },
+            "cancelled": false,
+            "duration": 109.08,
+            "exit": 0,
+            "operation_id": "50c7e3192f22334585bbde277fdc4413",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 962126,
+              "pid": 962126,
+              "sid": 962126,
+              "start": "162624053",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "6e63db1f9f7467c40e0792b90a7a9dd776d478fbfd7a20aeb1eb94921af00c4d",
+              "stdout": "290b8ae8024b6cb0efb76d62e1c3c8b8fe48f835ac6cdfca677c64a82b8cc7aa"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": true
+        },
+        {
+          "activation": "aa165a6d6d0c863d4285fb57b92510e15174e2c1a64f297bc617ab41f79ed55c",
+          "node": "safety",
+          "provider": "claude",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": "12d1db1e-82cf-42fc-9759-8d6be79f66d5",
+          "process": {
+            "bytes": {
+              "stderr": 447,
+              "stdout": 5836
+            },
+            "cancelled": false,
+            "duration": 26.335,
+            "exit": 0,
+            "operation_id": "bd5e6a27efffed180fa62ef6b54d5079",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 943691,
+              "pid": 943691,
+              "sid": 943691,
+              "start": "162607841",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "e587339fe389f806d67d14b058f84779391cdd64b670dd797c685a0e40589f97",
+              "stdout": "b8a2fad5903cfe7db6e628d76a508c7e904b9a90eab6b273941476f51482135e"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": true
+        },
+        {
+          "activation": "c1526124d214c8794a93e8134ff0ba77e53b4dc60e8b1c68957066c6370723d1",
+          "node": "ux",
+          "provider": "codex",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": "01a17ab8-9a48-74c2-8d7c-20b95f823a55",
+          "process": {
+            "bytes": {
+              "stderr": 1820,
+              "stdout": 69005
+            },
+            "cancelled": false,
+            "duration": 154.13,
+            "exit": 0,
+            "operation_id": "2948f933c70d66139f42981b47e346df",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 943483,
+              "pid": 943483,
+              "sid": 943483,
+              "start": "162607661",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "277fb68dbfa415583477e912625598d1cba3e5b6009534f629f2472517779161",
+              "stdout": "761dfc78c3df78034c72bd2b78ffc89e1e221bfd38a5dbf32588af016c1fc524"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": true
+        }
+      ],
+      "raw_snapshot_sha256": "9aaafdf58a5237b8865c867168b6c7f5ccbbd780393ba49ad549315dd40bab12"
+    },
+    {
+      "kind": "real-workflow-r2-docs-correction",
+      "proof": {
+        "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+        "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+        "run": "c2bf83678c5b896253bb9137cb971964",
+        "passed": false,
+        "state": "FAILED",
+        "actual_calls": 2,
+        "error": "Complex native workflow FAILED: CLI timeout; exit=-15"
+      },
+      "activations": [
+        {
+          "activation": "bbe4ccdea8a06eb0663123e19856f93b8b2eb9f063ce90c5ff876080d11f0778",
+          "node": "safety",
+          "provider": "claude",
+          "state": "FAILED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": null,
+          "process": {
+            "bytes": {
+              "stderr": 447,
+              "stdout": 0
+            },
+            "cancelled": false,
+            "duration": 600.128,
+            "exit": -15,
+            "operation_id": "2ec4e10126596e78aa0b2240818fb76a",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 974724,
+              "pid": 974724,
+              "sid": 974724,
+              "start": "162670027",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "15ba4274920d5ade7dc84a75f923db3a689de7dad420440e90b765024c9b2bb7",
+              "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "timeout": true
+          },
+          "initialization_included": true,
+          "accepted": null
+        },
+        {
+          "activation": "93724ab23b6a196378f16a1912e6aca2591381d4a0c296868cf3aa9868dfe61e",
+          "node": "ux",
+          "provider": "codex",
+          "state": "COMPLETED",
+          "round": 1,
+          "iteration_path": [],
+          "session_id": "01a17ac2-0c59-7b33-924f-6c3b5359516c",
+          "process": {
+            "bytes": {
+              "stderr": 910,
+              "stdout": 18906
+            },
+            "cancelled": false,
+            "duration": 63.038,
+            "exit": 0,
+            "operation_id": "f2d2b4f9b629590ba6023f2d9aa018db",
+            "overflow": false,
+            "process": {
+              "boot_id": "9457f150-de9a-4b96-822b-16c78eacb613",
+              "host": "silver-work-station",
+              "pgid": 974623,
+              "pid": 974623,
+              "sid": 974623,
+              "start": "162669634",
+              "state": "R"
+            },
+            "sha256": {
+              "stderr": "944c68eb00e08a7ad6e5c4f5d6e3ed820bd4a6ce40f2dc5e367fed5780418d78",
+              "stdout": "1d97701860ae7a5c632efe690dc80a5ee94d195bd8de1a14ef81d99c775d86fd"
+            },
+            "timeout": false
+          },
+          "initialization_included": true,
+          "accepted": true
+        }
+      ],
+      "raw_snapshot_sha256": "635b0923429881438e73c3307d382117c986f5c903ff3de9d79365011a9cf9c0"
+    }
+  ],
+  "negative_native_child": {
+    "evidence_type": "real model bounded-limit negative; business FAILED remains unchanged",
+    "business_passed": false,
+    "expected_run_state": "FAILED",
+    "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "run": "f796fe334b14730e577bd9e8b83e9dfd",
+    "passed": true,
+    "root_calls": 6,
+    "parent_sessions": [
+      "01a17ab8-9a48-74c2-8d7c-20b95f823a55",
+      "01a17abb-1a7b-7d83-9354-4dc52010e5fd",
+      "08d23313-0e04-430a-abc4-c0b24675646a",
+      "12d1db1e-82cf-42fc-9759-8d6be79f66d5"
+    ],
+    "child_sessions": [
+      "01a17ab9-17db-7203-838e-c024cd2695a9"
+    ],
+    "child_parent_mapping": {
+      "01a17ab9-17db-7203-838e-c024cd2695a9": "01a17ab8-9a48-74c2-8d7c-20b95f823a55"
+    },
+    "public_tool_counts": {
+      "Read": 9,
+      "Grep": 3,
+      "StructuredOutput": 3,
+      "exec": 18,
+      "spawn_agent": 1,
+      "send_message": 2,
+      "Glob": 7
+    },
+    "skill_marker_seen_in_visible_tool_result": true,
+    "skill_read_calls": [
+      {
+        "file": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/preview-r2/native/6ac6d1bc9fb4a18a77fb42d2c7ff5b91/.codex/sessions/2026/10/27/rollout-2026-10-27T00-18-03-01a17ab8-9a48-74c2-8d7c-20b95f823a55.jsonl",
+        "tool": "exec",
+        "call_id": "call_44dcd10839234accb1b787d735b9cfe3"
+      },
+      {
+        "file": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/preview-r2/native/6ac6d1bc9fb4a18a77fb42d2c7ff5b91/.codex/sessions/2026/10/27/rollout-2026-10-27T00-18-03-01a17ab8-9a48-74c2-8d7c-20b95f823a55.jsonl",
+        "tool": "exec",
+        "call_id": "call_b1c8b4e3657e4d1e97b655cc2a1e9339"
+      },
+      {
+        "file": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/preview-r2/native/17541364671f8f944111a19565c2703d/.codex/sessions/2026/10/27/rollout-2026-10-27T00-20-46-01a17abb-1a7b-7d83-9354-4dc52010e5fd.jsonl",
+        "tool": "exec",
+        "call_id": "call_8f1073e58a5d4763ad74a4f3921284b3"
+      },
+      {
+        "file": "/home/workspace/DevFlower/test/20261027-claude-recovery-finalization/preview-r2/native/17541364671f8f944111a19565c2703d/.codex/sessions/2026/10/27/rollout-2026-10-27T00-20-46-01a17abb-1a7b-7d83-9354-4dc52010e5fd.jsonl",
+        "tool": "exec",
+        "call_id": "call_bb0986ab0cd5439bad36d73ff700a22b"
+      }
+    ],
+    "loop": {
+      "guide/writer": [
+        {
+          "activation": "35e055c95d7678cd8a4ec2015ef5d7eab15a27bd56eb01e1c2fdacb08040b319",
+          "iteration_path": [
+            1
+          ],
+          "session": "01a17abb-1a7b-7d83-9354-4dc52010e5fd",
+          "initialization_included": true,
+          "accepted": true,
+          "issues": []
+        },
+        {
+          "activation": "e193a4997f37e524f3707f101b402e03be58a8b222e9b5fe86fd8847fcbde9a9",
+          "iteration_path": [
+            2
+          ],
+          "session": "01a17abb-1a7b-7d83-9354-4dc52010e5fd",
+          "initialization_included": false,
+          "accepted": true,
+          "issues": []
+        }
+      ],
+      "guide/reviewer": [
+        {
+          "activation": "915597dda8030e8b44cf57a22acd430c9124caa647e66c1a4c16e30bb2b555d6",
+          "iteration_path": [
+            1
+          ],
+          "session": "08d23313-0e04-430a-abc4-c0b24675646a",
+          "initialization_included": true,
+          "accepted": false,
+          "issues": [
+            "第3步应补充每张 PNG/JPEG 不超过 2MB。",
+            "第6步的历史导出及交接重验规则不在指定文档/源码中，不能作为已核实事实。"
+          ]
+        },
+        {
+          "activation": "9cef3715c84a4af5a88703c0efb11cfe5e3967ca236b26f9faaafcd552924f02",
+          "iteration_path": [
+            2
+          ],
+          "session": "08d23313-0e04-430a-abc4-c0b24675646a",
+          "initialization_included": false,
+          "accepted": false,
+          "issues": [
+            "第6步不完整：WORKBENCH.md:115仅提及设计与历史存储，未提供“整轮任务对话”、历史任务查看Agent/交接/工具记录或“导出记录”的操作依据。"
+          ]
+        }
+      ]
+    },
+    "hidden_reasoning_extracted": false,
+    "whole_product_contract_K": false
+  },
+  "image": {
+    "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "synthetic": false,
+    "passed": true,
+    "requested_model": "deepseek-flash",
+    "conversation": "61f1af9cb94690dbe8ea1e119d0f1fe6",
+    "state": "COMPLETED",
+    "receipt": {
+      "agent_id": "devflower-assistant/v1",
+      "effort": "unknown",
+      "images": [
+        {
+          "bytes": 49328,
+          "height": 1050,
+          "id": "fdc336bb6ea7e045908a3a2c2b9d16b75eafba19c0c7165cb02a383198d4fe05",
+          "mime": "image/png",
+          "name": "complex-flowchart.png",
+          "sha256": "fdc336bb6ea7e045908a3a2c2b9d16b75eafba19c0c7165cb02a383198d4fe05",
+          "width": 1300
+        }
+      ],
+      "model_provider": "anthropic-api",
+      "native_session_id": null,
+      "provider": "devflower-agent",
+      "provider_message_id": "913ada3a-a987-4880-87ce-0a5913202166",
+      "provider_request_id": null,
+      "public_summaries": [],
+      "requested_effort": "xhigh",
+      "requested_model": "deepseek-flash",
+      "resolved_model": "deepseek-flash",
+      "session_id": "61f1af9cb94690dbe8ea1e119d0f1fe6",
+      "tools_enabled": [
+        "propose_workflow"
+      ],
+      "transport": {
+        "agent_id": "devflower-assistant/v1",
+        "coding_cli": false,
+        "connection_sha256": "1294a77f1feef5d285cfedbecec3de28ead1694a0ac17b4c60072c5d12a56146",
+        "kind": "direct-model-api",
+        "protocol": "anthropic"
+      },
+      "usage": {
+        "input_tokens": 1588,
+        "output_tokens": 3297
+      }
+    },
+    "nodes": 9,
+    "edges": 10,
+    "kinds": [
+      "start",
+      "agent",
+      "agent",
+      "merge",
+      "loop",
+      "condition",
+      "output",
+      "output",
+      "result"
+    ]
+  },
+  "numeric_transport": {
+    "evidence_type": "actual Claude CLI consuming synthetic localhost Messages/SSE; not model acceptance",
+    "external_model_calls": 0,
+    "passed": true,
+    "cases": [
+      {
+        "label": "integer",
+        "input_offset": 328,
+        "passed": true
+      },
+      {
+        "label": "integral-float",
+        "input_offset": 328.0,
+        "passed": true
+      },
+      {
+        "label": "huge-invalid",
+        "input_offset": 3280000000000000,
+        "passed": true
+      }
+    ],
+    "inference": "328 and328.0 remain328 through exact local SSE serializer + actual CLI. Cannot attribute observed huge offsets to local numeric serialization; raw upstream physical source remains unknown. No argument repair."
+  },
+  "recovery_budget": {
+    "max_infrastructure_retries": 2,
+    "recoveries": [
+      {
+        "attempt": 1,
+        "candidate": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+        "kind": "new bounded readonly workflow after definite Claude240s timeout; no uncertain business replay",
+        "prior_candidate": "22f83cdb40390a393322db22fe4cd1c5964ea161e93c9c2059763bdafa5fbcbe",
+        "prior_run": "982b8260ba702ea51fd799ac91d0ccae"
+      },
+      {
+        "attempt": 2,
+        "kind": "explicit native Codex implementation verification resume after180sec timeout, exact UUID",
+        "session": "01a17ab7-b80a-7272-b643-9b2733b62283"
+      }
+    ],
+    "task": "20261027_02_claude-recovery-finalization"
+  },
+  "gate": {
+    "additional_gap": "Current-candidate positive complex native workflow still not passed",
+    "exit": 2,
+    "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "gate_invoked": true,
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "independent_verdict": null,
+    "primary_missing_evidence": "No successful structured Claude report; CLI prompt too long / empty compaction",
+    "raw_review_sha256": "b56097683cecaf394a662c58a554c18e9fe6f172593fc5eac370ccd465e93411",
+    "reason": "$: wrong type",
+    "round": 1,
+    "run_id": "c166b0c13ccd5a374e79653c2d0bf859",
+    "source_candidate": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "stable_replaced": false,
+    "status": "BLOCKED",
+    "verification_not_evaluated": "Gate rejected absent review at the schema check; mandatory verification specs retained, positive native test is explicitly failed."
+  },
+  "privacy": {
+    "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "files": 239,
+    "known_credential_matches": [],
+    "forbidden_runtime_files": [],
+    "source_unchanged": true,
+    "passed": true
+  },
+  "readiness": {
+    "state": "BLOCKED",
+    "candidate_sha256": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+    "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+    "source_self_test": true,
+    "independent_review": false,
+    "independent_verdict": null,
+    "source_rounds": 1,
+    "infrastructure_recoveries": 2,
+    "gate": {
+      "additional_gap": "Current-candidate positive complex native workflow still not passed",
+      "exit": 2,
+      "fixed_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+      "gate_invoked": true,
+      "git_tree": "7e1992f75109ae5e542b87f97c5ea1cf24d772ef",
+      "independent_verdict": null,
+      "primary_missing_evidence": "No successful structured Claude report; CLI prompt too long / empty compaction",
+      "raw_review_sha256": "b56097683cecaf394a662c58a554c18e9fe6f172593fc5eac370ccd465e93411",
+      "reason": "$: wrong type",
+      "round": 1,
+      "run_id": "c166b0c13ccd5a374e79653c2d0bf859",
+      "source_candidate": "e33323b9fdb92eebdc5a14b74985f77c7d3349523792abcbc7e3a74cdf59bb24",
+      "stable_replaced": false,
+      "status": "BLOCKED",
+      "verification_not_evaluated": "Gate rejected absent review at the schema check; mandatory verification specs retained, positive native test is explicitly failed."
+    },
+    "stable_promoted": false,
+    "user_personal_ux_acceptance": false,
+    "draft": true,
+    "remaining": [
+      "WX05: same final candidate positive complex Opus workflow has not completed; original bounded negative preserved, corrected-material run timed out600sec with invalid Read offsets",
+      "WX06/SUP01: no valid independent Claude source verdict; SC08 code repair not independently closed"
+    ],
+    "not_resolved_by_tests": "Model numeric arguments and context/compaction availability on the current gateway remain unreliable; physical backend and effective effort unknown"
+  },
+  "unchanged": {
+    "main": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+    "main_tree": "6c9e39e16bbbe7de95b894e0a58632b1a0f63039",
+    "stable_replaced": false,
+    "old_native_sessions_preserved": true,
+    "old_Task04_Task10_reports_and_budgets_unchanged": true
+  }
+}
