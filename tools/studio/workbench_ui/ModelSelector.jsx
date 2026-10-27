@@ -30,7 +30,7 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
  useEffect(()=>()=>{pickVersion.current++;onSelecting?.(false)},[profile?.id,workspace?.id]);
  async function load(refresh=false){const v=++version.current;setPending(true);setError('');try{
   let result=await api('/api/models',{profile:profile.id,refresh,workspace:workspace?.id});
-  if(v===version.current&&!refresh&&!result.attempted_at)result=await api('/api/models',{profile:profile.id,refresh:true,workspace:workspace?.id});
+  if(v===version.current&&!refresh&&(!result.attempted_at||result.stale))result=await api('/api/models',{profile:profile.id,refresh:true,workspace:workspace?.id});
   if(v!==version.current)return;setCatalog(result);onCatalog?.(result);
  }catch(e){if(v===version.current)setError(e.message)}finally{if(v===version.current)setPending(false)}}
  useEffect(()=>{setCatalog(profile);load(false);return()=>{version.current++}},[profile?.id,workspace?.id]);

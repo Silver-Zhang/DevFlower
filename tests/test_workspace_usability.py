@@ -96,7 +96,7 @@ class EffortSelectionTests(unittest.TestCase):
         self.base,self.rt=fixture(self);self.w=self.base.project['id'];self.manager=WorkbenchSessions(self.rt)
         self.name='default-claude';self.profile=self.rt.operator['profiles'][self.name]
     def catalog(self,efforts=None):
-        self.rt.flow.put('cli-probe',self.name,dict(available=True,at=time.time(),executable_sha256=digest(Path(self.profile['executable']).resolve().read_bytes()),efforts=efforts or ['low','medium','high','xhigh','max']))
+        self.rt.flow.put('cli-probe',self.name,dict(available=True,machine_output=True,at=time.time(),executable_sha256=digest(Path(self.profile['executable']).resolve().read_bytes()),efforts=efforts or ['low','medium','high','xhigh','max']))
         with patch('studio.model_catalog.proxy_models',return_value=[dict(id=self.profile['model'],name='Synthetic model',efforts=[],source='SYNTHETIC proxy')]),patch.object(self.manager,'rpc',return_value={}):
             return ModelCatalog(self.manager).get(self.name,self.profile,True,self.w)
     def test_profile_high_does_not_hide_cli_effort_choices(self):
@@ -109,6 +109,16 @@ class EffortSelectionTests(unittest.TestCase):
         self.catalog();probe=self.rt.flow.get('cli-probe',self.name);probe['at']-=400;self.rt.flow.put('cli-probe',self.name,probe)
         v=ModelCatalog(self.manager).get(self.name,self.profile,False,self.w);self.assertEqual(v['models'][0]['selectable_efforts'],[self.profile['effort']])
         with self.assertRaises(Invalid):ModelRegistration(self.rt).select(dict(workspace=self.w,profile=self.name,model=self.profile['model'],effort='invented'))
+    def test_successful_directory_omitting_default_can_select_effort_without_entitlement(self):
+        self.catalog()
+        with patch('studio.model_catalog.proxy_models',return_value=[dict(id='different-model',name='Synthetic other',efforts=[],source='SYNTHETIC proxy')]),patch.object(self.manager,'rpc',return_value={}):
+            value=ModelCatalog(self.manager).get(self.name,self.profile,True,self.w)
+        row=next(m for m in value['models'] if m['id']==self.profile['model'])
+        self.assertFalse(row['discovered']);self.assertTrue(row['operator_registered']);self.assertFalse(row['execution_allowed'])
+        selected=ModelRegistration(self.rt).select(dict(workspace=self.w,profile=self.name,model=self.profile['model'],effort='max'))
+        self.assertFalse(selected['execution_allowed'])
+        with self.assertRaises(Blocked):self.rt.node_binding(self.w,dict(profile=self.name,model=self.profile['model'],effort='max',mode='Ask'))
+        with self.assertRaises(Invalid):ModelRegistration(self.rt).select(dict(workspace=self.w,profile=self.name,model='look-alike-unregistered',effort='max'))
 
 
 class AssistantRunTests(unittest.TestCase):

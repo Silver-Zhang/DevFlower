@@ -69,7 +69,13 @@ class ModelRegistration:
                 raise Blocked('模型目录已过期或配置变化，请刷新后再配置')
         if cache.get('environment_sha256')!=profile_identity(p):raise Blocked('模型目录的认证或服务已变化，请刷新')
         row=next((r for r in cache.get('models',[]) if r['id']==data['model']),None)
-        if not row: raise Invalid('此模型不在当前真实目录中，请刷新后选择')
+        if not row:
+            # A successful gateway directory may omit an explicitly configured
+            # CLI alias/context variant. Preserve its registration identity,
+            # without claiming discovery, model capability or execution success.
+            registered={r['id'] for r in self.rt.policy.get('models',{}).get(p['provider'],[])}|{p['model']}
+            if data['model'] not in registered:raise Invalid('此模型不在当前真实目录或明确登记配置中，请刷新后选择')
+            row=dict(id=data['model'],efforts=[],source='explicit operator registration; omitted by directory')
         from .model_catalog import selectable_efforts
         allowed,effort_source=selectable_efforts(self.rt,data['profile'],p,row)
         effort=data.get('effort') or allowed[0]
