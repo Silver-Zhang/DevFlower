@@ -19,6 +19,11 @@ class SessionBatch:
         if len(rows)>200:raise Invalid('一次最多清理200个会话')
         result=[]
         for handle,s in sorted(rows.items()):
+            if s.get('saved_history'):
+                key,meta,archive=self.manager.saved_metadata(workspace,handle)
+                result.append(dict(handle=handle,title=s['title'],saved_history=True,meta_key=key,
+                    archive_sha256=digest(canonical(archive)),meta_sha256=digest(canonical(meta))))
+                continue
             _,row=self.rt.session_center.resolve(workspace,handle)
             b,reason=self.rt.session_center._binding(row,self.rt.project(workspace))
             if not b or self.manager.busy(b,row['native']['session_id']):raise Blocked(reason or '有会话正在运行或占用未确认，请先结束后再清理')
@@ -45,11 +50,15 @@ class SessionBatch:
             if v.get('purpose')!='workflow-session-trash':raise Blocked('不是工作流会话清理确认')
             now=self.members(v['workspace'],v['workflow'])
             if digest(canonical(now))!=digest(canonical(v['members'])):raise Conflict('会话成员、历史或分类已变化；没有批量修改，请重新核对')
-            homes=sorted({r['home'] for r in now})
+            homes=sorted({r['home'] for r in now if not r.get('saved_history')})
             for home in homes:held.enter_context(lease(Path(home).parent/(digest(str(Path(home).resolve()).encode())+'.session.lock')))
             # A native turn may have completed between discovery and taking
             # its lease. Re-read exact native identities under all held leases.
             for r in now:
+                if r.get('saved_history'):
+                    _,_,archive=self.manager.saved_metadata(v['workspace'],r['handle'])
+                    if digest(canonical(archive))!=r['archive_sha256']:raise Conflict('保存的阅读副本已变化；整批未修改')
+                    continue
                 _,current=self.rt.session_center.resolve(v['workspace'],r['handle'])
                 if (current['native']['sha256'],current['native']['session_id'],current['profile']['home'])!=(r['native_sha256'],r['session_id'],r['home']):
                     raise Conflict('原生历史在核对后变化；没有批量修改，请重新确认')
@@ -59,8 +68,10 @@ class SessionBatch:
                    for o in self.rt.db.listing('session-operation',limit=None)):raise Blocked('有新会话操作待执行；没有批量修改')
             with self.rt.flow.tx() as db:
                 for r in now:
-                    raw=db.execute("SELECT data FROM records WHERE kind='session-meta' AND id=?",(r['handle'],)).fetchone();meta=json.loads(raw[0]) if raw else None
+                    kind='project-session-meta' if r.get('saved_history') else 'session-meta'
+                    key=r.get('meta_key',r['handle'])
+                    raw=db.execute("SELECT data FROM records WHERE kind=? AND id=?",(kind,key)).fetchone();meta=json.loads(raw[0]) if raw else None
                     if digest(canonical(meta))!=r['meta_sha256']:raise Conflict('会话分类已被其他操作修改；整批未生效')
                     meta=dict(meta or dict(id=r['handle'],workspace=v['workspace']),collection='trash',updated_at=time.time())
-                    db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('session-meta',r['handle'],canonical(meta).decode()))
+                    db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',(kind,key,canonical(meta).decode()))
         return dict(trashed=len(now),handles=[r['handle'] for r in now],native_modified=False,permanently_deleted=False)

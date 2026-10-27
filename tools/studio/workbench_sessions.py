@@ -12,6 +12,7 @@ from orchestration.process import execute
 from orchestration.store import lease, process_identity
 from .agent_sessions import _visible, safe_text
 from .graph import Invalid
+from .server import Conflict
 from .session_sources import opened
 
 
@@ -268,13 +269,26 @@ class WorkbenchSessions:
             # separate read-only handle namespace and are explicitly labelled.
             for item in self.rt.project_files(workspace).archives('session'):
                 row=item['data']['session']
-                if row['handle'] in native_keys or row.get('collection','active')!=view:continue
+                key,meta,_=self.saved_metadata(workspace,'saved:'+item['key'],archive=item)
+                collection=(meta or {}).get('collection',row.get('collection','active'))
+                if row['handle'] in native_keys or collection!=view:continue
                 if query and query.casefold() not in (row.get('title','')+' '+row['provider']).casefold():continue
-                result.append(dict(row,handle='saved:'+item['key'],identity='saved:'+item['key'],
+                result.append(dict(row,handle='saved:'+item['key'],identity='saved:'+item['key'],collection=collection,
+                    title=(meta or {}).get('alias',row.get('title','保存的会话')),
                     workspace_id=workspace,saved_history=True,display_state='UNKNOWN',busy=False,
                     choices=dict(view=True,resume=False,context_new=False,fork=False),
                     note='项目内保存的对话阅读副本；不恢复原生进程，不授予执行权限'))
         return dict(sessions=result,coverage=listing['discovery']['coverage'],operations=operations)
+
+    def saved_metadata(self,workspace,handle,*,archive=None):
+        self.rt.session_center.workspace(workspace)
+        if not isinstance(handle,str) or not handle.startswith('saved:'):raise Invalid('不是保存的阅读副本')
+        archive=archive or self.rt.project_files(workspace).archive('session',handle[6:])
+        key=digest(canonical([workspace,handle]))
+        try:meta=self.db.get('project-session-meta',key)
+        except Invalid:meta=None
+        if meta and meta.get('workspace')!=workspace:raise Blocked('阅读副本归属不匹配')
+        return key,meta,archive
 
     def busy(self,binding,sid):
         return self.rt.session_center._busy(binding['home']) or self.native_process_busy(binding['home'],sid)
@@ -431,6 +445,23 @@ class WorkbenchSessions:
 
     def change(self,workspace,handle,action,*,name='',answer=''):
         self.rt.check_operator()
+        if isinstance(handle,str) and handle.startswith('saved:'):
+            key,meta,archive=self.saved_metadata(workspace,handle)
+            prior_sha256=digest(canonical(meta))
+            meta=dict(meta or dict(id=handle,workspace=workspace,collection=archive['data']['session'].get('collection','active')))
+            if action=='rename':
+                if not isinstance(name,str) or not 1<=len(name.strip())<=160:raise Invalid('会话名称需要 1–160 个字符')
+                meta['alias']=safe_text(name.strip())
+            elif action in ('archive','trash','restore'):
+                if action!='restore' and not answer.strip():raise Invalid('请确认将阅读副本移入可恢复列表')
+                meta['collection']={'archive':'archived','trash':'trash','restore':'active'}[action]
+            else:raise Blocked('保存的阅读副本仅支持本机分类、别名和恢复，不提供原生操作')
+            meta['updated_at']=time.time()
+            with self.db.tx() as db:
+                raw=db.execute("SELECT data FROM records WHERE kind='project-session-meta' AND id=?",(key,)).fetchone()
+                if digest(canonical(json.loads(raw[0]) if raw else None))!=prior_sha256:raise Conflict('阅读副本分类已变化，请刷新后重试')
+                db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('project-session-meta',key,canonical(meta).decode()))
+            return dict(handle=handle,collection=meta['collection'],alias=meta.get('alias'),native_modified=False,permanently_deleted=False)
         native_modified=False
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')

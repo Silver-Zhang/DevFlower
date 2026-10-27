@@ -79,8 +79,13 @@ def decode_reply(text,choices):
     if value.startswith('```json\n') and value.endswith('```'):value=value[8:-3].strip()
     try:result=json.loads(value)
     except (ValueError,RecursionError):raise Invalid('模型没有返回有效配置；未修改画布，可继续描述需求') from None
-    if not isinstance(result,dict) or set(result)!={'reply','plan'} or not isinstance(result['reply'],str) or not result['reply'].strip() or len(result['reply'])>12000:
+    if not isinstance(result,dict) or set(result)-{'reply','plan','run_request'} or not {'reply','plan'}<=set(result) or not isinstance(result['reply'],str) or not result['reply'].strip() or len(result['reply'])>12000:
         raise Invalid('助手回复不符合画布接口；未修改草稿')
+    request=result.get('run_request')
+    if request is not None:
+        if (result['plan'] is not None or not isinstance(request,dict) or set(request)!={'task'} or
+            not isinstance(request['task'],str) or not 1<=len(request['task'].strip())<=12000):
+            raise Invalid('运行请求只能包含本次任务；不能携带权限、命令或同时修改画布')
     if result['plan'] is not None:result['plan']=expand_plan(result['plan'],choices)
     graph=plan_graph(result['plan'],choices) if result['plan'] is not None else None
     return result,graph
@@ -297,7 +302,8 @@ class CanvasAssistant:
                 r=client.chat(t['model'],prompt)
                 self.rt.flow.change('canvas-turn',key,dict(receipt={k:v for k,v in r.items() if k!='text'},model_response=self._redact(r['text'][:150000])),states=['RUNNING'])
                 result,graph=decode_reply(self._redact(r['text']),t['choices'])
-                if graph and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布')
+                if (graph or result.get('run_request')) and t.get('intent')=='chat':raise Blocked('问答模式不能修改画布或发起运行')
+                run_request=dict(result['run_request'],graph=t['base_graph'],graph_sha256=t['base_graph_sha256'],workspace=t['workspace']) if result.get('run_request') else None
                 proposal=ConfigurationAssistant(self.rt).external(dict(workspace=t['workspace'],graph=t['base_graph'],plan=result['plan']),canvas_only=t.get('source',{}).get('kind')=='canvas-only') if graph else None
             with self.lock:
                 self.finalizing.add(key)
@@ -305,7 +311,7 @@ class CanvasAssistant:
                 with self.rt.flow.tx() as db:
                     row=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(key,)).fetchone()[0])
                     v=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-conversation' AND id=?",(t['conversation'],)).fetchone()[0])
-                    row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,receipt={k:v for k,v in r.items() if k!='text'},finished_at=time.time())
+                    row.update(state='COMPLETED',reply=result['reply'],proposal=proposal,run_request=run_request,receipt={k:v for k,v in r.items() if k!='text'},finished_at=time.time())
                     v['updated_at']=time.time();v['messages'].append(dict(role='assistant',text=result['reply'],at=time.time(),turn=key,kind='proposal' if proposal else 'answer',public_summaries=self._redact(r.get('public_summaries',[]))));v['revision']+=1
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-turn' AND id=?",(canonical(row).decode(),key))
                     db.execute("UPDATE records SET data=? WHERE kind='canvas-conversation' AND id=?",(canonical(v).decode(),v['id']))

@@ -26,8 +26,12 @@ class FolderAndLibraryTests(unittest.TestCase):
  def save(self,**kw):return self.library.save(dict(workspace=self.w,graph=self.g,name='我的分析流程',**kw))
  def test_parent_browsing_leaves_execution_roots_without_authorizing(self):
   parent=self.base.source.parent;v=self.rt.folder(str(parent));self.assertEqual(v['parent'],str(parent.parent));self.assertFalse(v['execution_allowed']);self.assertTrue(v['locations'])
-  outside=parent/'outside';outside.mkdir();w=self.rt.open_workspace(str(outside));self.assertFalse(w['execution_allowed'])
-  with self.assertRaises(Blocked):self.rt.node_binding(w['id'],self.g['nodes'][1],admission=False)
+  outside=parent/'outside';outside.mkdir()
+  self.rt.folder(str(outside))
+  with self.assertRaises(Blocked):self.rt.validate_source(str(outside))
+  w=self.rt.open_workspace(str(outside));self.assertTrue(w['execution_allowed'])
+  self.assertEqual(self.rt.node_binding(w['id'],self.g['nodes'][1],admission=False)['cwd'],str(outside))
+  self.assertEqual(self.rt.flow.list('run'),[])
  def test_filesystem_browse_does_not_expose_system_private_or_symlink(self):
   v=self.rt.folder('/');self.assertIn('etc',[x['name'] for x in v['folders']]);self.assertFalse(v['execution_allowed'])
   for p in ['/proc','/etc',str(self.rt.storage),str(self.rt.native)]:

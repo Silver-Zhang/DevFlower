@@ -94,3 +94,7 @@ test('overflow of finite reports cannot be displayed as an infinite bill',()=>{
 
 import {providerLabel} from "../tools/studio/workbench_ui/provider_label.mjs";
 test("Provider labels preserve Copilot and never guess Claude",()=>{assert.equal(providerLabel("copilot"),"GitHub Copilot");assert.equal(providerLabel("claude"),"Claude Code");assert.equal(providerLabel("codex"),"Codex");assert.equal(providerLabel("unverified"),"Agent（未确认）")});
+
+import {workflowGroups,nodeGroups} from '../tools/studio/workbench_ui/journal_groups.mjs';
+ test('workflow history groups by stable design identity and never merges identical names',()=>{const groups=workflowGroups([{id:'a',draft_id:'design',workflow_name:'分析',created_at:1},{id:'b',draft_id:'design',workflow_name:'分析',created_at:2},{id:'c',draft_id:'other',workflow_name:'分析',created_at:3},{id:'d',workflow_name:'分析'}]);assert.equal(groups.length,3);assert.deepEqual(groups[0].runs.map(r=>r.id),['b','a']);assert.equal(groups[2].id,'run:d')});
+ test('node record partitions preserve each upstream and current iteration',()=>{const groups=nodeGroups([{id:'u',name:'你'},{id:'a1',node:'a',name:'分析',round:[1]},{id:'b',node:'b',name:'复核',round:[1]},{id:'a2',node:'a',name:'分析',round:[2]}]);assert.deepEqual(groups.map(g=>g.id),['workflow','a','b']);assert.deepEqual(groups[1].entries.map(e=>e.round),[[1],[2]]);assert.equal(groups[2].entries[0].id,'b')});

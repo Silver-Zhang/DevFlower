@@ -106,11 +106,20 @@ class WorkbenchRuntime(SessionRuntime):
         return browse_directory(path)
 
     def validate_source(self, path):
-        from .workspace_access import view_policy
+        from .workspace_access import view_policy, selected_scope
+        from orchestration.common import workspace_metadata
         path = self.readable_directory(path)
         if view_policy(self,path)['protected_container']:
             raise Blocked('文件夹已打开，但此位置包含系统或工作台保护数据；运行 Agent 请选择具体的项目代码目录。')
-        try: return super().validate_source(path)
+        if not (any(Path(path).is_relative_to(p) for p in self.operator['allowed_roots']) or selected_scope(self,path)):
+            raise Blocked('请先通过“打开文件夹”选择此项目，再确认本次任务的运行权限。')
+        if self.trust: self.trust.permits(path, self.operator_file)
+        try:
+            workspace_metadata(path,check_git=True)
+            # General conversations/workflows also work in ordinary folders.
+            # Git delivery still requires a separate real repository identity.
+            if not (Path(path)/'.git').exists(): return dict(root=path,head=None,branch=None)
+            return identity(path)
         except (OSError,ValueError):
             raise Blocked('文件夹已打开；项目内记录保留区需要检查，暂不允许 Agent 执行。') from None
 
@@ -128,8 +137,11 @@ class WorkbenchRuntime(SessionRuntime):
         return ProjectFiles(self, workspace)
 
     def open_workspace(self, path):
-        from .workspace_access import view_policy
+        from .workspace_access import view_policy, selected_scope
         path=self.readable_directory(path)
+        self.check_operator()
+        if not view_policy(self,path)['protected_container']:
+            selected_scope(self,path,grant=True)
         try: old=self.db.get('workspace',digest(path.encode())[:32])
         except Invalid: old={}
         row = super().open_workspace(path)
@@ -168,7 +180,7 @@ class WorkbenchRuntime(SessionRuntime):
 
     def saved_runs(self):
         current = self.flow.list('run'); known = {(r['workspace'],r['id']) for r in current}
-        result = [{k: v for k, v in r.items() if k in ('id','workspace','state','created_at','task')} for r in current]
+        result = [dict({k: v for k, v in r.items() if k in ('id','workspace','state','created_at','task','draft_id')},workflow_name=r.get('graph',{}).get('name','工作流')) for r in current]
         for w in self.db.listing('workspace', limit=None):
             if not w.get('project_storage'): continue
             try:
@@ -176,7 +188,7 @@ class WorkbenchRuntime(SessionRuntime):
                     if (w['id'],v['key']) in known: continue
                     r = v['data']
                     result.append(dict(id=v['key'], workspace=w['id'], state='UNKNOWN',
-                        created_at=r.get('created_at') or 0, task=r.get('task',''), saved_history=True))
+                        created_at=r.get('created_at') or 0, task=r.get('task',''),draft_id=r.get('draft_id'),workflow_name=r.get('name','工作流'), saved_history=True))
             except (OSError, ValueError, Invalid, Blocked): pass  # project_drafts exposes the read error.
         return result
 
@@ -208,7 +220,7 @@ class WorkbenchRuntime(SessionRuntime):
         return dict(path=path, name=Path(path).name, parent=parent if path!='/' else None,locations=locations,show_hidden=show_hidden,
                     openable=openable, open_reason=reason, protected_container=contains_private,
                     record_location='host' if policy['hosted_records'] else 'project',record_notice=policy['reason'],
-                    execution_allowed=not contains_private and any(Path(path).is_relative_to(r) for r in roots),
+                    execution_allowed=not contains_private, selection_grants_scope=not contains_private and not bool(self.trust),
                     roots=roots, folders=rows, machine=socket.gethostname(), environment='Linux Runtime', release=self.release_identity(),
                     recent=self.db.listing('workspace', limit=8))
 
@@ -219,7 +231,6 @@ class WorkbenchRuntime(SessionRuntime):
     def node_binding(self, workspace, node, *, admission=True):
         project = self.session_center.workspace(workspace)
         self.validate_source(project['path'])
-        if not any(Path(project['path']).is_relative_to(x) for x in self.operator['allowed_roots']): raise Blocked('工作区未获执行授权')
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
         try:auth=self.flow.get('auth-probe',node['profile'])

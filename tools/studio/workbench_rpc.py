@@ -1,5 +1,6 @@
 """Bounded native Codex metadata client; executes inside the existing bwrap supervisor."""
 import json
+import re
 import selectors
 import subprocess
 import sys
@@ -16,7 +17,10 @@ def request(executable, method, params):
             return result.returncode,result.stdout.decode(errors='replace')[:100000]
         code,version=read(['--version'])
         _,help_text=read(['exec','--help'] if provider=='codex' else ['--help'])
+        effort=re.search(r'--effort\s+<[^>]+>[^\n]*(?:\n\s+)?\(([^)]+)\)',help_text) if provider=='claude' else None
+        efforts=[v.strip() for v in effort[1].split(',')] if effort else []
         return {'result':{'version':version.strip()[:160],'available':code==0,
+            'efforts':efforts,'effort_source':'installed CLI --help' if efforts else 'unknown',
             'machine_output':('--json' if provider=='codex' else '--output-format') in help_text,
             'resume':'resume' in help_text,'auth_probe_scope':'dedicated profile HOME; see authentication separately'}}
     if method == 'claude/auth-status':

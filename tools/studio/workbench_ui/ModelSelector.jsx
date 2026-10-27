@@ -36,7 +36,7 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
  useEffect(()=>{setCatalog(profile);load(false);return()=>{version.current++}},[profile?.id,workspace?.id]);
  const current=catalog?.id===profile?.id?catalog:profile;
  const models=current?.models||[],selected=models.find(m=>m.id===model);
- const reasoning=m=>m?.native_efforts?.length?m.native_efforts:m?.efforts?.length?m.efforts:[profile?.effort].filter(Boolean);
+ const reasoning=m=>m?.selectable_efforts?.length?m.selectable_efforts:m?.native_efforts?.length?m.native_efforts:m?.efforts?.length?m.efforts:[profile?.effort].filter(Boolean);
  const efforts=reasoning(selected);
  return <section className="model-picker" aria-label="模型发现">
   <label className="field"><span>模型</span><select aria-label="模型" disabled={disabled||pending||Boolean(choosing)} value={choosing?.model||model||''} onChange={e=>{const m=models.find(x=>x.id===e.target.value);choose({model:m.id,effort:reasoning(m).includes(effort)?effort:reasoning(m)[0]||''})}}>

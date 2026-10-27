@@ -41,7 +41,7 @@ class DirectAgentTests(unittest.TestCase):
   with patch('subprocess.Popen',side_effect=AssertionError('CLI must never be spawned')):r=self.call()
   self.assertEqual(r['agent_id'],AGENT_ID);self.assertEqual(r['provider'],'devflower-agent');self.assertIsNone(r['native_session_id']);self.assertEqual(r['session_id'],'own-conversation');self.assertFalse(r['transport']['coding_cli'])
  def test_dedicated_system_and_closed_canvas_tools(self):
-  self.call();_,d,_=self.requests[0];self.assertIn('DevFlower 专属助手',d['system']);self.assertEqual([t['name'] for t in d['tools']],['propose_workflow']);self.assertEqual(d['messages'][0]['content'],'visible context');self.assertEqual(d['output_config'],{'effort':'high'})
+  self.call();_,d,_=self.requests[0];self.assertIn('DevFlower 专属助手',d['system']);self.assertEqual([t['name'] for t in d['tools']],['propose_workflow','request_workflow_run']);self.assertEqual(d['messages'][0]['content'],'visible context');self.assertEqual(d['output_config'],{'effort':'high'})
  def test_tool_call_becomes_proposal_data_not_execution(self):
   plan={'version':1,'name':'draft','summary':'draft','nodes':[],'edges':[]};self.reply['content']=[dict(type='tool_use',name='propose_workflow',input={'reply':'草稿','plan':plan})]
   r=self.call();self.assertEqual(json.loads(r['text'])['plan'],plan);self.assertEqual(list(self.rt.storage.glob('*.sqlite')),[])

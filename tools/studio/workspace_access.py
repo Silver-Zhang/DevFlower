@@ -1,8 +1,30 @@
-"""Directory selection is local navigation, never execution authority."""
+"""Host-owned folder selection scope; project files never grant authority."""
 import os
 from pathlib import Path
 from .graph import Invalid
 from .session_sources import clean_path, opened
+from orchestration.common import Blocked, digest
+
+
+def selected_scope(rt, path, *, grant=False):
+    """Bind an explicit authenticated folder selection to this installation.
+
+    A replaced directory, changed operator or new candidate needs a new pick.
+    Browsing and copied .devflower files cannot create this host-only record.
+    """
+    with opened(path, directory=True) as fd:
+        st = os.fstat(fd)
+    value = dict(path=path, device=st.st_dev, inode=st.st_ino,
+                 operator=rt.operator_sha256, candidate=rt.candidate_sha256)
+    key = digest(path.encode())
+    if grant:
+        if view_policy(rt, path)['protected_container']:
+            raise Blocked('此位置包含系统、认证或正在运行的工作台数据；请选择具体项目文件夹。')
+        if rt.trust: rt.trust.permits(path, rt.operator_file)
+        rt.db.put('selected-workspace-scope', key, value)
+        return True
+    try: return rt.db.get('selected-workspace-scope', key) == value
+    except Invalid: return False
 
 
 def browse_directory(path):

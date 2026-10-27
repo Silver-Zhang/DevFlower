@@ -14,6 +14,21 @@ import os
 TTL = 300
 
 
+def selectable_efforts(rt, name, profile, model):
+    """CLI grammar is a selectable request, never proof of model entitlement."""
+    native=list(model.get('efforts') or [])
+    if native: return native, model.get('effort_source','provider')
+    if profile['provider']=='claude':
+        try: cli=rt.flow.get('cli-probe',name)
+        except Invalid: cli={}
+        if (cli.get('available') and 0<=time.time()-cli.get('at',0)<TTL and
+            cli.get('executable_sha256')==digest(Path(profile['executable']).resolve().read_bytes()) and
+            isinstance(cli.get('efforts'),list) and cli['efforts'] and
+            all(isinstance(v,str) and v for v in cli['efforts'])):
+            return list(dict.fromkeys(cli['efforts'])), 'installed CLI --help; model support requires execution check'
+    return [profile['effort']], 'current profile preference; model support unknown'
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise Blocked('模型目录重定向被拒绝；请核对已批准的服务地址')
@@ -162,8 +177,10 @@ class ModelCatalog:
         for m in rows:
             registered = m['id'] in approved
             native = m['id'] in native_ids
+            choices,effort_source=selectable_efforts(self.rt,name,profile,m if native else {})
             models.append(dict(m, efforts=approved.get(m['id'], []),
                 native_efforts=list(m.get('efforts', [])) if native else [],
+                selectable_efforts=choices, selectable_effort_source=effort_source,
                 operator_registered=registered, discovered=native, discovery_current=bool(native and fresh),
                 execution_state='unverified' if registered else 'not-authorized',
                 execution_allowed=False, verification_scope='select exact configuration to verify',

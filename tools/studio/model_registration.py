@@ -70,7 +70,8 @@ class ModelRegistration:
         if cache.get('environment_sha256')!=profile_identity(p):raise Blocked('模型目录的认证或服务已变化，请刷新')
         row=next((r for r in cache.get('models',[]) if r['id']==data['model']),None)
         if not row: raise Invalid('此模型不在当前真实目录中，请刷新后选择')
-        allowed=row.get('efforts') or [p['effort']]
+        from .model_catalog import selectable_efforts
+        allowed,effort_source=selectable_efforts(self.rt,data['profile'],p,row)
         effort=data.get('effort') or allowed[0]
         if not isinstance(effort,str) or effort not in allowed: raise Invalid('请选择目录报告的强度，或沿用此Agent已配置的强度后验证')
         key=self.key(data['workspace'],data['profile'],data['model'])
@@ -80,7 +81,7 @@ class ModelRegistration:
             model=data['model'],effort=effort,key=key,environment=profile_identity(p),operator=self.rt.operator_sha256,
             policy=self.rt.policy_sha,catalog_sha256=digest(canonical(cache)),prior_sha256=digest(canonical(prior)),
             human_questions=['配置此模型供当前工作区选择；不调用模型、不授予执行权限。首次使用仍需真实连接检查。'],
-            capability_source='provider' if row.get('efforts') else 'current CLI profile preference; model support unknown'))
+            capability_source=effort_source))
 
     def select(self,data):
         # A model pick is a local selection, not a second approval ceremony.

@@ -145,7 +145,7 @@ class ProjectFilesTests(unittest.TestCase):
         with self.rt.project_files(row['id']).library() as store:
             design=store.get('draft','portable')
         self.assertEqual(design['workspace'],row['id']);self.assertEqual(design['graph']['nodes'][1]['session'],'new')
-        self.assertFalse(row['execution_allowed']);self.assertEqual(self.rt.flow.list('permit'),[])
+        self.assertTrue(row['execution_allowed']);self.assertEqual(self.rt.flow.list('permit'),[]);self.assertEqual(self.rt.flow.list('run'),[])
 
     def test_tracked_metadata_is_never_hidden_from_source_identity(self):
         git(self.base.source,'add','-f','.devflower/project.json')
@@ -171,12 +171,14 @@ class ProjectFilesTests(unittest.TestCase):
         with patch('studio.session_center.nested_profiles',side_effect=AssertionError('must not scan private subtrees')):
             self.assertEqual(self.rt.session_center.discover(value['id'])['discovery']['sessions'],[])
 
-    def test_unapproved_project_can_save_without_receiving_execution_permission(self):
+    def test_explicitly_selected_project_saves_without_starting_or_granting_model_admission(self):
         folder=self.base.source.parent/'unapproved';folder.mkdir()
         value=self.rt.open_workspace(str(folder));files=self.rt.project_files(value['id'])
         files.save_draft('saved',self.g,None)
-        self.assertFalse(value['execution_allowed'])
-        with self.assertRaises(Blocked):self.rt.node_binding(value['id'],self.g['nodes'][1],admission=False)
+        self.assertTrue(value['execution_allowed'])
+        self.assertEqual(self.rt.node_binding(value['id'],self.g['nodes'][1],admission=False)['cwd'],str(folder))
+        self.assertEqual(self.rt.flow.list('run'),[])
+        self.assertEqual(self.rt.db.listing('model-admission',limit=None),[])
         from studio.configuration_assistant import ConfigurationAssistant
         with patch.object(self.rt,'validate_source',side_effect=AssertionError('draft design must not validate executable source')):
             base=ConfigurationAssistant(self.rt)._base(dict(workspace=value['id'],graph=self.g),canvas_only=True)
