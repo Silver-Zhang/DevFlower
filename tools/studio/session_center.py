@@ -406,8 +406,15 @@ class SessionCenter:
             self._recheck(value)
             b = value['binding']
             with ExitStack() as stack:
-                stack.enter_context(lease(Path(value['source']['common_dir']) / 'devflower-writer.lock',
-                                          shared=value['permission'] == 'read'))
+                if hasattr(self.runtime, 'source_lock'):
+                    # General workspaces need the same host-owned lock as the
+                    # workflow/PTY paths. They need not be Git repositories.
+                    from .workbench_scheduler import source_lease
+                    stack.enter_context(source_lease(self.runtime.source_lock(value['cwd']),
+                                                     value['permission'] != 'read'))
+                else:
+                    stack.enter_context(lease(Path(value['source']['common_dir']) / 'devflower-writer.lock',
+                                              shared=value['permission'] == 'read'))
                 stack.enter_context(lease(Path(b['home']).parent / (digest(str(Path(b['home']).resolve()).encode()) + '.session.lock')))
                 if journal.get(key)['data']['cancel_requested']:
                     raise Blocked('Cancelled before native spawn')

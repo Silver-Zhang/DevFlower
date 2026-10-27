@@ -194,8 +194,10 @@ def create_server(runtime,port=0):
                 elif path=='/api/session/action':value=sessions.change(data['workspace'],data['handle'],data['action'],name=data.get('name',''),answer=data.get('answer',''))
                 elif path=='/api/terminal/prepare':value=terminals.prepare(data)
                 elif path=='/api/terminal/start':value=terminals.start(data)
-                elif path=='/api/terminal/input':value=terminals.input(data['workspace'],data['id'],data['sequence'],data['text'])
-                elif path=='/api/terminal/resize':value=terminals.resize(data['workspace'],data['id'],data['cols'],data['rows'])
+                elif path=='/api/terminal/input':value=terminals.input(data['workspace'],data['id'],data['sequence'],data['text'],generation=data.get('generation',0))
+                elif path=='/api/terminal/resize':value=terminals.resize(data['workspace'],data['id'],data['cols'],data['rows'],generation=data.get('generation',0))
+                elif path=='/api/terminal/share':value=terminals.share(data['workspace'],data['id'])
+                elif path=='/api/terminal/claim':value=terminals.claim(data['workspace'],data['id'],data['generation'])
                 elif path=='/api/terminal/close':value=terminals.close(data['workspace'],data['id'])
                 elif path=='/api/chat/prepare':
                     # A context copy is explicitly a new conversation, never a fake native resume.

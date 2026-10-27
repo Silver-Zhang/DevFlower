@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import secrets
 import selectors
+import shlex
 import sqlite3
 import struct
 import subprocess
@@ -88,7 +89,8 @@ class NativeTerminals:
             key = secrets.token_hex(16)
             record = dict(id=key, workspace=value['workspace'], handle=value['handle'], provider=value['provider'],
                 cwd=value['cwd'], session_id=value['session_id'], model=value['model'], effort=value['effort'], state='STARTING', created_at=time.time(),
-                input_sequence=0, authorization_sha256=digest(canonical(receipt)), candidate_sha256=self.rt.candidate_sha256)
+                    input_sequence=0, input_owner='workbench', input_generation=0,
+                    authorization_sha256=digest(canonical(receipt)), candidate_sha256=self.rt.candidate_sha256)
             with self.rt.flow.tx() as db:
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal', key, canonical(record).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal-permit', data['id'], canonical(dict(
@@ -114,7 +116,8 @@ class NativeTerminals:
                 secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
                 entry = dict(proc=process, master=master, process=identity, home=binding['home'], text='', first=0, next=0,
                     execution_binding=value['execution_binding'], cwd=value['cwd'], admission_verification=verification,
-                    total=0, filter=TerminalText(secret), inputs={}, deadline=time.monotonic()+1800, state='RUNNING')
+                    total=0, filter=TerminalText(secret), inputs={}, owner='workbench', generation=0,
+                    deadline=time.monotonic()+1800, state='RUNNING')
                 self.entries[key] = entry
                 self.rt.flow.change('terminal', key, {'state': 'RUNNING', 'process': identity})
                 entry['thread']=threading.Thread(target=self._read, args=(key, entry), daemon=True, name='native-pty-'+key[:6])
@@ -179,6 +182,7 @@ class NativeTerminals:
                 self.rt.flow.change('terminal', key, {'state': 'RECOVERY_REQUIRED', 'reason': '终端连接结果未确认；未自动重发输入'})
         finally:
             selector.close(); os.close(entry['master'])
+            if entry.get('attach'): entry['attach'].close()
 
     def snapshot(self, workspace, key, after=0):
         with self.lock:
@@ -204,11 +208,67 @@ class NativeTerminals:
             if len(result)>=20:break
         return result
 
-    def input(self, workspace, key, sequence, text):
+    def _writer(self, entry, owner, generation):
+        # Old clients have generation zero. After any handoff they must refresh
+        # and explicitly claim; delayed requests can never regain the keyboard.
+        if type(generation) is not int or generation != entry['generation'] or owner != entry['owner']:
+            raise Conflict('输入已由另一端接管，请刷新后明确接管；未发送此次按键')
+
+    def claim(self, workspace, key, generation, owner='workbench'):
+        with self.lock:
+            row = self.snapshot(workspace, key); entry = self.entries.get(key)
+            if not entry or entry['proc'].poll() is not None or entry['state'] != 'RUNNING':
+                raise Blocked('原生进程没有可接管的活动连接')
+            if type(generation) is not int or generation != entry['generation']:
+                raise Conflict('接管状态已变化，请重新读取，未强行抢占')
+            if row.get('input_status') in ('SENDING', 'UNKNOWN'):
+                raise Blocked('上次输入结果未确认，不允许接管或重发')
+            next_generation = entry['generation'] + 1
+            self.rt.flow.change('terminal', key, dict(input_generation=next_generation,
+                input_owner='workbench' if owner == 'workbench' else 'local-terminal'))
+            entry['owner'], entry['generation'] = owner, next_generation
+            return self.snapshot(workspace, key)
+
+    def release(self, workspace, key, generation, owner):
+        with self.lock:
+            self.snapshot(workspace, key); entry = self.entries.get(key)
+            if not entry: raise Blocked('接管连接不存在')
+            self._writer(entry, owner, generation)
+            self.rt.flow.change('terminal', key, dict(input_generation=generation+1, input_owner='unclaimed'))
+            entry['owner'], entry['generation'] = None, generation+1
+            return self.snapshot(workspace, key)
+
+    def detach(self, workspace, key, owner):
+        with self.lock:
+            entry = self.entries.get(key)
+            if not entry or entry.get('owner') != owner: return
+            try:
+                self.release(workspace, key, entry['generation'], owner)
+            except (OSError, sqlite3.Error, Blocked):
+                # Keep input disabled if the durable release cannot be saved.
+                entry['owner'] = None
+
+    def share(self, workspace, key):
+        with self.lock:
+            row = self.snapshot(workspace, key); entry = self.entries.get(key)
+            if not entry or entry['proc'].poll() is not None or entry['state'] != 'RUNNING':
+                raise Blocked('请先打开此会话的原生终端；不会另启CLI或复制历史')
+            from .native_attach import NativeAttach
+            if not entry.get('attach'):
+                entry['attach'] = NativeAttach(self, workspace, key)
+            script = Path(__file__).parents[1] / 'devflower_attach.py'
+            return dict(terminal=key, provider=row['provider'], session_id=row['session_id'],
+                command=shlex.join([sys.executable, '-B', str(script), str(entry['attach'].path)]),
+                mechanism='same-supervised-pty', desktop_connected=False,
+                desktop_reason=('当前 Codex 桌面端未连接此PTY；该命令仅连接本地原生CLI，不代表桌面同步。'
+                                if row['provider']=='codex' else None))
+
+    def input(self, workspace, key, sequence, text, owner='workbench', generation=0):
         if not isinstance(text, str) or not 0 < len(text.encode()) <= 16384: raise Invalid('终端输入超过预算')
         with self.lock:
             row = self.snapshot(workspace, key); entry = self.entries.get(key)
             if not entry or entry['state'] != 'RUNNING' or entry['proc'].poll() is not None: raise Blocked('终端未运行，未重发输入')
+            self._writer(entry, owner, generation)
             if type(sequence) is not int: raise Invalid('终端输入需要明确序号')
             sha = digest(text.encode())
             if sequence in entry['inputs']:
@@ -231,11 +291,12 @@ class NativeTerminals:
             if len(entry['inputs'])>128:del entry['inputs'][min(entry['inputs'])]
             return dict(accepted=True,duplicate=False,input_sequence=sequence)
 
-    def resize(self, workspace, key, cols, rows):
+    def resize(self, workspace, key, cols, rows, owner='workbench', generation=0):
         cols, rows = dimensions(cols, rows)
         with self.lock:
             self.snapshot(workspace, key); entry=self.entries.get(key)
             if not entry or entry['proc'].poll() is not None: raise Blocked('终端没有活动连接')
+            self._writer(entry, owner, generation)
             fcntl.ioctl(entry['master'],termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
         return dict(resized=True)
 

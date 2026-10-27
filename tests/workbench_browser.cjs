@@ -533,6 +533,28 @@ await test('product-handoff-shows-names-and-content-once-per-real-stage',async p
  await openWorkspace(p);await p.route('**/api/run?**',async route=>{const res=await route.fetch(),v=await res.json();if(v.run.id==='A'){const e={at:1,run:'A',edge:'edge1',source:'analyze',node:'review',activation:'A',target_activation:'review-round',target_round:[],iteration_path:[],attempt:1,content_sha256:'a'.repeat(64),content:{answer:'CLEAR_UPSTREAM_CONTENT'}};v.events=[{...e,seq:1,kind:'handoff-ready'},{...e,seq:2,kind:'handoff-sent'}]}await route.fulfill({json:v})});
  await p.getByLabel('历史运行',{exact:true}).selectOption('A');await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()==='运行 A');await p.getByRole('button',{name:'活动',exact:true}).click();await p.getByRole('button',{name:'交接内容',exact:true}).click();assert.equal(await p.locator('.activity-content>details').count(),1);assert((await p.locator('.activity-content').innerText()).includes('CLEAR_UPSTREAM_CONTENT'));assert((await p.locator('.activity-content').innerText()).includes('分析 A'));assert(!(await p.locator('.activity-content').innerText()).includes('a'.repeat(64)));
 });
+await test('native-local-attach-ui-observes-then-explicitly-reclaims',async p=>{
+ await openWorkspace(p);await p.locator('.session-main').filter({hasText:'Synthetic dialog-A'}).click();
+ let row={id:'SHARED-SYNTHETIC-PTY',handle:access.sessions['dialog-A'].handle,workspace:access.workspace,state:'RUNNING',process_alive:true,input_sequence:3,input_owner:'local-terminal',input_generation:1},claims=[],inputs=[],stops=0;
+ await p.route('**/api/terminals?**',route=>route.fulfill({json:{terminals:[row]}}));
+ await p.route('**/api/terminal/output?**',route=>route.fulfill({json:{...row,output:'SYNTHETIC same native PTY',next:25,reset:false}}));
+ await p.route('**/api/terminal/resize',route=>route.fulfill({json:{resized:true}}));
+ await p.route('**/api/terminal/claim',route=>{claims.push(route.request().postDataJSON());row={...row,input_owner:'workbench',input_generation:2};return route.fulfill({json:row})});
+ await p.route('**/api/terminal/input',route=>{inputs.push(route.request().postDataJSON());return route.fulfill({json:{accepted:true}})});
+ await p.route('**/api/terminal/close',route=>{stops++;return route.fulfill({json:{stopped:true}})});
+ await p.getByRole('button',{name:'原生终端',exact:true}).click();await p.getByRole('button',{name:'接管到工作台',exact:true}).waitFor();
+ await p.locator('.xterm-helper-textarea').focus();await p.keyboard.type('ignored');await delay(350);assert.equal(inputs.length,0);
+ await p.getByRole('button',{name:'接管到工作台',exact:true}).click();await until(()=>claims.length===1);assert.equal(claims[0].generation,1);await until(async()=>await p.getByRole('button',{name:'接管到工作台',exact:true}).count()===0);
+ await p.locator('.xterm-helper-textarea').focus();await p.keyboard.press('A');await until(()=>inputs.length===1);assert.equal(inputs[0].generation,2);assert.equal(inputs[0].sequence,4);
+ await p.getByRole('button',{name:'关闭终端视图',exact:true}).click();assert.equal(stops,0);
+});
+await test('native-local-attach-is-not-presented-as-desktop-sync',async p=>{
+ await openWorkspace(p);await p.locator('.session-main').filter({hasText:'Synthetic dialog-A'}).click();const row={id:'SHARE-SYNTHETIC-PTY',handle:access.sessions['dialog-A'].handle,workspace:access.workspace,state:'RUNNING',process_alive:true,input_sequence:0,input_owner:'workbench',input_generation:0};
+ await p.route('**/api/terminals?**',route=>route.fulfill({json:{terminals:[row]}}));await p.route('**/api/terminal/output?**',route=>route.fulfill({json:{...row,output:'SYNTHETIC native output',next:23,reset:false}}));await p.route('**/api/terminal/resize',route=>route.fulfill({json:{resized:true}}));
+ await p.route('**/api/terminal/share',route=>route.fulfill({json:{terminal:row.id,session_id:'SYNTHETIC',command:'python3 -B /SYNTHETIC/devflower_attach.py /SYNTHETIC/private/attach.json',desktop_connected:false,desktop_reason:'当前 Codex 桌面端未连接此PTY；该命令仅连接本地原生CLI，不代表桌面同步。'}}));
+ await p.getByRole('button',{name:'原生终端',exact:true}).click();await p.getByRole('button',{name:'在本机终端连接',exact:true}).click();const view=p.getByLabel('本机原生会话连接',{exact:true});await view.waitFor();assert((await view.innerText()).includes('--takeover'));assert((await view.innerText()).includes('不代表桌面同步'));
+ await p.getByRole('button',{name:'收起连接说明',exact:true}).click();assert.equal(await view.count(),0);
+});
 await test('product-terminal-explicit-tab-opens-once-and-reconnects-existing-pty',async p=>{
  await openWorkspace(p);await p.evaluate(()=>localStorage.removeItem('devflower-terminal-auto-open'));await p.locator('.session-main').filter({hasText:'Synthetic dialog-A'}).click();let starts=0,active=false;const row={id:'UI-SYNTHETIC-PTY',handle:access.sessions['dialog-A'].handle,workspace:access.workspace,state:'RUNNING',process_alive:true,input_sequence:0};
  await p.route('**/api/terminals?**',route=>route.fulfill({json:{terminals:active?[row]:[]}}));
