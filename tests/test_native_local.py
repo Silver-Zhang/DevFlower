@@ -1,0 +1,107 @@
+"""Canonical native roots and writer locks; synthetic fixtures, not model proof."""
+import copy
+import fcntl
+import json
+import os
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+sys.path[:0]=[str(Path(__file__).parent),str(Path(__file__).resolve().parents[1]/'tools')]
+from test_workbench_runtime import fixture,structured_session
+from studio.native_local import configured,bind,profile_key,session_lease,native_busy,codex_history,preferred_profile
+from orchestration.common import Blocked,save,digest
+
+
+class NativeLocalTests(unittest.TestCase):
+    def setUp(self):
+        self.base,self.rt=fixture(self)
+        self.home=self.base.source.parent/'canonical-native-home';self.home.mkdir()
+        (self.home/'.codex').mkdir();(self.home/'.claude').mkdir()
+        op=copy.deepcopy(self.rt.operator)
+        op['native_local']={p:dict(home=str(self.home),config_root=str(self.home/('.'+p))) for p in ('codex','claude')}
+        save(self.rt.operator_file,op);self.rt.operator=op;self.rt.operator_sha256=digest(self.rt.operator_file.read_bytes())
+        self.binding=bind(self.rt,op['profiles']['default-codex'],self.base.project['id'])
+
+    def test_explicit_native_binding_uses_the_same_canonical_home(self):
+        v=self.rt.node_binding(self.base.project['id'],dict(profile='default-codex',mode='Ask'),admission=False)['binding']
+        self.assertEqual(v['home'],str(self.home));self.assertEqual(v['execution_backend'],'native-local')
+        self.assertFalse(v['external_sandbox']);self.assertEqual(v['isolation'],'native-local')
+
+    def test_native_root_mismatch_or_link_is_not_adopted(self):
+        self.rt.operator['native_local']['codex']['config_root']=str(self.home/'.claude')
+        with self.assertRaises(Blocked):configured(self.rt,'codex')
+
+    def test_malformed_local_configuration_fails_closed(self):
+        self.rt.operator['native_local']['codex']=True
+        with self.assertRaises(Blocked):configured(self.rt,'codex')
+
+    def test_unverified_native_extensions_are_not_advertised(self):
+        from studio.agent_extensions import AgentExtensions
+        value=AgentExtensions(self.rt).catalog(self.base.project['id'],'default-codex')
+        self.assertFalse(value['capabilities']['skills']);self.assertFalse(value['capabilities']['subagents'])
+        self.assertEqual(value['skills'],[])
+
+    def test_native_config_rotation_invalidates_exact_execution_scope(self):
+        from studio.model_admission import ModelAdmission
+        gate=ModelAdmission(self.rt);cwd=str(self.base.source)
+        config=self.home/'.codex/config.toml';config.write_text('model_provider="first"\n')
+        before=gate.key(self.binding,cwd)
+        config.write_text('model_provider="second"\n')
+        self.assertNotEqual(gate.key(self.binding,cwd),before)
+
+    def test_default_native_profile_is_explicit_not_dictionary_order(self):
+        self.rt.operator['profiles']={'z-other':dict(self.binding,model='different'),**self.rt.operator['profiles']}
+        name,p=preferred_profile(self.rt,'codex')
+        self.assertEqual(name,'default-codex');self.assertNotEqual(p['model'],'different')
+
+    def test_unavailable_native_mutation_does_not_leave_pending_journal(self):
+        from studio.workbench_sessions import WorkbenchSessions
+        manager=WorkbenchSessions(self.rt)
+        with self.assertRaises(Blocked):manager.rpc(self.binding,str(self.base.source),'thread/fork',{'threadId':'anything'})
+        self.assertEqual(self.rt.flow.list('native-mutation'),[])
+
+    def test_different_native_uuids_share_home_but_not_profile_or_lock(self):
+        a=dict(self.binding,session_id='00000000-0000-4000-8000-000000000001')
+        b=dict(self.binding,session_id='00000000-0000-4000-8000-000000000002')
+        self.assertNotEqual(profile_key(a),profile_key(b))
+        with session_lease(a):
+            with session_lease(b):pass
+            with self.assertRaises(Blocked):
+                with session_lease(a):pass
+
+    def test_native_store_lock_blocks_only_the_owned_thread(self):
+        root=self.home/'.codex/thread-writer-locks';root.mkdir()
+        a='00000000-0000-4000-8000-000000000001';b='00000000-0000-4000-8000-000000000002'
+        with (root/(a+'.lock')).open('w') as stream:
+            fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            self.assertTrue(native_busy(self.binding,a));self.assertFalse(native_busy(self.binding,b))
+        self.assertFalse(native_busy(self.binding,a))
+
+    def test_native_history_reads_provider_items_and_never_hidden_reasoning(self):
+        sid='00000000-0000-4000-8000-000000000001';cwd=str(self.base.source)
+        value=dict(thread=dict(id=sid,cwd=cwd,turns=[dict(id='actual-turn',items=[
+            dict(type='userMessage',id='u',content=[dict(type='text',text='question')]),
+            dict(type='reasoning',id='private',summary='DO_NOT_SHOW'),
+            dict(type='agentMessage',id='a',text='answer')])]))
+        with patch('studio.native_codex_rpc.metadata',return_value=value) as rpc:
+            rows=codex_history(self.binding,cwd,sid)
+        self.assertEqual([r['text'] for r in rows],['question','answer'])
+        self.assertEqual(rows[0]['turn_id'],'actual-turn');self.assertEqual(rpc.call_args.args[2],'thread/read')
+        self.assertFalse((self.home/'copied-history').exists())
+
+    def test_native_history_mismatch_cannot_cross_workspace(self):
+        value=dict(thread=dict(id='other',cwd='/other',turns=[]))
+        with patch('studio.native_codex_rpc.metadata',return_value=value):
+            with self.assertRaises(Blocked):codex_history(self.binding,str(self.base.source),'00000000-0000-4000-8000-000000000001')
+
+    def test_claude_write_mode_is_not_declared_verified_from_a_prompt(self):
+        with self.assertRaises(Blocked):self.rt.node_binding(self.base.project['id'],dict(profile='default-claude',mode='Agent'),admission=False)
+
+    def test_legacy_profile_keys_and_homes_keep_original_semantics(self):
+        home=str(self.home/'legacy');old=dict(home=home,provider='codex',session_id='anything')
+        self.assertEqual(profile_key(old),digest(home.encode()))
+        self.assertFalse(native_busy(self.binding,None))
+
+
+if __name__=='__main__':unittest.main()

@@ -66,7 +66,7 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
         raise Blocked('read-only credential overlays require bwrap')
     from .common import workspace_metadata
     metadata = workspace_metadata(cwd, check_git=True)
-    if metadata and (backend != 'bwrap' or not isolate):
+    if metadata and backend != 'native-local' and (backend != 'bwrap' or not isolate):
         raise Blocked('项目记录隔离需要强制的外层执行保护')
     overlays = []
     for source, relative in readonly_files:
@@ -121,6 +121,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
             wrapped += ['--tmpfs', metadata, '--remount-ro', metadata]
         command = [str(Path(argv[0]).resolve()) if Path(argv[0]).is_absolute() else argv[0], *argv[1:]]
         argv = wrapped + ['--remount-ro', '/', '--remount-ro', '/tmp', '--chdir', str(cwd), '--', *command]
+    elif backend == 'native-local' and not isolate:
+        pass  # Explicit host-approved native client; no added HOME/container.
     elif backend != 'landlock':
         raise Blocked('unknown isolation backend')
 

@@ -112,6 +112,11 @@ class AgentExtensions:
         project=self.rt.session_center.workspace(workspace);p=self.rt.operator['profiles'].get(profile)
         if not p:raise Invalid('请选择已配置的 Agent')
         cap=capabilities(p);rows=[]
+        if self.rt.operator.get('native_local',{}).get(p['provider']):
+            return dict(capabilities=dict(skills=False,subagents=False,
+                reason='本机原生模式沿用原客户端扩展；额外挂载与子 Agent 策略尚未验证'),
+                skills=[],subagent_modes=['disabled'],
+                notice='不会改写本机 Skills 或子 Agent 配置。旧隔离模式的已验证挂载仍保留。')
         if cap['skills'] and not project.get('protected_container'):
             roots=[Path(project['path'])/x for x in ('.agents/skills','.claude/skills','skills')]
             roots += [Path.home()/x for x in ('.agents/skills','.codex/skills','.claude/skills')]

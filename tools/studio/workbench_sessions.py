@@ -56,6 +56,14 @@ class WorkbenchSessions:
             request_sections=redact(item.get('request_sections', []), secret),
             messages=[],activity=[],summaries=[],session=None,history_status='waiting')
         try:
+            if binding.get('execution_backend')=='native-local' and binding['provider']=='codex':
+                from .native_local import codex_history
+                turn=item.get('native_turn_id') or item.get('receipt',{}).get('native_turn_id')
+                if not turn:raise Invalid('原生回合身份尚未返回')
+                session=self.activation_session(workspace,run,activation)
+                messages=codex_history(binding,chat['cwd'],binding['session_id'],turn_id=turn)
+                value.update(session=session,history_status='available',messages=redact(messages,secret))
+                return value
             offset=item.get('native_history_offset');end=item.get('native_history_end')
             if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
                 raise Invalid('此历史运行没有记录可核验的本轮原生范围')
@@ -233,7 +241,14 @@ class WorkbenchSessions:
             busy=False
             if internal and internal['profile'].get('home'):
                 try:
-                    busy=self.busy({'home':internal['profile']['home']},row['session_id'])
+                    probe={'home':internal['profile']['home']}
+                    from .native_local import configured,bind
+                    cfg=configured(self.rt,row['provider'])
+                    if cfg and cfg['home']==probe['home']:
+                        from .native_local import preferred_profile
+                        _,profile=preferred_profile(self.rt,row['provider'])
+                        probe=bind(self.rt,profile,workspace)
+                    busy=self.busy(probe,row['session_id'])
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
             named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),
@@ -256,6 +271,13 @@ class WorkbenchSessions:
                 if internal and c['binding'].get('home') == internal['profile'].get('home') and
                 c['binding'].get('provider') == row['provider'] and
                 c['binding'].get('session_id') == row['session_id']), None)
+            if bound is None and internal:
+                from .native_local import configured,bind
+                cfg=configured(self.rt,row['provider'])
+                if cfg and internal['profile']['home']==cfg['home']:
+                    from .native_local import preferred_profile
+                    name,profile=preferred_profile(self.rt,row['provider'])
+                    bound=dict(bind(self.rt,profile,workspace),runtime_profile=name)
             if bound:
                 exact = next((name for name, profile in self.rt.operator['profiles'].items() if
                     all(bound.get(k) == profile.get(k) for k in
@@ -263,6 +285,8 @@ class WorkbenchSessions:
                     (name==bound.get('runtime_profile') or (bound.get('model'),bound.get('effort'))==(profile['model'],profile['effort']))), None)
                 named['execution'] = dict(profile=exact, provider=bound['provider'],
                                           model=bound['model'], effort=bound['effort'])
+                if bound.get('execution_backend')=='native-local':named['execution']['backend']='native-local'
+                if bound.get('execution_backend')=='native-local':named['choices']['fork']=False
             if not query or query.casefold() in (title+' '+row['provider']).casefold():result.append(named)
         if hasattr(self.rt,'project_files'):
             # Never adopt a copied UUID/HOME as a writer. Saved copies use a
@@ -291,6 +315,9 @@ class WorkbenchSessions:
         return key,meta,archive
 
     def busy(self,binding,sid):
+        if binding.get('execution_backend')=='native-local':
+            from .native_local import own_busy
+            return own_busy(self.rt,binding,sid)
         return self.rt.session_center._busy(binding['home']) or self.native_process_busy(binding['home'],sid)
 
     def native_process_busy(self,home,sid):
@@ -515,6 +542,22 @@ class WorkbenchSessions:
                     native_modified=native_modified,permanently_deleted=False)
 
     def rpc(self,binding,cwd,method,params):
+        from .native_local import configured
+        cfg=configured(self.rt,binding['provider'])
+        local=bool(cfg and (binding.get('execution_backend')=='native-local' or
+            binding.get('home')==cfg['home'] or Path(binding['home']).is_relative_to(self.rt.rpc_home)))
+        if local and method in ('cli/probe','claude/auth-status'):
+            from .workbench_rpc import request
+            from orchestration.common import clean_env
+            env=clean_env(cfg['home']);env['TMPDIR']='/tmp'
+            env['CODEX_HOME' if binding['provider']=='codex' else 'CLAUDE_CONFIG_DIR']=cfg['config_root']
+            reply=request(binding['executable'],method,params,env=env)
+            if 'error' in reply:raise Blocked('原生能力探测未完成')
+            return reply['result']
+        if local and binding['provider']=='codex' and method in ('model/list','account/read','thread/read','thread/list'):
+            from .native_codex_rpc import metadata
+            return metadata(dict(binding,**cfg),cwd,method,params)
+        if local:raise Blocked('此本机原生生命周期操作尚未独立验证；可通过原生客户端管理')
         if binding['provider']=='copilot':
             if method not in ('cli/probe','copilot/models','copilot/auth-status'):raise Blocked('Copilot 尚未支持此原生元数据操作')
             from .copilot_adapter import invoke
@@ -536,6 +579,8 @@ class WorkbenchSessions:
                 value=dict(id=operation,home=str(home),cwd=cwd,method=method,params=params,state='PENDING',at=time.time())
                 db.execute('INSERT INTO records VALUES(?,?,?)',('native-mutation',operation,canonical(value).decode()))
         try:
+            if local:
+                raise Blocked('此本机原生生命周期操作尚未独立验证；可通过原生客户端管理')
             with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')):
                 result,out,_=execute([sys.executable,'-B',str(helper)],cwd,home,
                     read=[str(helper),cwd,*binding['read_paths']],write=[],timeout=30,cap=2_000_000,
@@ -590,8 +635,10 @@ class WorkbenchSessions:
             catalog=ModelCatalog(self).get(name,profile,refresh,workspace)
             from .agent_extensions import capabilities as extension_capabilities
             extensions=extension_capabilities(profile)
+            local=bool(self.rt.operator.get('native_local',{}).get(profile['provider']))
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
-                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'],subagents=extensions['subagents'],extensions=extensions,
+                execution_backend='native-local' if local else 'isolated',
+                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and not local,subagents=extensions['subagents'] and not local,extensions=extensions,
                 model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
         if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):

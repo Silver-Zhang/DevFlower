@@ -30,7 +30,7 @@ class ModelAdmission:
             environment_sha256=digest(canonical(clean_env())),
             profile=binding.get('runtime_profile'), cwd=str(cwd),
             config={k: binding.get(k) for k in ('provider', 'model', 'effort',
-                'execution_mode', 'role', 'tools', 'timeout_seconds', 'executable',
+                'execution_mode', 'role', 'tools', 'timeout_seconds', 'executable', 'execution_backend','config_root',
                 'read_paths', 'readonly_files', 'isolation', 'external_sandbox', 'buffered_tool_transport', 'model_registration_key','model_registration_sha256','no_tools','execution_context','skills','skill_ids','subagents')})
 
     def key(self, binding, cwd):
@@ -259,6 +259,7 @@ class ModelAdmission:
         probe_cwd = artifacts/'workspace'; probe_cwd.mkdir(mode=0o700)
         probe = dict(binding, home=str(self.rt.storage/'model-check-homes'/check_id),
                      session_id=None, admission_probe=True, responsibility='Native model configuration diagnostic', background='')
+        if binding.get('execution_backend')=='native-local':probe['home']=binding['home']
         schema = artifacts/'schema.json'
         save(schema, dict(type='object', additionalProperties=False, required=['reply'],
                           properties={'reply':dict(type='string')}))

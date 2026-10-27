@@ -25,6 +25,16 @@ def profile_identity(profile):
             raw = os.read(fd, 200001)
         if len(raw) > 200000: raise Blocked('原生配置超过读取预算')
         files.append([source, target, digest(raw)])
+    if profile.get('execution_backend')=='native-local':
+        root=Path(profile['config_root'])
+        for name in ('config.toml',) if profile['provider']=='codex' else ('settings.json','settings.local.json'):
+            path=root/name
+            try:
+                with opened(path) as fd:raw=os.read(fd,200001)
+            except FileNotFoundError:
+                files.append([str(path),name,None]);continue
+            if len(raw)>200000:raise Blocked('本机原生配置超过读取预算')
+            files.append([str(path),name,digest(raw)])
     exe = Path(profile['executable']).resolve() if profile.get('executable') else None
     exe_hash=None
     if exe and exe.is_file():

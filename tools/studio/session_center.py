@@ -25,6 +25,7 @@ from .graph import Invalid
 from .server import Conflict
 from .session_sources import clean_path, opened, Refused, scan, UUID
 from .workspace_sessions import WorkspaceSessions, display
+from .native_local import profile_key, session_lease
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED'}
 REPLY_SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['reply'],
@@ -93,7 +94,13 @@ class SessionCenter:
         owned = self.runtime.owned_sessions(project['id'], validate=False)
         managed = [dict(provider=row['provider'], home=row['home'], config_root=row['config_root'],
                         workspace=project['path'], original_project_root=row['execution_root']) for row in owned]
-        return managed + profiles, coverage, owned
+        profiles=managed+profiles
+        if self.runtime.operator.get('native_local'):
+            from .native_local import profiles as local_profiles
+            profiles=local_profiles(self.runtime,project,profiles)
+            errors=[v for (provider,cwd),v in getattr(self.runtime,'native_local_errors',{}).items() if cwd==project['path']]
+            if errors:coverage=dict(coverage,native_local=dict(status='partial',errors=errors))
+        return profiles, coverage, owned
 
     def discover(self, workspace, include_hidden=False):
         self.runtime.check_operator()
@@ -112,10 +119,17 @@ class SessionCenter:
         directory = self.runtime.storage / 'discovery'
         directory.mkdir(exist_ok=True, mode=0o700)
         discovery = WorkspaceSessions(directory, [project['path']], persist=False,
-            profile_config=dict(profiles=profiles, defaults=True))
+            profile_config=dict(profiles=profiles, defaults=not bool(self.runtime.operator.get('native_local'))))
         selected = next(iter(discovery.roots))
         rows, coverage, seen = [], [], set()
         for p in discovery.profiles:
+            if self.runtime.operator.get('native_local'):
+                from .native_local import configured
+                cfg=configured(self.runtime,p['provider'])
+                if cfg and (p['home'],p['config_root'])==(cfg['home'],cfg['config_root']):
+                    # Discovery filters change as threads are created. They are
+                    # not part of this canonical workspace's native identity.
+                    p['id']=session_identity(p['provider'],p['config_root'],p['home'],project['path'],'native-local')
             if p['workspace'] and p['workspace'] != project['path']:
                 continue
             native, report = scan(str(Path(p['config_root']) / ('sessions' if p['provider'] == 'codex' else 'session-state' if p['provider']=='copilot' else 'projects')),
@@ -163,7 +177,24 @@ class SessionCenter:
         p, native = handle['profile'], handle['native']
         if handle.get('ambiguous') or native['cwd_changed'] or not p['home']:
             return None, 'Native environment or unique cwd identity is unverified; read only'
-        # Imported records, including default HOME, are never adopted as writers.
+        from .native_local import configured,bind,own_busy
+        cfg=configured(self.runtime,p['provider'])
+        if cfg and (p['home'],p['config_root'])==(cfg['home'],cfg['config_root']):
+            if native['cwd']!=project['path']:return None,'原生工作目录与当前工作区不一致'
+            from .native_local import preferred_profile
+            name,profile=preferred_profile(self.runtime,p['provider'])
+            previous=next((r['binding'] for r in self.db.listing('chat-profile',filters={'workspace':project['id']},limit=None)
+                if r['binding'].get('home')==cfg['home'] and r['binding'].get('provider')==p['provider']
+                and r['binding'].get('session_id')==native['session_id']),None)
+            if previous:
+                name=previous['runtime_profile'];profile=self.runtime.operator['profiles'][name]
+            binding=bind(self.runtime,profile,project['id'])
+            if previous:binding.update({k:previous[k] for k in ('model','effort')})
+            binding.update(runtime_profile=name,session_id=native['session_id'])
+            if own_busy(self.runtime,binding,native['session_id']):return None,'同一原生会话已由另一端持有，仍可只读查看'
+            return binding,'本机原生会话；使用原HOME与原UUID，未复制记录'
+        # Legacy imports stay readonly; only the explicitly configured canonical
+        # roots above can be adopted through native locking and current scope.
         for row in self.db.listing('chat-profile', filters={'workspace': project['id']}, limit=None):
             b = row['binding']
             if row['workspace'] == project['id'] and b['home'] == p['home'] and b['provider'] == p['provider']:
@@ -226,6 +257,12 @@ class SessionCenter:
         extra += [src for profile in self.runtime.operator['profiles'].values()
                   for src, _ in profile.get('readonly_files', [])]
         secrets_found = credentials(p['home'] or p['config_root'], extra, read_file=credential_bytes)
+        from .native_local import configured,codex_history
+        cfg=configured(self.runtime,p['provider'])
+        if p['provider']=='codex' and cfg and p['config_root']==cfg['config_root']:
+            profile=next(v for v in self.runtime.operator['profiles'].values() if v['provider']=='codex')
+            messages=redact(codex_history(dict(profile,**cfg),row['native']['cwd'],row['native']['session_id'],limit,query),secrets_found)
+            return dict(workspace_id=workspace,handle=handle,messages=messages,history_source='canonical-native-api')
         messages = conversation(p['provider'], row['native']['path'], limit, query,
                                 expected_sha256=row['native']['sha256'], secrets=secrets_found,start_offset=start_offset,end_offset=end_offset,include_metadata=include_metadata)
         return dict(workspace_id=workspace, handle=handle, messages=messages)
@@ -312,7 +349,7 @@ class SessionCenter:
             op = dict(value, id=secrets.token_hex(16), state='QUEUED', created_at=time.time(),
                       cancel_requested=False, authorization=receipt)
             self.db.put('session-operation', op['id'], op)
-            self.db.put('chat-profile', digest(op['binding']['home'].encode()),
+            self.db.put('chat-profile', profile_key(op['binding']),
                         dict(workspace=op['workspace'], binding=op['binding']))
             child=None;identity=None;owner='chat:'+op['id']
             try:
@@ -415,7 +452,7 @@ class SessionCenter:
                 else:
                     stack.enter_context(lease(Path(value['source']['common_dir']) / 'devflower-writer.lock',
                                               shared=value['permission'] == 'read'))
-                stack.enter_context(lease(Path(b['home']).parent / (digest(str(Path(b['home']).resolve()).encode()) + '.session.lock')))
+                stack.enter_context(session_lease(b))
                 if journal.get(key)['data']['cancel_requested']:
                     raise Blocked('Cancelled before native spawn')
                 # Re-read exact transcript under the shared HOME lease.
@@ -438,7 +475,7 @@ class SessionCenter:
                     ModelAdmission(self.runtime).renew(b,value['cwd'],reply,verification)
                 # Pin receipt to the actual UUID, requested environment and process.
                 summary = {k: reply.get(k) for k in ('session_id', 'requested_model', 'requested_effort',
-                    'resolved_model', 'resolved_effort', 'permission_mode', 'process', 'usage')}
+                    'resolved_model', 'resolved_effort', 'permission_mode', 'process', 'usage','native_turn_id')}
                 summary.update(cwd=value['cwd'], home=b['home'], provider=b['provider'], profile=value['profile'])
                 self.db.update('session-operation', key, dict(state='CANCELLED' if journal.get(key)['data']['cancel_requested'] else 'COMPLETED',
                     receipt=summary, reply=safe_text(reply['report'].get('reply', ''))))
@@ -479,12 +516,14 @@ class SessionJournal:
         if row.get('diagnostic'):
             return
         binding = dict(row['binding'], session_id=sid)
-        self.db.put('chat-profile', digest(binding['home'].encode()),
+        self.db.put('chat-profile', profile_key(binding),
                     dict(workspace=row['workspace'], binding=binding))
 
     def finish(self, key, status, **updates):
         row = self.db.get('session-step', key)
         self.db.update('session-step', key, dict(status=status, data=dict(row['data'], **updates)))
+        if updates.get('native_turn_id'):
+            self.db.update('session-operation',self.operation,dict(native_turn_id=updates['native_turn_id']))
         if row['kind'] == 'PROCESS' and status == 'RUNNING':
             self.db.update('session-operation', self.operation, dict(state='RUNNING', process=updates.get('process'),native_started_at=time.time()))
             operation = self.db.get('session-operation', self.operation)

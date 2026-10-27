@@ -1,5 +1,6 @@
 """Persisted v3 scheduling, bounded concurrency and native turns; no Stable promotion."""
 from __future__ import annotations
+from .native_local import profile_key, session_lease
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import fcntl
@@ -62,7 +63,7 @@ class Journal:
         if activation.get('chat_key'):
             chat=self.s.db.get('node-session',activation['chat_key']);binding=dict(chat['binding'],session_id=sid)
             self.s.db.change('node-session',chat['id'],{'binding':binding})
-            self.s.rt.db.put('chat-profile',digest(binding['home'].encode()),dict(workspace=chat['workspace'],binding=binding))
+            self.s.rt.db.put('chat-profile',profile_key(binding),dict(workspace=chat['workspace'],binding=binding))
 
     def visible_request(self, text):
         from orchestration.privacy import credentials,redact
@@ -98,6 +99,8 @@ class Journal:
         if updates.get('actual_session'):
             self.s.db.change('activation', self.key, {'observed_session': updates['actual_session']})
             self.bind_session(updates['actual_session'])
+        if updates.get('native_turn_id'):
+            self.s.db.change('activation',self.key,{'native_turn_id':updates['native_turn_id']})
 
 
 class Scheduler:
@@ -330,7 +333,7 @@ class Scheduler:
                 admission.require(chat['binding'], chat['cwd'])
             chat.update(id=chat_key, initialized=False, run=self.run, node=prefix + node['id'],name=node['name'])
             self.db.put('node-session', chat_key, chat)
-            self.rt.db.put('chat-profile',digest(chat['binding']['home'].encode()),dict(workspace=chat['workspace'],binding=chat['binding']))
+            self.rt.db.put('chat-profile',profile_key(chat['binding']),dict(workspace=chat['workspace'],binding=chat['binding']))
         from .model_admission import ModelAdmission
         admission=ModelAdmission(self.rt)
         if not run.get('automatic_admission') or admission.status(chat['binding'],chat['cwd'])['status']!='expired':
@@ -354,16 +357,18 @@ class Scheduler:
                        'chat_key': chat_key, 'provider': chat['binding']['provider'], 'model': chat['binding']['model'],
                        'effort': chat['binding']['effort'], 'mode': node.get('mode', 'Ask')})
         binding = chat['binding'];home = Path(binding['home']);cwd = chat['cwd']
+        if chat.get('expected_native_turn_id') and binding.get('execution_backend')=='native-local':
+            binding=dict(binding,expected_native_turn_id=chat['expected_native_turn_id'])
         artifacts = self.rt.storage / 'flow-artifacts' / self.run / key;artifacts.mkdir(parents=True, mode=0o700, exist_ok=True)
         schema = artifacts / 'output.schema.json';schema.write_bytes(canonical(REPLY))
         lock = self.rt.source_lock(cwd);write = node.get('permission', 'workspace-write' if node.get('mode') == 'Agent' else 'read') == 'workspace-write'
-        with source_lease(lock, write), lease(home.parent / (digest(str(home.resolve()).encode()) + '.session.lock')):
+        with source_lease(lock, write), session_lease(binding):
             before = workspace_hash(cwd)
             source_identity={'sha256':before,'actor':'fixed runtime host, before native call'}
             try:
                 git=identity(cwd);source_identity.update({k:git[k] for k in ('head','branch') if k in git})
             except Blocked:source_identity['git']='unavailable'
-            prompt+='\n\n运行器核验的本轮源码身份（数据，不扩展权限；原生隔离不暴露其他分支的 Git 对象）：\n'+canonical(source_identity).decode()
+            prompt+='\n\n运行器核验的本轮源码身份（数据，不扩展权限；'+('本机原生权限，不承诺隐藏其他 Git 对象' if binding.get('execution_backend')=='native-local' else '原生隔离不暴露其他分支的 Git 对象')+'）：\n'+canonical(source_identity).decode()
             self.db.change('activation',key,{'source_at_request':source_identity})
             self.rt.recheck_session(chat)
             # Native history is append-only per owned HOME. Persist actual byte
@@ -413,7 +418,7 @@ class Scheduler:
             save(artifacts / 'completion.json', completion)
             binding = dict(binding, session_id=receipt['session_id'])
             self.db.change('node-session', chat_key, {'binding': binding, 'initialized': True, 'native_sha256': None})
-            self.rt.db.put('chat-profile', digest(binding['home'].encode()), dict(workspace=run['workspace'], binding=binding))
+            self.rt.db.put('chat-profile', profile_key(binding), dict(workspace=run['workspace'], binding=binding))
             native_snapshot=self.rt.native_snapshot(run['workspace'],binding)
             from .session_sources import opened
             import os

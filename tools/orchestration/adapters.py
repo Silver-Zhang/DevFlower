@@ -75,6 +75,14 @@ class CLI:
         self.kind, self.binding, self.limits = kind, binding, limits
 
     def start(self, prompt, cwd, artifacts, output_schema=None, store=None, run=None, session=None):
+        if self.binding.get('execution_backend') == 'native-local':
+            if self.kind == 'codex':
+                from studio.local_codex_adapter import LocalCodex
+                return LocalCodex(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
+            if self.kind == 'claude':
+                from studio.local_claude_adapter import LocalClaude
+                return LocalClaude(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
+            raise Blocked('该 Provider 尚未支持本机原生会话')
         if self.kind == 'copilot':
             from studio.copilot_adapter import CopilotAdapter
             return CopilotAdapter(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
