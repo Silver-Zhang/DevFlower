@@ -1,0 +1,82 @@
+{
+  "source": {
+    "head": "6c298fe3dc0560f8d513f9e7594428d35a558020",
+    "tree": "c952f20fd3cbd33d3043d8e79f5514c30949f87d",
+    "candidate_sha256": "fcb2806d118851fd498945c527a7854372a9b5ed78cb97bcf12b144ae413fcea",
+    "files": 313
+  },
+  "pr": {
+    "number": 22,
+    "draft": true,
+    "merged": false
+  },
+  "checks": {
+    "root_product_tests_passed": 300,
+    "root_original_command": {
+      "count": 284,
+      "exit": 1,
+      "fail": 0,
+      "error": 1,
+      "skip": 0,
+      "harness_error": "nonexistent test_tool_activity; 283 product tests passed"
+    },
+    "corrected_missing_module": {
+      "count": 17,
+      "exit": 0
+    },
+    "limited_boundary": {
+      "count": 5,
+      "exit": 0
+    },
+    "local_cli_integration": {
+      "run": "new R2",
+      "cli": 9,
+      "local_requests": 7,
+      "external_requests": 0,
+      "assertions": 23,
+      "exit": 0,
+      "actual_session": "01a183f3-2467-7791-bbf2-4a1b9f5d7c69",
+      "native_turn_id": "unknown",
+      "actual_exec_seconds": 11.029,
+      "total_seconds": 77.075
+    },
+    "full_current_local": "NOT_RUN",
+    "real_current_model": "NOT_RUN",
+    "formal_rounds_used": 0,
+    "formal_max": 2,
+    "infrastructure_used": 2,
+    "infrastructure_max": 2
+  },
+  "open_findings": [
+    "repeat ~61s capability probes; bounded successful capability cache being implemented",
+    "managed readonly child agent tool not implemented",
+    "final same-source product K and dual independent review/Gates missing"
+  ],
+  "current_native_job": "developer-native-capability-cache",
+  "managed_child_tool": "NOT_IMPLEMENTED",
+  "main_unchanged": true,
+  "stable_unchanged": true,
+  "final_acceptance": false,
+  "ci": {
+    "python_count": 1291,
+    "exit": 1,
+    "fail": 1,
+    "error": 0,
+    "skip": 0,
+    "run_id": 40753957895,
+    "finding": "static public source manifest misses tools/studio/native_skill_pack.py",
+    "studio": "SUCCESS",
+    "chromium": "SUCCESS"
+  },
+  "post48_uncommitted": {
+    "candidate_sha256": "a83b70b67b91b4f37398472cffb3641e396c299c64d612709cd5e9dc80f88edf",
+    "tree": "59956940a6cf554e288078b6d8cbf175075f7c9f",
+    "files": 316,
+    "root_host_tests": 84,
+    "host_exit": 0,
+    "real_native_descriptor_negative_cli": 1,
+    "real_model_requests": 0,
+    "parent_death_positive": true,
+    "not_final_approved": true
+  }
+}

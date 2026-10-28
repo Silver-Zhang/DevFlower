@@ -6,7 +6,7 @@
 
 ## 2. 做法与证据
 
-当前source47：0fd979129398dd89d5137759d2a8ca0dbc7bef85，tree c905ae195721975d240cc31659e637a18471e1c1，309文件，完整候选SHA256 1a8d13d2332d1ea958a9b9bd2ac385204c63cf68dfa8e554833987aca89173c4。已正常push flow/workbench-guided-stable，PR22仍Draft。修复自有能力探测/保护扫描自身竞争及部分视图未协调入口，真实模型execute和公开hash在锁外，原guard字节未改。Root旧46新反例1项预期FAIL/exit1保留；当前90定向回归及独立16项限定检查均exit0、FAIL/ERROR/SKIP0。当前全回归/真实K/双审未完成，绝不套46结果。
+当前source48：6c298fe3dc0560f8d513f9e7594428d35a558020/treec952f20fd3cbd33d3043d8e79f5514c30949f87d/CFfcb2806d118851fd498945c527a7854372a9b5ed78cb97bcf12b144ae413fcea，313文件；已正常push，PR22保持Draft。完整冻结Skill资源、提交边界、Claude effort与实时工具活动修复均已实施；Root283项产品测试通过，首联合命令另1个模块名loader ERROR/exit1保留，正确工具活动17项另跑0。独立5项安全边界与唯一完整本地CLI集成23项核验通过，9CLI/7全本地请求、0真实模型。source48全量/真实K/最终双审未通过，仍不可合并。
 
 上游 awesome-design-md 为 MIT 设计文档合集，固定3b605329240ce735b510037cca322f1831fdd7f8，84份参考完整安装到本机同名适配skill，不冒称官方已提供SKILL.md。源码增加共享theme、永久设计规范和来源/许可证；统一浅深/系统、画布、聊天、助手设置与历史、检查器、文件夹/模板、弹窗、活动、终端与旧页面。保持用户Sim交互方向、真实状态、权限与模型设置。
 
@@ -36,7 +36,7 @@ Root在44真实plan_graph独立复现省略合同（0模型）；原原生实施
 
 ## 4. 结论与边界
 
-界面定向预检通过，用户本人审美验收未代签。当前47仅完成定向回归与限定预检；完整回归、真实六图/复杂AI图、原生双端与合同K、最终双硬ACCEPT和固定旧Gate仍需同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
+界面定向预检通过，用户本人审美验收未代签。当前48仅完成定向回归、限定反例及本地合成CLI集成；完整回归、真实六图/复杂AI图、原生双端与合同K、最终双硬ACCEPT和固定旧Gate仍需同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
 
 已验证Development入口：python3 /home/workspace/DevFlower/.local/open-guided-development.py，当前source46/e4a593c（44375），独立预览不是Stable；原33/42服务、入口备份与版本保留。使用指南project/USER_GUIDE.md。API设置私有文件不入库。
 
@@ -63,3 +63,11 @@ source46真实新负面：六图前五完整通过，第六run4019b56ae…risks�
 source47三CI现已真实SUCCESS，日志读回1256Python/6host/64JS全0（本地仍90定向），未套46。K2新Skill原型原生PARTIAL/exit0，Root228项0；内核C47两实际进程36字段可读/拒写已证。首次本模块完整实际CLI集成9进程/7全本地请求、0外部，读取资源/执行helper/拒改成功、actual input与Journal hash一致、未选Skill/MCP未注入；整段76.37s而exec仅10.228s剩余预算被停-15，无最终receipt，FAILED保留。native JSONL task_complete不等于stdout turn.completed/正常进程退出，原因unknown。独立另复现COMPLETED后context再verify因source修改抛“未发送”且外层无receipt，当前原生同UUID定向修复；无source48完整验收/最终ACCEPT，不提交有此缺陷原型。
 
 新Skill提交点修复原生IMPLEMENTED/exit0、Root267项目标全0，候选33b972…/312files/tree3ae4e17只读完整冻结（仍未提交）。限定独立5项4PASS/1FAIL继续发现清理末尾stat→named-rmdir能删替代空目录；只删空目录、不穿越其文件，保持准确范围。第二实际local CLI集成尚0调用即停。另独立完整runtime定位Claude精确默认model被目录遗漏时UI五档而max准入拒绝（high通过）、过期CLI元数据静默回high、原持久工具活动被节点对话API丢弃；0模型及原设置不变。当前同原生writer正定向修这三类确证问题，根清理选择保留空根/info而不删不明命名对象；不通过弱化保护追求PASS。
+
+source48 commit6c298fe/treec952f20/CFfcb280/313files，正常push；旧33b完整快照保留，初Skill f555按原生工具patch逆向重建并核全CF及tree223264/311files，准确标非原始磁盘快照，未复制会话全文或隐藏推理。R2新run本地真实CLI process0/23核验全true，同UUID01a183f3…、请求hash/资源/权限/清理状态对应；原R1失败不改判。源码300项实际产品测试(283+17)通过，Root首命令1loader ERROR原件不删；完整scope不据此通过。原生三用户路径修复62项0；独立完整effort fixture高/max准入一致、unknown/Ask写拒绝，0模型。辅助设计审核因模型capacity出错未获新结论，Root自行补测不冒充独立ACCEPT。
+
+后续确证新缺陷：实际能力检查锁体约61秒，双LocalCodex控制实验在32秒持锁下令另一尚余150秒预算节点30秒失败；原helper32.048s/0CLI/0模型。实际kernel可读自建NativeAttach私有descriptor，仅bool/hash证明、无真实终端连接/接管、0外部；首TMPDIR fixture失败亦保留。Root自有Python父死亡后诊断子进程仍活，精确身份清理后已消失。当前原生writer N/developer-native-capability-authority 在K2修step-budget等待/仅本地能力成功缓存、受保护descriptor/短本地通信及诊断父生命周期；无正式review/Gate/Stable晋升。
+
+2026-10-29 接续精确更正：上文capability-authority已终局PARTIAL，后续private-attach亦PARTIAL（角色socket EPERM不伪称Host失败），cache当时未做。累计当前未提交a83b70b…/316files/tree5995694；Root真实Host84全0、独立1本地CLI核对新protected descriptor不可读和6字段正确、2替换清理不删foreign对象，直接诊断Python子进程父死真实正例通过。新v2不迁移旧活动attach；元数据路径若被替换仅原pinned inode已清空，不能从路径推导当前文件为0bytes。48云端真实1291Python/1FAIL0ERROR0SKIP（仅静态公开清单缺native_skill_pack.py），原日志保留，a83补清单已定向验证，尚无新云端通过。
+
+现同原生writer N/developer-native-capability-cache在a83基础实装有界仅进程成功合成能力cache与singleflight；不作模型准入/权限缓存，不跳过每次config/source/authority检查。受控只读子Agent尚待实现。新用户Claude统一管理要求再次查源码和官方接口，CLI已接中心，Desktop Code与Chat分开；本轮0真实Claude模型调用。45会话测试41通过/2FAIL2ERROR，四项未改assert在默认短路径复查全0；项目缩短路径仍特殊socket ERROR，整模块30秒超时与初runner缺局部输出均留注释，不能覆盖首失败。main/Stable未动，无新增正式源码审核轮。

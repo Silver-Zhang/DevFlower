@@ -1,13 +1,13 @@
 # 当前状态
 
-Task16仅Codex多Agent；原Task15 NEEDS_CORRECTION/Gate BLOCKED及所有失败保留。
+Task16只用Codex多Agent审核，旧Task15否定/Gate及全部失败保留。
 
-最新source47：0fd979129398dd89d5137759d2a8ca0dbc7bef85/treec905ae195721975d240cc31659e637a18471e1c1/CF1a8d13d2332d1ea958a9b9bd2ac385204c63cf68dfa8e554833987aca89173c4，309文件；S已push、PR22 Draft，K2正接续Skill实现。
+已push source48：6c298fe3dc0560f8d513f9e7594428d35a558020/treec952f20fd3cbd33d3043d8e79f5514c30949f87d/CFfcb2806d118851fd498945c527a7854372a9b5ed78cb97bcf12b144ae413fcea，313文件，PR22 Draft。云端1291 Python有1FAIL/0ERROR/SKIP，漏公开清单native_skill_pack.py；studio/chromium成功，不能称48全绿。
 
-本轮：同原生UUID在旧固定监督器两次真实修6文件，协调自有synthetic probe生命周期及部分视图保护扫描，真实execute与公开hash在锁外，原guard字节不变。Root旧46新反例1FAIL保留；新90项与独立16项均0、FAIL/ERROR/SKIP0。source47三CI成功，实际日志1256Python/6host/64JS全0；本地全量与真实K/双审核仍未完成，不套旧1246/253通过。原fixture/静态范围误判与旧空目录capture拒绝均保留；未删旧空目录或用户文件。
+K2后续未提交a83b70b…/316files已实现剩余step等待、诊断直接子进程父死亡约束、protected NativeAttach v2/短abstract socket和静态清单补项。原生报告PARTIAL保留。Root Host84测试0、独立实际1 CLI/0模型证明新descriptor不可读，两个目录替换清理例通过；旧泄漏及父死子存负例不改判。仅这些具体缺陷正例，不是整版通过。
 
-46历史：完整1246Python/6host/64JS/253HTTP+16smoke和三CI全0；DeepSeek4场景完成并原对话追加，旧reply/receipt/proposal保留。六图前五按合同通过，第六preflight FAILED，2预留/1实际；后续AI/PTY未启动。现场path/line unknown，受控复现只是已证自身竞争，不假称唯一归因。
+唯一实施者原UUID01a1810f…正在N/developer-native-capability-cache，source_before a83b70b…；缓存仅本进程成功合成本机能力，不替代模型/授权/配置/真实保护扫描。受控只读子Agent仍未实现。
 
-默认native-local Skills/多Agent开关仍需实现：原生CLI默认子模型可被override，不能直接放开。K2同原生实施者已交Skill包原型PARTIAL，Root228项目标测试0；一次实际本地CLI读资源/拒写成功但因最终exec剩余10秒超时集成FAILED，无最终receipt。独立反例另发现COMPLETED后外层verify误称未发送，此提交点缺陷已真修、Root267项0；独立仍发现named-rmdir空根替换窗口，实际第二集成尚未再调用。当前原生同UUID并修空根安全清理、Claude UI/准入强度不一致与实时工具活动丢失；后续受控只读子任务工具复用runner/预算/会话中心。所有真实模型/子进程/原生HOME边界还需当前候选验证，不以计划代完成。
+Claude统一中心已读原HOME/CLI UUID。桌面Chat/Code分开；Code元数据匹配不等于实时接管。本轮45项会话回归41PASS/2FAIL/2ERROR，长TMPDIR夹具问题；4项以系统默认短路径另跑0，项目短路径仍1AF_UNIX ERROR，整模块30秒超时原件保留，不能称整批通过。0真实Claude调用。
 
-Development入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py 仍实际46/44375，非正式Stable。main e0a0f92和正式Stable未动。原生会话/旧版本/认证/19worktree保留；未删分支。双审0/2、infra2/2，合同8032befd不变。最终K/双硬ACCEPT/固定旧Gate/merge/正式Stable/闲置已合并分支清理仍PENDING。
+设计预检52截图及历史46完整回归保留，不套当前候选。Development入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py 仍46/44375，非Stable。main e0a0f92、正式Stable cfea19未动；旧版本/原生会话/认证/19worktree未删。双审0/2、infra2/2、合同8032befd不变，最终K/双硬ACCEPT/两个旧Gate/merge/正式Stable/清理仍PENDING。
