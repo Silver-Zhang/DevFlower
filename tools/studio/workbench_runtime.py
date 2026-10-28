@@ -146,7 +146,7 @@ class WorkbenchRuntime(SessionRuntime):
 
     def validate_source(self, path, *, ordinary=False):
         from .workspace_access import view_policy, selected_scope, native_workspace_view
-        from orchestration.common import workspace_metadata
+        from orchestration.common import workspace_metadata, has_git_metadata
         path = self.readable_directory(path)
         policy=view_policy(self,path)
         partial=(ordinary and not self.trust and policy['contains'] and not policy['inside'] and not policy['system'] and bool(self.operator.get('native_local',{}).get('codex')))
@@ -160,7 +160,7 @@ class WorkbenchRuntime(SessionRuntime):
             workspace_metadata(path,check_git=True)
             # General conversations/workflows also work in ordinary folders.
             # Git delivery still requires a separate real repository identity.
-            if not (Path(path)/'.git').exists(): return dict(root=path,head=None,branch=None)
+            if not has_git_metadata(path): return dict(root=path,head=None,branch=None)
             return identity(path)
         except (OSError,ValueError):
             raise Blocked('文件夹已打开；项目内记录保留区需要检查，暂不允许 Agent 执行。') from None
