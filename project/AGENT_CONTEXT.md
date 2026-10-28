@@ -1,19 +1,19 @@
 # DevFlower 接续入口
 
-当前任务tasks/2026-10/20261028_02_codex-multi-review。用户改用Codex多Agent审核/自有QA，保留产品Claude支持、中转和原生历史。
+当前task：tasks/2026-10/20261028_02_codex-multi-review。用户改用Codex多Agent审核；保留产品Claude、中转、旧Stable和原生历史。不擅自调用Claude。
 
-S=development/guided-stable，flow/workbench-guided-stable，30b0a6d08c11dc0962adfa0c9af0bfd1dbdd84a5，tree d0767ed371ebd072a2df04423440f6385eb1d54b，CF a3b6a8ebe9fee7e6c299ed34a421dd88d1da5ac9cbcafcfe88c6692787f7dcc9，298files。H=archives/devflower-guided-stable-20261028，candidate-stage37。PR22 Draft，新CI待核验；旧36三CI SUCCESS不能套用；main e0a0f92，未合并。
+S=development/guided-stable；K2=/home/workspace/claude_workspace/DevFlower测试/guided-stable/product-k-final，两干净HEAD648cb9ebd190720d02f2fc6ad1a55fd5a763d05f/tree3e1afc67256a23f74810d828466c9da39824855d/CFf598bd0b7bef94855a1707840f0bbebe5ce7f299f667f0eb3ee80fb800b18a3a/301files。H=archives/devflower-guided-stable-20261028/candidate-stage40；B=上述guided-stable测试目录。PR22 Draft已push；main仍e0a0f92。
 
-N=H/codex-multi-review-20261028，合同cedcf84fa4453b71b7e68287b04cc64ba2c9eaf063de5d8cc3202019e97ccf9e。完整审核0/2，每轮双独立原生Codex；infra2/2不复位。旧Task15/R4/所有预算/负面保持。
+N=H父/codex-multi-review-20261028，合同cedcf84fa4453b71b7e68287b04cc64ba2c9eaf063de5d8cc3202019e97ccf9e。完整双审核0/2，infra2/2不得复位。原Task15 R1–R4 NEEDS_CORRECTION/Gate BLOCKED/所有失败与预算不改。B/native_codex_final_review_current.py尚无当前READY，未正式审核。
 
-DeepSeek连接本机私有持久保存，现有deepseek-flash/medium与中转/密钥保留。Development .local/open-guided-development.py仍source33，不冒充Stable。36真实问答/公开源码诊断通过；两次未声明字段提案严格拒绝，原对话明确修正后两次均完成apply，负面保留。
+原生实施者UUID01a1810f-48a5-7d81-8d09-f515ad972126，原HOME与Codex库、Terra/high请求、实际后端unknown。metadata/footer/CSI/deadline/D09均实际改源码；N/developer-stage39-final-adapter是同源标准CLI.start IMPLEMENTED/0只读终局，不冒充再次修改。40只读probe共享锁与新增4flock/state测试由Root实施，140目标0，后续需40标准终局。Root助手合同保持/上下文metadata及legacy-v1测试署名另列。
 
-36全量1177Python/6host/64JS/251九套ChromiumHTTP/16旧smoke及Baseline/构建字节/语法全部通过。独立辅助153旧反例+20新反例、26UI检查/24新截图通过，B/codex-policy-counterexamples/stage36-final-precheck；不代替完整审核。Sim/Impeccable视觉字节与35相同，36仍实际重跑。
+39全回归1216Python/6host/64JS/251HTTP+16smoke全部0；235定向/26UI/24截图同CF0。云端Chromium400 Managed session home occupied，原日志ci-stage39/job-122839447655-actual.log。独立真实_busy/exclusiveflock反例证明两个只读探测互相误判，原CI锁持有者仍unknown。40仅shared=True探测，真实writer/未终态仍拒绝，未削弱安全。39真实首图2调用已明确stop/CANCELLED，flows-stage39-codex/qa-withdrawal.json，非恢复重试/完成。40必须重验。
 
-36真实CodeX顺序2/汇合3/路由1/提前退出2通过；五轮场景第8调用配置变化安全拒绝，强断言失败/exit1、复杂图未执行。H/flows-stage36-codex/strict-acceptance-failure.json说明旧JSON提前写passed的边界。下一候选需重新验真实图，不用旧版本套。
+当前40 full B/regress_parallel.py运行，日志H父/regression-stage40；B/final_actual40.py等全回归完成后才真实六图→AI图片产品源码图→两UUID同PTY→browser终端→host能力。各自原始proof/监督summary绑定40；不要在paid Codex流程期间另起TUI。实际DeepSeek40四场景已完成（问答/读公开源码/修复apply/图片复杂图），不是代码审核或K最终通过；生成图当前条件/loop正确result.accepted，Ask/Plan只读、两个Codex并行。
 
-36真实browser同UUID ready后逐字/exit正常0；Desktop API读取同一原生UUID/回答哈希一致，不是记录复制，也不等于桌面GUI实时接管。共享PTY第一UUID全通过，第二claim3s超时。独立4.2s SQLite锁复现客户端3s先超时、服务端晚commit后安全释放。原生实施者UUID01a1810f-48a5-7d81-8d09-f515ad972126已修deadline，原PARTIAL因7项AF_UNIX受限保留；Root只另修标准临时目录并实际执行42项均通过。37已冻结，当前只读全回归/真实六图/独立辅助并行；不再有源码writer。流程完成前不另起CLI/TUI或终局ACK干扰配置。新反例/旧失败全保留。
+DeepSeek本机设置/home/silver/.config/devflower/devflower-agent-connection.json，deepseek-flash/medium/原中转密钥保留；不得输出私密值。Development入口.local/open-guided-development.py仍source33，正式Stable未更新。用户指南project/USER_GUIDE.md，不把当前开发服务称Stable。
 
-ST=stable/usable-v1-5816ba4776b3，CF5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821，Gate SHA12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab。固定旧组件自举，不是当前Controller自批。B/native_codex_final_review_current.py准备双完整只读原生审核，证据READY后才启动。
+辅助E=B/codex-policy-counterexamples：stage40-final-precheck当前复验，原stage39-busy-reader-counterexample/d09旧反例/K事实分别保持，非正式ACCEPT。固定ST=stable/usable-v1-5816ba4776b3，完整CF5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821，Gate12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab，固定组件自举而非当前Controller自批。
 
-剩余：统一deadline修复后冻结新候选/全量测试/真实六图与完整同UUID终端/K、双硬ACCEPT、旧Gate、条件式merge/main集成与正式Stable。B/proposed-stable-launcher.py已独立测试，保护原始配置的模型偏好漂移恢复与真实进程未确认停止；没有部署/换pointer。旧Stable、会话、认证和旧源码均保留，未清分支，project/*必须保留。
+剩余同源最终实际场景/CI/完整双Codex审核/旧Gate/条件式PR22普通merge/main ff-only集成回归/正式Stable晋升/仅清已合并闲置非project分支。B/prepare_final_packet.py证据索引封包须READY才审；B/proposed-stable-launcher.py已独立测试，未安装。旧Stable服务已停、无codex baseline文件；真正切换前保留旧安装/入口/SQLite/原生HOME，按新授权建独立baseline，不改旧pin。不要删除worktree/会话/证据。
