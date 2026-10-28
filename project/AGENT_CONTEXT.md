@@ -1,23 +1,23 @@
 # DevFlower 接续入口
 
-当前tasks/2026-10/20261028_02_codex-multi-review，用户仅Codex多Agent审核，保留产品Claude/原生库/中转和所有失败。不得擅自调用Claude审核。
+当前 tasks/2026-10/20261028_02_codex-multi-review；仅 Codex 多 Agent 审核，保留 Claude 产品支持、中转、原生库及全部失败。不要重新调用 Claude 做审核。
 
-S=development/guided-stable；K2=/home/workspace/claude_workspace/DevFlower测试/guided-stable/product-k-final，均clean HEAD ddd040d17fa1f2a5c691a8b59766f1aed98c16ea/tree2cbda7a956a210d78f361d91785d70a4b688f1f5/CF81d55a7a91c710265b66f2b0c4e2e20d33d47ee95982f8acddef12c0e46b7709/306files。H=archives/devflower-guided-stable-20261028；B=上述测试guided-stable；N=H/codex-multi-review-20261028。当前冻结candidate-stage44，PR22 Draft正常push，main e0a0f92未动。
+源码 S=development/guided-stable；K2=/home/workspace/claude_workspace/DevFlower测试/guided-stable/product-k-final。两者 clean HEAD4eff18541562194a0ebda917dc2d981bfc415600/tree973aea109c040389f09ff00bd318b3f548569189/CF6e0cbd037f9c5261b3244456cbcf87ad034257934af1fc68500e80e7426262fc/306files。H=archives/devflower-guided-stable-20261028；B=上述测试guided-stable；N=H/codex-multi-review-20261028。冻结 candidate-stage45；PR22 Draft 已推送，main e0a0f92未动。
 
-合同8032befda2fe2856ecdb02910c0d0449dc31b7df44baa618c520b2e74540d837，首次正式审前追加用户MIT设计参考要求；旧合同/旧Task15 R1-R4/负面不变。完整双审0/2、infra2/2，不复位。独立UI/后端预检不算完整审核或Gate。
+合同8032befda2fe2856ecdb02910c0d0449dc31b7df44baa618c520b2e74540d837；完整双审0/2、infra2/2，不复位。旧 Task15 R1–R4/NEEDS_CORRECTION/Gate exit2 及所有失败原样保留。预检不算完整源码 ACCEPT 或 Gate。
 
-本机awesome-design-md是上游MIT84份DESIGN.md适配skill，3b605329...固定来源，源码docs/design/WORKBENCH_DESIGN.md+theme.css+license/provenance。UI pass5绑定43，44仅测试夹具不同（UI/Runtime字节全同），新完整浏览器已0，18面板52截图，8原target+2延迟/迟到/刷新+7camera+8chat全部0；Root全134工作台HTTP0。用户审美未代签。原41/42清单import与6UI失败/42撤回保留。
+45完整1239Python/6host/64JS/253ChromiumHTTP+16旧smoke，21命令全exit0、FAIL/ERROR/SKIP0；三CI SUCCESS。DeepSeek4真实场景COMPLETED。H/actual-stage45-supervision按六图→AI图片复杂图→两UUID同PTY→browser→host顺序执行，不因等待重启付费请求。
 
-原生实施者UUID01a1810f-48a5-7d81-8d09-f515ad972126，原HOME/Codex库，Terra/high请求，物理后端unknown。v3最小偏好修是其实际源码修改，原PARTIAL含权限夹具失败/临时Git报告保留；Root111和独立37执行者另署。v3域仅普通本地新record，v1/v2与其他安全字段不放宽。Source40真实前4图pass、第5图2实际/3预留失败，事后desktop.conversationDetailMode差异不推断精确失败瞬间。
+44六图21真实调用按合同通过；AI44 selector重名未建run，修外部QA后真实7calls/max2 FAILED，独立Agent发现省略带合同节点会丢合同。Root零调用复现；原生同一实施UUID01a1810f-48a5-7d81-8d09-f515ad972126真实修2文件，14纯测试、Root165、辅助20全exit0，旧empty合同assert保留。45补workbench_store.py公开资料后重验，不套旧通过。
 
-regression-stage44全回归，final_actual44等其all0才六图→AI图片复杂源码图→两UUID同PTY→browser→host；不要在paid流程中另起TUI。assistant-stage44真实DeepSeek4场景COMPLETED/sourceunchanged，source诊断实际search/read，修复apply错误1→0，图片有proposal；复杂图未执行不能称K通过。42助手3项清单失败保留，新的公开设计精确白名单+21源读取正负例通过。
+awesome-design-md为上游MIT84份DESIGN.md适配skill，pin3b605329…；共享theme.css/实际UI与docs/design/WORKBENCH_DESIGN.md及来源许可均已入源码。独立UI pass5对应43，44/45的UI字节相同；18面板52截图和8原target+2延迟/刷新+7camera+8chat通过。用户本人审美未代签。旧41/42清单和UI失败、43云端WAL测试失败/撤回保留。
 
-DeepSeek private全局设置/home/silver/.config/devflower/devflower-agent-connection.json，deepseek-flash/medium/原relay与key保留，不输出值不入库。Development .local/open-guided-development.py现source44，HTTP真实核验；旧33/42服务和入口备份保留。不是Stable。
+Development唯一入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py；已实际核验source45/41761。旧Development/Stable安装、服务记录和入口备份保留。全局DeepSeek私有连接/home/silver/.config/devflower/devflower-agent-connection.json，原deepseek-flash/medium/relay/key不变；不输出密钥。
 
-固定ST=stable/usable-v1-5816ba4776b3，CF5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821，Gate12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab。辅助误import生成3pyc已精确核对隔离并恢复原CF，incident全留；全部Python-B。
+Claude统一中心读取原HOME/.claude/projects。实际3条桌面Code metadata通过cliSessionId对应同一CLI历史；不同app/session ID不可按名称合并。此为只读关联，不是桌面实时接管或外部裸CLI双写验证。Codex45实际Desktop read_thread对应原UUID、原回执hash；H/native-desktop-shared-stage45.json，不复制原始会话。首次QA canonical编码断言失败留qa-note，无模型重放。
 
-B/native_codex_final_review_current.py双审须当前READY；prepare_final_packet_design.py待构建审查/密钥扫描/真实全部证据后seal。v3K事实E/contract-k-facts-v3-precommit区分Root/native与历史。B/proposed-deploy-task16.py及proposed-task16-launcher.py仅草案，独立静态/纯fixture预检中，未执行/批准；正式Stable旧storage保留且需native-capable seed新baseline。新Controller不能自批，不覆旧Stable/认证/对话。全部最终Gate后才按已授权普通merge/main ff-only/集成/正式Stable，最终仅清已合并闲置非project分支。
+固定监督ST=stable/usable-v1-5816ba4776b3，CF5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821，Gate SHA12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab。辅助误import产生3pyc已精确核对并隔离，原CF恢复、incident完整保留；所有Python使用-B。
 
-source44相对43只有旧WAL测试夹具：预建WAL/显式close，生产guard与旧assert未改。43本地全0但云端单个初扫描ERROR；observation2实际抓到journal缺失，最初harness错误保留，不能反推云端唯一时间线。43前4图8调用完成，第5由Rootwithdraw/CANCELLED（前snapshot预留0、最终1，actual sent未知）。44完整1231/6/64/253HTTP+16smoke与三CI均0，新标准原UUID终局IMPLEMENTED/exit0/source44前后相同。44实际仅在本地/CI/assistant4场景全0后才开始，仍未完成。新K事实E/contract-k-facts-stage44；外部deploy_task16_v2.py/task16_launcher_v2.py作者25fixture0，原审查者复审发现allow_alive未使用会阻断READY活进程入口，待完整复审后Root新版本修。未执行部署、正式双审/Gate。
+B/prepare_final_packet_task16.py只整理PENDING；须真实全部证据、核验/隐私检查后外部seal，再B/native_codex_final_review_current.py两个新UUID。正式双硬ACCEPT后各跑旧Gate，再按授权普通merge/main ff-only/集成回归/正式Stable。原生标准实施45终局IMPLEMENTED/exit0/source前后相同。
 
-最新source45覆盖上文44当前项：S/K2 clean4eff18541562194a0ebda917dc2d981bfc415600/tree973aea109c040389f09ff00bd318b3f548569189/CF6e0cbd037f9c5261b3244456cbcf87ad034257934af1fc68500e80e7426262fc/306files。45完整1239/6host/64JS/253HTTP+16smoke/21命令0，三CI SUCCESS，DeepSeek4实际场景complete，final_actual45等全量+CI+助手后六图→AI五公开源→PTY→browser→host。44六图21pass；原AI44 selector重名未创建run，改外部测试代码后实际AI44-selector-corrected七calls max2FAILED，独立Agent发现合同省略；Root0调用复现+B/contract-node-omission-counterexample。原生同UUID N/developer-contract-omission-fix实际改2文件，14项纯测试exit0/Root165项exit0/辅助20项exit0；旧empty合同assert原样、fixture保留旧guard。45AI原生资料补workbench_store.py，不要求为ACCEPT改判。新native_task16_stage45_final_receipt.py已启动等标准原UUID只读终局，不能套44。正式审0/2 infra2/2不改。新builder B/prepare_final_packet_task16.py仅静态未运行；当前K事实E/contract-k-facts-stage45。外部deploy_task16_v4.py/task16_launcher_v4.py原v3负面不改，作者44+独立46纯fixture全部0/EXTERNAL_DRAFT_PRECHECK_PASS，未真实main/部署/批准。当前唯一推荐Development入口仍44，原Stable未动。
+B/deploy_task16_v4.py + task16_launcher_v4.py：作者44/独立46纯fixture通过、EXTERNAL_DRAFT_PRECHECK_PASS，未部署。真实发布须当前两审核/两Gate、严格v2provenance、批准/argv绑定、持久启动intent、原始baseline FD、原存储备份与原生/认证身份保存。指针和入口各自原子替换，非一对原子。旧草案v1–v3负面保留；仍不许覆盖Stable或删除会话/证据。仅完成后清已合并闲置非project分支，保留使用中的worktree。
