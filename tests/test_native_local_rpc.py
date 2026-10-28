@@ -125,7 +125,7 @@ class NativeConfigReloadEvidence(unittest.TestCase):
     """Actual local CLI, synthetic home and MCP; never invokes a model."""
     def test_app_server_reloads_mcp_after_config_read(self):
         import os,subprocess,time,shutil
-        executable=shutil.which('codex');self.assertTrue(executable,'Codex CLI required')
+        executable=os.environ.get('DEVFLOWER_TEST_CODEX_SUPPORTED') or shutil.which('codex');self.assertTrue(executable and os.path.isfile(executable),'Codex CLI required')
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);marker=root/'started';helper=root/'server.py';config=root/'config.toml'
             helper.write_text('from pathlib import Path\nimport time\nPath('+repr(str(marker))+').write_text("started")\ntime.sleep(2)\n');config.write_text('')

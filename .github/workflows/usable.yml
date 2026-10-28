@@ -2,14 +2,6 @@ name: Usable regression
 
 on:
   pull_request:
-    paths:
-      - 'tools/**'
-      - 'tests/**'
-      - 'docs/**'
-      - 'AGENTS.md'
-      - 'WORKFLOW.md'
-      - 'examples/**'
-      - '.github/workflows/usable.yml'
   push:
     branches: ['main', 'flow/devflower-usable-v1', 'flow/template-governance-ci', 'flow/agent-workspace-vnext']
   workflow_dispatch:
@@ -52,6 +44,16 @@ jobs:
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Install pinned native CLI test fixtures outside source
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/usable-evidence/native-cli-identity.json"
       - name: All Python contracts including Usable and orchestration
         shell: bash
         run: |

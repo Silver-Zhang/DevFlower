@@ -112,6 +112,68 @@ class NamedPermissionsTests(unittest.TestCase):
     with self.assertRaises(Blocked):check_protected_hardlinks([folder])
    for roots in (['/'],['relative'],[folder]*513):
     with self.assertRaises(Blocked):check_protected_hardlinks(roots)
+ def test_sqlite_wal_disappearing_during_scan_is_not_a_link_failure(self):
+  import os,sqlite3
+  from studio.native_codex_exec import check_protected_hardlinks
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);db=root/'workbench.sqlite';conn=sqlite3.connect(db);self.addCleanup(conn.close)
+   conn.execute('pragma journal_mode=wal');conn.execute('create table entries(v)');conn.commit();wal=Path(str(db)+'-wal');self.assertTrue(wal.exists())
+   real=os.stat;changed=[]
+   def stat_once(path,*a,**kw):
+    if path==wal.name and not changed:
+     changed.append(True);conn.execute('pragma wal_checkpoint(truncate)');conn.close();raise FileNotFoundError(2,'synthetic WAL vanished',path)
+    return real(path,*a,**kw)
+   with patch('studio.native_codex_exec.os.stat',side_effect=stat_once):check_protected_hardlinks([str(root)])
+   self.assertTrue(changed)
+ def test_live_sqlite_checkpoint_and_preflight_keep_unknown_alias_refusal(self):
+  import os,sqlite3,threading
+  from studio.native_codex_exec import check_protected_hardlinks
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);db=root/'workbench.sqlite';done=threading.Event();errors=[]
+   def churn():
+    try:
+     for i in range(50):
+      with sqlite3.connect(db,timeout=2) as conn:
+       conn.execute('pragma journal_mode=wal');conn.execute('create table if not exists t(v)');conn.execute('insert into t values (?)',(i,));conn.commit();conn.execute('pragma wal_checkpoint(truncate)')
+    except Exception as exc:errors.append(exc)
+    finally:done.set()
+   thread=threading.Thread(target=churn);thread.start();checks=0
+   try:
+    while not done.is_set():check_protected_hardlinks([str(root)]);checks+=1
+   finally:thread.join(5)
+   self.assertFalse(thread.is_alive());self.assertFalse(errors);self.assertGreater(checks,0)
+   secret=root/'authority';secret.write_text('synthetic');outside=root.parent/(root.name+'-alias');os.link(secret,outside)
+   try:
+    with self.assertRaises(Blocked):check_protected_hardlinks([str(root)])
+   finally:outside.unlink()
+ def test_new_unlinked_state_file_during_scan_does_not_invalidate(self):
+  import os
+  from studio.native_codex_exec import check_protected_hardlinks
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);(root/'existing').write_text('synthetic');real=os.fwalk;calls=[]
+   def mutate(*args,**kw):
+    calls.append(1)
+    if len(calls)==2:(root/'new-state').write_text('synthetic')
+    yield from real(*args,**kw)
+   with patch('studio.native_codex_exec.os.fwalk',side_effect=mutate):check_protected_hardlinks([str(root)])
+ def test_relinked_shared_file_and_replaced_root_are_rejected(self):
+  import os
+  from studio.native_codex_exec import check_protected_hardlinks
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder)/'authority';root.mkdir();first=root/'a';first.write_text('synthetic');os.link(first,root/'b');real=os.fwalk;calls=[]
+   def relink(*args,**kw):
+    calls.append(1)
+    if len(calls)==2:(root/'b').unlink();os.link(first,root/'b')
+    yield from real(*args,**kw)
+   with patch('studio.native_codex_exec.os.fwalk',side_effect=relink):
+    with self.assertRaises(Blocked):check_protected_hardlinks([str(root)])
+   calls.clear()
+   def replace(*args,**kw):
+    calls.append(1)
+    if len(calls)==2:root.rename(root.with_name('prior'));root.mkdir()
+    yield from real(*args,**kw)
+   with patch('studio.native_codex_exec.os.fwalk',side_effect=replace):
+    with self.assertRaises(Blocked):check_protected_hardlinks([str(root)])
  def test_feature_check_rejects_unknown_or_enabled_flags(self):
   import time
   from studio.native_codex_exec_probe import _verify_disabled_features,_AUTOMATIC_DISABLED

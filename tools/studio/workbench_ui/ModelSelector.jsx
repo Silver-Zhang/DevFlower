@@ -4,19 +4,9 @@ import React,{useEffect,useRef,useState} from 'react';
 export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disabled=false,workspace,mode='Ask',permission,tools,timeout=300,context,onSelecting}){
  const [catalog,setCatalog]=useState(profile),[pending,setPending]=useState(false),[error,setError]=useState('');
  const version=useRef(0);
- const [choosing,setChoosing]=useState(null);const pickVersion=useRef(0),pickOwner=useRef('');pickOwner.current=profile?.id+':'+workspace?.id;
- async function choose(values){
-  const ticket=++pickVersion.current,owner=pickOwner.current,m=(current?.models||[]).find(x=>x.id===values.model);
-  const known=(values.model===profile.model&&values.effort===profile.effort)||(m?.operator_registered&&m.efforts?.includes(values.effort));
-  setError('');setChoosing(values);onSelecting?.(true);
-  try{
-   if(!known)await api('/api/model-selection',{workspace:workspace?.id,profile:profile.id,...values});
-   if(ticket!==pickVersion.current||owner!==pickOwner.current)return;
-   onChange(values);if(!known)await load(false);
-  }catch(e){if(ticket===pickVersion.current&&owner===pickOwner.current)setError(e.message)}
-  finally{if(ticket===pickVersion.current){setChoosing(null);onSelecting?.(false)}}
- }
- useEffect(()=>()=>{pickVersion.current++;onSelecting?.(false)},[profile?.id,workspace?.id]);
+ // Selection changes only the bound draft synchronously. Start/send validates
+ // the discovered model and current configuration on the server.
+ function choose(values){setError('');onChange(values)}
  async function load(refresh=false){const v=++version.current;setPending(true);setError('');try{
   let result=await api('/api/models',{profile:profile.id,refresh,workspace:workspace?.id});
   if(v===version.current&&!refresh&&(!result.attempted_at||result.stale))result=await api('/api/models',{profile:profile.id,refresh:true,workspace:workspace?.id});
@@ -28,12 +18,11 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
  const reasoning=m=>m?.selectable_efforts?.length?m.selectable_efforts:m?.native_efforts?.length?m.native_efforts:m?.efforts?.length?m.efforts:[profile?.effort].filter(Boolean);
  const efforts=reasoning(selected);
  return <section className="model-picker" aria-label="模型发现">
-  <label className="field"><span>模型</span><select aria-label="模型" disabled={disabled||pending||Boolean(choosing)} value={choosing?.model||model||''} onChange={e=>{const m=models.find(x=>x.id===e.target.value);choose({model:m.id,effort:reasoning(m).includes(effort)?effort:reasoning(m)[0]||''})}}>
+  <label className="field"><span>模型</span><select aria-label="模型" disabled={disabled||pending} value={model||''} onChange={e=>{const m=models.find(x=>x.id===e.target.value);choose({model:m.id,effort:reasoning(m).includes(effort)?effort:reasoning(m)[0]||''})}}>
    {!selected&&<option value={model||''}>{model||'请选择模型'}（目录尚未确认）</option>}
    {models.map(m=><option key={m.id} value={m.id} >{m.name||m.id}</option>)}
   </select></label>
-  <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending||Boolean(choosing)} value={effort||''} onChange={e=>choose({model,effort:e.target.value})}>{!efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{efforts.map(x=><option key={x}>{x}</option>)}</select></label>
-  {choosing&&<small role="status">正在选择模型…</small>}
+  <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending} value={effort||''} onChange={e=>choose({model,effort:e.target.value})}>{!efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{efforts.map(x=><option key={x}>{x}</option>)}</select></label>
   <button type="button" className="refresh-models" aria-busy={pending} disabled={pending||disabled} onClick={()=>load(true)}>刷新模型</button>
   {pending&&<small role="status" aria-label="模型读取状态">正在读取模型目录…</small>}
   {(error||current?.error)&&<p role="alert">{error||current.error}</p>}

@@ -1,5 +1,5 @@
 """Native exec configuration and synthetic-transport regressions; no real model."""
-import json,sys,tempfile,unittest
+import json,os,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -31,8 +31,8 @@ class ExecConfigTests(unittest.TestCase):
   args=exec_args(dict(b,no_tools=True),provider_overrides({}));self.assertIn('features.shell_tool=false',args);self.assertIn('features.code_mode_host=false',args)
  def test_real_binary_synthetic_lock_and_tool_probe(self):
   with tempfile.TemporaryDirectory() as folder:
-   self.assertTrue(require_exec_capability('/usr/lib/chatgpt/resources/codex',folder))
-   with self.assertRaises(Blocked):require_exec_capability('/usr/local/bin/codex',folder)
+   self.assertTrue(require_exec_capability(os.environ.get('DEVFLOWER_TEST_CODEX_SUPPORTED','/usr/lib/chatgpt/resources/codex'),folder))
+   with self.assertRaises(Blocked):require_exec_capability(os.environ.get('DEVFLOWER_TEST_CODEX_LEGACY','/usr/local/bin/codex'),folder)
  def test_sandbox_probe_rejects_cross_workspace_read(self):
   with tempfile.TemporaryDirectory() as folder:
    with patch('studio.native_codex_exec_probe._run_command',return_value=SimpleNamespace(returncode=0,stdout=b'[true,false,false,true]')):
