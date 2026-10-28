@@ -8,7 +8,12 @@ from .workbench_graph import validate_graph
 
 def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None):
     issues=[]
+    counts={'error':0,'warning':0}
+    def result():
+        total=sum(counts.values())
+        return dict(issues=issues, execution_verified=False, total=total, error_count=counts['error'], warning_count=counts['warning'], omitted_count=total-len(issues), truncated=total>len(issues))
     def add(severity, message, *, node=None, edge=None, field=None):
+        counts[severity]+=1
         if len(issues)<256:
             issues.append(dict(severity=severity,message=message,node=node,edge=edge,field=field))
     if not isinstance(task,str) or not task.strip():
@@ -16,7 +21,7 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
     elif len(task)>50000:add('error','本次任务超过长度上限，请缩短。',field='task')
     if not isinstance(graph,dict):
         add('error','工作流格式无效，请重新打开草稿。',field='graph')
-        return dict(issues=issues,execution_verified=False)
+        return result()
     budget=graph.get('budget',{})
     if not isinstance(budget,dict):add('error','运行预算格式无效。',field='budget')
     else:
@@ -311,4 +316,4 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
     try:validate_graph(graph)
     except (Invalid,ValueError,TypeError,KeyError,AttributeError,RecursionError) as exc:add('error','流程结构需要修正：'+str(exc),field='graph')
     add('warning','静态检查不会调用模型或证明连接成功；实际结果以任务回执为准。',field='model')
-    return dict(issues=issues,execution_verified=False)
+    return result()

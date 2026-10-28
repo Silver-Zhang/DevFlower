@@ -109,6 +109,17 @@ await test('inspection-late-response-is-not-attached-to-new-task',async p=>{
  await until(async()=>(await p.locator('.alert').allTextContents()).some(v=>v.includes('检查期间草稿或任务已变化')));
  assert.equal(await p.getByLabel('工作流检查结果',{exact:true}).count(),0);
 });
+await test('inspection-truncated-real-http-displays-counts',async p=>{
+ await openWorkspace(p);await p.getByLabel('本次任务',{exact:true}).fill('检查截断');
+ // Exercise the real checker with a large synthetic graph, then render its actual response.
+ await p.route('**/api/workflow/check',async route=>{
+  const body=route.request().postDataJSON();body.graph={version:3,name:'repro',nodes:Array.from({length:64},(_,i)=>({id:`bad${i}`,name:`bad${i}`,kind:'agent'})),edges:[]};
+  const response=await route.fetch({postData:JSON.stringify(body)});await route.fulfill({response});
+ });
+ await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();
+ const text=await results.innerText();assert(text.includes('449 个错误'));assert(text.includes('2 条提醒'));assert(text.includes('遗漏 195 条'));assert(text.includes('分批修复'));
+ assert.equal(await results.getByRole('button',{name:'查看全部问题'}).count(),0);await results.getByRole('button',{name:'查看已列问题'}).click();
+});
 await test('inspection-handoff-sends-versioned-issues-over-real-http',async p=>{
  await openWorkspace(p);await p.getByLabel('本次任务',{exact:true}).fill('检查身份测试');
  await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();
