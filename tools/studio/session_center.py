@@ -237,7 +237,8 @@ class SessionCenter:
                 return True
         # Share the exact Controller HOME lease, without interpreting mtimes.
         try:
-            with lease(Path(home).parent / (digest(str(Path(home).resolve()).encode()) + '.session.lock')):
+            # Readers may probe together; only an actual exclusive writer is busy.
+            with lease(Path(home).parent / (digest(str(Path(home).resolve()).encode()) + '.session.lock'), shared=True):
                 pass
         except Blocked:
             return True
