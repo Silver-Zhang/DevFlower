@@ -186,6 +186,30 @@ class ConfigurationTests(unittest.TestCase):
   return dict(version=1,name='AI proposed',summary='Data only',nodes=nodes,edges=[dict(source='start',target='analyze'),dict(source='analyze',target='result')])
  def proposal(self):return self.ai.external(dict(workspace=self.w,graph=self.g,plan=self.plan()))
  def test_plan_strict_schema_builds_actual_executable_graph(self):self.assertEqual(plan_graph(self.plan(),self.choices)['nodes'][1]['profile'],'default-codex')
+ def test_new_ai_agents_receive_goal_but_existing_scope_is_preserved(self):
+  self.assertIs(plan_graph(self.plan(),self.choices)['nodes'][1]['task_context'],True)
+  for value in (None,False,True):
+   previous=copy.deepcopy(self.g);node=previous['nodes'][1]
+   if value is None:node.pop('task_context',None)
+   else:node['task_context']=value
+   graph=plan_graph(self.plan(),self.choices,previous=previous)
+   if value is None:self.assertNotIn('task_context',graph['nodes'][1])
+   else:self.assertIs(graph['nodes'][1]['task_context'],value)
+  nested=self.plan();nested['nodes'][1].update(kind='loop',body=self.plan(),max_rounds=2,until=dict(field='result.accepted',op='equals',value=True))
+  previous=plan_graph(nested,self.choices)
+  self.assertIs(previous['nodes'][1]['body']['nodes'][1]['task_context'],True)
+  previous['nodes'][1]['body']['nodes'][1]['task_context']=False
+  self.assertIs(plan_graph(nested,self.choices,previous=previous)['nodes'][1]['body']['nodes'][1]['task_context'],False)
+ def test_ai_preview_and_apply_preserve_existing_goal_scope(self):
+  for value in (None,False):
+   graph=copy.deepcopy(self.g)
+   if value is None:graph['nodes'][1].pop('task_context',None)
+   else:graph['nodes'][1]['task_context']=value
+   v=self.ai.external(dict(workspace=self.w,graph=graph,plan=self.plan()))
+   actual=self.ai.apply(dict(workspace=self.w,id=v['id'],graph=graph,answer={'action':'apply-proposal'}))['graph']
+   self.assertEqual(v['graph'],actual)
+   if value is None:self.assertNotIn('task_context',actual['nodes'][1])
+   else:self.assertIs(actual['nodes'][1]['task_context'],False)
  def test_plan_cannot_supply_permission_or_endpoint(self):
   for field in ('permission','command','endpoint','authorization'):
    plan=self.plan();plan['nodes'][1][field]='unsafe'

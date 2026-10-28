@@ -29,9 +29,10 @@ def schema(profiles,depth=0):
         nodes=dict(type='array',minItems=3,items=node),edges=dict(type='array',minItems=2,items=edge)))
 
 
-def plan_graph(plan, choices):
+def plan_graph(plan, choices, *, previous=None):
     validate(plan,schema(choices))
     if len(canonical(plan))>150000 or len(plan['nodes'])>12 or len(plan['edges'])>24:raise Invalid('配置提案超过大小预算')
+    old_nodes={n['id']:n for n in (previous or {}).get('nodes',[])}
     nodes=[];ids=set();depth={};incoming={n['id']:[] for n in plan['nodes']}
     for edge in plan['edges']:
         if edge['source'] not in incoming or edge['target'] not in incoming:raise Invalid('提案连线指向不存在的节点')
@@ -46,13 +47,18 @@ def plan_graph(plan, choices):
         v=dict(id=n['id'],kind=n['kind'],name=n['name'],position=dict(x=80+layer*280,y=120+row*200))
         if n['kind']=='condition':v['test']=n.get('test',dict(field='result.accepted',op='equals',value=True))
         if n['kind']=='merge':v['strategy']=n.get('strategy','all')
-        if n['kind']=='loop':v.update(body=plan_graph(n.get('body'),choices),max_rounds=n.get('max_rounds',5),until=n.get('until',dict(field='result.accepted',op='equals',value=True)))
+        old=old_nodes.get(n['id'],{})
+        if n['kind']=='loop':v.update(body=plan_graph(n.get('body'),choices,previous=old.get('body') if old.get('kind')=='loop' else None),max_rounds=n.get('max_rounds',5),until=n.get('until',dict(field='result.accepted',op='equals',value=True)))
         if n['kind']=='agent':
             allowed=choices.get(n['profile'])
             if not allowed or (n['model'],n['effort']) not in [(m['id'],e) for m in allowed['models'] for e in m['efforts']]:raise Invalid('AI提案选择了尚未配置的模型或强度')
             if allowed['provider']=='copilot' and n['mode'] not in ('Ask','Plan'):raise Invalid('Copilot 提案仅允许 Ask/Plan 上下文分析')
             v.update(profile=n['profile'],provider=allowed['provider'],model=n['model'],effort=n['effort'],mode=n['mode'],permission='workspace-write' if n['mode']=='Agent' else 'read',
                 session='new',subagents='disabled',timeout=profile_timeout(allowed),responsibility=n['name'],initial_prompt=n['initial_prompt'],round_prompt=n['round_prompt'],handoff_prompt=n['handoff_prompt'])
+            # Fresh AI-created nodes match manual creation. Reconfiguring an
+            # existing node preserves its explicit or legacy receiving scope.
+            if old.get('kind')!='agent':v['task_context']=True
+            elif 'task_context' in old:v['task_context']=old['task_context']
         nodes.append(v)
     if not any(n['kind'] in ('agent','loop') for n in nodes) or sum(n['kind']=='result' for n in nodes)!=1:raise Invalid('提案需要Agent与唯一结果节点')
     graph=dict(version=3,name=plan['name'],nodes=nodes,edges=[dict(dict(id='ai-edge'+str(i),transfer='result'),**e) for i,e in enumerate(plan['edges'])],budget=dict(calls=24,seconds=3600))
@@ -222,7 +228,7 @@ class ConfigurationAssistant:
                 if isinstance(value,dict):return {k:sanitize(x) for k,x in value.items()}
                 return value
             r['report']=sanitize(r['report'])
-            graph=plan_graph(r['report'],v['choices']);self._source(v)
+            graph=plan_graph(r['report'],v['choices'],previous=v['base_graph']);self._source(v)
             if verification and not ModelAdmission(self.rt).renew(b,v['cwd'],r,verification,unless_cancelled=key):
                 if self._finish_cancelled(key):return
                 raise Blocked('配置助手连接已被撤销或回执不匹配；未发布提案')
@@ -301,7 +307,7 @@ class ConfigurationAssistant:
 
     def external(self,data,*,canvas_only=False,allow_invalid=False):
         if set(data)!={'workspace','graph','plan'}:raise Invalid('外部提案只接受工作区、当前画布和版本化配置计划，不接受命令/凭据/授权')
-        base=self._base(data,canvas_only=canvas_only,allow_invalid=allow_invalid);graph=plan_graph(data['plan'],base['choices']);key=secrets.token_hex(16)
+        base=self._base(data,canvas_only=canvas_only,allow_invalid=allow_invalid);graph=plan_graph(data['plan'],base['choices'],previous=base['base_graph']);key=secrets.token_hex(16)
         v=dict(base,id=key,configuration=True,source_kind='external-unverified',diagnostic=True,state='COMPLETED',proposed_graph=graph,plan=data['plan'],summary=safe_text(data['plan']['summary']),created_at=time.time())
         self.rt.db.put('session-operation',key,v);return self.status(data['workspace'],key)
 
@@ -312,5 +318,5 @@ class ConfigurationAssistant:
         self._source(v)
         if digest(canonical(data['graph']))!=v['base_graph_sha256']:raise Conflict('画布在生成后已被修改；未覆盖，请基于当前版本重新生成')
         # Revalidate current profile/model choices after any registration changes.
-        graph=plan_graph(v['plan'],self.choices(v['workspace']))
+        graph=plan_graph(v['plan'],self.choices(v['workspace']),previous=v['base_graph'])
         return dict(graph=graph,applied_to_draft_only=True,execution_started=False,permissions_granted=False)
