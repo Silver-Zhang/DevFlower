@@ -138,11 +138,12 @@ def _cleanup(root,identity):
 
 
 @contextmanager
-def native_skill_pack(binding,cwd,secrets,*,roots=('/tmp','/dev/shm')):
+def native_skill_pack(binding,cwd,secrets,*,roots=('/tmp','/dev/shm'),managed=False):
     values=binding.get('skills')
     if (not isinstance(values,list) or not 1<=len(values)<=6 or
         binding.get('provider')!='codex' or binding.get('execution_backend')!='native-local' or
-        binding.get('native_interaction')!='ordinary' or binding.get('subagents','disabled')!='disabled'):
+        binding.get('native_interaction')!='ordinary' or
+        binding.get('subagents','disabled')!='disabled' and not (managed and binding.get('subagents')=='readonly')):
         raise Blocked('冻结 Skill 包仅支持本机 Codex 普通操作；未发送任务')
     protected=binding.get('native_protected')
     if not isinstance(protected,list) or not protected:raise Blocked('缺少原生保护范围；未发送任务')

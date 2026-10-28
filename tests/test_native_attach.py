@@ -97,7 +97,8 @@ class NativeAttachTests(unittest.TestCase):
         os.chmod(server.path, 0o600)
         value = json.loads(server.path.read_text())
         for change in ({'session_id': 'other'}, {'token': 'wrong'}):
-            sock = socket.socket(socket.AF_UNIX); sock.settimeout(2); sock.connect(value['socket'])
+            self.assertEqual(value['version'], 2)
+            sock = socket.socket(socket.AF_UNIX); sock.settimeout(2); sock.connect('\0'+value['socket'])
             with sock.makefile('rwb') as stream:
                 hello = {k: value[k] for k in ('token', 'terminal', 'workspace', 'session_id')}; hello.update(change)
                 stream.write(json.dumps(hello).encode()+b'\n'); stream.flush()
@@ -107,7 +108,11 @@ class NativeAttachTests(unittest.TestCase):
     def test_close_removes_only_ephemeral_attach_files(self):
         self.launch(); self.connect(); server = self.manager.entries[self.key]['attach']
         self.manager.close(self.workspace, self.key)
-        self.assertFalse(server.root.exists())
+        self.assertEqual(server.cleanup_info['status'],'retained_private_metadata')
+        self.assertEqual(server.path.read_bytes(),b'')
+        self.assertEqual(server.root.stat().st_mode & 0o777,0o700)
+        self.assertEqual([p.name for p in server.root.iterdir()],['attach.json'])
+        self.assertEqual(server.root.stat().st_uid,os.getuid())
         with self.assertRaises(Blocked): self.manager.share(self.workspace, self.key)
 
     def test_real_http_rejects_stale_browser_after_local_claim(self):

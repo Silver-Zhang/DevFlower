@@ -48,9 +48,18 @@ def _collect(process,deadline,cancelled,input_data=None):
         process.communicate()
         raise
 
+def _spawn(args,**kwargs):
+    # These are synchronous diagnostic children: the spawning thread remains
+    # alive through collection. Linux binds PDEATHSIG to that thread's death.
+    from orchestration.sandbox import LIBC
+    parent=os.getpid()
+    def child_setup():
+        if LIBC.prctl(1,signal.SIGKILL,0,0,0) or os.getppid()!=parent:os._exit(125)
+    return subprocess.Popen(args,start_new_session=True,close_fds=True,preexec_fn=child_setup,**kwargs)
+
 def _run_command(args,*,cwd,env,input_data=None,deadline,cancelled):
-    process=subprocess.Popen(args,cwd=cwd,env=env,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
-                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    process=_spawn(args,cwd=cwd,env=env,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     out,err=_collect(process,deadline,cancelled,input_data)
     return type('ProbeResult',(),dict(returncode=process.returncode,stdout=out,stderr=err))()
 
@@ -115,12 +124,12 @@ def _probe(executable,stamp,root,deadline,cancelled,*,no_tools=False,ordinary_pr
             sid=starts[0]['thread_id']
             if str(uuid.UUID(sid))!=sid:raise ValueError('invalid thread identity')
             resume=[executable,'exec','resume',*argv[2:-1],sid,'synthetic']
-            second=subprocess.Popen(resume,cwd=work,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+            second=_spawn(resume,cwd=work,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             while not waiting.wait(min(.1,_remaining(deadline,cancelled))):
                 if second.poll() is not None:raise ValueError('resume did not reach synthetic provider')
             from .native_local import native_busy
             if not native_busy({'provider':'codex','home':str(base),'config_root':str(home)},sid):raise ValueError('native writer lock is not held')
-            third=subprocess.Popen(resume,cwd=work,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+            third=_spawn(resume,cwd=work,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             try:_collect(third,min(deadline,time.monotonic()+20),cancelled)
             except Blocked:
                 _remaining(deadline,cancelled)

@@ -31,6 +31,23 @@ def capabilities(profile):
         return dict(_probe(str(p),profile['provider'],s.st_mtime_ns,s.st_size))
     except OSError:return dict(skills=False,subagents=False,reason='原生工具不可用')
 
+@lru_cache(maxsize=32)
+def _managed_help(executable,mtime,size):
+    try:
+        with tempfile.TemporaryDirectory(prefix='df-managed-help-') as home:
+            r=subprocess.run([executable,'exec','--help'],env=clean_env(home),capture_output=True,timeout=12)
+        text=r.stdout.decode('utf-8','replace')
+        return r.returncode==0 and all(flag in text for flag in ('--ignore-user-config','--ignore-rules','--strict-config','--json'))
+    except (OSError,subprocess.TimeoutExpired):return False
+
+def managed_capability(profile,cap):
+    """Host-managed tool prerequisites, not native-spawn enforcement or admission."""
+    if not (cap.get('skills') and cap.get('subagents')):return False
+    try:
+        p=Path(profile['executable']);st=p.stat()
+        return _managed_help(str(p),st.st_mtime_ns,st.st_size)
+    except (OSError,KeyError,TypeError):return False
+
 
 def skill_header(text):
     """A deliberately small native YAML subset, with no aliases or policy keys.
@@ -118,7 +135,7 @@ class AgentExtensions:
                 reason='本机原生模式沿用原客户端扩展；额外挂载与子 Agent 策略尚未验证'),
                 skills=[],subagent_modes=['disabled'],
                 notice='不会改写本机 Skills 或子 Agent 配置。旧隔离模式的已验证挂载仍保留。')
-        if local:cap=dict(cap,subagents=False)
+        if local:cap=dict(cap,subagents=managed_capability(p,cap),subagent_source='DevFlower 管理的只读子任务及 CLI 只读接口检查')
         if cap['skills'] and not project.get('protected_container'):
             roots=[Path(project['path'])/x for x in ('.agents/skills','.claude/skills','skills')]
             roots += [Path.home()/x for x in ('.agents/skills','.codex/skills','.claude/skills')]
@@ -141,19 +158,22 @@ class AgentExtensions:
                         except (OSError,ValueError,Blocked,Invalid):row=dict(id=key,name=folder.name,available=False,reason='包含不支持的配置、链接或超过预算')
                         rows.append(row)
                 except (OSError,ValueError):continue
-        notice=('DevFlower 冻结 Skill 包提供所选资源的只读入口，不是 CLI 原生注册；本机子 Agent 尚未开放。' if local else '子 Agent 仅在 Ask/Plan 强制只读下开放；写入任务保持一个源码写入者。')
+        if local:
+            notice='DevFlower 冻结 Skill 包提供所选资源的只读入口，不是 CLI 原生注册。'
+            notice+=('只读子任务由 DevFlower 管理，仅普通点击工作流 Ask/Plan 可用，含交付节点不可用；CLI 原生多 Agent 保持关闭。' if cap['subagents'] else '当前 CLI 能力未确认，只读子任务不可用：'+(cap.get('reason') or '请刷新能力。'))
+        else:notice='子 Agent 仅在 Ask/Plan 强制只读下开放；写入任务保持一个源码写入者。'
         return dict(capabilities=cap,skills=rows,subagent_modes=['disabled','readonly'] if cap['subagents'] else ['disabled'],notice=notice)
-    def bind(self,workspace,node,binding):
+    def bind(self,workspace,node,binding,*,managed_workflow=False):
         ids=node.get('skills',[]);policy=node.get('subagents','disabled')
         if not isinstance(ids,list) or len(ids)>6 or any(not isinstance(k,str) for k in ids) or len(set(ids))!=len(ids):raise Invalid('每个节点最多选择六个不同 Skill')
         if policy not in ('disabled','readonly'):raise Invalid('子 Agent 策略无效')
         if not ids and policy=='disabled':
             binding.update(skills=[],skill_ids=[],subagents='disabled');return
         local=binding.get('execution_backend')=='native-local'
-        if local and (binding.get('provider')!='codex' or policy!='disabled'):
-            raise Blocked('本机模式仅支持 Codex 冻结 Skill 包；子 Agent 尚未开放')
+        if local and (binding.get('provider')!='codex' or policy!='disabled' and not managed_workflow):
+            raise Blocked('本机只读子任务仅支持普通点击工作流；当前入口不可使用')
         cap=capabilities(binding)
-        if local:cap=dict(cap,subagents=False)
+        if local:cap=dict(cap,subagents=bool(managed_workflow and managed_capability(binding,cap)))
         if ids and not cap['skills'] or policy!='disabled' and not cap['subagents']:raise Blocked(cap.get('reason') or '原生扩展接口不可用')
         if policy!='disabled' and (node.get('mode','Ask')=='Agent' or binding['role']=='implementer'):raise Blocked('子 Agent 当前只开放只读 Ask/Plan，写入任务必须保持一个源码写入者')
         selected=[]

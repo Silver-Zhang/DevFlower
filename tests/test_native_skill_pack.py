@@ -28,8 +28,8 @@ class NativeSkillTests(unittest.TestCase):
   self.source=self.work/'.agents/skills/check';self.source.mkdir(parents=True);(self.source/'SKILL.md').write_text('---\nname: check\ndescription: Synthetic checklist\n---\nRead the reference.\n');(self.source/'references').mkdir();(self.source/'references/a.txt').write_text('fixture reference');(self.source/'scripts').mkdir();(self.source/'scripts/check.py').write_text('print("fixture")')
   self.base=dict(provider='codex',execution_backend='native-local',runtime_profile='p',executable='/synthetic',home=str(self.home),config_root=str(self.codex),model='fixture',effort='high',role='reviewer',execution_mode='Ask',project='w',session_id=None,conversation_format='text',readonly_files=[],native_interaction='ordinary',native_protected=[str(self.storage)],subagents='disabled')
  def bind(self):
-  with patch('studio.agent_extensions.capabilities',return_value={'skills':True,'subagents':True}),patch('pathlib.Path.home',return_value=self.home):
-   ext=AgentExtensions(self.rt);catalog=ext.catalog('w','p');self.assertFalse(catalog['capabilities']['subagents']);row=next(x for x in catalog['skills'] if x['name']=='check')
+  with patch('studio.agent_extensions.capabilities',return_value={'skills':True,'subagents':True}),patch('studio.agent_extensions.managed_capability',return_value=True),patch('pathlib.Path.home',return_value=self.home):
+   ext=AgentExtensions(self.rt);catalog=ext.catalog('w','p');self.assertTrue(catalog['capabilities']['subagents']);row=next(x for x in catalog['skills'] if x['name']=='check')
    b=dict(self.base);ext.bind('w',dict(skills=[row['id']]),b)
   return b
  def test_real_full_package_is_frozen_and_cleaned(self):

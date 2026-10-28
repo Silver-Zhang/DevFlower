@@ -28,7 +28,7 @@ class Fixture(unittest.TestCase):
         self.base=Path(self.tmp.name).resolve();self.db=WorkbenchStore(self.base/'state.sqlite')
         self.db.put('terminal','t',dict(id='t',workspace='w',state='RUNNING',provider='codex',
             session_id='synthetic',input_generation=0,input_owner='workbench',input_sequence=0))
-        self.manager=NativeTerminals(SimpleNamespace(flow=self.db),None)
+        self.manager=NativeTerminals(SimpleNamespace(flow=self.db,storage=self.base),None)
         self.readfd,self.writefd=os.pipe();self.addCleanup(os.close,self.readfd);self.addCleanup(os.close,self.writefd)
         self.manager.entries['t']=dict(proc=SimpleNamespace(poll=lambda:None),state='RUNNING',owner='workbench',
             generation=0,text='',first=0,next=0,inputs={},master=self.writefd)
@@ -193,11 +193,7 @@ class DirectDeadlineTests(Fixture):
 class UnixSocketDeadlineTests(Fixture):
     def setUp(self):
         super().setUp()
-        # /proc/self/fd supplies a short local pathname despite long CI worktrees.
-        self.rootfd=os.open(self.base,os.O_RDONLY|os.O_DIRECTORY);self.addCleanup(os.close,self.rootfd)
-        short=f'/proc/self/fd/{self.rootfd}/attach';os.mkdir(short,0o700)
-        with patch('studio.native_attach.tempfile.mkdtemp',return_value=short):
-            self.server=NativeAttach(self.manager,'w','t')
+        self.server=NativeAttach(self.manager,'w','t')
         self.addCleanup(self.close_server)
 
     def close_server(self):

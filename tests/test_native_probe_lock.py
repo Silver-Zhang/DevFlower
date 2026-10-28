@@ -82,3 +82,16 @@ class ProbeLockTests(unittest.TestCase):
   def send(*a,**kw):kw['on_stdout'](RAW);return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
   with patch('studio.native_codex_exec_probe.require_sandbox_capability') as probe,patch('orchestration.process.execute',side_effect=send):
    result=self.run_client(b);probe.assert_called_once();self.assertEqual(result['session_id'],SID)
+ def test_coordination_receives_step_budget_while_rpc_stays_bounded(self):
+  from contextlib import contextmanager
+  waits=[];rpc_timeouts=[]
+  @contextmanager
+  def gate(path,timeout,cancelled):
+   waits.append(timeout);yield timeout
+  class BoundedRPC(RPC):
+   def __init__(self,*args):rpc_timeouts.append(args[4])
+  self.patch_probe()
+  def send(*a,**kw):kw['on_stdout'](RAW);return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
+  with patch('studio.native_codex_rpc.metadata_guard',gate),patch('studio.local_codex_adapter.CodexRPC',BoundedRPC),patch('orchestration.process.execute',side_effect=send):
+   self.run_client(timeout=180)
+  self.assertEqual(len(waits),3);self.assertTrue(all(x>30 for x in waits));self.assertLessEqual(rpc_timeouts[0],30)

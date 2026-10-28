@@ -254,6 +254,22 @@ def permission_profile_args(paths,write,*,select_default=True):
     if select_default:args+=['-c','default_permissions="devflower"']
     return args
 
+def managed_mcp_args(context):
+    from .managed_children import ManagedContext
+    if type(context) is not ManagedContext or context.closed.is_set():raise Blocked('受管子任务上下文无效')
+    import time
+    remaining=int(context.deadline-time.monotonic())
+    if remaining<1:raise Blocked('受管子任务启动预算已耗尽')
+    script=Path(__file__).resolve().parents[1]/'devflower_managed_child.py'
+    args=['-B',str(script),str(context.path)]
+    return ['-c','mcp_servers.devflower_managed.command="/usr/bin/python3"',
+            '-c','mcp_servers.devflower_managed.args='+json.dumps(args,ensure_ascii=True),
+            '-c','mcp_servers.devflower_managed.enabled=true',
+            '-c','mcp_servers.devflower_managed.required=true',
+            '-c','mcp_servers.devflower_managed.enabled_tools=["delegated_readonly"]',
+            '-c','mcp_servers.devflower_managed.startup_timeout_sec='+str(min(remaining,10)),
+            '-c','mcp_servers.devflower_managed.tool_timeout_sec='+str(remaining)]
+
 def exec_args(binding,provider_args,*,schema=None):
     read_only=binding['role']!='implementer' or bool(binding.get('admission_probe'))
     ordinary=binding.get('native_interaction')=='ordinary'

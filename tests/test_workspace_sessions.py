@@ -34,7 +34,7 @@ def native(root, provider, cwd, sid=SID):
                    dict(type='user', sessionId=sid, cwd=str(cwd), timestamp='2026-10-20T01:00:00Z',
                         version='2.1.303', message={'content': PRIVATE})]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(''.join(json.dumps(r)+'\n' for r in records))
+    path.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
     return path
 
 
@@ -61,6 +61,28 @@ def fixture(base):
     return dict(a=a,b=b,home=home,roots=[codex,nested,external],paths=paths,other=other,cfg=cfg)
 
 
+class NativeFixtureTests(unittest.TestCase):
+    def test_native_fixture_preserves_unicode_cwd_for_adversarial_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);cwd=base/'中文工作区';cwd.mkdir()
+            path=native(base/'unicode-source','claude',cwd)
+            original=path.read_text();self.assertIn(str(cwd),original)
+            modified=original.replace(str(cwd),'relative/project')
+            self.assertNotEqual(modified,original)
+            self.assertEqual(json.loads(modified.splitlines()[1])['cwd'],'relative/project')
+    def test_short_fd_path_reaches_same_long_unicode_parent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder)/('长目录'*20);parent.mkdir()
+            fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
+            try:
+                alias='/proc/self/fd/'+str(fd)+'/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl'
+                self.assertGreater(len(os.fsencode(str(parent/'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl'))),108)
+                self.assertLess(len(os.fsencode(alias)),108)
+                before=parent.stat();via=os.stat('/proc/self/fd/'+str(fd))
+                self.assertEqual((before.st_dev,before.st_ino),(via.st_dev,via.st_ino))
+            finally:os.close(fd)
+
+
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.base=Path(self.tmp.name)
@@ -78,6 +100,7 @@ class WorkspaceTests(unittest.TestCase):
     def config(self,edit):
         cfg=json.loads(self.f['cfg'].read_text());edit(cfg);self.f['cfg'].write_text(json.dumps(cfg))
         return App(self.base/'other-studio',project_roots=[self.f['a'],self.f['b']],session_profiles=self.f['cfg'])
+
 
     def test_three_profiles_same_project_and_duplicate_ids_are_preserved(self):
         rows=self.snapshot()['sessions']
@@ -232,13 +255,15 @@ class WorkspaceTests(unittest.TestCase):
         fifo=path.with_name(OTHER+'.jsonl')
         sockpath=path.with_name('bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl')
         os.mkfifo(fifo)
-        sock=socket.socket(socket.AF_UNIX)
+        parentfd=os.open(sockpath.parent,os.O_RDONLY|os.O_DIRECTORY)
+        sock=None
         real_open=os.open
         def guarded_open(name,*args,**kwargs):
             self.assertNotIn(os.fspath(name),[fifo.name,sockpath.name,str(fifo),str(sockpath)])
             return real_open(name,*args,**kwargs)
         try:
-            sock.bind(str(sockpath))
+            sock=socket.socket(socket.AF_UNIX)
+            sock.bind('/proc/self/fd/'+str(parentfd)+'/'+sockpath.name)
             with patch('studio.session_sources.os.open',side_effect=guarded_open):
                 data=self.snapshot()
                 self.assertEqual(len(data['sessions']),3)
@@ -249,7 +274,8 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertEqual(data['coverage'][2]['status'],'partial')
                 self.assertEqual(data['coverage'][2]['rejected'].get('special_file'),2)
         finally:
-            sock.close()
+            if sock is not None:sock.close()
+            os.close(parentfd)
 
     def test_surrogate_cwd_rejects_only_bad_file_over_real_http(self):
         path=self.f['paths'][2]

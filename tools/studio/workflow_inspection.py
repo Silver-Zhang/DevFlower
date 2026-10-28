@@ -251,7 +251,13 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                 if subagents not in ('disabled','readonly') or subagents=='readonly' and (mode=='Agent' or permission=='workspace-write'):
                     add('error',f'「{name}」的子 Agent 设置不符合只读权限，请关闭或改用只读工作方式。',node=path,field='subagents')
                 if subagents=='readonly' and rt.operator.get('native_local',{}).get(profile.get('provider') if profile else n.get('provider')):
-                    add('error',f'「{name}」的本机原生模式尚不支持受管子 Agent，请关闭该选项。',node=path,field='subagents')
+                    provider=profile.get('provider') if profile else n.get('provider')
+                    if provider!='codex' or not profile:add('error',f'「{name}」的本机原生 Provider 尚不支持受管子 Agent。',node=path,field='subagents')
+                    else:
+                        from .agent_extensions import capabilities,managed_capability
+                        cap=capabilities(profile)
+                        if not managed_capability(profile,cap):add('error',f'「{name}」的本机 CLI 能力未确认：'+(cap.get('reason') or '请刷新能力。'),node=path,field='subagents')
+                        else:add('warning',f'「{name}」的受管只读子任务仅支持普通点击工作流，不支持交付图。',node=path,field='subagents')
                 skills=n.get('skills',[])
                 if not isinstance(skills,list) or len(skills)>6 or any(not isinstance(v,str) or not re.fullmatch(r'[a-f0-9]{64}',v) for v in skills):add('error',f'「{name}」的 Skill 选择身份无效。',node=path,field='skills')
                 elif skills:

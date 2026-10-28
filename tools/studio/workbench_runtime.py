@@ -287,7 +287,7 @@ class WorkbenchRuntime(SessionRuntime):
             return native_workspace_hash(self,view)
         return workspace_hash(path)
 
-    def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=3):
+    def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=3, managed_workflow=False):
         project = self.session_center.workspace(workspace)
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
@@ -366,10 +366,12 @@ class WorkbenchRuntime(SessionRuntime):
         if registration and not direct:
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
         from .agent_extensions import AgentExtensions
-        AgentExtensions(self).bind(workspace,node,binding)
+        if node.get('subagents','disabled')!='disabled':
+            AgentExtensions(self).bind(workspace,node,binding,managed_workflow=bool(direct and managed_workflow))
+        else:AgentExtensions(self).bind(workspace,node,binding)
         if binding.get('execution_backend')=='native-local' and binding.get('skills') and not direct:
             raise Blocked('本机 Codex Skill 包仅支持普通直接操作；旧受控任务不自动迁移')
-        if binding.get('execution_backend')=='native-local' and (binding.get('subagents') not in (None,'disabled') or binding.get('skills') and binding.get('provider')!='codex'):
+        if binding.get('execution_backend')=='native-local' and (binding.get('subagents') not in (None,'disabled') and not (direct and managed_workflow and binding.get('provider')=='codex' and not write) or binding.get('skills') and binding.get('provider')!='codex'):
             raise Blocked('本机模式的定制 Skill 挂载/子Agent边界尚未验证；不会假装旧隔离挂载仍然有效')
         if direct:
             from .model_registration import direct_environment_identity
@@ -488,11 +490,16 @@ class WorkbenchRuntime(SessionRuntime):
         graph=validate_graph(request['graph']);task=request.get('task', '')
         if not isinstance(task,str) or not 1 <= len(task.strip()) <= 50000: raise Invalid('请填写本次任务')
         bindings={}
+        from .workbench_scheduler import has_delivery
+        managed_workflow=direct and not has_delivery(graph)
         def inspect(g,prefix=''):
             for n in g['nodes']:
                 if n['kind']=='agent' or n['kind']=='router' and n.get('classifier'):
                     from .routing import classifier_node
-                    try:bindings[prefix+n['id']]=self.node_binding(workspace,classifier_node(n) if n['kind']=='router' else n,admission=not (automatic or direct),direct=direct)
+                    try:
+                        selected=classifier_node(n) if n['kind']=='router' else n
+                        extra={'managed_workflow':managed_workflow} if selected.get('subagents','disabled')!='disabled' else {}
+                        bindings[prefix+n['id']]=self.node_binding(workspace,selected,admission=not (automatic or direct),direct=direct,**extra)
                     except (Invalid,Blocked) as exc:
                         exc.node=prefix+n['id'];raise
                 if n['kind']=='loop': inspect(n['body'],prefix+n['id']+'/')

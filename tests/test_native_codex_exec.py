@@ -133,15 +133,15 @@ class ExecConfigTests(unittest.TestCase):
  def test_native_tool_events_are_bounded_in_both_journals(self):
   from studio.session_center import SessionJournal
   from studio.workbench_scheduler import Journal
-  class DB:
-   def __init__(self):self.row={}
-   def get(self,*args):return dict(self.row)
-   def update(self,kind,key,data):self.row.update(data)
-   def change(self,kind,key,data):self.row.update(data)
-  for journal in (SessionJournal(DB(),'operation'),Journal(SimpleNamespace(db=DB()),'activation')):
-   for i in range(45):journal.native_tool_event({'id':str(i),'command':'read','output':'visible'})
-   db=journal.db if isinstance(journal,SessionJournal) else journal.s.db
-   self.assertEqual(len(db.row['native_tool_activity']),40);self.assertEqual(db.row['native_tool_activity'][0]['id'],'5');self.assertEqual(db.row['native_tool_activity'][-1]['id'],'44')
+  from studio.usable_store import Storage
+  from studio.workbench_store import WorkbenchStore
+  with tempfile.TemporaryDirectory() as folder:
+   session_db=Storage(Path(folder)/'session');session_db.put('session-operation','operation',{})
+   workflow_db=WorkbenchStore(Path(folder)/'workflow.sqlite');workflow_db.put('activation','activation',{})
+   for journal,db,kind,key in ((SessionJournal(session_db,'operation'),session_db,'session-operation','operation'),(Journal(SimpleNamespace(db=workflow_db),'activation'),workflow_db,'activation','activation')):
+    for i in range(45):journal.native_tool_event({'id':str(i),'command':'read','output':'visible'})
+    row=db.get(kind,key)
+    self.assertEqual(len(row['native_tool_activity']),40);self.assertEqual(row['native_tool_activity'][0]['id'],'5');self.assertEqual(row['native_tool_activity'][-1]['id'],'44')
  def test_unisolated_native_codex_terminal_is_refused_before_prepare(self):
   from studio.native_terminals import NativeTerminals
   binding=dict(provider='codex',execution_backend='native-local')

@@ -54,6 +54,10 @@ class Journal:
     def get(self, run):
         return {'data': self.s.db.get('run', self.s.run)}
 
+    def reserve_managed_child(self,slot,task,parent,*,with_created=False):
+        from .managed_child_reservation import reserve
+        return reserve(self,slot,task,parent,with_created=with_created)
+
     def intent(self, run, kind, data):
         key = secrets.token_hex(16)
         self.s.db.put('native-step', key, dict(id=key, run=self.s.run, activation=self.key, kind=kind, data=data))
@@ -69,8 +73,11 @@ class Journal:
             self.s.rt.db.put('chat-profile',profile_key(binding),dict(workspace=chat['workspace'],binding=binding))
 
     def native_tool_event(self, event):
-        row=self.s.db.get('activation',self.key)
-        self.s.db.change('activation',self.key,{'native_tool_activity':(row.get('native_tool_activity') or [])[-39:]+[event]})
+        with self.s.db.tx() as db:
+            saved=db.execute("SELECT data FROM records WHERE kind='activation' AND id=?",(self.key,)).fetchone()
+            if not saved:raise Blocked('节点活动记录不存在')
+            row=json.loads(saved[0]);row['native_tool_activity']=(row.get('native_tool_activity') or [])[-39:]+[event]
+            db.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",(canonical(row).decode(),self.key))
 
     def visible_request(self, text):
         from orchestration.privacy import credentials,redact
@@ -94,6 +101,8 @@ class Journal:
         if row['kind'] == 'PROCESS' and status == 'RUNNING':
             self.s.db.change('activation', self.key, {'state': 'RUNNING', 'process': updates['process']},
                              event={'kind': 'node-running', 'action': '原生 Agent 已启动'})
+            context=getattr(self,'_managed_context',None)
+            if context is not None:context.bind_process(updates['process'])
             if row['data'].get('context',{}).get('provider') in ('codex','claude','copilot'):
                 with self.s.db.tx() as db:
                     r=json.loads(db.execute("SELECT data FROM records WHERE kind='run' AND id=?",(self.s.run,)).fetchone()[0])

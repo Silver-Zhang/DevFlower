@@ -109,9 +109,9 @@ def journal_tools(events,secrets,state):
         key=safe_text(redact(key,secrets))
         command=event.get('command');output=event.get('output')
         def clean(value,protocol=False):return safe_text(redact(visible_content(value,protocol=protocol),secrets))[:4000] if isinstance(value,str) else ''
-        rows=[]
-        if isinstance(command,str) and command:rows.append(dict(kind='function_call',name='命令',call_id=key,content=clean(command),at=None,source='activation-journal'))
-        if isinstance(output,str) and output or event['event']=='item.completed':rows.append(dict(kind='function_call_output',name='命令结果',call_id=key,content=clean(output,True),at=None,source='activation-journal'))
+        rows=[];child=event.get('tool_kind')=='managed_child';label='只读子任务' if child else '命令'
+        if isinstance(command,str) and command:rows.append(dict(kind='function_call',name=label,call_id=key,content=clean(command),at=None,source='activation-journal'))
+        if isinstance(output,str) and output or event['event']=='item.completed':rows.append(dict(kind='function_call_output',name=label+'结果',call_id=key,content=clean(output,True),at=None,source='activation-journal'))
         for row in group_tools(rows):
             row.update(source='activation-journal',activation_state=state,status=clean(event.get('status')),exit_code=event.get('exit_code') if type(event.get('exit_code')) is int else None)
             for ev in row['events']:ev['source']='activation-journal'
