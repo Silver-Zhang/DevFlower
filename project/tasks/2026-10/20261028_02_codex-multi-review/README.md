@@ -71,3 +71,7 @@ source48 commit6c298fe/treec952f20/CFfcb280/313files，正常push；旧33b完整
 2026-10-29 接续精确更正：上文capability-authority已终局PARTIAL，后续private-attach亦PARTIAL（角色socket EPERM不伪称Host失败），cache当时未做。累计当前未提交a83b70b…/316files/tree5995694；Root真实Host84全0、独立1本地CLI核对新protected descriptor不可读和6字段正确、2替换清理不删foreign对象，直接诊断Python子进程父死真实正例通过。新v2不迁移旧活动attach；元数据路径若被替换仅原pinned inode已清空，不能从路径推导当前文件为0bytes。48云端真实1291Python/1FAIL0ERROR0SKIP（仅静态公开清单缺native_skill_pack.py），原日志保留，a83补清单已定向验证，尚无新云端通过。
 
 现同原生writer N/developer-native-capability-cache在a83基础实装有界仅进程成功合成能力cache与singleflight；不作模型准入/权限缓存，不跳过每次config/source/authority检查。受控只读子Agent尚待实现。新用户Claude统一管理要求再次查源码和官方接口，CLI已接中心，Desktop Code与Chat分开；本轮0真实Claude模型调用。45会话测试41通过/2FAIL2ERROR，四项未改assert在默认短路径复查全0；项目缩短路径仍特殊socket ERROR，整模块30秒超时与初runner缺局部输出均留注释，不能覆盖首失败。main/Stable未动，无新增正式源码审核轮。
+
+2026-10-29 本轮post48：a83→9af原生IMPLEM实装成功合成能力cache，Root136全0；独立实际Host15CLI/9local/0模型测得cold75.799s、warm11.971s、两个Provider重叠，逐次config/环境/保护扫描/真实请求未跳过。独立TTL waiter/hit两P2旧9af原件留存，原生窄修至ef6，独立15定向全0。Root中文长TMPDIR38全0；旧会话3失败真正根因为JSON默认Unicode转义使raw.replace不生效，socket另属长度限制，fixture已修且旧assert保留。
+
+Managed子Agent目前仍未用户可用：原生reserve层→host runner/私有endpoint/stdio桥→paired intent/双worker/source初核逐步实施，原报告PARTIAL不改。fd2 Host33组件测试全0、0模型；独立确证丢paired intent不能拒绝、source漂移未核验、close信可变DB误杀另一本fixture自有Python，未触碰真实用户进程。b803已补paired与source初核但尚未全生命周期。当前唯一原生writer N/developer-native-managed-child-context/工具70540在b803基础接父MCP真实PID/UUID发布与不可变owned进程收尾，UI/catalog仍关。Root另合成stderr分类器反例证推理强度配置error被reasoning过滤隐藏，待后续窄修，不称原Terra现场唯一原因。

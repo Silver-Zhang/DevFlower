@@ -1,0 +1,49 @@
+{
+  "kind": "POST48_PROGRESS_NOT_FINAL_ACCEPTANCE",
+  "pushed_head": "6c298fe3dc0560f8d513f9e7594428d35a558020",
+  "cache9af": {
+    "candidate": "9af30b10f4d07241be1feb65254bdd28874320a3a217212ecaf678a4bd20e328",
+    "root_tests": 136,
+    "exit": 0,
+    "independent_actual_cli": 15,
+    "all_local_requests": 9,
+    "real_models": 0,
+    "cold_seconds": 75.799,
+    "warm_seconds": 11.971,
+    "parallel_inflight": 2,
+    "old_ttl_findings_preserved": true
+  },
+  "expiry_ef6": {
+    "candidate": "ef697c9d27ba39d99dc50331c5cd9ba8e9e9ae92e5cf32c354f66a11b384c96d",
+    "independent_checks": 15,
+    "root_chinese_long_tmp_checks": 38,
+    "fail": 0,
+    "error": 0,
+    "skip": 0,
+    "exit": 0
+  },
+  "managed_service_fd2": {
+    "candidate": "fd2040005fb7e5f51caed0e242bb65653b71737be32304a0bf46fa5724de0c87",
+    "host_tests": 33,
+    "exit": 0,
+    "child_model_transport": "synthetic",
+    "real_models": 0,
+    "not_product_enabled": true
+  },
+  "current_native_job": "developer-native-managed-child-context",
+  "current_before": "b8035c51d7efe07a0db02436fe2a9b57639d09cce5a8c12f69ca1f2c564d98e3",
+  "remaining": [
+    "host context fixed MCP and actual child lifecycle",
+    "UI/catalog and native real CLI/model product scenarios",
+    "effort configuration error visibility",
+    "final same-source full regression CI K dual native review and fixed Gates",
+    "conditional delivery stable and unused-merged branch cleanup"
+  ],
+  "main_changed": false,
+  "stable_changed": false,
+  "formal_rounds": 0,
+  "formal_max": 2,
+  "infrastructure_used": 2,
+  "infrastructure_max": 2,
+  "final_approved": false
+}
