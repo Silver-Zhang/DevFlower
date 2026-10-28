@@ -1,0 +1,80 @@
+{
+  "kind": "SOURCE49_DRAFT_NOT_FINAL_ACCEPTANCE",
+  "head": "a56895ff09a403575b368456ffd353ed4ca88d5f",
+  "git_tree": "b9182a5e78ac88282ab46ae492da005de548b898",
+  "candidate_sha256": "e6935ad32cad7e4d6b90d64c2a3041b998bf4461eac69b52e7a7612c8f2a882e",
+  "files": 327,
+  "remote_readback": true,
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/22",
+  "draft": true,
+  "source49_ci": "pending; studio success last observed",
+  "local_f95_regression": {
+    "candidate_sha256": "f95d5bd26958dc530e65bc7ea0c1e6f791218952a669f55206db371ad17f0455",
+    "python": {
+      "tests": 1430,
+      "failures": 1,
+      "errors": 2,
+      "skipped": 0,
+      "exit": 1
+    },
+    "js": {
+      "tests": 64,
+      "exit": 0
+    },
+    "host": {
+      "tests": 6,
+      "exit": 0
+    },
+    "baseline_exit": 0,
+    "frontend_build_exit": 0,
+    "all_syntax_exit": 0,
+    "browser": "running"
+  },
+  "native_mcp_f95": {
+    "actual_cli": 9,
+    "all_local_http": 14,
+    "actual_children": 0,
+    "external_models": 0,
+    "gate": "BLOCKED",
+    "reason": "MCP tool call requires approval, but approval policy is never",
+    "harness_error": "incorrectly re-emitted after error; original preserved; new finite harness terminates first error"
+  },
+  "latest_uncommitted": {
+    "candidate_sha256": "5d8f76817c1d71604f054a9e1e42930bafbbea4a9ea4167b039636fe0bff00bb",
+    "git_tree": "11a2c3e9c77bd41e1f8e3a02655adf755bdabf9d",
+    "files": 327,
+    "implementation": "precise only fixed managed tool approval; no global config change; two subprocess test fixtures explicit tools path",
+    "root_original_counterexample": {
+      "tests": 3,
+      "failures": 1,
+      "errors": 2,
+      "exit": 1
+    },
+    "root_positive": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "native_real_mcp": "independent actual Host in progress on prior 9d candidate"
+  },
+  "claude_sessions": {
+    "candidate_sha256": "7bdb82ef0c449bc66741baa9884670d48906fe198c3d6ffe3392bfaa4c919e4b",
+    "tests": 47,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0,
+    "resource_warning": true,
+    "external_models": 0,
+    "desktop_code_metadata_not_live_takeover": true
+  },
+  "main_changed": false,
+  "stable_changed": false,
+  "formal_rounds": 0,
+  "formal_max": 2,
+  "infrastructure_used": 2,
+  "infrastructure_max": 2,
+  "final_approved": false
+}
