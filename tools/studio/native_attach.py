@@ -14,10 +14,12 @@ import stat
 import struct
 import tempfile
 import threading
+import time
 
 from orchestration.common import Blocked, canonical
 from .graph import Invalid
 from .server import Conflict
+from .native_terminals import CONTROL_BUDGET
 
 LIMIT = 2_000_000
 
@@ -102,10 +104,12 @@ class NativeAttach:
                         op = request.get('op')
                         if op == 'observe' and set(request) <= {'op', 'after'}:
                             result = self.terminals.snapshot(self.workspace, self.key, request.get('after', 0))
-                        elif op == 'claim' and set(request) == {'op', 'generation'}:
-                            result = self.terminals.claim(self.workspace, self.key, request['generation'], owner)
-                        elif op == 'release' and set(request) == {'op', 'generation'}:
-                            result = self.terminals.release(self.workspace, self.key, request['generation'], owner)
+                        elif op == 'claim' and set(request) == {'op', 'generation', 'deadline'}:
+                            result = self.terminals.claim(self.workspace, self.key, request['generation'], owner, deadline=request['deadline'])
+                        elif op == 'release' and set(request) == {'op', 'generation', 'deadline'}:
+                            result = self.terminals.release(self.workspace, self.key, request['generation'], owner, deadline=request['deadline'])
+                        elif op in ('claim', 'release') and set(request) == {'op', 'generation'}:
+                            raise Blocked('本地接管客户端版本过旧；请重新打开最新接管工具并读取状态。')
                         elif op == 'input' and set(request) == {'op', 'generation', 'sequence', 'text'}:
                             result = self.terminals.input(self.workspace, self.key, request['sequence'], request['text'], owner, request['generation'])
                         elif op == 'resize' and set(request) == {'op', 'generation', 'cols', 'rows'}:
@@ -179,17 +183,30 @@ class AttachClient:
             if not self.hello.get('ok') or self.hello.get('session_id') != self.data['session_id']:
                 raise Blocked('本地接管握手未确认')
         except BaseException:
-            self.socket.close()
+            if hasattr(self, 'stream'): self.close()
+            else: self.socket.close()
             raise
 
     def request(self, op, **data):
-        self.stream.write(canonical(dict(op=op, **data)) + b'\n')
-        self.stream.flush()
-        reply = receive(self.stream)
+        try:
+            if op in ('claim', 'release'):
+                data = dict(data, deadline=time.monotonic()+CONTROL_BUDGET)
+            self.stream.write(canonical(dict(op=op, **data)) + b'\n')
+            self.stream.flush()
+            reply = receive(self.stream)
+        except (OSError, ValueError, Blocked):
+            try: self.close()
+            except (OSError, ValueError): pass
+            raise Blocked('本地请求结果未确认；请重新连接读取真实状态，不要自动重发。') from None
         if not reply.get('ok'):
             raise Blocked(reply.get('error', '接管结果未确认，未重发'))
         return reply['result']
 
     def close(self):
-        self.stream.close()
-        self.socket.close()
+        # A buffered writer may otherwise flush an unfinished request while
+        # closing after a timeout. Disable the socket before closing streams.
+        try: self.socket.shutdown(socket.SHUT_RDWR)
+        except (OSError, ValueError): pass
+        try: self.stream.close()
+        except (OSError, ValueError): pass
+        finally: self.socket.close()

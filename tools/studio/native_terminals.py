@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import fcntl
 import hashlib
+import json
+import math
 import os
 from pathlib import Path
 import pty
@@ -26,6 +28,9 @@ from .server import Conflict
 from .terminal_text import TerminalText
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
+# Leave room within the local attachment's three-second socket deadline for
+# sending the response. This covers both the manager lock and SQLite writer.
+CONTROL_BUDGET = 1.0
 
 
 def dimensions(cols, rows):
@@ -212,15 +217,21 @@ class NativeTerminals:
             row = self.rt.flow.get('terminal', key)
             if row['workspace'] != workspace: raise Blocked('终端不属于此工作区')
             if type(after) is not int or after < 0: raise Invalid('终端输出位置无效')
-            entry = self.entries.get(key)
-            if not entry:
-                return dict(row, state='RECOVERY_REQUIRED' if row['state'] not in TERMINAL else row['state'],
-                            output='', next=after, reset=False, process_alive=group_alive(row.get('process')))
-            reset = after < entry['first'] or after > entry['next']
-            start = entry['first'] if reset else after
-            from .terminal_phase import terminal_phase
-            return dict(row, state=entry['state'], output=entry['text'][start-entry['first']:], next=entry['next'], reset=reset,
-                        process_alive=entry['proc'].poll() is None, **terminal_phase(row['provider'],entry['text'],entry['proc'].poll() is None))
+            return self._snapshot_row(row, self.entries.get(key), after)
+
+    def _snapshot_row(self, row, entry, after=0):
+        if not entry:
+            return dict(row, state='RECOVERY_REQUIRED' if row['state'] not in TERMINAL else row['state'],
+                        output='', next=after, reset=False, process_alive=group_alive(row.get('process')))
+        if entry.get('owner') is None:
+            # A disconnected owner loses input immediately even if persisting
+            # the release was blocked; the next claim must still be explicit.
+            row = dict(row, input_owner='unclaimed')
+        reset = after < entry['first'] or after > entry['next']
+        start = entry['first'] if reset else after
+        from .terminal_phase import terminal_phase
+        return dict(row, state=entry['state'], output=entry['text'][start-entry['first']:], next=entry['next'], reset=reset,
+                    process_alive=entry['proc'].poll() is None, **terminal_phase(row['provider'],entry['text'],entry['proc'].poll() is None))
 
     def listing(self, workspace):
         self.rt.session_center.workspace(workspace)
@@ -237,29 +248,59 @@ class NativeTerminals:
         if type(generation) is not int or generation != entry['generation'] or owner != entry['owner']:
             raise Conflict('输入已由另一端接管，请刷新后明确接管；未发送此次按键')
 
-    def claim(self, workspace, key, generation, owner='workbench'):
-        with self.lock:
-            row = self.snapshot(workspace, key); entry = self.entries.get(key)
-            if not entry or entry['proc'].poll() is not None or entry['state'] != 'RUNNING':
-                raise Blocked('原生进程没有可接管的活动连接')
-            if type(generation) is not int or generation != entry['generation']:
-                raise Conflict('接管状态已变化，请重新读取，未强行抢占')
-            if row.get('input_status') in ('SENDING', 'UNKNOWN'):
-                raise Blocked('上次输入结果未确认，不允许接管或重发')
-            next_generation = entry['generation'] + 1
-            self.rt.flow.change('terminal', key, dict(input_generation=next_generation,
-                input_owner='workbench' if owner == 'workbench' else 'local-terminal'))
-            entry['owner'], entry['generation'] = owner, next_generation
-            return self.snapshot(workspace, key)
+    def claim(self, workspace, key, generation, owner='workbench', *, deadline=None):
+        return self._control(workspace, key, generation, owner, claim=True, deadline=deadline)
 
-    def release(self, workspace, key, generation, owner):
-        with self.lock:
-            self.snapshot(workspace, key); entry = self.entries.get(key)
-            if not entry: raise Blocked('接管连接不存在')
-            self._writer(entry, owner, generation)
-            self.rt.flow.change('terminal', key, dict(input_generation=generation+1, input_owner='unclaimed'))
-            entry['owner'], entry['generation'] = None, generation+1
-            return self.snapshot(workspace, key)
+    def release(self, workspace, key, generation, owner, *, deadline=None):
+        return self._control(workspace, key, generation, owner, claim=False, deadline=deadline)
+
+    def _control(self, workspace, key, generation, owner, *, claim, deadline):
+        now = time.monotonic()
+        if deadline is not None:
+            try: valid = type(deadline) in (int, float) and math.isfinite(deadline)
+            except OverflowError: valid = False
+            if not valid: raise Invalid('终端控制时限无效；请重新连接。')
+        deadline = min(now + CONTROL_BUDGET, deadline) if deadline is not None else now + CONTROL_BUDGET
+        remaining = deadline - now
+        if remaining <= 0: raise Blocked('终端控制等待超时；请刷新状态后再操作。')
+        if not self.lock.acquire(timeout=remaining):
+            raise Blocked('终端正在处理其他操作；请刷新状态后再明确接管或释放。')
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise Blocked('终端控制等待超时；请刷新状态后再操作。')
+            mutated = False; entry = None
+            try:
+                with self.rt.flow.tx(timeout=remaining) as db:
+                    record = db.execute("SELECT data FROM records WHERE kind='terminal' AND id=?", (key,)).fetchone()
+                    if not record: raise Invalid('记录不存在')
+                    row = json.loads(record[0]); entry = self.entries.get(key)
+                    if row['workspace'] != workspace: raise Blocked('终端不属于此工作区')
+                    if claim:
+                        if not entry or entry['proc'].poll() is not None or entry['state'] != 'RUNNING':
+                            raise Blocked('原生进程没有可接管的活动连接')
+                        if type(generation) is not int or generation != entry['generation']:
+                            raise Conflict('接管状态已变化，请重新读取，未强行抢占')
+                        if row.get('input_status') in ('SENDING', 'UNKNOWN'):
+                            raise Blocked('上次输入结果未确认，不允许接管或重发')
+                    else:
+                        if not entry: raise Blocked('接管连接不存在')
+                        self._writer(entry, owner, generation)
+                    next_generation = generation + 1
+                    row.update(input_generation=next_generation,
+                               input_owner=('workbench' if owner == 'workbench' else 'local-terminal') if claim else 'unclaimed')
+                    db.execute("UPDATE records SET data=? WHERE kind='terminal' AND id=?", (canonical(row).decode(), key))
+                    mutated = True
+                    if time.monotonic() >= deadline:
+                        raise Blocked('终端控制等待超时；请刷新状态后再操作。')
+            except sqlite3.Error as exc:
+                if not mutated and (getattr(exc, 'sqlite_errorcode', 0) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or 'locked' in str(exc).lower() or 'busy' in str(exc).lower()):
+                    raise Blocked('终端状态正被其他操作更新；请刷新状态后再明确接管或释放。') from None
+                if mutated and entry is not None: entry['owner'] = None
+                raise Blocked('终端控制结果未确认；请重新读取状态，不要自动重发。') from None
+            entry['owner'], entry['generation'] = (owner if claim else None), next_generation
+            return self._snapshot_row(row, entry)
+        finally:
+            self.lock.release()
 
     def detach(self, workspace, key, owner):
         with self.lock:
