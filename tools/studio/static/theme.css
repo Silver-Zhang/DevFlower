@@ -2,7 +2,7 @@
    Adapted from VoltAgent's MIT DESIGN.md analyses; no brand assets or fonts. */
 :root {
   color-scheme: light dark;
-  --studio-bg: light-dark(#ffffff, #17191e);
+  --studio-bg: light-dark(#ffffff, #1b1b1e);
   --studio-subtle-bg: light-dark(#f7f8fa, #121419);
   --studio-input: light-dark(#ffffff, #1d2027);
   --studio-hover: light-dark(#f0f2f6, #252a34);

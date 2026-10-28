@@ -9,7 +9,8 @@ ROOT=Path(__file__).resolve().parents[2]
 with opened(ROOT/'tools/studio/public_source_manifest.json') as fd:
     _manifest=json.loads(os.read(fd,100001))
 _LAUNCHERS=frozenset('tools/'+name for name in ('devflower.py','devflower_attach.py','devflower_copilot.py','devflower_native_terminal.py','devflower_sessions.py','devflower_stable_bridge.py','devflower_studio.py','devflower_usable.py','devflower_workbench.py','review_handoff.py'))
-if not isinstance(_manifest,list) or len(_manifest)>512 or len(set(_manifest))!=len(_manifest) or any(not isinstance(p,str) or PurePosixPath(p).is_absolute() or '..' in PurePosixPath(p).parts or not (p.startswith(('tools/studio/','tools/orchestration/')) and p.endswith('.py') or p.startswith('tools/studio/workbench_ui/') and p.endswith(('.jsx','.mjs','.css')) or p.startswith('docs/') and p.endswith('.md') or p in _LAUNCHERS) for p in _manifest):
+_PUBLIC_DESIGN_FILES=frozenset(('tools/studio/static/theme.css','tools/studio/workbench_ui/vendor/awesome-design-md/LICENSE','tools/studio/workbench_ui/vendor/awesome-design-md/PROVENANCE.md'))
+if not isinstance(_manifest,list) or len(_manifest)>512 or len(set(_manifest))!=len(_manifest) or any(not isinstance(p,str) or PurePosixPath(p).is_absolute() or '..' in PurePosixPath(p).parts or not (p.startswith(('tools/studio/','tools/orchestration/')) and p.endswith('.py') or p.startswith('tools/studio/workbench_ui/') and p.endswith(('.jsx','.mjs','.css')) or p.startswith('docs/') and p.endswith('.md') or p in _LAUNCHERS or p in _PUBLIC_DESIGN_FILES) for p in _manifest):
     raise Invalid('公开源码清单无效')
 PUBLIC_FILES=frozenset(_manifest)
 class PublicSourceReader:

@@ -2,7 +2,7 @@ import {inspectionCurrent,inspectionSummary} from './inspection_identity.mjs';
 import {profileTimeout} from './node_defaults.mjs';
 import React,{useState,useEffect,useRef,useCallback,useMemo} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ReactFlow,Background,MiniMap,Handle,Position,MarkerType,applyNodeChanges,applyEdgeChanges,addEdge,SelectionMode,useStore,useUpdateNodeInternals} from '@xyflow/react';
+import {ReactFlow,Background,MiniMap,Handle,Position,MarkerType,applyNodeChanges,applyEdgeChanges,addEdge,SelectionMode,useStore,useUpdateNodeInternals,useNodesInitialized,useReactFlow} from '@xyflow/react';
 import Markdown,{DocumentLinkProvider} from './DocumentLinks.jsx';
 import {FolderPicker} from './FolderPicker.jsx';
 import {WorkflowLibrary} from './WorkflowLibrary.jsx';
@@ -101,6 +101,13 @@ function CanvasHandleMeasurements(){
   !n.hidden&&n.measured.width>0&&n.measured.height>0&&!n.internals.handleBounds
  ).map(n=>n.id)));
  useEffect(()=>{const ids=JSON.parse(missing);if(ids.length)updateNodeInternals(ids)},[missing,updateNodeInternals]);
+ return null;
+}
+function CanvasInitialRunView({ready}){
+ const initialized=useNodesInitialized(),{fitView}=useReactFlow(),framed=useRef(false);
+ // A run may be selected before its exact frozen snapshot arrives. Frame its
+ // measured graph once, without moving the camera on later polls or selection.
+ useEffect(()=>{if(!ready||!initialized||framed.current)return;framed.current=true;fitView({padding:.2,maxZoom:1})},[ready,initialized,fitView]);
  return null;
 }
 function MeasuredCanvas({nodes,onNodesChange,children,...props}){
@@ -320,7 +327,7 @@ setStatus(s);setChatProfile(s.profiles.find(p=>p.available)?.id||'');
      onReconnect={(old,c)=>{if(validConnection(currentGraph,c.source,c.target,old.id))updateCurrent(g=>Object.assign(g.edges.find(e=>e.id===old.id),c))}}
      onSelectionStart={()=>setSelected(null)} onNodeDragStart={()=>{if(viewMode==='draft')rememberGraph();dragged.current=Infinity;setSelected(null)}} onNodeDragStop={()=>{dragged.current=Date.now()+150}}
      onNodeClick={(e,n)=>{if(Date.now()<dragged.current)return;setAssistantOpen(false);if(e.shiftKey||e.ctrlKey||e.metaKey){setSelected(null);return;}setSelection([n.id]);setSelected(n.id);setEdge(null);setConfigTab(viewMode==='run'?'runtime':'basic');const target=canvasRef.current?.querySelector(`[data-id="${CSS.escape(n.id)}"]`);const box=target?.getBoundingClientRect()||e.currentTarget.getBoundingClientRect();const bounds=canvasRef.current.getBoundingClientRect();const place=inspectorPlacement(box,bounds);setPinned(true);setAnchor(place)}}
-     onPaneClick={()=>{setSelected(null);setEdge(null);setSelection([]);setPendingAdd(null);canvasMenu.closeMenu()}} onEdgeClick={(e,edge)=>{setEdge(edge.id);setSelected(null);setSelection([])}}><Background gap={24} size={1} color="var(--studio-grid)"/>{minimap&&<MiniMap style={{width:110,height:72}} nodeColor="var(--studio-faint)" maskColor="var(--studio-minimap-mask)"/>}</MeasuredCanvas>
+     onPaneClick={()=>{setSelected(null);setEdge(null);setSelection([]);setPendingAdd(null);canvasMenu.closeMenu()}} onEdgeClick={(e,edge)=>{setEdge(edge.id);setSelected(null);setSelection([])}}><CanvasInitialRunView ready={viewMode==='run'&&snapshot?.run?.id===run}/><Background gap={24} size={1} color="var(--studio-grid)"/>{minimap&&<MiniMap style={{width:110,height:72}} nodeColor="var(--studio-faint)" maskColor="var(--studio-minimap-mask)"/>}</MeasuredCanvas>
      <small className="canvas-navigation-hint" aria-label="画布导航说明">空格 + 拖动平移 · 适应画布查看全图</small>
      <EditorToolbar focused={focusCanvas} onFocus={()=>{setFocusCanvas(v=>!v);setSelected(null);setEdge(null);setAssistantOpen(false);setLibrary(false)}} menuOpen={arrangeOpen} setMenuOpen={setArrangeOpen} onFit={()=>rf?.fitView({padding:.2,maxZoom:1})} zoomIn={()=>rf?.zoomIn()} zoomOut={()=>rf?.zoomOut()} mode={panMode} setMode={setPanMode} count={selection.length} disabled={viewMode==='run'} undo={()=>traverseHistory('undo')} redo={()=>traverseHistory('redo')} canUndo={editHistory.current.past.length>0} canRedo={editHistory.current.future.length>0} command={editorCommand} minimap={minimap} setMinimap={setMinimap}/>
      {(!workspace||(!currentGraph?.nodes?.length&&viewMode==='draft'&&!guideDismissed))&&<div className="onboarding"><span className="eyebrow">从一个想法开始</span><h1>让 Agent 在画布上协作</h1><p>{workspace?'工作空间已就绪。从模板开始，或在空白画布添加第一个节点。':<>打开工作区，配置对话与流程，<br/>在同一处看到每一步真实执行。</>}</p>{!workspace?<Btn icon={FolderOpen} className="primary" onClick={()=>guard(()=>loadFolders())}>打开工作区</Btn>:<div className="onboarding-actions"><Btn icon={Workflow} className="primary" onClick={()=>setLibrary(true)}>选择可运行示例</Btn><Btn icon={Plus} onClick={()=>{newDocument(blankGraph());setGuideDismissed(true);setPalette(true)}}>创建空白工作流</Btn></div>}<ol><li>打开工作空间</li><li>选择模板</li><li>配置 Agent 与连线</li><li>填写任务</li><li>开始运行</li></ol></div>}

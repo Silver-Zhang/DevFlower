@@ -20,6 +20,14 @@ class PublicSourceToolTests(unittest.TestCase):
   for path in ('tools/studio/managed_claude.py','tools/studio/stream_response.py','tools/devflower_native_terminal.py','tools/studio/workbench_ui/CanvasAssistant.jsx'):
    self.assertIn(path,PUBLIC_FILES)
   self.assertNotIn('tools/studio/private-receipt.json',PUBLIC_FILES)
+ def test_shipped_design_references_are_readable_but_other_static_files_are_not(self):
+  for path in ('tools/studio/static/theme.css','tools/studio/workbench_ui/vendor/awesome-design-md/LICENSE','tools/studio/workbench_ui/vendor/awesome-design-md/PROVENANCE.md'):
+   with self.subTest(path=path):
+    value=PublicSourceReader(self.rt).read(path,1,3)
+    self.assertEqual(value['path'],path);self.assertTrue(value['text'])
+    self.assertEqual(value['candidate_sha256'],self.rt.candidate_sha256)
+  for path in ('tools/studio/static/private-settings.json','tools/studio/static/workbench.js','tools/studio/workbench_ui/vendor/awesome-design-md/../auth.json'):
+   with self.subTest(path=path),self.assertRaises(Invalid):PublicSourceReader(self.rt).read(path,1,3)
  def test_private_and_traversal_paths_rejected(self):
   for path in ('/etc/passwd','../auth.json','.git/config','tools/studio/../../etc/passwd','tools/studio/private-receipt.json'):
    with self.subTest(path=path),self.assertRaises(Invalid):self.reader.read(path,1,10)
