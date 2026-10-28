@@ -41,11 +41,20 @@ class Storage:
         value = canonical(data).decode()
         for attempt in range(3):
             try:
-                with self.lock, self.db() as db, db:
-                    db.execute("INSERT OR REPLACE INTO objects "
-                               "SELECT ?,?,? WHERE NOT EXISTS "
-                               "(SELECT 1 FROM objects WHERE kind=? AND id=? AND data=?)",
-                               (kind, key, value, kind, key, value))
+                with self.lock, self.db() as db:
+                    # An autocommit SELECT is a separate committed snapshot;
+                    # close its cursor before starting any write transaction.
+                    # Exact equality linearizes this no-op at that read.
+                    cursor = db.execute('SELECT data FROM objects WHERE kind=? AND id=?', (kind, key))
+                    try: row = cursor.fetchone()
+                    finally: cursor.close()
+                    if row is not None and row[0] == value:
+                        return
+                    with db:
+                        db.execute("INSERT OR REPLACE INTO objects "
+                                   "SELECT ?,?,? WHERE NOT EXISTS "
+                                   "(SELECT 1 FROM objects WHERE kind=? AND id=? AND data=?)",
+                                   (kind, key, value, kind, key, value))
                 return
             except sqlite3.OperationalError as exc:
                 code = getattr(exc, 'sqlite_errorcode', None)
