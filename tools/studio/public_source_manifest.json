@@ -145,6 +145,7 @@
   "tools/studio/workbench_ui/polish.css",
   "tools/studio/workbench_ui/product.css",
   "tools/studio/workbench_ui/provider_label.mjs",
+  "tools/studio/workbench_ui/readability.css",
   "tools/studio/workbench_ui/runtime_projection.mjs",
   "tools/studio/workbench_ui/start_checks.mjs",
   "tools/studio/workbench_ui/studio.css",

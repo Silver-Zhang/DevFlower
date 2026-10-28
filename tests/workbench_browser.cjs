@@ -847,6 +847,43 @@ await test('builtin-assistant-user-edit-during-inference-is-not-overwritten',asy
  await openWorkspace(p);await p.getByRole('button',{name:'AI 配置',exact:true}).click();const panel=p.getByTestId('assistant-dock');await panel.getByLabel('助手模型',{exact:true}).selectOption('auto');await panel.getByLabel('助手工作方式',{exact:true}).selectOption('workflow');await panel.locator('.assistant-options>summary').click();await panel.getByRole('checkbox',{name:/设计工作流模式生成后自动应用/}).check();let release;const hold=new Promise(r=>release=r);await p.route('**/api/canvas-assistant/conversation?*',async route=>{const response=await route.fetch();const body=await response.json();if(body.turn?.state==='COMPLETED')await hold;await route.fulfill({response})});try{await panel.getByRole('checkbox',{name:/允许发送.*对话/}).check();await panel.getByLabel('配置需求',{exact:true}).fill('生成过程中保留编辑');await panel.getByRole('button',{name:'发送',exact:true}).click();await p.getByLabel('工作流名称',{exact:true}).fill('用户手动保留的名称');release();await until(async()=>await panel.getByRole('alert').count()>0);assert.equal(await p.getByLabel('工作流名称',{exact:true}).inputValue(),'用户手动保留的名称');assert((await panel.getByRole('alert').first().innerText()).includes('修改'));}finally{release()}
 });
 
+await test('polish-focus-canvas-expands-readable-graph-without-changing-workflow',async p=>{
+ await openWorkspace(p);await until(async()=>await p.locator('.react-flow__node').count()===4);
+ const before=await p.getByTestId('canvas').boundingBox(),nodeBefore=await p.locator('.react-flow__node').first().boundingBox();
+ const writes=[];p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|canvas-assistant\/messages)$/.test(r.url()))writes.push(r.url())});
+ await p.getByRole('button',{name:'专注画布',exact:true}).click();
+ await until(async()=>{const c=await p.getByTestId('canvas').boundingBox(),n=await p.locator('.react-flow__node').first().boundingBox();return c.width>before.width*1.5&&n.width>nodeBefore.width*1.4});
+ assert.equal(await p.locator('.react-flow__node').count(),4);assert.equal(await p.locator('.react-flow__edge-path').count(),3);
+ await p.screenshot({path:out+'/focused-readable-canvas.png'});
+ await p.getByRole('button',{name:'退出专注画布',exact:true}).click();await until(async()=>Math.abs((await p.getByTestId('canvas').boundingBox()).width-before.width)<3);
+ assert.deepEqual(writes,[]);
+});
+await test('polish-small-runtime-assistant-opens-readonly-and-closes-with-draft-intact',async p=>{
+ await p.setViewportSize({width:700,height:860});await openWorkspace(p);await p.getByLabel('历史运行',{exact:true}).selectOption('A');
+ assert(await p.getByRole('button',{name:'AI 配置',exact:true}).isEnabled());
+ const writes=[];p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|canvas-assistant\/messages)$/.test(r.url()))writes.push(r.url())});
+ await p.getByRole('button',{name:'AI 配置',exact:true}).click();let dock=p.getByTestId('assistant-dock');await dock.waitFor();
+ assert.equal(await dock.getByLabel('助手工作方式',{exact:true}).inputValue(),'chat');
+ await dock.getByLabel('配置需求',{exact:true}).fill('解释这次运行，请保留我的草稿。');
+ await p.screenshot({path:out+'/small-runtime-assistant.png'});
+ await p.getByRole('button',{name:'收起工作台侧栏',exact:true}).click();assert(!(await p.getByTestId('assistant-dock').isVisible()));
+ await p.getByRole('button',{name:'AI 配置',exact:true}).click();dock=p.getByTestId('assistant-dock');
+ assert.equal(await dock.getByLabel('配置需求',{exact:true}).inputValue(),'解释这次运行，请保留我的草稿。');
+ assert.equal(await p.getByLabel('历史运行',{exact:true}).inputValue(),'A');assert.deepEqual(writes,[]);
+});
+await test('polish-saved-assistant-model-is-ready-before-slow-catalog-and-omitted-default',async p=>{
+ let release;const hold=new Promise(r=>release=r);
+ await p.route('**/api/devflower-agent/config',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({configured:true,protocol:'openai',base_url:'https://example.invalid',model:'saved-deepseek-model',effort:'high',fingerprint:'synthetic',has_credentials:true})}));
+ await p.route('**/api/assistant/models*',async r=>{await hold;await r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({models:[{id:'another-model'}],default_model:'saved-deepseek-model',source:'SYNTHETIC catalog omits default'})})});
+ try{
+  await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');
+  await until(async()=>await dock.getByLabel('助手模型',{exact:true}).inputValue()==='saved-deepseek-model');
+  await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();await dock.getByLabel('配置需求',{exact:true}).fill('我可以在目录刷新完成前使用已保存的模型');
+  assert(await dock.getByRole('button',{name:'发送',exact:true}).isEnabled());assert((await dock.innerText()).includes('可先使用已保存的模型'));
+  release();await until(async()=>await dock.getByLabel('助手模型',{exact:true}).getByRole('option').count()===2);
+  assert.equal(await dock.getByLabel('助手模型',{exact:true}).inputValue(),'saved-deepseek-model');
+ }finally{release()}
+});
 await test('deepseek-settings-and-model-choice-survive-reopen-without-exposing-key',async p=>{
  await p.route('**/api/assistant/models*',async route=>{
   const response=await p.request.get(access.url+'/api/devflower-agent/config',{headers:{Authorization:'Bearer '+access.token}}),config=await response.json();

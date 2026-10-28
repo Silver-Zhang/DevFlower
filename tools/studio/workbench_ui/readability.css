@@ -1,0 +1,78 @@
+/* Final shared type and interaction scale. Preserve the editor's existing
+   light/dark worlds and runtime semantics; chrome must serve the task. */
+:root{--studio-faint:#74747e;--ui-caption:11px;--ui-label:12px;--ui-body:14px}
+html[data-theme=dark]{--studio-faint:#a1a1ac}
+.workbench{font-size:var(--ui-body);caret-color:var(--studio-text)}
+.workbench ::selection{background:var(--studio-blue-bg);color:var(--studio-text)}
+.workbench *{scrollbar-width:thin;scrollbar-color:var(--studio-line-strong) transparent}
+.workbench button,.workbench input,.workbench select,.workbench textarea{font-size:var(--ui-label)}
+.workbench button:focus-visible,.workbench summary:focus-visible{outline:2px solid var(--studio-blue);outline-offset:2px}
+.workbench .workspace-name strong{font-size:14px}.workbench .workspace-name small{font-size:11px}
+.workbench .workspace-navigation>button,.workbench .workflow-list-row>button:first-child{font-size:12px;min-height:34px}
+.workbench .sidebar-title,.workbench .workspace-section-title,.workbench .session-search input{font-size:12px}
+.workbench .collection-tabs button,.workbench .session-filters button,.workbench .session-grouping,.workbench .session-grouping select{font-size:11px;min-height:29px}
+.workbench .session-main strong{font-size:12px}.workbench .session-main small,.workbench .session-main time,.workbench .session-state{font-size:11px;line-height:1.55}
+.workbench .session-grouping{white-space:nowrap;gap:6px}.workbench .session-grouping select{flex:1;min-width:0;max-width:calc(100% - 32px)}
+.workbench.sidebar-collapsed .workspace-navigation>button{font-size:0}
+.workbench .session-group-title,.workbench .session-node-title,.workbench .project-storage-note{font-size:11px}
+.workbench .editor-tabs{height:38px;flex-shrink:0}.workbench .editor-tabs button{font-size:12px}
+.workbench .canvas-toolbar{gap:7px;padding:8px 12px;min-height:48px;max-height:112px}
+.workbench .canvas-toolbar button,.workbench .canvas-toolbar>select{font-size:12px;min-height:31px}
+.workbench .workflow-title>input{font-size:13px}.workbench .dirty{font-size:11px}
+.workbench .canvas-edit-tools{max-width:calc(100% - 24px);overflow:visible;flex-wrap:wrap}
+.workbench .canvas-edit-tools>button,.workbench .arrange-menu>button{min-width:29px;min-height:30px;padding:5px}
+.workbench .node-card header strong{font-size:14px}.workbench .node-card header small{font-size:11px}
+.workbench .node-description,.workbench .node-description p{font-size:12px;line-height:1.6}
+.workbench .node-description>small,.workbench .provider,.workbench .node-card footer>small,.workbench .badge{font-size:11px}
+.workbench .design-banner,.workbench .notice,.workbench .alert,.workbench .design-banner p{font-size:12px;line-height:1.5}
+.workbench .workflow-guide{padding:9px 14px}.workflow-guide header{flex-wrap:wrap}.workflow-guide header>button:last-child{margin-left:auto}
+.workbench .inspector .field>span,.workbench .inspector small,.workbench .hint{font-size:12px;line-height:1.65}
+.workbench .inspector input,.workbench .inspector select,.workbench .inspector textarea{font-size:13px;min-height:36px}
+.workbench .inspector>nav button,.workbench .request-tabs button{font-size:12px}
+.workbench .inspector-body{padding:18px}.workbench .inspector .field{margin-bottom:18px}
+.workbench .studio-tools-tabs{gap:2px!important;padding:0 9px!important;min-height:42px}
+.workbench .studio-tools-tabs button{font-size:12px!important;min-height:30px;padding:6px!important;gap:5px!important}
+.workbench .studio-tools-tabs .tools-close{margin-left:auto;padding:5px!important}
+.workbench .studio-tools-heading strong,.workbench .studio-node-library>button>span{font-size:13px}
+.workbench .studio-tools-heading small,.workbench .studio-node-library small,.workbench .studio-tools-hint{font-size:12px;line-height:1.5}
+.workbench .studio-node-library>button{padding:11px 14px;min-height:57px}
+.workbench .assistant-dock-header strong,.workbench .assistant-subview>header{font-size:13px}
+.workbench .assistant-dock .assistant-bubble{font-size:14px;line-height:1.8;margin-bottom:26px}
+.workbench .assistant-chat{padding:18px}.workbench .assistant-welcome p{font-size:13px}
+.workbench .assistant-welcome button{font-size:12px;padding:11px 12px}
+.workbench .assistant-composer textarea{font-size:14px;min-height:88px;max-height:180px}
+.workbench .assistant-composer-toolbar select,.workbench .assistant-intent select{font-size:12px}
+.workbench .assistant-check,.workbench .assistant-muted,.workbench .assistant-security,.workbench .assistant-options,.workbench .assistant-reply-kind{font-size:11px;line-height:1.6}
+.workbench .assistant-subview .field{font-size:12px;margin:18px 0}.workbench .assistant-subview input,.workbench .assistant-subview select{font-size:13px;min-height:38px}
+.workbench .assistant-history-open span{font-size:13px}.workbench .assistant-history-open small{font-size:11px}
+.workbench .message,.workbench .journal-entry{font-size:14px;line-height:1.8}
+.workbench .messages,.workbench .run-journal-messages{scroll-padding:20px}
+.workbench .message-role,.workbench .journal-entry>header,.workbench .journal-task small{font-size:12px}
+.workbench .message p,.workbench .journal-entry p{max-width:75ch}
+.workbench .run-journal>header p,.workbench .run-journal button,.workbench .journal-node-section>h3{font-size:12px}
+.workbench .run-journal h2{font-size:18px}.workbench .journal-navigation{width:220px}
+.workbench .overview-current strong{font-size:16px}.workbench .overview-current small,.workbench .run-usage{font-size:12px}
+.workbench .runtime-overview .elapsed,.workbench .overview-progress small{font-size:12px;font-variant-numeric:tabular-nums}
+.workbench .task-input textarea{font-size:13px;line-height:1.6}.workbench .activity-tabs button,.workbench .activity-tabs>span{font-size:11px}
+.workbench.focus-canvas{--sidebar-width:52px!important}
+.workbench.focus-canvas .center,.workbench.focus-canvas .sessions-sidebar{transition:none}
+.workbench.focus-canvas .studio-tools,.workbench.focus-canvas .tools-resize{display:none}
+.workbench.focus-canvas:not(.has-inspector) .center{margin-right:0}
+@media(max-width:1100px){
+ .workbench .brand>span{display:none}
+ .workbench .workspace-name small{max-width:230px}
+ .workbench .run-actions{gap:4px}
+ .workbench .run-actions button{font-size:11px;padding:6px}
+ .workbench .theme-picker select{font-size:11px}
+ .workbench .canvas-toolbar{padding:7px 10px}
+}
+@media(max-width:720px){
+ .workbench .topbar{height:var(--header-height);min-height:var(--header-height);overflow:hidden}
+ .workbench .run-actions{max-width:100%;overflow-x:auto;flex-wrap:nowrap;padding:2px 0 4px}
+ .workbench .run-actions button{min-height:29px;flex-shrink:0}
+ .workbench .assistant-pane{min-width:0}.workbench .assistant-chat{padding:14px}
+ .workbench .assistant-welcome{margin-top:14px}
+ .workbench .canvas-edit-tools{left:8px;bottom:10px;max-width:calc(100% - 16px);gap:1px}
+ .workbench .canvas-edit-tools>button,.workbench .arrange-menu>button{min-width:26px;min-height:28px;padding:4px}
+ .workbench .run-journal>header{padding:14px;flex-wrap:wrap}.workbench .journal-navigation{width:auto}
+}
