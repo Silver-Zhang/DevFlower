@@ -1,0 +1,60 @@
+{
+  "source": {
+    "head": "0fd979129398dd89d5137759d2a8ca0dbc7bef85",
+    "tree": "c905ae195721975d240cc31659e637a18471e1c1",
+    "candidate_sha256": "1a8d13d2332d1ea958a9b9bd2ac385204c63cf68dfa8e554833987aca89173c4",
+    "files": 309
+  },
+  "pr": {
+    "number": 22,
+    "draft": true,
+    "merged": false
+  },
+  "checks": {
+    "root_targeted": {
+      "count": 90,
+      "exit": 0,
+      "fail": 0,
+      "error": 0,
+      "skip": 0
+    },
+    "independent_limited": {
+      "count": 16,
+      "exit": 0,
+      "fail": 0,
+      "error": 0,
+      "skip": 0
+    },
+    "old_source46_counterexample": {
+      "count": 1,
+      "exit": 1,
+      "fail": 1,
+      "expected_negative": true
+    },
+    "full_current_regression": "NOT_RUN",
+    "current_real_product": "NOT_RUN",
+    "formal_rounds_used": 0,
+    "formal_maximum": 2,
+    "infrastructure_used": 2,
+    "infrastructure_maximum": 2
+  },
+  "native_implementation": {
+    "provider": "codex",
+    "session_id": "01a1810f-48a5-7d81-8d09-f515ad972126",
+    "requested_model": "gpt-6.1-terra",
+    "requested_effort": "high",
+    "physical_backend": "unknown",
+    "effective_effort": "unknown",
+    "reports": [
+      "developer-probe-coordination-fix",
+      "developer-workspace-probe-coordination-fix"
+    ],
+    "status": "IMPLEMENTED",
+    "final_acceptance": false
+  },
+  "source46_complex_failure_preserved": true,
+  "skill_pack_implementation": "IN_PROGRESS",
+  "managed_child_tool": "PLANNED_NOT_IMPLEMENTED",
+  "main_unchanged": true,
+  "stable_unchanged": true
+}
