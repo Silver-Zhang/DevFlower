@@ -4,7 +4,7 @@
   "contract_sha256": "e9dea223528b3da15e8eafc0f419cfb8a1596ab77814ed6eb470ed581830e5eb",
   "source_base": "f67737a9016b45d5a64896445e322ba3e32c926b",
   "implementation_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
-  "status": "IMPLEMENTING_NATIVE_BOUNDARIES",
+  "status": "FIXING_ACTUAL_RUN_FAILURES",
   "formal_acceptance": false,
   "user_personal_acceptance": false,
   "main_merged": false,
@@ -116,9 +116,54 @@
           "最终源码需在正常宿主运行 Codex 具名 profile 的实际工具及符号链接、硬链接反例。当前受控环境拒绝创建内层 user namespace。",
           "外层完整回归、真实模型验收、独立复核及 Git/Stable 交付均未执行。"
         ]
+      },
+      {
+        "phase": 14,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "硬链接检查是启动前的元数据检查，并非对同一系统用户其他进程的原子仲裁；其他进程在检查后创建别名的情况尚未被源码消除。父工作区视图目前也保守拒绝普通文件的所有多重硬链接，包括与受保护数据无关的链接。",
+          "最终 17 字段权限探针及实际模型工具边界仍需在正常宿主复验；本环境无法创建内层 namespace。",
+          "真实 Claude CLI 参数解析已验证，但未执行真实 Provider 或实际交互式工具行为验收。修改后的终端提示尚未做浏览器视觉检查。",
+          "外层完整回归、真实模型验收、独立复核和 Git/Stable 交付均未执行。"
+        ]
+      },
+      {
+        "phase": 15,
+        "status": "IMPLEMENTED",
+        "exit": 0,
+        "remaining": [
+          "父工作区视图仍保守拒绝普通文件的多重硬链接；这是本轮保留的既有限制。",
+          "最终候选的宿主完整回归、真实 CLI 和模型验收、独立审核及 Git/Stable 交付由外层执行。"
+        ]
+      },
+      {
+        "phase": 16,
+        "status": "PARTIAL",
+        "exit": 0,
+        "remaining": [
+          "在正常宿主对最终源码重跑真实 Codex 加合成 Provider 的嵌套 deny 启动和工具权限矩阵；本环境的内层 bubblewrap 创建失败，尚不能证明该验证通过。",
+          "外层完整回归、独立审核及 Git/Stable 交付尚未执行。"
+        ]
+      },
+      {
+        "phase": 17,
+        "status": "IMPLEMENTED",
+        "exit": 0,
+        "remaining": [
+          "外层需用最终候选重新执行真实助手诊断，并完成全量回归、独立审核和 Stable 交付。"
+        ]
+      },
+      {
+        "phase": 18,
+        "status": "IMPLEMENTED",
+        "exit": 0,
+        "remaining": [
+          "外层需对最终候选重新冻结并运行完整回归、云端 CI、真实模型和工作流验收、独立审核及 Git/Stable 交付。"
+        ]
       }
     ],
-    "active_phase": 14
+    "active_phase": 19
   },
   "controlled_targeted_tests": [
     {
@@ -214,8 +259,8 @@
   },
   "new_source_counterexample": "Chinese no-space visible stream stays empty until final (in-progress module SHA235aa4e7eec60de0f9eea0e3c613984cb00978f60f97e6bc5ace6efe60b68756); actual probe preserved",
   "source_pushed": true,
-  "source_commit": "c842e84413b1b68be8c6e00e133d20f6281994f7",
-  "source_tree": "aac25dc171c64a38f0e33968b3d643a5e4052443",
+  "source_commit": "c28d65d0cb245fd9977369c8b26d11ff0097e4fb",
+  "source_tree": "ef62b6dfb659134186356d3bcd409fc7f46c266a",
   "passed_regression_stage7": {
     "sha256": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
     "git_tree": "23c3872bfb00e2c35483830f730e0556415d1fe7",
@@ -412,5 +457,66 @@
     "does_not_close_preexisting_alias_issue": true
   },
   "source_worktree_dirty": true,
-  "latest_source_not_pushed": true
+  "latest_source_not_pushed": true,
+  "latest_candidate": {
+    "sha256": "2ead3a655c08748e2764a5a66f13333f6ab18b0235c9052b2c35b50cda90fc7d",
+    "files": 283,
+    "final_approved": false
+  },
+  "latest_regression": {
+    "candidate": "2ead3a655c08748e2764a5a66f13333f6ab18b0235c9052b2c35b50cda90fc7d",
+    "python": 1119,
+    "host": 6,
+    "js": 60,
+    "workbench_browser": 124,
+    "all_nine_browser_suites_exit": 0,
+    "baseline_exit": 0,
+    "syntax_exit": 0,
+    "build_exit": 0,
+    "assets_match": true,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "ci_readback": {
+    "head": "c28d65d0cb245fd9977369c8b26d11ff0097e4fb",
+    "runs": [
+      40610047630,
+      40610047625
+    ],
+    "conclusion": "success"
+  },
+  "actual_stage17_flows": {
+    "candidate": "c1a557dd9956bb48ae42845f749688109d9be81ed8be8d1ce2efa06e0809fa67",
+    "scenarios": 6,
+    "native_calls": 21,
+    "result": "all expected including max5 FAIL",
+    "not_stage18_acceptance": true
+  },
+  "actual_stage18": {
+    "assistant_cases": 4,
+    "assistant_states": [
+      "COMPLETED",
+      "COMPLETED",
+      "COMPLETED",
+      "COMPLETED"
+    ],
+    "repair_errors_before": 1,
+    "repair_errors_after": 0,
+    "native_host_checks": 3,
+    "native_host_passed": 3,
+    "gui_actual_model": "gpt-6.1-terra",
+    "gui_requested_effort": "high",
+    "gui_native_exit": 0,
+    "gui_framework_result": "FAILED from unrelated removed historical alternate-codex profile",
+    "sequence_result": "FAILED actual Claude 300.641s timeout; remaining five scenarios not launched"
+  },
+  "remaining": [
+    "removed historical Profile affects unrelated new task completion",
+    "new workflow timeout must inherit approved Profile; clarify timeout error",
+    "final same-source real graph/UI/native lifecycle proof",
+    "fresh independent hard ACCEPT and old fixed Gate",
+    "product K closure",
+    "main/Stable promotion and safe merged-unused branch cleanup"
+  ]
 }

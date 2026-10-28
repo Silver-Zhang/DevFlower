@@ -1,11 +1,9 @@
 # 当前状态
 
-Task15 `tasks/2026-10/20261028_01_guided-stable`：仍在实施，不是正式验收。原D01–D12、旧K/BLOCKED/负面原件保留；源码审核1/5、基础设施恢复2/2已耗尽，R1无终局裁决。新候选必须新源码轮复核。
+Task15 `tasks/2026-10/20261028_01_guided-stable`仍未最终验收。整版Draft PR22 head c28d65d/treeef62/CF2ead，283文件，完整继承PR19→20→21。main仍e0a0f92/tree6c9e，无合并、Stable晋升或删分支。
 
-main/origin main重新fetch读回e0a0f92fed7f94bfef3a01b1298f8465c008023d，tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039，main干净。PR19→20→21保留Draft，完整继承后的Draft PR22 head c842e84413b1b68be8c6e00e133d20f6281994f7。后续源码在guided-stable工作树，尚未推送，不覆盖旧Stable或用户34915页。
+阶段18：完整1119 Python、6host、60JS、主工作台124、全部九套Chromium/HTTP、Baseline/语法/重建一致均通过；云端两个workflow在c28 success。真实助手问答/源码诊断/修复1→0/图片生成四项成功，三项真实CLI宿主检查通过。阶段17六图21次调用通过（含5轮负例），不冒充阶段18验收。
 
-原生Codex唯一源码写者为父任务原UUID01a17e69-7d98-7aa1-80fa-cca9423e5bd5，固定外部Stable监督。阶段10–13均PARTIAL；阶段14继续接通父工作区工作流/终端/恢复，以及受保护文件已有硬链接的启动完整性检查。旧K两次续接仍BLOCKED；已完成的真实源修复逐字节接回父树，不伪造旧K通过。
+当前阶段19只修实际现场缺陷：旧历史已移除Profile让无关新任务失败（实际Terra/high原生CLI已exit0）；Claude300秒超时提示不明确；新流程未沿用已批准Profile1800秒。旧失败、原生会话与用户Development34915保持。唯一源码写者为父Codex原UUID，固定旧Stable监督。
 
-外层实际CLI：原生同会话写锁/工具配置通过，硬链接保护负例真实失败；进一步证实运行中新建别名被拒绝，需补启动前保护。阶段12不可变中间快照正在完整回归。阶段7的1039Python/6host/59JS/233HTTPChromium不是最新源码验收，云端c842浏览器仍1FAIL。
-
-下一关：完成当前具体修复，冻结新候选、同版本完整回归/真实模型/22类逐页UI与复杂工作流/产品K、新独立硬ACCEPT及旧Gate；通过后才可按既有授权main整合、正式Stable晋升和已合并闲置分支清理。尚未合并/晋升/删分支。
+独立源码R1/5无最终裁决，基础设施恢复2/2耗尽，旧R1不再重试。新源码必须新审核轮；最终同源真实工作流/终端/UI/产品K、硬ACCEPT/旧Gate之后才整合和正式Stable。个人审美验收未代签。
