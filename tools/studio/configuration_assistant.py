@@ -48,6 +48,13 @@ def plan_graph(plan, choices, *, previous=None):
         if n['kind']=='condition':v['test']=n.get('test',dict(field='result.accepted',op='equals',value=True))
         if n['kind']=='merge':v['strategy']=n.get('strategy','all')
         old=old_nodes.get(n['id'],{})
+        # A prompt-only proposal cannot silently remove existing typed data
+        # guards. These are edited through the data-contract UI, not this tool.
+        if old.get('kind') != n['kind'] and any(old.get(k) for k in ('input_contract','output_contract')):
+            raise Invalid('节点「'+n['id']+'」已有数据合同，不能复用其身份替换节点类型；请创建新节点。')
+        if old.get('kind') == n['kind']:
+            for contract in ('input_contract','output_contract'):
+                if contract in old:v[contract]=copy.deepcopy(old[contract])
         if n['kind']=='loop':v.update(body=plan_graph(n.get('body'),choices,previous=old.get('body') if old.get('kind')=='loop' else None),max_rounds=n.get('max_rounds',5),until=n.get('until',dict(field='result.accepted',op='equals',value=True)))
         if n['kind']=='agent':
             allowed=choices.get(n['profile'])

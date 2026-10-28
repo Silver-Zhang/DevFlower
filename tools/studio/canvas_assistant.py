@@ -27,7 +27,7 @@ def redact_visible(rt,value):
         return v
     return clean(value)
 
-def expand_plan(plan,choices):
+def expand_plan(plan,choices,*,prefix=''):
     """Compact assistant output -> unchanged strict public plan validator.
 
     Only known local defaults are filled; unknown keys, profiles and mismatched
@@ -37,8 +37,13 @@ def expand_plan(plan,choices):
     if not isinstance(value,dict) or not isinstance(value.get('nodes'),list):raise Invalid('画布计划格式无效')
     value.setdefault('version',1);value.setdefault('name','图片识别流程');value.setdefault('summary','根据用户需求生成的未执行草稿')
     fields={'id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','test','strategy','body','max_rounds','until'}
-    for n in value['nodes']:
-        if not isinstance(n,dict) or set(n)-fields:raise Invalid('节点包含未允许的配置字段')
+    for index,n in enumerate(value['nodes']):
+        if not isinstance(n,dict):raise Invalid('画布节点需要配置对象，未修改草稿。')
+        unknown=set(n)-fields
+        if unknown:
+            path=prefix+str(n.get('id',index))
+            names='、'.join(safe_text(str(k))[:60] for k in sorted(unknown,key=str)[:8])
+            raise Invalid('节点「'+safe_text(path)[:200]+'」包含未允许的配置字段：'+names+'。请让助手按画布工具格式修正；原草稿未修改。')
         p=choices.get(n.get('profile'),{}) if n.get('kind')=='agent' else {}
         models=p.get('models',[])
         if n.get('kind')=='agent' and (not p or not models):raise Invalid('助手选择了尚未配置的 Agent')
@@ -46,11 +51,18 @@ def expand_plan(plan,choices):
         n.setdefault('effort',p.get('default_effort',models[0]['efforts'][0] if len(models)==1 and len(models[0]['efforts'])==1 else ''))
         n.setdefault('mode','Ask')
         for key in ('initial_prompt','round_prompt','handoff_prompt'):n.setdefault(key,'')
-        if n.get('kind')=='loop':n['body']=expand_plan(n.get('body'),choices)
+        if n.get('kind')=='loop':n['body']=expand_plan(n.get('body'),choices,prefix=prefix+str(n.get('id',index))+'/')
     # Entry/result are local canvas scaffolding, not extra Agent invocations.
     # LLMs may describe just the meaningful processing nodes. Add missing
     # scaffolding deterministically, then apply the unchanged graph validator.
-    if not isinstance(value.get('edges'),list) or any(not isinstance(e,dict) or not {'source','target'}<=set(e) or set(e)-{'source','target','when','transfer'} for e in value['edges']):raise Invalid('画布连线格式无效')
+    if not isinstance(value.get('edges'),list):raise Invalid('画布连线格式无效')
+    for index,e in enumerate(value['edges']):
+        if not isinstance(e,dict) or not {'source','target'}<=set(e):
+            raise Invalid('画布连线格式无效：'+prefix+'edges['+str(index)+'] 需要来源与目标节点。')
+        unknown=set(e)-{'source','target','when','transfer'}
+        if unknown:
+            names='、'.join(safe_text(str(k))[:60] for k in sorted(unknown,key=str)[:8])
+            raise Invalid('画布连线格式无效：'+prefix+'edges['+str(index)+'] 包含未允许的字段：'+names+'。请按工具格式修正，不复制快照标识或只读元数据；原草稿未修改。')
     ids={n.get('id') for n in value['nodes'] if isinstance(n.get('id'),str)}
     def add(kind):
         node_id='assistant_'+kind
@@ -236,16 +248,22 @@ class CanvasAssistant:
         clean=self._redact(data['message']);g=self._redact(base['base_graph'])
         # The exact original graph remains local for CAS. Only declared fields
         # and redacted visible text are sent to the inference backend.
-        nodes={'id','kind','name','profile','provider','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','responsibility','test','strategy','max_rounds','until','input_contract','output_contract'}
+        nodes={'id','kind','name','profile','model','effort','mode','initial_prompt','round_prompt','handoff_prompt','test','strategy','max_rounds','until'}
+        readonly={'provider','responsibility','input_contract','output_contract'}
         def visible_graph(graph,depth=0):
             if not isinstance(graph,dict) or depth>2:return {}
             ctx={k:graph.get(k) for k in ('version','name')};ctx['nodes']=[]
+            metadata=[]
             for n in graph.get('nodes',[]) if isinstance(graph.get('nodes'),list) else []:
                 if not isinstance(n,dict):continue
                 v={k:value for k,value in n.items() if k in nodes}
+                extra={k:value for k,value in n.items() if k in readonly}
+                if extra:metadata.append(dict(id=n.get('id'),**extra))
                 if n.get('kind')=='loop':v['body']=visible_graph(n.get('body'),depth+1)
                 ctx['nodes'].append(v)
-            ctx['edges']=[{k:value for k,value in e.items() if k in {'id','source','target','label','transfer','when','field','max_chars'}} for e in (graph.get('edges') if isinstance(graph.get('edges'),list) else []) if isinstance(e,dict)]
+            ctx['edges']=[{k:value for k,value in e.items() if k in {'id','source','target','transfer','when'}} for e in (graph.get('edges') if isinstance(graph.get('edges'),list) else []) if isinstance(e,dict)]
+            edge_metadata=[{k:value for k,value in e.items() if k in {'id','source','target','label','field','max_chars'}} for e in (graph.get('edges') if isinstance(graph.get('edges'),list) else []) if isinstance(e,dict) and any(k in e for k in ('label','field','max_chars'))]
+            ctx['readonly_metadata']=dict(nodes=metadata,edges=edge_metadata)
             return ctx
         context=visible_graph(g)
         binding=digest(canonical(dict(workspace=data['workspace'],conversation=data['conversation'],message=clean,model=data['model'],connection_sha256=connection_sha,images=image_meta,graph=base['base_graph_sha256'],expected=data['expected'],inspection=inspection,**({'intent':intent} if 'intent' in data else {}))))

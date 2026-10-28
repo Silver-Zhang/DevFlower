@@ -64,6 +64,29 @@ class CanvasAssistantTests(unittest.TestCase):
         result=self.ai.catalog();self.assertEqual(SyntheticBackend.calls,[]);self.assertFalse(result['execution_verified']);self.assertEqual(SyntheticBackend.closed,1)
     def test_builtin_conversation_returns_visible_reply_and_draft_proposal(self):
         v=self.run_turn();self.assertEqual(v['turn']['state'],'COMPLETED');self.assertEqual([m['role'] for m in v['messages']],['user','assistant']);self.assertEqual(v['turn']['receipt']['provider'],'devflower-agent');self.assertTrue(v['turn']['proposal']['graph']);self.assertEqual(self.rt.flow.list('run'),[])
+    def test_context_separates_readonly_metadata_from_proposal_nodes(self):
+        node=next(n for n in self.g['nodes'] if n['kind']=='agent')
+        node['input_contract']=[dict(field='answer',type='string',required=True)]
+        result=self.run_turn(self.data(graph=self.g))
+        self.assertEqual(result['turn']['state'],'COMPLETED')
+        context=SyntheticBackend.calls[-1]['current_graph']
+        visible=next(n for n in context['nodes'] if n['id']==node['id'])
+        self.assertFalse({'provider','responsibility','input_contract','output_contract'}&set(visible))
+        metadata=next(n for n in context['readonly_metadata']['nodes'] if n['id']==node['id'])
+        self.assertEqual(metadata['provider'],node['provider'])
+        self.assertEqual(metadata['input_contract'],node['input_contract'])
+    def test_external_proposal_and_apply_keep_existing_data_contracts(self):
+        node=next(n for n in self.g['nodes'] if n['id']=='analyze')
+        node['input_contract']=[dict(field='answer',type='string',required=True)]
+        node['output_contract']=[dict(field='result.score',type='number',required=True)]
+        result=self.run_turn(self.data(graph=self.g));self.assertEqual(result['turn']['state'],'COMPLETED')
+        proposal=result['turn']['proposal']
+        applied=ConfigurationAssistant(self.rt).apply(dict(workspace=self.w,id=proposal['id'],graph=self.g,answer={'action':'apply-proposal'}))
+        current=next(n for n in applied['graph']['nodes'] if n['id']=='analyze')
+        from studio.data_contracts import check
+        for key in ('input_contract','output_contract'):
+            self.assertEqual(current[key],node[key])
+            with self.assertRaises(Invalid):check({},current[key])
     def test_explicit_correction_sees_rejected_plan_without_automatic_retry(self):
         rejected=json.dumps(dict(reply='未通过的提案',plan=dict(version=1,name='invalid',summary='invalid',nodes=[],edges=[])))
         with patch.object(SyntheticBackend,'chat',return_value=dict(text=rejected)):
