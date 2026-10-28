@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from orchestration.common import digest
+from orchestration.common import canonical, digest
 from studio.workbench_examples import examples
 from studio.workbench_graph import validate_graph
 from studio.workbench_scheduler import Scheduler
@@ -121,13 +121,15 @@ class NestedRoundTests(unittest.TestCase):
                 node_binding=binding,source_lock=lambda cwd:root/'source.lock',recheck_session=lambda chat:None,
                 attachments=lambda cwd,paths:[],native_snapshot=lambda workspace,binding:{'native_path':str(Path(binding['home'])/'synthetic-history.jsonl')})
             store.put('run','native',dict(id='native',workspace='test',state='QUEUED',task='nested session reuse',
-                graph=validate_graph(graph),created_at=time.time(),paused=False,cancel_requested=False))
+                task_sha256=digest(b'nested session reuse'),candidate_sha256='0'*64,
+                graph_sha256=digest(canonical(graph)),graph=validate_graph(graph),created_at=time.time(),paused=False,cancel_requested=False))
             calls=[];summaries=[]
             def native_cli(provider,binding,options):
                 def start(prompt,cwd,artifacts,schema,journal,run):
                     activation=store.get('activation',journal.key)
                     node=activation['node'];sid='session-'+node.replace('/','-')
                     calls.append(dict(node=node,path=activation['iteration_path'],session=binding['session_id'],prompt=prompt))
+                    self.assertIn('nested session reuse', prompt)
                     # A bounded native-history double for the new per-activation
                     # byte range. No genuine Provider execution is claimed here.
                     transcript=Path(binding['home'])/'synthetic-history.jsonl';transcript.parent.mkdir(parents=True,exist_ok=True)
