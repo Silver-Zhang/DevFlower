@@ -2,15 +2,16 @@
   "task": "20261028_01_guided-stable",
   "run_id": "guided-stable-20261028-01",
   "contract_sha256": "e9dea223528b3da15e8eafc0f419cfb8a1596ab77814ed6eb470ed581830e5eb",
-  "status": "BLOCKED_INDEPENDENT_REVIEW",
+  "status": "INDEPENDENT_REVIEW_R4_IN_PROGRESS",
   "source": {
-    "commit": "d8c402f58ad845854ec4622206f44e645db42243",
-    "git_tree": "f440aef51f0e3513a83bdd335ddbaa2473426a97",
-    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
+    "commit": "b93f5f21c3dd2df5785899e6a58331ee8dd821a3",
+    "git_tree": "33fcaa4cbc7e6d7f3411da51bba0024817775aad",
+    "candidate_sha256": "e264becc9699d111d01b2bb7ef879b206f627a3e089b9d2bfdec09aeeddd45b3",
     "files": 289,
-    "manifest_sha256": "f868e2ec8a0e9d856761f4b3897a797dd09163fed5383c30750f4b1e745a0dbd",
-    "approved": false,
-    "notes": "Source送审/Draft同步，不是Gate通过或Stable晋升"
+    "native_implementation_commit": "3bf940892f94cccd2fd4e37ea2c718cb9516f10a",
+    "native_session": "01a180de-ce75-7941-ae4b-8c7e59288b17",
+    "source_before_after_same": true,
+    "approved": false
   },
   "formal_acceptance": false,
   "user_personal_acceptance": false,
@@ -18,7 +19,7 @@
   "stable_promoted": false,
   "main_head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
   "main_tree": "6c9e39e16bbbe7de95b894e0a58632b1a0f63039",
-  "source_review_rounds": 3,
+  "source_review_rounds": 4,
   "source_round_limit": 5,
   "infrastructure_recoveries": 2,
   "infrastructure_recovery_limit": 2,
@@ -43,7 +44,13 @@
       "reason": "HTTP502 upstream request failed"
     }
   ],
-  "current_review": "No verdict for final source22; old results not rebound",
+  "current_review": {
+    "round": 4,
+    "session_id": "58e09e1d-df9f-410d-97ef-d0f9b28f58a1",
+    "candidate": "e264becc9699d111d01b2bb7ef879b206f627a3e089b9d2bfdec09aeeddd45b3",
+    "state": "RUNNING",
+    "verdict": null
+  },
   "native_implementation": {
     "session_id": "01a18066-d096-7fa2-a4d2-45c1a0114fd0",
     "candidate": "73f0bdbcb2c14cb5b2e70774408ed144a06526387172c373b299ecf059eb041a",
@@ -90,18 +97,17 @@
   "cleanup": "No local flow branch merged into main and unused; all five checked out. No branches/worktrees/sessions removed.",
   "history": "Earlier progress preserved in Git and local records-before-stage22; original negative process/review/K records untouched.",
   "selftest_final": {
-    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
-    "python": 1129,
+    "candidate_sha256": "e264becc9699d111d01b2bb7ef879b206f627a3e089b9d2bfdec09aeeddd45b3",
+    "python": 1132,
     "host": 6,
-    "js": 61,
-    "chromium_http": 245,
+    "js": 62,
+    "chromium_http": 246,
     "legacy_studio_smoke": 16,
     "all_commands_exit_zero": true,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
-    "source_unchanged": true,
-    "build_assets_match": true
+    "source_unchanged": true
   },
   "ci_readback": {
     "head": "d8c402f58ad845854ec4622206f44e645db42243",
@@ -123,25 +129,59 @@
     "all_success": true
   },
   "final_preflight": {
-    "status": "BLOCKED",
-    "exit": 2,
-    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
-    "git_commit": "d8c402f58ad845854ec4622206f44e645db42243",
-    "git_tree": "f440aef51f0e3513a83bdd335ddbaa2473426a97",
-    "fixed_external_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "status": "NOT_READY",
     "gate_invoked": false,
-    "source_and_tests_checked": true,
-    "missing": [
-      "No genuine independent verdict for source22; source21 R3 actual HTTP502 exit1, no final verdict",
-      "Product K remains independently unaccepted; prior run BLOCKED preserved",
-      "Native same-Desktop live takeover and all extended capability evidence not complete"
-    ],
-    "note": "External preflight stops before gate because required native review inputs do not exist. This is not a fabricated Claude BLOCKED report or a failed run of the actual final gate. No approval or delivery authorized."
+    "reason": "R4 and current real max5/complex evidence pending"
   },
   "project_records_check": {
     "structural_exit": 0,
     "baseline_check_exit": 1,
     "baseline_reason": "Baseline-only check correctly refuses project branch containing project/. Product source22 baseline exit0; no check relaxed."
   },
-  "feature_matrix": "Local feature-matrix-stage22.json maps22 groups to exact same-source126 workbench cases, prior-source real evidence separated; no personal acceptance claimed."
+  "feature_matrix": "Local feature-matrix-stage22.json maps22 groups to exact same-source126 workbench cases, prior-source real evidence separated; no personal acceptance claimed.",
+  "channel_recovery": {
+    "real_model_request": true,
+    "requested_model": "claude-opus-5-5[1m]",
+    "requested_effort": "high",
+    "exit": 0,
+    "seconds": 8.815,
+    "actual_physical_backend": "unknown",
+    "not_old_review_retry": true
+  },
+  "product_k2": {
+    "task": "20261028_01_guided-stable/product-K2",
+    "base": "d8c402f58ad845854ec4622206f44e645db42243",
+    "problem": "Independent R3 actual counterexample: inspection silently drops findings above256",
+    "real_native_implementation": "01a180de-ce75-7941-ae4b-8c7e59288b17",
+    "commit": "3bf940892f94cccd2fd4e37ea2c718cb9516f10a",
+    "status": "IMPLEMENTED",
+    "original_PARTIAL_preserved": true,
+    "targeted_python": 56,
+    "targeted_browser": 1,
+    "external_executor": "root fixed external runner",
+    "independent_closure": "R4_PENDING",
+    "old_K_status_unchanged": true
+  },
+  "real_stage23": {
+    "sequence": "COMPLETED2calls with pause/resume",
+    "parallel_merge": "COMPLETED3calls",
+    "router": "COMPLETED1call",
+    "loop_early": "COMPLETED2calls",
+    "max5_attempt1": "FAILED before actual inference due protected-directory change; strict external assertion exit1",
+    "max5_attempt2": "FAILED at round3/6calls due actual Codex config hash drift; strict assertion exit1",
+    "max5_final": "New explicit readonly QA task under current restored config with read-only field-change observer; still running, originals not replayed",
+    "complex": "running, actual revision branch",
+    "assistant": "Question/source diagnosis/image completed; repair transient RECOVERY_REQUIRED then same actual Provider turn durably COMPLETED, explicit CASapply1to0, zero model replay",
+    "native": "SameUUID real PTY2providers/ownership/stop; actual Chromium Claude ready,/exit0,reprepare; DesktopAPI same Codex UUID/public reply; no forced Desktop UI takeover claimed"
+  },
+  "preserved_r4_final": {
+    "verdict": "NEEDS_CORRECTION",
+    "process_exit": 0,
+    "gate_exit": 2,
+    "gate_status": "BLOCKED",
+    "candidate_sha256": "e264becc9699d111d01b2bb7ef879b206f627a3e089b9d2bfdec09aeeddd45b3",
+    "open_finding": "R4-P1-ordinary-protected-directory-race",
+    "closed_finding": "R4-CLOSED-K2-bounded-inspection"
+  },
+  "handoff_to": "20261028_02_codex-multi-review"
 }

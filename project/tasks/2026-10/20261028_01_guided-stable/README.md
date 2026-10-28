@@ -35,3 +35,19 @@ Task15，合同 D01–D12。交付可引导使用的画布、直接模型任务�
 - 2026-10-28：原生多阶段实施、真实产品K尝试、R1失败及两次恢复，全部原件保留。
 - 2026-10-28：阶段18至21按实际反例修复历史Profile、超时继承、原生能力探测、助手冻结问答和历史长标题；阶段20/21各两项CI success。R2/R3仍无裁决。
 - 2026-10-28：阶段22仅修实际Claude plan-footer readiness及澄清过时诊断说明；真实终端/正常退出/同UUID再准备通过，完整1129/6/61/245回归通过，源码远端HEAD/tree一致，云端两项CI success（40633427959/40633427963）。原始日志/截图/native记录仅在本机archives；公开摘要同步project/devflower。
+
+### 用户明确继续后的 K2 / 当前阶段23
+
+用户再次授权继续原任务并保持条件式merge/Stable，旧预算不清零。Claude真实通道检查Opus5.5[1m]/high：8.815秒exit0。原生Codex独立副本先复现R3发现的256条问题静默截断，再修改检查器/UI/助手，64个无效节点共451条（449error/2warning），返回256、明确遗漏195。原生UUID01a180de-ce75-7941-ae4b-8c7e59288b17真实PARTIAL→外部56Python/JS/HTTP Chromium→IMPLEMENTED，新的原始适配器终局18.356秒exit0，前后完整CF相同。独立开发提交3bf9408经普通merge接回b93f5f2/treef33fc/CF e264becc9699d111d01b2bb7ef879b206f627a3e089b9d2bfdec09aeeddd45b3，289文件。旧K保持BLOCKED，不把新K2改写成旧运行成功。
+
+同阶段23完整1132Python/6host/62JS/246ChromiumHTTP和额外16smoke均exit0，FAIL/ERROR/SKIP0、重建字节一致；CI两项success40635673500/40635673499。真实顺序暂停恢复/并发汇合一次/router/提前循环已通过。五轮第一次因保护目录变化未启动，第二次到第三轮被真实Codex配置漂移拒绝，严格外部断言exit1保留。配置随后恢复原哈希；实际20秒原生PTY观察未造成配置变化，不能猜测漂移原因。正在新任务范围内带只读配置观测完成最后五轮和复杂图，不能先称通过。
+
+当前sourceR4/5：真实Claude会话58e09e1d-df9f-410d-97ef-d0f9b28f58a1，固定只读候选先合同/源码/反例再实施报告；原始R1-R3及2/2旧基础设施恢复不修改。两Provider共享PTY、代际接管/拒绝旧写者/关闭自有进程在本候选通过，Claude真实Chromium ready→/exit0→同UUIDprepare通过；Desktop接口读到同原生Codex UUID及原消息。助手修复真实请求曾暂态记录待确认，后同原turn/Provider回执完成、1→0应用，未重发模型。
+
+最终仍待独立硬ACCEPT、全部真实证据及固定Gate。main/Stable尚未变化，所有旧版本和会话保留，分支清理等正式整合后执行。当前事实以本段和progress为准，上文各阶段原始摘要保留。
+
+### R4 原始终局及 Provider 切换交接
+
+原生Claude R4最终NEEDS_CORRECTION（996.854秒、exit0），原始D01/D09 FAIL，R4-P1-ordinary-protected-directory-race OPEN；K2静默截断明确CLOSED。固定旧Stable Gate真实exit2/BLOCKED（当时真实max5验证失败），原意见与预算4/5、恢复2/2完整保留。source24已最小修新增目录并全回归1134Python/6host/62JS/246ChromiumHTTP+16旧smoke通过；它不因此得到审核ACCEPT。原生会话/旧K BLOCKED未修改。
+
+随后用户明确停止Claude，改为Codex多Agent审核；新的任务20261028_02_codex-multi-review承接剩余义务，独立合同/预算，不在旧运行隐式续轮、不改写R4负面。当前事实请读project/STATUS.md及新任务。

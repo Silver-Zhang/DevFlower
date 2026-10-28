@@ -1,15 +1,17 @@
 # DevFlower 接续入口
 
-当前Task15：tasks/2026-10/20261028_01_guided-stable/{README.md,task.json,contract.txt,progress.json}。raw=本机archives/devflower-guided-stable-20261028。保留旧Task14/K/BLOCKED、所有会话/auth/Stable，不reset/clean/force。
+当前任务tasks/2026-10/20261028_02_codex-multi-review。用户已明确改Codex多Agent审核，不再调用Claude审核/自有QA；保留产品Claude支持和中转设置。
 
-S=development/guided-stable，branch flow/workbench-guided-stable，HEADd8c402f，treef440，CF367e，289files；冻结candidate-stage22/candidate。main e0a0f92/tree6c9e，Draft PR22包含19→20→21。Developer当前仅root Codex，旧原生CLI阶段21IMPLEMENTED非最新terminal补丁作者。没有活动源码writer。
+S=development/guided-stable，flow/workbench-guided-stable，ac05aecaf481b55038711b3f7a4bb82f0adc3dee；tree f2f81a9388f0e8f31ec833b56e374fd10e6bd2e9；CF a8cc42108ef8d30a05dd08069d788eb51b5c180db8f471fe38f733a7b728f426，294files。H=archives/devflower-guided-stable-20261028，冻结candidate-stage33，PR22待验收。main e0a0f92，未合并。
 
-最终回归regression-stage22：1129Python/6host/61JS及baseline/syntax/build通过；summary已complete/source_unchanged，FAIL/ERROR/SKIP0。真实stage21六图/助手4项另列；native-browser-stage22-retry实际Claude ready、/exit0、同UUIDprepare通过。所有导入-B避免污染固定候选和旧Stable。
+N=H/codex-multi-review-20261028。最新用户DeepSeek持久设置要求已在首次正式源码审核前追加合同，SHA cedcf84fa4453b71b7e68287b04cc64ba2c9eaf063de5d8cc3202019e97ccf9e；旧4dd4ae7d原件保留。完整审核0/2，每轮双独立原生Codex；infra2/2已用，不复位。旧Task15/R4/预算/负面保持。
 
-审核权威reviews/budget.json：源码3/5，infra恢复2/2耗尽。R1timeout无裁决，R2driver143/native未知无裁决，R3 Opus5.5[1m]/high HTTP502/1411.756s/exit1无裁决。原生025dc97b-178a-4287-b39a-397750bb88bf位于reviews/native-home。不可恢复旧请求绕预算；尚无source22审核，不复用旧报告。固定外部监督旧Stable5816/gate12f0，不允许候选自签。
+新助手全局设置默认~/.config/devflower/devflower-agent-connection.json，目录0700/文件0600。已从preview-r5显式DeepSeek设置迁移并保留原件，当前deepseek-flash/medium，0新增模型调用。新Development source33已实际启动；.local/open-guided-development.py正常打开私有页面，HTTP配置读回证明在N/deepseek-live-config-proof.json。旧source22服务、source32漂移拒绝日志、旧Stable都保留。
 
-产品K旧Stable Studio run5807154ccb6046459b6f654123340256状态BLOCKED不改；真实native开发/修复/非零测试/PR22已发生，但独立认可未取得。不能用Ask文字/图示例替代K。任意外部Claude CLI无全局锁，Desktop实时UI/强接管未完整验收，native-local Skills/subagents不假称支持。
+source32完整Python1165仅1FAIL（公开源码清单漏新模块），source33只补manifest entry，相关20PASS；source32工作台Chromium128/host6/JS64/Baseline通过。source33辅助Codex16项独立反例PASS，B/codex-policy-counterexamples/stage33-persistence。不要把它当正式完整审核或新候选全部回归。
 
-用户允许在所有必需条件通过后普通merge、正式Stable晋升、已整合闲置非project分支清理；当前不具备条件。Development入口.local/open-guided-development.py实际38279，独立storage不覆盖34915或旧Stable；旧Stable启动被已轮换auth pin拒绝，不能偷换旧批准。项目摘要已整理，原过程和失败保留Git及archives。
+原生实施Codex UUID01a1810f-48a5-7d81-8d09-f515ad972126修改Provider兼容/held-FD保护/任务目标；Root其它修正独立署名。新最终候选需重新取得明确IMPLEMENTED回执（source29旧回执不套source33）。B/native_codex_final_review.py准备双独立readonly Codex，先证据后总结，EVIDENCE-READY后才启动，尚未启动。
 
-源码22本机全回归完成；云端40633427959/40633427963均success，远端HEAD/tree一致。外部preflight exit2、gate_invoked=false；缺当前有效独立报告及K认可。不是Claude裁决或最终Gate实际结果。
+剩余：用户强调的D06全页面Sim/Impeccable交互与视觉走查仍未完成；最终同源回归/真实复杂流程及合同K、双Codex完整硬ACCEPT、旧Gate待完成。source28真实歧义条件5轮拒绝及所有旧FAILED/CANCELLED原件留H，不改写。不能以小流程或合成浏览器代替产品K。
+
+旧固定监督器ST=stable/usable-v1-5816ba4776b3，CF5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821，Gate SHA12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab。旧Stable有配置漂移拒绝，不可静默换pin。全部条件满足才正常merge/main读回/ff-only/集成回归/新Stable v2 provenance；不覆盖旧版，不删除会话，project分支保留。
