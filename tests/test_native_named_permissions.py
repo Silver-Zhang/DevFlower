@@ -130,10 +130,17 @@ class NamedPermissionsTests(unittest.TestCase):
   from studio.native_codex_exec import check_protected_hardlinks
   with tempfile.TemporaryDirectory() as folder:
    root=Path(folder);db=root/'workbench.sqlite';done=threading.Event();errors=[]
+   # Establish the WAL database before exercising live WAL checkpoint races.
+   # Creating a brand-new DELETE-mode database concurrently can expose an
+   # incomplete first scan, which must still fail closed under the contract.
+   initial=sqlite3.connect(db)
+   try:initial.execute('pragma journal_mode=wal');initial.execute('create table t(v)');initial.commit()
+   finally:initial.close()
    def churn():
+    from contextlib import closing
     try:
      for i in range(50):
-      with sqlite3.connect(db,timeout=2) as conn:
+      with closing(sqlite3.connect(db,timeout=2)) as conn:
        conn.execute('pragma journal_mode=wal');conn.execute('create table if not exists t(v)');conn.execute('insert into t values (?)',(i,));conn.commit();conn.execute('pragma wal_checkpoint(truncate)')
     except Exception as exc:errors.append(exc)
     finally:done.set()
