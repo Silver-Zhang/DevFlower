@@ -156,6 +156,38 @@ class NamedPermissionsTests(unittest.TestCase):
     if len(calls)==2:(root/'new-state').write_text('synthetic')
     yield from real(*args,**kw)
    with patch('studio.native_codex_exec.os.fwalk',side_effect=mutate):check_protected_hardlinks([str(root)])
+ def test_new_nested_directories_with_single_link_files_are_allowed(self):
+  import os
+  from studio.native_codex_exec import check_protected_hardlinks
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);real=os.fwalk;calls=[]
+   def mutate(*args,**kw):
+    calls.append(1)
+    if len(calls)==2:
+     nested=root/'new'/'nested';nested.mkdir(parents=True);(nested/'state').write_text('synthetic')
+    yield from real(*args,**kw)
+   with patch('studio.native_codex_exec.os.fwalk',side_effect=mutate):check_protected_hardlinks([str(root)])
+ def test_new_directories_cannot_hide_new_links_or_existing_mode_change(self):
+  import os
+  from studio.native_codex_exec import check_protected_hardlinks
+  for kind in ('external','internal','symlink','mode','shared-relink','root-replace'):
+   with self.subTest(kind=kind),tempfile.TemporaryDirectory() as folder:
+    base=Path(folder);root=base/'root';root.mkdir();existing=root/'existing';existing.mkdir();first=existing/'a';first.write_text('synthetic')
+    if kind=='shared-relink':os.link(first,existing/'b')
+    real=os.fwalk;calls=[]
+    def mutate(*args,**kw):
+     calls.append(1)
+     if len(calls)==2:
+      new=root/'new'/'nested';new.mkdir(parents=True)
+      if kind=='external':os.link(first,base/'outside')
+      elif kind=='internal':os.link(first,new/'alias')
+      elif kind=='symlink':(new/'escape').symlink_to(base,target_is_directory=True)
+      elif kind=='mode':existing.chmod(0o700 if existing.stat().st_mode & 0o777 != 0o700 else 0o755)
+      elif kind=='shared-relink':(existing/'b').unlink();os.link(first,existing/'b')
+      elif kind=='root-replace':root.rename(base/'old');root.mkdir()
+     yield from real(*args,**kw)
+    with patch('studio.native_codex_exec.os.fwalk',side_effect=mutate):
+     with self.assertRaises(Blocked):check_protected_hardlinks([str(root)])
  def test_relinked_shared_file_and_replaced_root_are_rejected(self):
   import os
   from studio.native_codex_exec import check_protected_hardlinks
