@@ -920,5 +920,25 @@ await test('model-catalog-expiry-refreshes-before-restoring-effort-options',asyn
  await p.route('**/api/models',async route=>{const data=route.request().postDataJSON();const response=await route.fetch();const value=await response.json();if(data.refresh)refreshes++;else{reads++;value.stale=true;value.attempted_at=1;value.updated_at=1;}await route.fulfill({response,json:value})});
  await p.getByRole('button',{name:'新建会话',exact:true}).click();await until(async()=>refreshes===1);await p.getByLabel('模型',{exact:true}).waitFor();assert.equal(reads,1);assert.equal(refreshes,1);assert(await p.getByRole('button',{name:'刷新模型',exact:true}).isEnabled());
 });
+await test('snapshot-chat-and-history-layout-readonly-assistant-keeps-run-frozen',async p=>{
+ await openWorkspace(p);await p.getByLabel('历史运行',{exact:true}).selectOption('A');
+ await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');
+ await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');
+ await dock.getByRole('checkbox',{name:/允许发送.*对话/}).check();const calls=[];
+ p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|config-assistant\/apply)$/.test(r.url()))calls.push(r.url())});
+ await dock.getByLabel('配置需求',{exact:true}).fill('解释运行问题，不修改流程也不启动任务');
+ await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>(await dock.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));
+ assert.equal(await p.getByLabel('历史运行',{exact:true}).inputValue(),'A');assert.deepEqual(calls,[]);
+ await dock.getByLabel('助手工作方式',{exact:true}).selectOption('workflow');assert(await dock.getByLabel('配置需求',{exact:true}).isDisabled());
+});
+await test('snapshot-chat-and-history-layout-long-titles-stay-in-navigation',async p=>{
+ const long='这是一个包含很多中文和很长无空格标识符的工作流任务标题'.repeat(20);
+ await p.route('**/api/status',async route=>{const response=await route.fetch(),value=await response.json();value.runs=value.runs.map(r=>({...r,task:long}));await route.fulfill({response,json:value})});
+ await openWorkspace(p);await p.getByLabel('历史运行',{exact:true}).selectOption('A');await p.getByRole('button',{name:'整轮对话',exact:true}).click();
+ const nav=p.getByLabel('按工作流查看任务',{exact:true});await until(async()=>await nav.locator('.journal-task').count()>0);
+ const sizes=await nav.locator('.journal-task').evaluateAll(es=>es.map(e=>({width:e.clientWidth,content:e.scrollWidth,text:e.innerText})));
+ assert(sizes.some(e=>e.text.includes(long.slice(0,40))));assert(sizes.every(e=>e.content<=e.width+2),JSON.stringify(sizes));
+ assert(await nav.evaluate(e=>e.scrollWidth<=e.clientWidth+2));await p.screenshot({path:out+'/journal-long-titles.png'});
+});
 await browser.close();writeResults(null,true);console.log(JSON.stringify({tests:results.length,failures:results.filter(r=>!r.passed).length,skipped:0}));process.exitCode=results.some(r=>!r.passed)?1:0;
 })().catch(e=>{console.error(String(e));process.exitCode=1;browser?.close();});
