@@ -171,7 +171,9 @@ def main():
                 if record.get('source_view') and rt.source_view_hash(cwd,record['source_view'])!=record.get('source_sha256'):
                     raise Blocked('工作区在终端能力检查期间变化；未启动CLI')
                 from studio.native_codex_exec import check_protected_hardlinks
-                check_protected_hardlinks(binding['native_protected'])
+                from studio.native_codex_rpc import metadata_guard
+                with metadata_guard(rt.storage):
+                    check_protected_hardlinks(binding['native_protected'])
         from studio.model_admission import ModelAdmission
         if direct:
             from studio.model_registration import ModelRegistration

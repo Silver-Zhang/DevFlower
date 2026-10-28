@@ -275,7 +275,7 @@ class SessionCenter:
         cfg=configured(self.runtime,p['provider'])
         if p['provider']=='codex' and cfg and p['config_root']==cfg['config_root'] and not getattr(self.runtime,'readonly_configuration_warning',lambda:None)():
             profile=next(v for v in self.runtime.operator['profiles'].values() if v['provider']=='codex')
-            messages=redact(codex_history(dict(profile,**cfg),row['native']['cwd'],row['native']['session_id'],limit,query),secrets_found)
+            messages=redact(codex_history(dict(profile,**cfg,_metadata_guard=str(self.runtime.storage)),row['native']['cwd'],row['native']['session_id'],limit,query),secrets_found)
             return dict(workspace_id=workspace,handle=handle,messages=messages,history_source='canonical-native-api')
         messages = conversation(p['provider'], row['native']['path'], limit, query,
                                 expected_sha256=row['native']['sha256'], secrets=secrets_found,start_offset=start_offset,end_offset=end_offset,include_metadata=include_metadata)
@@ -526,7 +526,7 @@ class SessionCenter:
                 chat_binding = dict(b, conversation_format='text') if natural else dict(b)
                 if value.get('interaction')=='click' and b.get('execution_backend')=='native-local' and b.get('provider')=='codex':
                     from .native_codex_exec import protected_paths
-                    chat_binding.update(native_interaction='ordinary',native_protected=protected_paths(self.runtime,b))
+                    chat_binding.update(native_interaction='ordinary',native_protected=protected_paths(self.runtime,b),_metadata_guard=str(self.runtime.storage))
                 reply = CLI(b['provider'], chat_binding, limits).start(value['prompt'] if natural else value['prompt'] +
                     '\nReturn a JSON object with your visible answer in the string field reply.',
                     value['cwd'], artifacts, None if natural else schema, journal, key)

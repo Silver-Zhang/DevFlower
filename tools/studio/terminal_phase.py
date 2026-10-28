@@ -3,8 +3,25 @@ import re
 from orchestration.common import digest
 
 
+def _visible_layout(text):
+    """Preserve absolute cursor row changes while joining same-row fragments."""
+    parts=[];row=None;offset=0
+    for match in re.finditer(r'\x1b\[[0-?]*[ -/]*[@-~]',text):
+        chunk=text[offset:match.start()];parts.append(chunk)
+        if '\n' in chunk or '\r' in chunk:row=None
+        move=re.fullmatch(r'\x1b\[(\d*)(?:;(\d*))?H',match.group())
+        if move:
+            next_row=int(move.group(1) or 1)
+            if row is None or next_row!=row:
+                parts.append('\n')
+            row=next_row
+        offset=match.end()
+    parts.append(text[offset:])
+    return ''.join(parts)
+
+
 def terminal_phase(provider, text, alive):
-    clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text[-24000:])
+    clean = _visible_layout(text[-24000:])
     if not alive: return dict(phase='closed', label='终端已结束')
     markers = [('theme', '首次设置：选择终端配色', ('Choose the text style', 'Select a theme')),
                ('trust', '等待你确认工作区信任', ('Do you trust the files', 'trust this folder', 'trust this workspace', 'Yes, I trust this folder')),
@@ -29,6 +46,21 @@ def terminal_phase(provider, text, alive):
     if provider=='codex':last_prompt=max(last_prompt,last('Ask Codex'))
     if at >= 0 and at > last_prompt:
         return dict(phase=phase, label=label, phase_sha256=digest(clean.encode()))
+    if provider=='codex' and last('Resuming session')>=0:
+        resume=last('Resuming session')
+        # A placeholder can appear during restoration. Only a later, actual
+        # prompt line followed by the CLI's model/effort/cwd footer is evidence
+        # of the restored input screen; earlier scrollback is not evidence.
+        prompt=re.compile(r'(?:^|[\r\n])[ \t│┃╭╰]*[❯>›][ \t]*Ask\s*Codex[^\r\n]*',re.I)
+        candidates=[m for m in prompt.finditer(clean) if m.start()>resume]
+        if candidates:
+            tail=clean[candidates[-1].end():candidates[-1].end()+1200]
+            footer=re.search(r'(?:^|[\r\n])[ \t│┃]*[^\s│┃·|][^\r\n│┃·|]{0,119}?[ \t]*(?:[·|][ \t]*|[ \t]+)(?:none|minimal|low|medium|high|xhigh|max|ultra|default)[ \t]*[·|][ \t]*(?:\d+%[ \t]*(?:context[ \t]*)?left[ \t]*[·|][ \t]*)?(?:~(?:/[^\s│┃]*)?|/[^\s│┃]+)',tail,re.I)
+            remainder=tail[footer.end():] if footer else ''
+            if (footer and at<candidates[-1].start() and
+                    re.fullmatch(r'[\s│┃╭╰─]*(?:\d+%\s+(?:context\s+)?left[\s│┃╭╰─]*)?',remainder,re.I)):
+                return dict(phase='ready',label='已进入原生 Agent 会话')
+        return dict(phase='resuming',label='正在恢复原生会话')
     if provider=='codex' and last('Ask Codex')>at:
         return dict(phase='ready',label='已进入原生 Agent 会话')
     # Claude can render its plan-mode footer without /effort (for example

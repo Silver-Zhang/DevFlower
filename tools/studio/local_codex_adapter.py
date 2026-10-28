@@ -1,6 +1,7 @@
 """Native Codex execution with one canonical thread and native writer locking."""
 import json
 import re
+from contextlib import nullcontext
 from pathlib import Path
 import time
 from orchestration.common import Blocked,canonical,digest
@@ -142,8 +143,11 @@ class LocalCodex:
             raise Blocked('原生模型配置已变化，请刷新后重试')
         # Read only the effective provider/relay settings. Tool configuration is
         # never copied, and unknown credential-bearing provider fields fail closed.
-        with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),30),cancelled) as probe:
-            config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
+        from .native_codex_rpc import metadata_guard
+        gate=b.get('_metadata_guard')
+        with metadata_guard(gate,min(remaining(),30),cancelled) if gate else nullcontext(min(remaining(),30)) as wait:
+            with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),wait,30),cancelled) as probe:
+                config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
         provider_args=provider_overrides(config)
         if b.get('no_tools'):
             require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,no_tools=True,ordinary_profile=ordinary)
@@ -156,7 +160,8 @@ class LocalCodex:
         if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
         if ordinary:
             from .native_codex_exec import check_protected_hardlinks
-            check_protected_hardlinks(b.get('native_protected',[]))
+            with metadata_guard(gate,min(remaining(),30),cancelled) if gate else nullcontext():
+                check_protected_hardlinks(b.get('native_protected',[]))
         remaining()
         argv=exec_args(b,provider_args,schema=output_schema)
         if sid:

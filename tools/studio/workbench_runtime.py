@@ -356,7 +356,7 @@ class WorkbenchRuntime(SessionRuntime):
             admission_policy=self.policy_sha, admission_policy_file=str(self.policy_file))
         if not direct and binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and binding.get('session_id'):
             from .native_codex_rpc import metadata
-            turns=metadata(binding,cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
+            turns=metadata(dict(binding,_metadata_guard=str(self.storage)),cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
             if turns:binding['expected_native_turn_id']=turns[-1]['id']
         if registration and not direct:
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
@@ -418,7 +418,7 @@ class WorkbenchRuntime(SessionRuntime):
                     value=dict(native_path=internal['native']['path'],native_cwd=internal['native']['cwd'],expected_native_sha256=internal['native']['sha256'])
                     if binding.get('execution_backend')=='native-local' and binding['provider']=='codex':
                         from .native_codex_rpc import metadata
-                        turns=metadata(binding,internal['native']['cwd'],'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
+                        turns=metadata(dict(binding,_metadata_guard=str(self.storage)),internal['native']['cwd'],'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
                         if turns:value['expected_native_turn_id']=turns[-1]['id']
                     return value
         raise Blocked('真实原生回执已有 UUID，但记录无法唯一核验；禁止下一轮自动重发')

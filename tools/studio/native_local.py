@@ -209,7 +209,7 @@ def profiles(runtime, project, existing):
             elif provider=='codex':
                 from .native_codex_rpc import metadata
                 try:
-                    values=metadata(binding,project['path'],'thread/list',dict(cwd=project['path'],limit=200,
+                    values=metadata(dict(binding,_metadata_guard=str(runtime.storage)),project['path'],'thread/list',dict(cwd=project['path'],limit=200,
                         sourceKinds=['cli','vscode','exec','appServer'],sortKey='updated_at'))['data']
                     ids=[v['id'] for v in values if v.get('cwd')==project['path']]
                     runtime.native_local_errors={k:v for k,v in getattr(runtime,'native_local_errors',{}).items() if k!=cache_key}

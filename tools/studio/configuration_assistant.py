@@ -189,7 +189,7 @@ class ConfigurationAssistant:
             self.rt.check_operator();self._source(v);b=v['binding'];verification=None
             if v.get('interaction')=='click' and b.get('execution_backend')=='native-local' and b.get('provider')=='codex':
                 from .native_codex_exec import protected_paths
-                b=dict(b,native_interaction='ordinary',native_protected=protected_paths(self.rt,b))
+                b=dict(b,native_interaction='ordinary',native_protected=protected_paths(self.rt,b),_metadata_guard=str(self.rt.storage))
             if v.get('interaction')=='click':
                 from .model_registration import ModelRegistration
                 ModelRegistration(self.rt).require_direct(b)

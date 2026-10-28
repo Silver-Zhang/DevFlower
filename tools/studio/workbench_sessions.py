@@ -62,7 +62,7 @@ class WorkbenchSessions:
                 turn=item.get('native_turn_id') or item.get('receipt',{}).get('native_turn_id')
                 if not turn:raise Invalid('原生回合身份尚未返回')
                 session=self.activation_session(workspace,run,activation)
-                messages=codex_history(binding,chat['cwd'],binding['session_id'],turn_id=turn)
+                messages=codex_history(dict(binding,_metadata_guard=str(self.rt.storage)),chat['cwd'],binding['session_id'],turn_id=turn)
                 value.update(session=session,history_status='available',messages=redact(messages,secret))
                 return value
             offset=item.get('native_history_offset');end=item.get('native_history_end')
@@ -558,7 +558,7 @@ class WorkbenchSessions:
             return reply['result']
         if local and binding['provider']=='codex' and method in ('model/list','account/read','thread/read','thread/list'):
             from .native_codex_rpc import metadata
-            return metadata(dict(binding,**cfg),cwd,method,params)
+            return metadata(dict(binding,**cfg,_metadata_guard=str(self.rt.storage)),cwd,method,params)
         if local:raise Blocked('此本机原生生命周期操作尚未独立验证；可通过原生客户端管理')
         if binding['provider']=='copilot':
             if method not in ('cli/probe','copilot/models','copilot/auth-status'):raise Blocked('Copilot 尚未支持此原生元数据操作')

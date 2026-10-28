@@ -386,7 +386,7 @@ class Scheduler:
         binding = chat['binding'];home = Path(binding['home']);cwd = chat['cwd']
         if run.get('interaction')=='click' and binding.get('execution_backend')=='native-local' and binding.get('provider')=='codex' and not has_delivery(run['graph']):
             from .native_codex_exec import protected_paths
-            binding=dict(binding,native_interaction='ordinary',native_protected=protected_paths(self.rt,binding))
+            binding=dict(binding,native_interaction='ordinary',native_protected=protected_paths(self.rt,binding),_metadata_guard=str(self.rt.storage))
         if chat.get('expected_native_turn_id') and binding.get('execution_backend')=='native-local':
             binding=dict(binding,expected_native_turn_id=chat['expected_native_turn_id'])
         artifacts = self.rt.storage / 'flow-artifacts' / self.run / key;artifacts.mkdir(parents=True, mode=0o700, exist_ok=True)

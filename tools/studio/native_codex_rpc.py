@@ -5,7 +5,10 @@ thread. The native thread-store lock arbitrates writers across Desktop/CLI.
 """
 from __future__ import annotations
 import json
+import fcntl
 import os
+import stat
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import selectors
 import signal
@@ -16,6 +19,43 @@ from orchestration.common import Blocked, clean_env
 from orchestration.store import process_identity
 from orchestration.process import stop
 from orchestration.sandbox import LIBC
+from .session_sources import opened
+
+
+@contextmanager
+def metadata_guard(storage, timeout=30, cancelled=lambda:False):
+    """Serialize our short metadata processes with the terminal preflight scan.
+
+    The lock is only coordination: the protected-tree scan remains unchanged
+    and still rejects any external or otherwise unexplained mutation.
+    """
+    deadline=time.monotonic()+timeout
+    try:
+        with opened(storage,directory=True) as directory:
+            fd=os.open('.native-metadata-preflight.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=directory)
+            try:
+                s=os.fstat(fd)
+                if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or s.st_mode&0o077:
+                    raise Blocked('原生元数据协调锁不安全；未启动任务')
+                while True:
+                    if cancelled():raise Blocked('本次原生调用已取消；未自动重发')
+                    try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                    except BlockingIOError:
+                        if time.monotonic()>=deadline:raise Blocked('原生元数据协调超时；未自动重发') from None
+                        time.sleep(.02)
+                current=os.stat('.native-metadata-preflight.lock',dir_fd=directory,follow_symlinks=False)
+                if (current.st_dev,current.st_ino,current.st_mode,current.st_nlink)!=(s.st_dev,s.st_ino,s.st_mode,s.st_nlink):
+                    raise Blocked('原生元数据协调锁已变化；未启动任务')
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise Blocked('原生元数据协调超时；未自动重发')
+                yield remaining
+                current=os.stat('.native-metadata-preflight.lock',dir_fd=directory,follow_symlinks=False)
+                end=os.fstat(fd)
+                if (current.st_dev,current.st_ino,current.st_mode,current.st_nlink)!=(s.st_dev,s.st_ino,s.st_mode,s.st_nlink) or (end.st_dev,end.st_ino,end.st_mode,end.st_nlink)!=(s.st_dev,s.st_ino,s.st_mode,s.st_nlink):
+                    raise Blocked('原生元数据协调锁已变化；未启动任务')
+            finally:os.close(fd)
+    except OSError as exc:
+        raise Blocked('原生元数据协调失败；未启动任务：'+str(exc)) from None
 
 
 class CodexRPC:
@@ -132,5 +172,8 @@ class CodexRPC:
 def metadata(binding, cwd, method, params):
     if method not in {'model/list','account/read','thread/list','thread/read','thread/turns/list','thread/items/list'}:
         raise Blocked('此原生读取接口不执行恢复、启动、归档或删除')
-    with CodexRPC(binding['executable'], binding['home'], binding['config_root'], cwd, 30) as rpc:
-        return rpc.request(method, params)
+    lock=binding.get('_metadata_guard')
+    with metadata_guard(lock) if lock else nullcontext(30) as remaining:
+        if remaining<=0:raise Blocked('原生元数据协调超时；未自动重发')
+        with CodexRPC(binding['executable'], binding['home'], binding['config_root'], cwd, remaining) as rpc:
+            return rpc.request(method, params)
