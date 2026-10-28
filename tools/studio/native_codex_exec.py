@@ -174,6 +174,11 @@ def check_protected_hardlinks(paths):
             try:return snapshot(anchor)
             except FileNotFoundError:
                 while len(held)>mark:os.close(held.pop())
+                # An incomplete first scan cannot establish a new baseline:
+                # retrying could conceal replacement of already observed roots
+                # or shared inodes. Only S2 may retry with all S1 anchors held.
+                if anchor:
+                    raise Blocked('无法完成受保护目录初始核验；未启动任务。') from None
                 if attempt==2:raise
     try:
         if not all(hasattr(os,k) for k in ('O_PATH','O_NOFOLLOW','O_CLOEXEC','O_DIRECTORY')):
