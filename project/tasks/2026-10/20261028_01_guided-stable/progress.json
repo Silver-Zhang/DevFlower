@@ -2,521 +2,146 @@
   "task": "20261028_01_guided-stable",
   "run_id": "guided-stable-20261028-01",
   "contract_sha256": "e9dea223528b3da15e8eafc0f419cfb8a1596ab77814ed6eb470ed581830e5eb",
-  "source_base": "f67737a9016b45d5a64896445e322ba3e32c926b",
-  "implementation_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
-  "status": "FIXING_ACTUAL_RUN_FAILURES",
+  "status": "BLOCKED_INDEPENDENT_REVIEW",
+  "source": {
+    "commit": "d8c402f58ad845854ec4622206f44e645db42243",
+    "git_tree": "f440aef51f0e3513a83bdd335ddbaa2473426a97",
+    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
+    "files": 289,
+    "manifest_sha256": "f868e2ec8a0e9d856761f4b3897a797dd09163fed5383c30750f4b1e745a0dbd",
+    "approved": false,
+    "notes": "Source送审/Draft同步，不是Gate通过或Stable晋升"
+  },
   "formal_acceptance": false,
   "user_personal_acceptance": false,
   "main_merged": false,
   "stable_promoted": false,
-  "source_review_rounds": 1,
+  "main_head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+  "main_tree": "6c9e39e16bbbe7de95b894e0a58632b1a0f63039",
+  "source_review_rounds": 3,
+  "source_round_limit": 5,
   "infrastructure_recoveries": 2,
-  "implementation": {
-    "status": "PARTIAL",
-    "native_session_id": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
-    "completed_phases": [
-      {
-        "phase": 1,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 114.702
-      },
-      {
-        "phase": 2,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 485.205
-      },
-      {
-        "phase": 3,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 550.623
-      },
-      {
-        "phase": 4,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 769.165
-      },
-      {
-        "phase": 5,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 727.626
-      },
-      {
-        "phase": 6,
-        "status": "INTERRUPTED_NO_TERMINAL_REPORT",
-        "exit": -15,
-        "timeout": true,
-        "seconds": 1800.161
-      },
-      {
-        "phase": 7,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 1478.393
-      },
-      {
-        "phase": 8,
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 779.68
-      },
-      {
-        "phase": 9,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "尚未在云端重跑 CI 或读回九套浏览器 artifact；云端原失败缺少错误详情，不能断言本次复现是其唯一根因。",
-          "Task15 仍为 PARTIAL：既有原生恢复原子性和 TUI 工具边界阻塞未由本补丁解决。完整回归、独立审查、Gate 和交付由父监督继续。"
-        ]
-      },
-      {
-        "phase": 10,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "交互式原生终端由用户的 CLI 配置管理权限。如果用户在 CLI 中允许写入工作区外的位置，工作台没有额外隔离来保证权威文件不可写；可信自动交付仍须使用原有隔离监督路径。",
-          "当前环境禁止创建内层 user namespace，真实 Codex 只读和工作区写入边界探测均被阻断。需要在宿主验证；未将阻断视为通过。",
-          "最终候选的真实 Codex/Claude 模型调用、原生终端接管与争用、宿主完整回归、独立审查和 Gate 仍由外层执行。Claude 外部裸 CLI 不受工作台租约控制。",
-          "CLI 内部 Provider 级重试行为尚未在真实 Provider 上核验；自验确认 DevFlower 调度层在模拟失败后没有重发。"
-        ]
-      },
-      {
-        "phase": 11,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "交互式 TUI 仍使用用户自己的 CLI 权限设置；其内置工具尚未接入并验证同一受保护 profile。外部 MCP 也不能被称为受工作台文件权限约束。",
-          "包含权威目录的父工作区仍被现有预检拒绝运行；尚未实现使用受保护 profile 安全授权该父目录。",
-          "当前受控环境无法完成实际 CLI 的 sandbox 和模型可见工具探测。父监督提供的宿主九字段结果是旧参数的独立证据；最终源码新增的链接反例和实际工具路径仍需在宿主验证。",
-          "真实模型、完整回归、独立复核、Gate 和 Stable 验收仍由外层执行；本次未调用真实模型或签发批准。"
-        ]
-      },
-      {
-        "phase": 12,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "包含受保护子目录的父工作区仍被通用源校验拒绝。需要区分普通原生运行与严格交付路径，并处理源码快照对受保护子目录的遍历，才能安全放行。",
-          "受管 Claude 交互终端尚未补齐本轮要求的 strict MCP 和工具约束。",
-          "Codex TUI 已传入具名 profile，但用户可在原生 CLI 内改变权限，外部 MCP 不受该配置保证；最终源码的内置工具、链接和受保护路径行为仍需在正常宿主实际验证。",
-          "外层完整回归、真实 Provider 和终端验收、独立复核及 Stable 发布均未执行。"
-        ]
-      },
-      {
-        "phase": 13,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "父工作区部分视图目前只接入普通 Codex 对话。工作流、原生终端、暂停和恢复尚未统一使用该视图；这些入口仍保留严格拒绝，不能宣称本阶段源码完成。",
-          "Claude 终端已传入空内置工具集和严格空 MCP 参数，并检查 CLI 是否声明所需选项；当前环境没有 Claude 可执行文件，真实 CLI 是否按这些参数封闭工具和 MCP 尚未验证，逐路径读写能力也未实现。",
-          "最终源码需在正常宿主运行 Codex 具名 profile 的实际工具及符号链接、硬链接反例。当前受控环境拒绝创建内层 user namespace。",
-          "外层完整回归、真实模型验收、独立复核及 Git/Stable 交付均未执行。"
-        ]
-      },
-      {
-        "phase": 14,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "硬链接检查是启动前的元数据检查，并非对同一系统用户其他进程的原子仲裁；其他进程在检查后创建别名的情况尚未被源码消除。父工作区视图目前也保守拒绝普通文件的所有多重硬链接，包括与受保护数据无关的链接。",
-          "最终 17 字段权限探针及实际模型工具边界仍需在正常宿主复验；本环境无法创建内层 namespace。",
-          "真实 Claude CLI 参数解析已验证，但未执行真实 Provider 或实际交互式工具行为验收。修改后的终端提示尚未做浏览器视觉检查。",
-          "外层完整回归、真实模型验收、独立复核和 Git/Stable 交付均未执行。"
-        ]
-      },
-      {
-        "phase": 15,
-        "status": "IMPLEMENTED",
-        "exit": 0,
-        "remaining": [
-          "父工作区视图仍保守拒绝普通文件的多重硬链接；这是本轮保留的既有限制。",
-          "最终候选的宿主完整回归、真实 CLI 和模型验收、独立审核及 Git/Stable 交付由外层执行。"
-        ]
-      },
-      {
-        "phase": 16,
-        "status": "PARTIAL",
-        "exit": 0,
-        "remaining": [
-          "在正常宿主对最终源码重跑真实 Codex 加合成 Provider 的嵌套 deny 启动和工具权限矩阵；本环境的内层 bubblewrap 创建失败，尚不能证明该验证通过。",
-          "外层完整回归、独立审核及 Git/Stable 交付尚未执行。"
-        ]
-      },
-      {
-        "phase": 17,
-        "status": "IMPLEMENTED",
-        "exit": 0,
-        "remaining": [
-          "外层需用最终候选重新执行真实助手诊断，并完成全量回归、独立审核和 Stable 交付。"
-        ]
-      },
-      {
-        "phase": 18,
-        "status": "IMPLEMENTED",
-        "exit": 0,
-        "remaining": [
-          "外层需对最终候选重新冻结并运行完整回归、云端 CI、真实模型和工作流验收、独立审核及 Git/Stable 交付。"
-        ]
-      }
-    ],
-    "active_phase": 19
-  },
-  "controlled_targeted_tests": [
+  "infrastructure_recovery_limit": 2,
+  "reviews": [
     {
-      "suite": "test_workbench_direct_actions.py",
-      "tests": 6,
-      "exit": 0,
-      "failures": 0,
-      "errors": 0,
-      "skipped": 0,
-      "evidence_type": "synthetic-provider-boundary"
+      "round": 1,
+      "verdict": null,
+      "reason": "supervised timeout, two recoveries exhausted"
     },
     {
-      "suite": "test_workspace_sessions.py",
-      "tests": 34,
-      "exit": 0,
-      "failures": 0,
-      "errors": 0,
-      "skipped": 0
+      "round": 2,
+      "verdict": null,
+      "driver_exit": 143,
+      "native_exit": "unknown"
+    },
+    {
+      "round": 3,
+      "candidate": "73f0bdbcb2c14cb5b2e70774408ed144a06526387172c373b299ecf059eb041a",
+      "verdict": null,
+      "exit": 1,
+      "seconds": 1411.756,
+      "reason": "HTTP502 upstream request failed"
     }
   ],
-  "interim_candidate": {
-    "sha256": "9bb9976ce63a86790be7ff26ff9cb45a6d6317528804279d1ef7b45ce34c85c7",
-    "git_tree": "2436d143425aa3f77d127521049711599e9fc91c",
-    "files": 260
+  "current_review": "No verdict for final source22; old results not rebound",
+  "native_implementation": {
+    "session_id": "01a18066-d096-7fa2-a4d2-45c1a0114fd0",
+    "candidate": "73f0bdbcb2c14cb5b2e70774408ed144a06526387172c373b299ecf059eb041a",
+    "status": "IMPLEMENTED",
+    "executor_note": "Native Codex verifies external root-run test evidence; latest terminal patch authored by root Codex, not attributed to CLI"
   },
-  "interim_regression": {
-    "python": {
-      "tests": 985,
-      "failures": 1,
-      "errors": 0,
-      "skipped": 0,
-      "exit": 1
-    },
-    "host": {
-      "tests": 6,
-      "exit": 0
-    },
-    "js": {
-      "tests": 59,
-      "exit": 0
-    },
-    "browser": {
-      "tests": 230,
-      "failures": 17,
-      "errors": 0,
-      "skipped": 0,
-      "exit": 1,
-      "scope": "synthetic Chromium/HTTP across nine suites"
-    },
-    "legacy_studio_smoke": {
-      "checks": 16,
-      "passed": 16,
-      "exit": 0,
-      "real_model_calls": 0,
-      "offline_http_bridge": false
-    }
+  "real_stage21": {
+    "sequence": "COMPLETED 2 calls",
+    "parallel_merge": "COMPLETED 3 calls",
+    "router": "COMPLETED 1 call",
+    "loop_early": "COMPLETED 2 calls",
+    "max5": "FAILED as required,10 calls,5 actual rejected review rounds; original assertion wrong path exit1 retained, separate strict readback exit0",
+    "complex_text": "COMPLETED 3 calls; distinct explicit text contract, not productK",
+    "assistant": "4/4 actual directAPI: question/source diagnosis/repair1to0/flowchart"
   },
-  "visual_inspection": {
-    "initial_findings_retained": true,
-    "stage5_actual_browser": "compact guide/check, full canvas, light/dark ReactFlow and no node recenter verified",
-    "final_22_group_walkthrough": "pending",
-    "user_personal_acceptance": false
+  "real_stage22": {
+    "terminal": "Actual Chromium/canonical Claude/same UUID ready; native /exit0; new prepare against sealed same history succeeds",
+    "themes": "Actual settled light/dark inspected; no persistent white-on-white buttons; earlier screenshot transition retained"
   },
-  "records_sync": {
-    "previous_commit": "e3475e5bfe6c63abec8178408116c8e3c9da22b0",
-    "branch": "project/devflower",
-    "note": "This summary is a new checkpoint; commit/push readback recorded externally."
+  "product_k": {
+    "run": "5807154ccb6046459b6f654123340256",
+    "state": "BLOCKED unchanged",
+    "parent_development": "real native implementation, fixes, nonzero tests and Draft22 delivered; sufficiency not independently accepted"
   },
-  "latest_interim_candidate": {
-    "sha256": "be1cfd4e0c0edf93cb6bf0076d6f9b84b96533562f7a4a3c35e33fc6b2459fc5",
-    "git_tree": "aac25dc171c64a38f0e33968b3d643a5e4052443",
-    "files": 270,
-    "git_head": "c842e84413b1b68be8c6e00e133d20f6281994f7",
-    "tests": "not final full regression; source7 full results separately bound"
+  "stable": {
+    "candidate": "cfea19cac59824ca0727e0c21ff240a5b62e1e0c228da7e033c8ae34df139fbe",
+    "unchanged": true,
+    "startup_exit": 1,
+    "startup_reason": "pinned Codex auth input rotated; old deployment not rebound"
   },
-  "source_audit_rounds": 1,
-  "note": "Implementation continuations are not independent audit rounds; old Task14 R1-R4 unchanged.",
-  "actual_provider_tests": {
-    "candidate": "43d9d2d454c88a9777399d47fa2b80047bdb46a5141cc9223bde5311ab865821",
-    "codex": {
-      "state": "COMPLETED",
-      "seconds": 16.304,
-      "session": "01a17eae-4f53-7ce0-9bc2-095c9a09cf14"
-    },
-    "claude": {
-      "state": "COMPLETED",
-      "seconds": 9.193,
-      "session": "f82145dc-cffc-4205-8d37-6491430af679"
-    },
-    "claude_followup": "BLOCKED in prepare; no second provider request",
-    "observation_harness_error_preserved": true,
-    "not_final_K": true
+  "development": {
+    "entry": "/home/workspace/DevFlower/.local/open-guided-development.py",
+    "base_url": "http://127.0.0.1:38279",
+    "verified": true
   },
-  "new_source_counterexample": "Chinese no-space visible stream stays empty until final (in-progress module SHA235aa4e7eec60de0f9eea0e3c613984cb00978f60f97e6bc5ace6efe60b68756); actual probe preserved",
-  "source_pushed": true,
-  "source_commit": "c28d65d0cb245fd9977369c8b26d11ff0097e4fb",
-  "source_tree": "ef62b6dfb659134186356d3bcd409fc7f46c266a",
-  "passed_regression_stage7": {
-    "sha256": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
-    "git_tree": "23c3872bfb00e2c35483830f730e0556415d1fe7",
-    "python": 1039,
+  "remaining": [
+    "Final same-source independent hard ACCEPT and fixed old Gate",
+    "Product K acceptance against final source",
+    "Desktop live UI synchronization/handoff not fully verified; supported managed PTY path verified",
+    "Native-local Skills/subagents unsupported unless actually verified; not advertised as completed",
+    "Source main merge/Stable promotion only after all mandatory conditions",
+    "Old Stable runtime restart refused changed pinned authentication; installation/approval unchanged"
+  ],
+  "cleanup": "No local flow branch merged into main and unused; all five checked out. No branches/worktrees/sessions removed.",
+  "history": "Earlier progress preserved in Git and local records-before-stage22; original negative process/review/K records untouched.",
+  "selftest_final": {
+    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
+    "python": 1129,
     "host": 6,
-    "js": 59,
-    "chromium_http": 233,
-    "legacy_studio_checks": 16,
-    "exit": 0,
+    "js": 61,
+    "chromium_http": 245,
+    "legacy_studio_smoke": 16,
+    "all_commands_exit_zero": true,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
-    "source_unchanged": true
-  },
-  "actual_provider_stage7": {
-    "calls": 4,
-    "codex": "new and same UUID follow-up COMPLETED",
-    "claude": "new and same UUID follow-up COMPLETED",
-    "physical_backend": "unknown",
-    "not_K": true
-  },
-  "actual_builtin_stage7": {
-    "chat": "COMPLETED",
-    "complex_plan": "COMPLETED 6 nodes including Codex/Claude parallel merge",
-    "diagnosis": "FAILED; exact original public tool trace retained",
-    "physical_backend": "unknown"
-  },
-  "actual_terra_tool_test": {
-    "state": "provider turn ended but task did not succeed",
-    "errors": [
-      "code-mode host is disabled",
-      "unrequested browser plugin reachable"
-    ],
-    "native_model": "gpt-6.1-terra",
-    "requested_effort": "high"
-  },
-  "independent_review": {
-    "round": 1,
-    "candidate": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
-    "session": "ec86ce04-40e7-4a5f-a73a-7f29a23f3e2f",
-    "state": "NO_FINAL_VERDICT",
-    "verdict": null,
-    "first_attempt": "CLI exit1 before inference: nonexistent UUID incorrectly passed as resume; original kept",
-    "recovery": 2
-  },
-  "product_K": {
-    "run_id": "5807154ccb6046459b6f654123340256",
-    "state": "BLOCKED",
-    "stable": "5816ba4776b35d625e163af805d656315a7c638ba4e60e576763b121d86b3821",
-    "base": "c842e84413b1b68be8c6e00e133d20f6281994f7",
-    "actual_operator": "Codex using real user authorization; not user personally clicking",
-    "source_review_limit": 2,
-    "counts_toward_parent": true,
-    "pr": null,
-    "reason": "Implementer returned BLOCKED after partial source implementation, exit0; original retained",
-    "independent_reviews": 0,
-    "first_implementation_session": "01a17f04-1387-7741-b06e-7af23bf44003",
-    "first_implementation_seconds": 127.765,
-    "continuation": {
-      "state": "BLOCKED",
-      "same_native_session": true,
-      "supervisor": "fixed old Stable CLI under parent Task15 scope",
-      "old_controller_record_unchanged": true
-    }
-  },
-  "pr_url": "https://github.com/Silver-Zhang/DevFlower/pull/22",
-  "pr_draft": true,
-  "independent_review_current": {
-    "round": 1,
-    "candidate": "c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864",
-    "verdict": null,
-    "state": "NO_FINAL_VERDICT",
-    "attempts": [
-      {
-        "reason": "new UUID incorrectly resumed before inference",
-        "exit": 1,
-        "seconds": 1.026
-      },
-      {
-        "reason": "supervised timeout",
-        "exit": -15,
-        "seconds": 1800.192
-      },
-      {
-        "reason": "final allowed recovery timeout",
-        "exit": -15,
-        "seconds": 360.127
-      }
-    ],
-    "infrastructure_recoveries_used": 2,
-    "limit": 2
-  },
-  "product_k_continuation1": {
-    "status": "BLOCKED",
-    "exit": 0,
-    "seconds": 1640.423,
-    "focused_python": 60,
-    "stream_python": 9,
-    "js": 60,
-    "mechanical": 3,
-    "browser": 2,
-    "evidence": "synthetic/provider-mechanical; not final real product acceptance"
-  },
-  "product_k_continuation2": {
-    "status": "BLOCKED",
-    "session_id": "01a17f04-1387-7741-b06e-7af23bf44003",
-    "snapshot_sha256": "30d8fed06de5800c55eeb2d8ade3d5780e95b5edebed3a12c6bca3773e5d5300",
-    "git_tree": "13c1e61fe4ed6d8c3dab9bd64481d96b6326ecb3",
-    "files": 275,
-    "python_suites": [
-      26,
-      45
-    ],
-    "js": 60,
-    "mechanical": 3,
-    "chromium_http": 3,
-    "old_records_unchanged": true
-  },
-  "external_native_capability_experiment": {
-    "session": "01a17f38-5369-7a61-9ecd-085df436e777",
-    "model": "gpt-6.1-terra",
-    "effort": "high",
-    "exit": 0,
-    "seconds": 8.029,
-    "real_file_read": true,
-    "original_home_and_store": true,
-    "global_config_unchanged": true,
-    "product_adaptation_acceptance": false
-  },
-  "ci_c842": {
-    "run_id": 40585568242,
-    "python": 1044,
-    "host": 6,
-    "js": 59,
-    "contracts": "success",
-    "browser_workbench": {
-      "tests": 114,
-      "failures": 1,
-      "skipped": 0
-    },
-    "browser_job": "failure",
-    "public_artifact_files": 1,
-    "original_failed_case_detail_missing": true
-  },
-  "phase9": {
-    "status": "PARTIAL",
-    "scope": "CI/test interpreter portability only",
-    "original_failure_preserved": true,
-    "targeted_chromium": 1,
-    "project_files_chromium": 9,
-    "js": 60,
-    "cloud_recheck": "pending"
-  },
-  "phase10": {
-    "state": "PARTIAL",
-    "source_writer_session": "01a17e69-7d98-7aa1-80fa-cca9423e5bd5",
-    "scope": "ordinary native CLI semantics per user no-isolation preference; strong delivery gates retained",
-    "contract_changed": false,
-    "gate_or_review_approved": false
-  },
-  "host_native_stage12": {
-    "candidate_sha256": "04c51bc5fc693af70aa283577e81b36ed3513306ac1d0b1fd8af95f8ed8f3855",
-    "kind": "real CLI plus local synthetic Provider; zero real model calls; interim immutable snapshot",
-    "results": [
-      {
-        "case": "write-lock-tools",
-        "passed": true,
-        "value": true,
-        "seconds": 6.026
-      },
-      {
-        "case": "native-read-only",
-        "passed": false,
-        "error_type": "Blocked",
-        "reason": "原生 Codex 文件沙箱能力未通过本机探测；未调用模型：实际权限矩阵不匹配：{\"读取工作区\": true, \"写入工作区\": false, \"写入外部\": false, \"读取外部\": true, \"写入项目记录\": false, \"读取项目记录\": true, \"读取权威\": false, \"写入权威\": false, \"读取认证\": false, \"经软链接读取认证\": false, \"经软链接读取权威\": false, \"经软链接写入权威\": false, \"经硬链接读取认证\": true, \"经硬链接读取权威\": true}",
-        "seconds": 0.057
-      },
-      {
-        "case": "native-workspace-write",
-        "passed": false,
-        "error_type": "Blocked",
-        "reason": "原生 Codex 文件沙箱能力未通过本机探测；未调用模型：实际权限矩阵不匹配：{\"读取工作区\": true, \"写入工作区\": true, \"写入外部\": false, \"读取外部\": true, \"写入项目记录\": true, \"读取项目记录\": true, \"读取权威\": false, \"写入权威\": false, \"读取认证\": false, \"经软链接读取认证\": false, \"经软链接读取权威\": false, \"经软链接写入权威\": false, \"经硬链接读取认证\": true, \"经硬链接读取权威\": true}",
-        "seconds": 0.051
-      }
-    ]
-  },
-  "host_hardlink_creation": {
-    "actual_cli": true,
-    "synthetic_files": true,
-    "real_model_calls": 0,
-    "create_alias": "PermissionError errno13",
-    "direct_read": "denied",
-    "direct_write": "denied",
-    "does_not_close_preexisting_alias_issue": true
-  },
-  "source_worktree_dirty": true,
-  "latest_source_not_pushed": true,
-  "latest_candidate": {
-    "sha256": "2ead3a655c08748e2764a5a66f13333f6ab18b0235c9052b2c35b50cda90fc7d",
-    "files": 283,
-    "final_approved": false
-  },
-  "latest_regression": {
-    "candidate": "2ead3a655c08748e2764a5a66f13333f6ab18b0235c9052b2c35b50cda90fc7d",
-    "python": 1119,
-    "host": 6,
-    "js": 60,
-    "workbench_browser": 124,
-    "all_nine_browser_suites_exit": 0,
-    "baseline_exit": 0,
-    "syntax_exit": 0,
-    "build_exit": 0,
-    "assets_match": true,
-    "failures": 0,
-    "errors": 0,
-    "skipped": 0
+    "source_unchanged": true,
+    "build_assets_match": true
   },
   "ci_readback": {
-    "head": "c28d65d0cb245fd9977369c8b26d11ff0097e4fb",
+    "head": "d8c402f58ad845854ec4622206f44e645db42243",
+    "git_tree": "f440aef51f0e3513a83bdd335ddbaa2473426a97",
     "runs": [
-      40610047630,
-      40610047625
+      {
+        "id": 40633427963,
+        "status": "completed",
+        "conclusion": "success",
+        "head": "d8c402f58ad845854ec4622206f44e645db42243"
+      },
+      {
+        "id": 40633427959,
+        "status": "completed",
+        "conclusion": "success",
+        "head": "d8c402f58ad845854ec4622206f44e645db42243"
+      }
     ],
-    "conclusion": "success"
+    "all_success": true
   },
-  "actual_stage17_flows": {
-    "candidate": "c1a557dd9956bb48ae42845f749688109d9be81ed8be8d1ce2efa06e0809fa67",
-    "scenarios": 6,
-    "native_calls": 21,
-    "result": "all expected including max5 FAIL",
-    "not_stage18_acceptance": true
-  },
-  "actual_stage18": {
-    "assistant_cases": 4,
-    "assistant_states": [
-      "COMPLETED",
-      "COMPLETED",
-      "COMPLETED",
-      "COMPLETED"
+  "final_preflight": {
+    "status": "BLOCKED",
+    "exit": 2,
+    "candidate_sha256": "367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3",
+    "git_commit": "d8c402f58ad845854ec4622206f44e645db42243",
+    "git_tree": "f440aef51f0e3513a83bdd335ddbaa2473426a97",
+    "fixed_external_gate_sha256": "12f0b6aaf8d257e1ce0b87346e2f328089ab28fc96c52691719b7f28787630ab",
+    "gate_invoked": false,
+    "source_and_tests_checked": true,
+    "missing": [
+      "No genuine independent verdict for source22; source21 R3 actual HTTP502 exit1, no final verdict",
+      "Product K remains independently unaccepted; prior run BLOCKED preserved",
+      "Native same-Desktop live takeover and all extended capability evidence not complete"
     ],
-    "repair_errors_before": 1,
-    "repair_errors_after": 0,
-    "native_host_checks": 3,
-    "native_host_passed": 3,
-    "gui_actual_model": "gpt-6.1-terra",
-    "gui_requested_effort": "high",
-    "gui_native_exit": 0,
-    "gui_framework_result": "FAILED from unrelated removed historical alternate-codex profile",
-    "sequence_result": "FAILED actual Claude 300.641s timeout; remaining five scenarios not launched"
+    "note": "External preflight stops before gate because required native review inputs do not exist. This is not a fabricated Claude BLOCKED report or a failed run of the actual final gate. No approval or delivery authorized."
   },
-  "remaining": [
-    "removed historical Profile affects unrelated new task completion",
-    "new workflow timeout must inherit approved Profile; clarify timeout error",
-    "final same-source real graph/UI/native lifecycle proof",
-    "fresh independent hard ACCEPT and old fixed Gate",
-    "product K closure",
-    "main/Stable promotion and safe merged-unused branch cleanup"
-  ]
+  "project_records_check": {
+    "structural_exit": 0,
+    "baseline_check_exit": 1,
+    "baseline_reason": "Baseline-only check correctly refuses project branch containing project/. Product source22 baseline exit0; no check relaxed."
+  },
+  "feature_matrix": "Local feature-matrix-stage22.json maps22 groups to exact same-source126 workbench cases, prior-source real evidence separated; no personal acceptance claimed."
 }

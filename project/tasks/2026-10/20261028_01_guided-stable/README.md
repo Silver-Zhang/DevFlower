@@ -1,55 +1,37 @@
-# 引导式工作台、直接运行与助手诊断及正式 Stable 收尾
+# 引导式工作台与正式 Stable 收尾
 
 ## 1. 目标与范围
 
-落实本轮五项需求与完整 D01–D12：直接选择真实模型、普通操作免手写意见和额外探针、新手引导、静态完整性检查、独立助手诊断、全页面精修及真实产品闭环，最终满足硬 ACCEPT/固定 Gate 后整合 main、正式晋升 Stable、整理已合并闲置分支。保留全部旧源码、会话、认证和负面记录。
+Task15，合同 D01–D12。交付可引导使用的画布、直接模型任务、内置诊断助手和原生会话；保留既有会话、认证、Stable及原始失败。仅满足同源必需测试、真实独立硬 ACCEPT、固定旧 Gate 和产品 K 后合并/晋升。用户本人审美验收独立，Agent不代签。
 
 ## 2. 做法与证据
 
-独立分支 `flow/workbench-guided-stable` 完整继承 PR19→20→21。270 文件阶段8已隐私检查、正常提交与远端读回：HEAD `c842e84413b1b68be8c6e00e133d20f6281994f7`，tree `aac25dc171c64a38f0e33968b3d643a5e4052443`，CF `be1cfd4e0c0edf93cb6bf0076d6f9b84b96533562f7a4a3c35e33fc6b2459fc5`。这是未验收开发源码，不是 Stable。
+最新源码 `d8c402f58ad845854ec4622206f44e645db42243`，tree `f440aef51f0e3513a83bdd335ddbaa2473426a97`，289文件 CF `367e33fc48b387fdc7ee86afd925bf148c308fffb997803451dda5739692a5c3`，已隐私检查、冻结及正常push到Draft [PR22](https://github.com/Silver-Zhang/DevFlower/pull/22)。源码 tree 与冻结清单一致，提交不是验收。
 
-真实 Codex CLI 为唯一源码写者，Terra/high，UUID `01a17e69-7d98-7aa1-80fa-cca9423e5bd5`，固定旧 Stable 外部监督。阶段1–5、7、8均实际 PARTIAL；阶段6在1800.161秒超时、exit-15，无终局报告。原件保留，不制造 IMPLEMENTED。阶段8已实现受管 Claude 终端正常退出封存、数据库写锁下助手取消、工作区重开草稿竞态修复与公开源码清单扩展；合法长证明链和技能预检等仍需修复。
+阶段22：1129 Python、6宿主、61JS、Baseline、6项语法、独立构建字节一致均exit0；245项Chromium/HTTP和额外16项旧Studio smoke亦全部exit0，FAIL/ERROR/SKIP=0，见progress.json。终端定向89项通过。真实Chromium+原生Claude在本候选进入ready，原生 `/exit` 退出0，同HOME/cwd/UUID历史封存后新prepare成功；没有重放消息。浅/深色稳定页面已实际查看，旧截图的白色按钮为切换动画瞬间，未作为持续样式缺陷改代码。
 
-阶段7同一固定CF `c271e773e69636e2591c82bd3b439f96e1a16bdc33a07a5359e538293e3dc864`：1039 Python、6宿主隔离、59JS、233普通 Chromium/HTTP（9套）及额外16项旧Studio冒烟，exit0、FAIL/ERROR/SKIP=0；Baseline/6语法/独立构建字节一致。不是阶段8/最终候选测试。更早阶段3的985/1FAIL、230浏览器/17FAIL及阶段5的1002/0、主浏览器112/13FAIL原始记录保留；旧交互测试适配真实新流程，未删除断言或改Skip。阶段7一次草稿遗漏失败缺完整现场，阶段8确定性复现并修复同症重开竞态，未声称原失败唯一原因已证实。
+阶段21 CF73f0… 的真实顺序暂停恢复2calls、并发汇合3、路由1、循环提前2均完成；五轮10calls实际拒绝如期FAILED。原QA误取 `output.accepted` 导致exit1保留；严格读取 `output.result.accepted` 的独立复核exit0。另一个文本合同复杂图3calls完成，旧模糊任务7calls后正确拒绝保留。助手问答、公开源码诊断、修复1→0及图片识别四项真实调用通过。它们不冒充阶段22整版产品K。
 
-真实双Provider：Codex与Claude各新建和原UUID第二轮，共4调用COMPLETED；原生HOME/会话库和中转保留。内置助手真实API问答和6节点并行汇合草稿成功；实际诊断FAILED。外部观察查明：前两步search/read后返回多个空参数工具调用，被错误标作预算耗尽。batch/budget/invalid三个合成机械反例均exit1，不能当真实模型验收。
-
-真实浏览器选择Terra/high发送列目录任务：无需额外模型探针/手写意见，但任务未成功，两个命令调用报 `code-mode host is disabled`，且未选择的浏览器插件仍可达。已进入真实产品修复，不把原生exit0当任务成功。
-
-Sim实际参考commit `0721dd66d6bb3aee628a5b397a0385c09b54fa95`、Impeccable `d34c87e1a00989ae8dbdd7f6b30b70f23319e860`，Operate/context已应用。真实浏览器阶段5验证紧凑引导/检查、完整画布、浅深主题、点击节点不居中；阶段7实际读取助手历史/提案、CAS拒绝不匹配旧画布及模型直接选择。最终22类逐页验收、Impeccable detect及用户本人审美验收尚未完成。
+原生Codex阶段18/20部分失败及R1独立反例都保留。最终阶段21原生Codex UUID `01a18066-d096-7fa2-a4d2-45c1a0114fd0` 实际IMPLEMENTED，明确自验由外部root runner执行；终端阶段22补丁由root Codex实施，不假称CLI作者。中转站物理模型/生效强度未报告即unknown。
 
 ## 3. 决策记录
 
-Task15新源码审核总5轮、基础设施恢复2次；旧Task14 R1–R4/BLOCKED和旧预算完全保留。新R1实际启动时把新UUID误作resume，CLI1.026秒exit1、未推理；原件保留并计1次恢复。纠正为新建明确UUID `ec86ce04-40e7-4a5f-a73a-7f29a23f3e2f`，Opus5.5 1M/high，独立持久HOME和只读stage7副本；第一次实际审核在1800.192秒超时、exit-15；同UUID最终恢复也在360.127秒超时、exit-15，均无终局裁决。基础设施恢复2/2已耗尽，verdict=null，不批准阶段8。新源码修复后只能以新候选新源码轮送审，不延长旧运行。
+普通对话/工作流使用用户选定模型直接执行，不写确认意见、不额外nonce付费检查；开始点击仍固定工作区、图、任务、权限和预算，失败不自动重发。旧受控运行按其原合同保持。助手只读公开源码/帮助，修复为可预览、CAS校验、可撤销的草稿提案，不读取凭据、不任意shell、自授权限或自动批准交付。
 
-真实产品任务 K 已在固定旧 Stable 5816 的画布中提交并启动，run `5807154ccb6046459b6f654123340256`。实际操作者为获授权的 Codex，不冒充用户本人点击。任务绑定c842阶段8基线，修复真实助手诊断、原生工具/插件边界、检查交接身份、技能预检与长会话续接；独立 Development clone 开发。Developer真实PID/CLI/argv Terra/high已观察。其首轮127.765秒exit0但status BLOCKED，只完成部分实现；旧Controller实际停止，未验证/审核/交付。按原UUID继续1640.423秒exit0后仍BLOCKED：已补诊断批次、长Claude证明链、Skill漂移与检查交接身份及相关机械反例，Codex工具配置重载问题尚未关闭。外部监督查明无.git是预期隔离副本而非必须用户介入的障碍，按原HOME/cwd/UUID继续剩余源码实现，原BLOCKED不修改。该子任务至多2个源码审核轮并计入Task15总5轮，只允许正常开发分支/Draft PR交付，不批准整版main/Stable。三个父进程机械断言与真实模型/外层全回归分列。
-
-原生模式语义澄清：用户此前已明确“DevFlower不用隔离运行”。D08要求受支持入口单写，并未要求本机原生CLI无法读取工作区外所有文件。当前继续修正把普通原生模式当强隔离验证而全面拦截的实现：普通chat/TUI必须真实标注原生权限与可提供的接管能力，不伪造锁内历史CAS；强隔离探针、权威状态和自动交付门禁保持，无法验证的原生模式禁止自行批准自动交付。任意外部裸Claude CLI不能全局互斥的原始事实不改写。此澄清不等于缺陷已关闭或审核批准，最终由独立复核判断。初始D01–D12、旧K及预算不修改。
-
-云端PR22/c842：1044 Python/6host/59JS通过，浏览器114中1FAIL；artifact只有studio_races的一份结果，未获得该失败完整error，不能称唯一原因已确定。父进程A/B在无python别名环境同一跨工作区案例失败，仅添加解释器别名后通过。原生父任务阶段9已修复显式解释器及9套CI公开证据收集，并加inspection JS：定向HTTP Chromium1、项目文件9、JS60通过；故意无效解释器负面保留。云端尚未重跑。当前初始Codex UUID沿父任务实施普通原生语义修正，不与K源并行写入。
+审核预算源码3/5、基础设施恢复2/2。R1两次监督超时；R2外部driver143、native exit未知；R3真实Claude Opus5.5 1M/high在源码检查/反例后HTTP502，1411.756秒exit1，三轮均无最终裁决，不改写为ACCEPT。没有重试旧请求。原K run `5807154ccb6046459b6f654123340256` 保持BLOCKED，父固定监督真实开发/修复/非零测试/PR闭环是否足够，仍须独立判断。
 
 ## 4. 结论与边界
 
-当前继续真实产品修复，尚未正式验收。main `e0a0f92fed7f94bfef3a01b1298f8465c008023d`/tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039` 与旧Stable保留；PR19/20/21均Draft，整版收尾 [PR #22](https://github.com/Silver-Zhang/DevFlower/pull/22) 已创建并保持Draft，以main为base且完整继承旧源码。当前未合并、未晋升、未删分支。
+**尚未正式验收，PR22保持Draft，没有合并main或晋升Stable。** main仍 `e0a0f92fed7f94bfef3a01b1298f8465c008023d` / tree `6c9e39e16bbbe7de95b894e0a58632b1a0f63039`。旧Stable安装和批准不变；实际启动因旧pin固定的Codex auth文件已轮换而拒绝，没有偷换pin或覆盖认证。
 
-须完成当前真实产品修复及反馈闭环、最终同候选全回归/真实运行/逐页测试、独立硬 ACCEPT、固定旧 Gate、云端CI和真实PR读回，才能整合和晋升。外部任意Claude CLI的并发不可被产品合作锁保证；旧无来源证明的会话继续只读。不能靠文案、旧测试、未知会话恢复或伪造审批关闭阻塞。
+本机新Development：`python3 /home/workspace/DevFlower/.local/open-guided-development.py`，实际版本d8c402f/端口38279；`--check`已验证。打开文件夹→选择示例或创建节点→配置Provider/目录模型/模式/提示词→填写任务→“检查工作流”→“开始运行”。警告可定位问题并发送AI；助手只问答不会改画布，设计提案需预览应用。下一任务复用设计、新建run，旧记录在“整轮对话”按工作流/任务/节点查看；项目 `.devflower` 保存阅读记录，原生历史仍在原HOME。
+
+任意外部裸Claude CLI不受工作台租约控制；受支持PTY路径才可承诺单写/接管。Desktop同原生Codex UUID已被实际读取，但桌面实时刷新/强制接管未完成验收。普通原生模式的Skills/子agent未实测支持时明确不可用。极端无效图256条检查截断及助手API任意选定模型转发是独立R3反例观察，尚无正式裁决，不冒充已关闭必需finding。
+
+所有flow分支尚未合入main且被worktree使用，无符合“已整合且闲置”的安全删除对象。project分支、18个worktree、历史证据和原生聊天未删。完整剩余项见progress.json，不能把剩余都简化成CI。
 
 ## 5. 过程记录
 
-| 日期 | 关键事实 |
-|---|---|
-| 2026-10-28 | 核验main、PR19/20/21与所有worktree，创建独立任务/合同和源码分支；旧用户34915预览未覆盖。 |
-| 2026-10-28 | 实际NativeCodex连续实施8阶段；阶段6超时与所有PARTIAL/环境失败保留。阶段7完整同候选回归通过，阶段8保存并同步开发源码。 |
-| 2026-10-28 | 真实Provider续聊和内置助手测试，发现实际诊断/工具缺陷；新Claude源码R1及最终恢复均超时、无裁决；原错误启动保存。固定旧Stable画布实际发起产品K，首轮开发返回BLOCKED，外部按原UUID继续源码实现；旧运行不改写。实际重复打开当前助手历史造成零GET并永久加载的HTTP/Chromium反例已独立保存。 |
-
-新增原生能力实验：原HOME/原CODEX_HOME使用CLI支持的exec忽略本次用户工具配置，Terra/high/read-only真实读取公开测试文件成功，8.029秒exit0，原配置不变；不是产品适配或最终验收。bwrap固定配置元数据成功但嵌套命令失败，不作为可用方案。K同UUID continuation2已结束：71项Python分两套、60JS、3机械及3 Chromium/HTTP定向检查通过，仍真实BLOCKED于原生读取隔离、续聊CAS和TUI。固定275文件快照CF `30d8fed06de5800c55eeb2d8ade3d5780e95b5edebed3a12c6bca3773e5d5300` / tree `13c1e61fe4ed6d8c3dab9bd64481d96b6326ecb3`保存；该原件不改写。父任务已按清单逐字节接回开发树。
-
-原始授权、进程/输出、故障、截图和原生会话只在本机archives/test；公开分支仅此五节说明、合同与机器摘要。progress.json保存候选和实际计数，不将中间结果冒充最终通过。
-
-阶段10–13实际均返回PARTIAL，原始报告保留。已接普通Codex原UUID续聊、真正CLI具名权限、关闭未选插件/应用/浏览器/多agent工具、保护当前框架根；父工作区部分视图目前仅普通Codex对话贯穿prepare/launch/worker，工作流/终端/恢复尚未统一，阶段14正在实施。Claude TUI已加入严格空MCP/工具参数，实际二进制验证仍待外层。
-
-外层宿主阶段12实际CLI机械检查（零模型）：同会话写锁/工具配置通过；read-only和workspace-write保护探针均失败，原因是启动前已有硬链接仍可读取认证/权威的合成文件。进一步实际CLI证明运行中新建该硬链接被PermissionError13拒绝，直接读写也拒绝；不能删除已有硬链接负例或把此问题误报成宿主不支持。阶段14接收完整原始证据并修复启动前完整性保护。冻结阶段12中间278文件CF04c51bc5fc693af70aa283577e81b36ed3513306ac1d0b1fd8af95f8ed8f3855/tree9991dc8734efbb4aecff63a4377a8f8152b9eb0a开始外层完整回归，该快照并非最终候选。
-
-阶段14–18及当前现场补证（阶段18源码已推c28d65d/treeef62/CF2ead，283文件）：阶段15/17/18真实IMPLEMENTED、阶段14/16 PARTIAL。已修合法内部硬链接误报、SQLite临时单链接文件变化误报、重复deny路径导致CLI无法启动、模型/effort选择异步丢失，以及真实源码诊断工具的预算/错误展示。云端两个workflow在c28均success，1119 Python/6host/60JS通过；同版本本机全回归1119/6/60、主工作台124和全部九套Chromium/HTTP、Baseline/语法/重建字节一致，FAIL/ERROR/SKIP=0。
-
-真实阶段17六个图共21次原生调用全部符合预期，包括顺序暂停恢复、双路汇合一次、路由、提前结束、五轮10次实际拒绝和复杂图；该证据不冒充阶段18通过。阶段18助手真实问答、源码诊断、修复1→0和流程图识别四项成功；三项宿主CLI机械检查通过。实际GUI Terra/high启动的原生CLI7.118秒exit0，但新任务随后被旧历史中已移除Profile `alternate-codex` 的KeyError标成失败，已独立固定反例。阶段18顺序图Claude在300.641秒真实超时，余下五图自动未启动；既有已批准Profile单次1800，旧真实Claude首轮320.669秒曾成功，不能据此称模型不可用。阶段19只修历史Profile兼容、准确中文超时原因和新流程默认超时继承，旧草稿/旧失败不迁移重放。初次阶段19启动遇到真实JSON Schema400，外部监督器补明确type后又遇原生路由发现超时；两原件保留，未产生源码改动或独立审核。本机原模型/认证不更改。
+- 2026-10-28：原生多阶段实施、真实产品K尝试、R1失败及两次恢复，全部原件保留。
+- 2026-10-28：阶段18至21按实际反例修复历史Profile、超时继承、原生能力探测、助手冻结问答和历史长标题；阶段20/21各两项CI success。R2/R3仍无裁决。
+- 2026-10-28：阶段22仅修实际Claude plan-footer readiness及澄清过时诊断说明；真实终端/正常退出/同UUID再准备通过，完整1129/6/61/245回归通过，源码远端HEAD/tree一致，云端两项CI success（40633427959/40633427963）。原始日志/截图/native记录仅在本机archives；公开摘要同步project/devflower。

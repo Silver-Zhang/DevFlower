@@ -1,9 +1,13 @@
 # 当前状态
 
-Task15 `tasks/2026-10/20261028_01_guided-stable`仍未最终验收。整版Draft PR22 head c28d65d/treeef62/CF2ead，283文件，完整继承PR19→20→21。main仍e0a0f92/tree6c9e，无合并、Stable晋升或删分支。
+Task15仍BLOCKED；不是正式Stable。Draft PR22最新d8c402f/treef440/CF367e，289文件。main仍e0a0f92/tree6c9e，无merge、晋升或删分支。
 
-阶段18：完整1119 Python、6host、60JS、主工作台124、全部九套Chromium/HTTP、Baseline/语法/重建一致均通过；云端两个workflow在c28 success。真实助手问答/源码诊断/修复1→0/图片生成四项成功，三项真实CLI宿主检查通过。阶段17六图21次调用通过（含5轮负例），不冒充阶段18验收。
+阶段22：1129 Python/6host/61JS、Baseline/6syntax/build字节一致通过；245项Chromium/HTTP及额外16项旧Studio smoke亦全exit0，FAIL/ERROR/SKIP=0。实际Claude终端ready、/exit0、同UUID新prepare通过，稳定浅/深色已检查。阶段21真实六图语义（含max5负例/独立正确字段读回）、助手4项成功，不能冒充阶段22整版K。
 
-当前阶段19只修实际现场缺陷：旧历史已移除Profile让无关新任务失败（实际Terra/high原生CLI已exit0）；Claude300秒超时提示不明确；新流程未沿用已批准Profile1800秒。旧失败、原生会话与用户Development34915保持。唯一源码写者为父Codex原UUID，固定旧Stable监督。
+独立源码3/5均无最终裁决；基础设施恢复2/2耗尽。R1超时，R2driver143/native未知，R3 HTTP502/exit1。最终当前候选尚无硬ACCEPT/固定Gate，旧产品K仍BLOCKED。原始负面不修改。
 
-独立源码R1/5无最终裁决，基础设施恢复2/2耗尽，旧R1不再重试。新源码必须新审核轮；最终同源真实工作流/终端/UI/产品K、硬ACCEPT/旧Gate之后才整合和正式Stable。个人审美验收未代签。
+实际可测入口：python3 /home/workspace/DevFlower/.local/open-guided-development.py ，Development d8c402f/38279。旧Stable安装与批准保留，启动因旧pin的Codex auth轮换拒绝，未覆盖。5个flow分支均未合入main且在用，未删除。
+
+详见tasks/2026-10/20261028_01_guided-stable/README.md和progress.json；raw仅本机archives/devflower-guided-stable-20261028。后续只有服务恢复后新候选独立审核/产品K认可/固定Gate通过，才可条件式main和Stable。
+
+外部最终预检exit2：缺当前同源独立报告和产品K认可，固定Gate未调用，不能说已通过。云端当前2/2 success，实际头/tree已读回。

@@ -1,17 +1,15 @@
 # DevFlower 接续入口
 
-当前Task15：tasks/2026-10/20261028_01_guided-stable/{README.md,task.json,contract.txt,progress.json}。原始证据本机archives/devflower-guided-stable-20261028；公开仅摘要。保留旧Task14/K/BLOCKED/负面、所有会话/auth/Stable，不reset/clean/force。
+当前Task15：tasks/2026-10/20261028_01_guided-stable/{README.md,task.json,contract.txt,progress.json}。raw=本机archives/devflower-guided-stable-20261028。保留旧Task14/K/BLOCKED、所有会话/auth/Stable，不reset/clean/force。
 
-main e0a0f92/tree6c9e，Draft PR22 head c28d65d/treeef62，最新阶段18 CF2ead/283files。用户Development34915不覆盖；QA35603自有服务使用阶段18与自有GUI历史。S=development/guided-stable，唯一writer为原生Codex UUID01a17e69-7d98-7aa1-80fa-cca9423e5bd5，Terra/high，固定旧Stable5816监督。阶段19修3个实际问题，见STATUS，先核验进程与session。
+S=development/guided-stable，branch flow/workbench-guided-stable，HEADd8c402f，treef440，CF367e，289files；冻结candidate-stage22/candidate。main e0a0f92/tree6c9e，Draft PR22包含19→20→21。Developer当前仅root Codex，旧原生CLI阶段21IMPLEMENTED非最新terminal补丁作者。没有活动源码writer。
 
-完整阶段18回归1119Python/6host/60JS/主工作台124、全部九套浏览器及build/baseline通过，c28两项workflow success。真实助手4项成功/修复1→0、真实CLI宿主3项通过。阶段17六图21调用全预期；阶段18第一顺序图Claude timeout300.641s，后五图未启动。GUI Terra/high实际CLI7.118s exit0，随后旧历史alternate-codex KeyError导致框架FAIL，已固定反例。
+最终回归regression-stage22：1129Python/6host/61JS及baseline/syntax/build通过；summary已complete/source_unchanged，FAIL/ERROR/SKIP0。真实stage21六图/助手4项另列；native-browser-stage22-retry实际Claude ready、/exit0、同UUIDprepare通过。所有导入-B避免污染固定候选和旧Stable。
 
-独立R1 stage7只有动态反例，无最终裁决，两次超时、2/2基础设施恢复耗尽，不恢复旧R1。总源码1/5；新最终候选应新R2只读审核，Opus5.5 1M/high，实际物理backend/effective effort未知。最多5，总预算文件reviews/budget.json权威，源码实施续聊不算独立审核。
+审核权威reviews/budget.json：源码3/5，infra恢复2/2耗尽。R1timeout无裁决，R2driver143/native未知无裁决，R3 Opus5.5[1m]/high HTTP502/1411.756s/exit1无裁决。原生025dc97b-178a-4287-b39a-397750bb88bf位于reviews/native-home。不可恢复旧请求绕预算；尚无source22审核，不复用旧报告。固定外部监督旧Stable5816/gate12f0，不允许候选自签。
 
-真实产品K run5807154ccb6046459b6f654123340256来自旧Stable画布，真实开发/反例/源码修复已发生，旧Controller状态仍BLOCKED不能修改。其独立K候选CF30d8/tree13c与后续父任务CF不同。需独立评估父固定监督下真实修复复审/非零测试/Gate/PR能否补足K，不用问答fixture替代。
+产品K旧Stable Studio run5807154ccb6046459b6f654123340256状态BLOCKED不改；真实native开发/修复/非零测试/PR22已发生，但独立认可未取得。不能用Ask文字/图示例替代K。任意外部Claude CLI无全局锁，Desktop实时UI/强接管未完整验收，native-local Skills/subagents不假称支持。
 
-用户明确普通原生运行不必隔离；受支持单写/原HOME/原UUID/中转保留，任意外部Claude裸CLI无法全局互斥不能假装解决。普通Codex有具名原生权限与框架/auth保护；受保护父目录视图仅普通Codex支持，Claude不支持不能隐藏。无法验证强隔离绝不自动批准Git交付。所有导入用python3 -B避免污染候选。
+用户允许在所有必需条件通过后普通merge、正式Stable晋升、已整合闲置非project分支清理；当前不具备条件。Development入口.local/open-guided-development.py实际38279，独立storage不覆盖34915或旧Stable；旧Stable启动被已轮换auth pin拒绝，不能偷换旧批准。项目摘要已整理，原过程和失败保留Git及archives。
 
-真实跨端stage17同Codex UUID01a17fcc-6023-7e71-adc6-9dfc9bd5f3fa被Desktop读取/打开，加载后native_busy=true；离开标签不释放。自有QA聊天实际归档后释放再取消归档，原历史保留。不是虚构全局锁/复制同步。最终同候选PTY/生命周期还需补。
-
-用户已授权全通过后普通merge、main读回、正式Stable晋升及清理已整合闲置非project分支，不必新Prompt。必需同候选测试/独立硬ACCEPT/固定旧Gate/云端CI及产品K；保持旧Stable，准备新v2provenance和实际启动。未通过则Draft，不能把阶段性IMPLEMENTED当整版批准。
+源码22本机全回归完成；云端40633427959/40633427963均success，远端HEAD/tree一致。外部preflight exit2、gate_invoked=false；缺当前有效独立报告及K认可。不是Claude裁决或最终Gate实际结果。
