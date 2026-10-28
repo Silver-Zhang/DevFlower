@@ -24,6 +24,8 @@ class ExecConfigTests(unittest.TestCase):
   with self.assertRaises(Blocked):provider_overrides(dict(cli_auth_credentials_store='unknown-store'))
  def test_argv_enforces_explicit_capabilities_and_sandbox(self):
   b=dict(executable='fixture',model='gpt-test',effort='high',role='reviewer');args=exec_args(b,provider_overrides({}))
+  self.assertIn('approval_policy="never"',args);self.assertFalse(any('approval_mode=' in value or 'mcp_servers.devflower_managed.' in value for value in args))
+  self.assertFalse(any('supports_parallel_tool_calls=' in value for value in args))
   for value in ('--ignore-user-config','--ignore-rules','--strict-config','features.plugins=false','features.apps=false','features.multi_agent=false','features.code_mode_host=true','features.shell_tool=true','web_search="disabled"','sandbox_mode="read-only"'):
    self.assertIn(value,args)
   self.assertEqual(args[-1],'-');self.assertNotIn('danger-full-access',str(args))

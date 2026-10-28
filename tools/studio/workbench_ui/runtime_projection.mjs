@@ -14,6 +14,10 @@ export function duration(start,end){
  const seconds=Math.max(0,Math.floor((Number.isFinite(end)?end:Date.now()/1000)-start));
  return seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
 }
+export function stateDuration(start,end,state){
+ if(Number.isFinite(end))return duration(start,end);
+ return ['PENDING','QUEUED','STARTING','RUNNING','PAUSED','WAITING_CONFIRMATION','WAITING_INPUT','BUSY'].includes(state)?duration(start):'耗时未知';
+}
 export function latestActivation(nodes,path){
  return nodes.filter(a=>a.node===path).sort((a,b)=>{
   const x=a.iteration_path||[a.iteration||0],y=b.iteration_path||[b.iteration||0];

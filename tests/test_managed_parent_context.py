@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from orchestration.common import Blocked
@@ -41,6 +42,9 @@ class ParentContextTests(RunnerTests):
   from studio.native_codex_exec import managed_mcp_args
   context=ManagedContext.__new__(ManagedContext);context.closed=threading.Event();context.deadline=time.monotonic()+130;context.path=Path('/private/endpoint.json')
   args=managed_mcp_args(context)
+  self.assertEqual([x for x in args if 'supports_parallel_tool_calls=' in x],['mcp_servers.devflower_managed.supports_parallel_tool_calls=true'])
+  self.assertEqual([x for x in args if 'approval_mode=' in x],['mcp_servers.devflower_managed.tools.delegated_readonly.approval_mode="approve"'])
+  with self.assertRaises(Blocked):managed_mcp_args(SimpleNamespace(closed=threading.Event(),deadline=time.monotonic()+10,path=Path('/private/endpoint.json')))
   for key in ('startup_timeout_sec','tool_timeout_sec'):
    value=next(int(item.rsplit('=',1)[1]) for item in args if 'mcp_servers.devflower_managed.'+key+'=' in item)
    self.assertGreater(value,0);self.assertLessEqual(value,10 if key=='startup_timeout_sec' else 130)
@@ -74,11 +78,14 @@ class ParentContextTests(RunnerTests):
   args=sent[0];self.assertEqual(sum('mcp_servers.devflower_managed.command=' in x for x in args),1)
   self.assertIn('mcp_servers.devflower_managed.required=true',args)
   self.assertIn('mcp_servers.devflower_managed.enabled=true',args)
+  self.assertEqual([x for x in args if 'supports_parallel_tool_calls=' in x],['mcp_servers.devflower_managed.supports_parallel_tool_calls=true'])
   self.assertIn('mcp_servers.devflower_managed.enabled_tools=["delegated_readonly"]',args)
   for field in ('startup_timeout_sec','tool_timeout_sec'):
    values=[int(x.rsplit('=',1)[1]) for x in args if 'mcp_servers.devflower_managed.'+field+'=' in x]
    self.assertEqual(len(values),1);self.assertGreater(values[0],0);self.assertLessEqual(values[0],20)
   self.assertIn('--ignore-user-config',args);self.assertIn('features.multi_agent=false',args)
+  self.assertIn('approval_policy="never"',args)
+  self.assertEqual([x for x in args if 'approval_mode=' in x],['mcp_servers.devflower_managed.tools.delegated_readonly.approval_mode="approve"'])
   self.assertIn('skills.include_instructions=false',args);self.assertIn('skills.bundled.enabled=false',args)
   self.assertFalse(any('token' in x for x in args));self.assertFalse(hasattr(self.journal,'_managed_context'))
 

@@ -7,11 +7,19 @@ import time
 import unittest
 from pathlib import Path
 
+TOOLS = str(Path(__file__).resolve().parents[1] / 'tools')
+sys.path.insert(0, TOOLS)
+
 from orchestration.common import Blocked
 from studio.native_codex_exec_probe import _run_command
 
 
 class ProbeLifetimeTests(unittest.TestCase):
+    def child_env(self):
+        env = os.environ.copy()
+        env['PYTHONPATH'] = os.pathsep.join(filter(None, (TOOLS, env.get('PYTHONPATH', ''))))
+        return env
+
     def test_timeout_and_cancel_collect_child(self):
         for cancelled in (False, True):
             with self.subTest(cancelled=cancelled):
@@ -26,7 +34,7 @@ class ProbeLifetimeTests(unittest.TestCase):
                 "print(p.pid,flush=True)\n"
                 "p.wait()\n")
         unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])
-        parent=subprocess.Popen([sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=os.environ.copy())
+        parent=subprocess.Popen([sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.child_env())
         child=None
         try:
             child=int(parent.stdout.readline())
@@ -50,7 +58,7 @@ class ProbeLifetimeTests(unittest.TestCase):
                 "from studio.native_codex_exec_probe import _spawn\n"
                 "p=_spawn([sys.executable,'-c','import time;time.sleep(30)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
                 "print(p.pid,flush=True)\n")
-        parent=subprocess.run([sys.executable,'-c',code],capture_output=True,env=os.environ.copy(),timeout=3,check=True)
+        parent=subprocess.run([sys.executable,'-c',code],capture_output=True,env=self.child_env(),timeout=3,check=True)
         child=int(parent.stdout);end=time.monotonic()+3
         while time.monotonic()<end:
             try:state=Path('/proc',str(child),'stat').read_text().split(') ',1)[1][0]

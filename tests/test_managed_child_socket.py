@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+TOOLS=str(Path(__file__).resolve().parents[1]/'tools')
+sys.path.insert(0,TOOLS)
+
 from orchestration.common import canonical
 from orchestration.store import process_identity
 from studio.managed_children import OwnedEndpoint
@@ -25,7 +28,8 @@ class ManagedSocketTests(unittest.TestCase):
    try:
     program='from studio.managed_child_bridge import main;main()'
     requests=[dict(jsonrpc='2.0',id=1,method='initialize',params={}),dict(jsonrpc='2.0',id=2,method='tools/list'),dict(jsonrpc='2.0',id=3,method='tools/call',params=dict(name='delegated_readonly',arguments=dict(slot=1,task='inspect')))]
-    proc=subprocess.run([sys.executable,'-B','-c',program,str(endpoint.path)],input=b''.join(canonical(x)+b'\n' for x in requests),capture_output=True,timeout=10)
+    env=os.environ.copy();env['PYTHONPATH']=os.pathsep.join(filter(None,(TOOLS,env.get('PYTHONPATH',''))))
+    proc=subprocess.run([sys.executable,'-B','-c',program,str(endpoint.path)],input=b''.join(canonical(x)+b'\n' for x in requests),capture_output=True,timeout=10,env=env)
     self.assertEqual(proc.returncode,0,proc.stderr.decode(errors='replace'));rows=[json.loads(x) for x in proc.stdout.splitlines()]
     self.assertEqual(len(rows),3);self.assertFalse(rows[-1]['result']['isError']);self.assertEqual(calls,[(1,'inspect')])
    finally:endpoint.close();endpoint.thread.join(3)

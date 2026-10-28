@@ -34,7 +34,7 @@ import {AgentExtensions} from './AgentExtensions.jsx';
 import {ModelSelector} from './ModelSelector.jsx';
 import {useCloseView} from './useCloseView.jsx';
 import {RuntimeOverview,StatusBadge} from './RuntimeOverview.jsx';
-import {projectRun,latestActivation,roundText,duration,edgeEvidence,preflight} from './runtime_projection.mjs';
+import {projectRun,latestActivation,roundText,stateDuration,edgeEvidence,preflight} from './runtime_projection.mjs';
 import {SessionList} from './SessionList.jsx';
 import {HandoffEdge} from './HandoffEdge.jsx';
 import {ToolActivity} from './ToolActivity.jsx';
@@ -71,7 +71,7 @@ function NodeCard({data,selected}){
   {n.kind==='agent'?<div className="node-description"><span className={'provider '+n.provider}>{n.provider==='codex'?'Codex':n.provider==='copilot'?'GitHub Copilot':'Claude Code'}</span><span>{n.mode||'Ask'} · {n.effort}</span><p>{n.responsibility||'点击设置职责与提示词'}</p><small>{n.model}</small></div>:
    n.kind==='loop'?<div className="node-description">最多 {n.max_rounds||5} 轮 · {n.body?.nodes?.filter(x=>x.kind==='agent').length||0} 个 Agent<button className="nodrag link" onClick={e=>{e.stopPropagation();data.openLoop(n.id)}}>编辑循环内流程 <ArrowUpRight size={13}/></button></div>:
    <div className="node-description">{n.kind==='merge'?(a?`已收到 ${a.received||0}/${a.expected||0}`:'等待所有上游输入'):n.kind==='human'?'等待真实确认后继续':n.kind==='router'?'按声明字段分流 · 可选只读分类':n.kind==='condition'?'按结果字段选择下一步':n.kind==='verify'?'固定外部验证配置':n.kind==='delivery'?'经独立审核与授权交付':'点击节点即可配置'}</div>}
-  <footer><Badge state={a?.state}/>{data.issues?.length>0&&<span className="inspection-flag" title={data.issues.map(i=>i.message).join('\n')}>{data.issues.some(i=>i.severity==='error')?'错误':'提醒'} · {data.issues.length}</span>}{a&&a.state!=='UNKNOWN'&&<small>第 {roundText(a)} 轮{a.started_at?' · '+duration(a.started_at,a.finished_at):''}</small>}</footer>{a?.state==='RUNNING'&&<div className="node-action">▶ {a.input_sent_sha256?'请求已发送 · 等待 Agent 回答':'正在准备原生调用'}</div>}{a?.reason&&a.state!=='UNKNOWN'&&<div className="node-failure">{a.reason}</div>}
+  <footer><Badge state={a?.state}/>{data.issues?.length>0&&<span className="inspection-flag" title={data.issues.map(i=>i.message).join('\n')}>{data.issues.some(i=>i.severity==='error')?'错误':'提醒'} · {data.issues.length}</span>}{a&&a.state!=='UNKNOWN'&&<small>第 {roundText(a)} 轮{' · '+stateDuration(a.started_at,a.finished_at,a.state)}</small>}</footer>{a?.state==='RUNNING'&&<div className="node-action">▶ {a.input_sent_sha256?'请求已发送 · 等待 Agent 回答':'正在准备原生调用'}</div>}{a?.reason&&a.state!=='UNKNOWN'&&<div className="node-failure">{a.reason}</div>}
   {a?.waiting?.length>0&&<div className="waiting">等待：{a.waiting.map(id=>data.names?.[id]||id).join('、')}</div>}
   {n.kind!=='result'&&<Handle type="source" position={Position.Right} aria-label="输出连接点"/>}
  </div>

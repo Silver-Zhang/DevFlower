@@ -266,7 +266,9 @@ def managed_mcp_args(context):
             '-c','mcp_servers.devflower_managed.args='+json.dumps(args,ensure_ascii=True),
             '-c','mcp_servers.devflower_managed.enabled=true',
             '-c','mcp_servers.devflower_managed.required=true',
+            '-c','mcp_servers.devflower_managed.supports_parallel_tool_calls=true',
             '-c','mcp_servers.devflower_managed.enabled_tools=["delegated_readonly"]',
+            '-c','mcp_servers.devflower_managed.tools.delegated_readonly.approval_mode="approve"',
             '-c','mcp_servers.devflower_managed.startup_timeout_sec='+str(min(remaining,10)),
             '-c','mcp_servers.devflower_managed.tool_timeout_sec='+str(remaining)]
 
