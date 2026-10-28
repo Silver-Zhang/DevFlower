@@ -117,6 +117,8 @@ class NativeTerminals:
                 cwd=value['cwd'], session_id=value['session_id'], model=value['model'], effort=value['effort'], state='STARTING', created_at=time.time(),
                     input_sequence=0, input_owner='workbench', input_generation=0,
                     authorization_sha256=digest(canonical(receipt)), interaction=value.get('interaction'), permit=data['id'], execution_environment_sha256=value['execution_binding'].get('direct_environment_sha256'), native_sha256=value['native_sha256'], candidate_sha256=self.rt.candidate_sha256)
+            if 'direct_environment_version' in value['execution_binding']:
+                record['execution_environment_version']=value['execution_binding']['direct_environment_version']
             with self.rt.flow.tx() as db:
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal', key, canonical(record).decode()))
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('terminal-permit', data['id'], canonical(dict(

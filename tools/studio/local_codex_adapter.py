@@ -27,6 +27,11 @@ class LocalCodex:
     def __init__(self,binding,limits):self.b,self.limits=binding,limits
 
     def start(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
+        version=self.b.get('direct_environment_version',1)
+        if type(version) is not int or version not in (1,2):
+            raise Blocked('不支持的原生环境指纹版本')
+        if self.b.get('direct_environment_version')==2 and self.b.get('native_interaction')!='ordinary':
+            raise Blocked('此原生环境指纹仅适用于普通直接操作；未发送任务')
         if self.b.get('native_interaction')=='ordinary':
             if self.b.get('require_atomic_resume') and (session or self.b.get('session_id')):
                 raise Blocked('此请求需要原子历史比较；原生 Codex 不支持，未发送任务')
@@ -125,6 +130,8 @@ class LocalCodex:
         import uuid
         b=self.b;cwd=str(cwd);artifacts=Path(artifacts)
         sid=session or b.get('session_id');ordinary=b.get('native_interaction')=='ordinary'
+        if b.get('direct_environment_version')==2 and not ordinary:
+            raise Blocked('此原生环境指纹仅适用于普通直接操作；未发送任务')
         if b.get('expected_native_turn_id') and not (ordinary and sid):raise Blocked('新会话不能带旧回合身份；请刷新')
         if b.get('admission_probe') or b.get('no_tools') and not ordinary:
             raise Blocked('本机 Codex 的无工具模式仍暴露询问工具；该入口尚未验证，未调用模型。')
@@ -137,8 +144,8 @@ class LocalCodex:
             left=deadline-time.monotonic()
             if left<=0:raise Blocked('原生调用达到本次等待预算；未自动重发')
             return left
-        from .model_registration import profile_identity
-        environment=profile_identity(b)
+        from .model_registration import direct_environment_identity
+        environment=direct_environment_identity(b)
         if b.get('direct_environment_sha256') and environment!=b['direct_environment_sha256']:
             raise Blocked('原生模型配置已变化，请刷新后重试')
         # Read only the effective provider/relay settings. Tool configuration is
@@ -156,7 +163,7 @@ class LocalCodex:
         read_only=b['role']!='implementer' or bool(b.get('admission_probe'))
         capability=require_native_write_capability if ordinary else require_sandbox_capability
         capability(b['executable'],artifacts,not read_only,timeout=remaining(),cancelled=cancelled)
-        if profile_identity(b)!=environment:raise Blocked('原生模型配置在预检期间变化；未发送请求')
+        if direct_environment_identity(b)!=environment:raise Blocked('原生模型配置在预检期间变化；未发送请求')
         if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
         if ordinary:
             from .native_codex_exec import check_protected_hardlinks

@@ -129,7 +129,8 @@ def main():
     if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not (direct and parent):
         raise Blocked('本机 Codex 终端需要工作台内明确接管；旧授权不自动改变。')
     selected=rt.node_binding(a.workspace,dict(profile=binding['runtime_profile'],model=binding['model'],
-        effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not direct,direct=direct)
+        effort=binding['effort'],mode='Ask',permission='read',skills=binding.get('skill_ids',[]),subagents=binding.get('subagents','disabled')),admission=not direct,direct=direct,
+        direct_environment_version=record.get('execution_environment_version',1) if direct else 2)
     if direct and (record.get('native_sha256') != row['native']['sha256'] or record.get('execution_environment_sha256') != selected['binding'].get('direct_environment_sha256')):
         raise Blocked('原生会话或配置在终端启动后发生变化，未启动CLI')
     binding=dict(binding,skills=selected['binding'].get('skills',[]),subagents=selected['binding'].get('subagents','disabled'),execution_mode='Ask',role='reviewer',isolation='native-local' if binding.get('execution_backend')=='native-local' else 'bwrap',native_interactive=direct)

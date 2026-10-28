@@ -74,13 +74,30 @@ class PreferenceDriftTests(unittest.TestCase):
  def test_model_preference_changes_after_prepare_reject_old_snapshot(self):
   from studio.workbench_examples import examples
   from studio.server import Conflict
+  from unittest.mock import patch
+  graph=examples(self.rt.operator['profiles'])[0];p=self.rt.operator['profiles']['default-codex']
+  for n in graph['nodes']:
+   if n['kind']=='agent':n.update(profile='default-codex',provider='codex',model=p['model'],effort=p['effort'])
+  # Preserve the original rejection contract for already-issued raw v1 permits.
+  original=self.rt.node_binding
+  with patch.object(self.rt,'node_binding',side_effect=lambda *a,**kw:original(*a,**kw,direct_environment_version=1)):
+   permit=self.rt.prepare_flow(dict(workspace=self.base.project['id'],graph=graph,task='synthetic',interaction='click'))
+  self.config.write_text('model="two"\nmodel_reasoning_effort="medium"\n[permissions]\ndefault="read"\n')
+  with self.assertRaises(Conflict):self.rt.launch_flow(permit['id'],permit['sha256'],{'action':'start'})
+  self.assertEqual(self.rt.flow.list('run'),[])
+ def test_new_snapshot_keeps_explicit_selection_after_preference_change(self):
+  from studio.workbench_examples import examples
+  from unittest.mock import patch
   graph=examples(self.rt.operator['profiles'])[0];p=self.rt.operator['profiles']['default-codex']
   for n in graph['nodes']:
    if n['kind']=='agent':n.update(profile='default-codex',provider='codex',model=p['model'],effort=p['effort'])
   permit=self.rt.prepare_flow(dict(workspace=self.base.project['id'],graph=graph,task='synthetic',interaction='click'))
   self.config.write_text('model="two"\nmodel_reasoning_effort="medium"\n[permissions]\ndefault="read"\n')
-  with self.assertRaises(Conflict):self.rt.launch_flow(permit['id'],permit['sha256'],{'action':'start'})
-  self.assertEqual(self.rt.flow.list('run'),[])
+  with patch.object(self.rt,'spawn') as spawn:result=self.rt.launch_flow(permit['id'],permit['sha256'],{'action':'start'})
+  self.assertEqual(spawn.call_count,1)
+  for selected in result['run']['bindings'].values():
+   self.assertEqual(selected['binding']['direct_environment_version'],2)
+   self.assertEqual((selected['binding']['model'],selected['binding']['effort']),(p['model'],p['effort']))
  def test_provider_hooks_and_tools_are_not_preferences(self):
   from orchestration.common import Blocked
   for suffix in ('model_provider="other"\n','[hooks]\ncommand="unsafe"\n','[tools]\nwrite=true\n'):

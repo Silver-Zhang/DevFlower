@@ -4,6 +4,8 @@ import hashlib
 import os
 from functools import lru_cache
 import time
+import tomllib
+import datetime
 from orchestration.common import canonical, digest, Blocked
 from .graph import Invalid
 from .server import Conflict
@@ -18,7 +20,7 @@ def _executable_hash(path, device, inode, size, mtime, ctime):
     return value.hexdigest()
 
 
-def profile_identity(profile):
+def profile_identity(profile, *, _codex_preferences=False):
     files = []
     for source, target in profile.get('readonly_files', []):
         with opened(source) as fd:
@@ -30,11 +32,37 @@ def profile_identity(profile):
         for name in ('config.toml',) if profile['provider']=='codex' else ('settings.json','settings.local.json','.credentials.json'):
             path=root/name
             try:
-                with opened(path) as fd:raw=os.read(fd,200001)
+                with opened(path) as fd:
+                    before=os.fstat(fd) if _codex_preferences else None
+                    raw=os.read(fd,200001)
+                    if before is not None:
+                        after=os.fstat(fd)
+                        stamp=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+                        if stamp(before)!=stamp(after) or len(raw)!=after.st_size:
+                            raise Blocked('本机原生配置在读取期间变化')
             except FileNotFoundError:
                 files.append([str(path),name,None]);continue
             if len(raw)>200000:raise Blocked('本机原生配置超过读取预算')
-            files.append([str(path),name,digest(raw)])
+            if _codex_preferences and name == 'config.toml':
+                try:
+                    parsed=tomllib.loads(raw.decode('utf-8'))
+                    for key in ('model','model_reasoning_effort'):
+                        if key in parsed and (not isinstance(parsed[key],str) or not parsed[key].strip()):
+                            raise ValueError('invalid preference')
+                        parsed.pop(key,None)
+                    # Type-tag every value: TOML tables cannot collide with a
+                    # synthetic datetime/float marker.
+                    def typed(value):
+                        if isinstance(value,dict):return ['table',[[k,typed(v)] for k,v in sorted(value.items())]]
+                        if isinstance(value,list):return ['array',[typed(v) for v in value]]
+                        if isinstance(value,(datetime.datetime,datetime.date,datetime.time)):return [type(value).__name__,value.isoformat()]
+                        if isinstance(value,float):return ['float',value.hex()]
+                        return [type(value).__name__,value]
+                    config_hash=digest(canonical(typed(parsed)))
+                except (ValueError,UnicodeDecodeError,RecursionError,TypeError):
+                    raise Blocked('本机 Codex 配置格式或默认偏好无效') from None
+                files.append([str(path),name,config_hash])
+            else:files.append([str(path),name,digest(raw)])
     exe = Path(profile['executable']).resolve() if profile.get('executable') else None
     exe_hash=None
     if exe and exe.is_file():
@@ -50,6 +78,24 @@ def profile_identity(profile):
     return digest(canonical(dict(auth_identity=auth_identity,provider=profile.get('provider'), executable=str(exe) if exe else None,
         executable_sha256=exe_hash,
         files=files)))
+
+
+def direct_environment_identity(binding):
+    """Legacy direct pins remain raw; v2 is issued only for ordinary Codex."""
+    version=binding.get('direct_environment_version',1)
+    if type(version) is not int or version not in (1,2):raise Blocked('不支持的原生环境指纹版本')
+    if version==1:return profile_identity(binding)
+    from .session_sources import clean_path
+    if (binding.get('provider')!='codex' or binding.get('execution_backend')!='native-local' or
+            binding.get('direct_environment_scope')!='native-codex-ordinary' or
+            binding.get('native_interaction') not in (None,'ordinary') or
+            binding.get('execution_mode') not in ('Ask','Plan','Agent') or
+            any(not isinstance(binding.get(k),str) or not binding[k].strip() or binding[k]=='unknown' for k in ('model','effort'))):
+        raise Blocked('原生环境指纹与执行身份不匹配')
+    home=clean_path(binding.get('home'));root=clean_path(binding.get('config_root'))
+    if home!=binding['home'] or root!=binding['config_root'] or root!=str(Path(home)/'.codex'):
+        raise Blocked('本机 Codex 配置路径与 HOME 不匹配')
+    return profile_identity(binding,_codex_preferences=True)
 
 
 class ModelRegistration:
@@ -127,7 +173,7 @@ class ModelRegistration:
 
     def require_direct(self, binding):
         expected=binding.get('direct_environment_sha256')
-        if not expected or profile_identity(binding) != expected:
+        if not expected or direct_environment_identity(binding) != expected:
             raise Conflict('模型配置或认证在操作后发生变化，请重新选择并启动')
 
     def require(self,binding):
