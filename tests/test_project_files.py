@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from test_workbench_runtime import fixture, structured_session
-from orchestration.common import Blocked, canonical, tree_hash, workspace_hash, git
+from orchestration.common import Blocked, canonical, tree_hash, workspace_hash, git, workspace_metadata, has_git_metadata
 from orchestration.process import execute
 from studio.graph import Invalid
 from studio.server import Conflict
@@ -36,6 +36,43 @@ class ProjectFilesTests(unittest.TestCase):
         self.assertIs(meta['authority'], False)
         self.assertEqual(self.files.root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(git(self.base.source,'check-ignore','.devflower/project.json'),'.devflower/project.json')
+
+    def test_native_empty_git_placeholder_keeps_ordinary_workspace_usable(self):
+        folder = self.base.source.parent/'native-ordinary'; folder.mkdir()
+        row = self.rt.open_workspace(str(folder))
+        marker = folder/'.git'; marker.mkdir()
+        before = workspace_hash(folder)
+        self.assertFalse(has_git_metadata(folder))
+        self.assertEqual(workspace_metadata(folder, check_git=True), str(folder/'.devflower'))
+        self.assertEqual(self.rt.validate_source(str(folder)), dict(root=str(folder), head=None, branch=None))
+        self.assertEqual(self.rt.open_workspace(str(folder))['id'], row['id'])
+        self.assertEqual(workspace_hash(folder), before)
+        self.assertEqual(list(marker.iterdir()), [], 'Native placeholder is preserved, not deleted')
+
+    def test_empty_git_exception_never_hides_invalid_metadata_or_links(self):
+        for kind in ('nonempty', 'file', 'link', 'dangling'):
+            with self.subTest(kind=kind):
+                folder = self.base.source.parent/('invalid-git-'+kind); folder.mkdir()
+                self.rt.open_workspace(str(folder)); marker = folder/'.git'
+                if kind == 'nonempty': marker.mkdir(); (marker/'HEAD').write_text('invalid')
+                elif kind == 'file': marker.write_text('gitdir: missing\n')
+                else:
+                    target = folder/'target'
+                    if kind == 'link': target.mkdir()
+                    marker.symlink_to(target, target_is_directory=True)
+                self.assertTrue(has_git_metadata(folder))
+                with self.assertRaises(Blocked): workspace_metadata(folder, check_git=True)
+                with self.assertRaises(Blocked): self.rt.validate_source(str(folder))
+
+    def test_git_placeholder_replacement_during_check_is_refused(self):
+        folder = self.base.source.parent/'racing-git'; folder.mkdir()
+        marker = folder/'.git'; marker.mkdir(); real = os.listdir
+        def replaced(fd):
+            entries = real(fd); marker.rename(folder/'original'); marker.mkdir(); return entries
+        before = len(os.listdir('/proc/self/fd'))
+        with patch('orchestration.common.os.listdir', replaced), self.assertRaises(Blocked):
+            has_git_metadata(folder)
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
 
     def test_save_is_project_local_and_works_after_host_design_cache_removed(self):
         row = self.files.save_draft('saved', self.g, None)

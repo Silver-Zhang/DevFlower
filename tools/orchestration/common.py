@@ -128,6 +128,35 @@ def tree_hash(root, excludes=()):
     return digest(canonical(manifest(root, excludes)))
 
 
+def has_git_metadata(root):
+    """An empty native-sandbox mount point is not a Git repository marker.
+
+    Every nonempty directory, file or link still requires real Git validation.
+    This exception grants no delivery permission and never removes user data.
+    """
+    marker = Path(root) / '.git'
+    try:
+        before = os.lstat(marker)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(before.st_mode):
+        return True
+    stamp = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_nlink, s.st_mtime_ns, s.st_ctime_ns)
+    try:
+        fd = os.open(marker, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            opened = os.fstat(fd)
+            empty = not os.listdir(fd)
+            if (stamp(before) != stamp(opened) or stamp(opened) != stamp(os.fstat(fd)) or
+                    stamp(opened) != stamp(os.lstat(marker))):
+                raise Blocked('Git 元数据在检查期间变化；未启动任务。')
+            return not empty
+        finally:
+            os.close(fd)
+    except OSError:
+        raise Blocked('无法核验 Git 元数据；未启动任务。') from None
+
+
 def workspace_metadata(root, *, check_git=False):
     """Reserved local project data, never source or Agent input.
 
@@ -148,7 +177,7 @@ def workspace_metadata(root, *, check_git=False):
     if value != dict(version=1, kind='devflower-project', authority=False):
         raise Blocked('未识别的 .devflower 不会从源码身份中排除')
     # Reserved data cannot hide tracked executable source from the source hash.
-    if check_git and (Path(root) / '.git').exists() and git(root, 'ls-files', '--', '.devflower'):
+    if check_git and has_git_metadata(root) and git(root, 'ls-files', '--', '.devflower'):
         raise Blocked('.devflower 是本地记录保留区，不能包含已跟踪的源码')
     return str(path)
 
