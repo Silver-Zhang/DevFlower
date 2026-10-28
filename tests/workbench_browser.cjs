@@ -535,8 +535,8 @@ await test('design-md-new-chat-error-keeps-introduction-visible',async p=>{
  await p.route('**/api/models',r=>r.fulfill({status:400,json:{error:'模型目录暂时不可达，请检查连接后刷新'}}));
  await p.getByRole('button',{name:'开始对话',exact:true}).click();
  await p.getByText('模型目录暂时不可达，请检查连接后刷新',{exact:true}).waitFor();
- for(const width of [700,952,1512]){
-  await p.setViewportSize({width,height:756});await p.evaluate(()=>document.fonts.ready);
+ for(const [width,height] of [[700,660],[700,756],[952,756],[1512,756]]){
+  await p.setViewportSize({width,height});await p.evaluate(()=>document.fonts.ready);
   await until(async()=>p.locator('.messages').evaluate(e=>{const box=e.getBoundingClientRect();return [...e.querySelectorAll('.empty-chat h2,.empty-chat p')].every(x=>{const r=x.getBoundingClientRect();return r.top>=box.top&&r.bottom<=box.bottom&&r.left>=box.left&&r.right<=box.right})}));
   assert.equal(await p.locator('.messages').evaluate(e=>e.scrollTop),0,'The introduction is visible without scrolling past blank space');
   await p.screenshot({path:out+'/design-md-chat-error-'+width+'.png'});
