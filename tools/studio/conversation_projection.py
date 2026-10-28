@@ -24,7 +24,7 @@ def conversation_turns(manager, workspace, row, related, messages, secrets, *, o
         turns.append(dict(id=a['id'],kind='workflow',created_at=a.get('started_at',0),
             user_text=text(run['run'].get('task')),name=text(a.get('name')),node=a['node'],run=a['run'],
             iteration_path=a.get('iteration_path',[]),state=state,run_state=run['state'],
-            request_sections=parts,answer=answer['text'] if answer else None,
+            request_sections=parts,actual_request_recorded=bool(a.get('actual_request')),answer=answer['text'] if answer else None,
             answer_source=origin(answer['text']) if answer else None))
     for op in manager.rt.db.listing('session-operation',filters={'workspace':workspace},limit=None):
         if op.get('diagnostic'):continue

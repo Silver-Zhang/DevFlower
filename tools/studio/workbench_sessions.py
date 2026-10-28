@@ -54,6 +54,7 @@ class WorkbenchSessions:
             process_alive=group_alive(item.get('process')), task=safe_text(redact(flow['task'],secret)),
             connection_check=bool(item.get('connection_check')),
             request_sections=redact(item.get('request_sections', []), secret),
+            actual_request_recorded=bool(item.get('actual_request')),
             messages=[],activity=[],summaries=[],session=None,history_status='waiting')
         try:
             if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not getattr(self.rt,'readonly_configuration_warning',lambda:None)():

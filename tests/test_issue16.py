@@ -172,7 +172,8 @@ class ConditionMissingTests(unittest.TestCase):
  def test_native_invalid_output_contract_has_no_recoverable_completion(self):
   from studio.workbench_examples import examples
   from studio.workbench_scheduler import Scheduler
-  base,rt=fixture(self, admission=True);graph=examples(rt.operator['profiles'])[0];node=graph['nodes'][1];node['output_contract']=[dict(field='result.required',type='number',required=True)];run=dict(id='contract-fail',workspace=base.project['id'],graph=graph,created_at=time.time(),calls=0);rt.flow.put('run',run['id'],run);scheduler=Scheduler(rt,run['id']);activation=scheduler.activation(node,'',0,[])
+  from orchestration.common import canonical,digest
+  base,rt=fixture(self, admission=True);graph=examples(rt.operator['profiles'])[0];node=graph['nodes'][1];node['output_contract']=[dict(field='result.required',type='number',required=True)];task='synthetic contract';run=dict(id='contract-fail',workspace=base.project['id'],graph=graph,graph_sha256=digest(canonical(graph)),candidate_sha256=rt.candidate_sha256,task=task,task_sha256=digest(task.encode()),created_at=time.time(),calls=0);rt.flow.put('run',run['id'],run);scheduler=Scheduler(rt,run['id']);activation=scheduler.activation(node,'',0,[])
   report=dict(reply='answer',summary='summary',accepted=False,result_json='{}',artifacts=[],evidence=[],issues=[],next='')
   with patch('studio.workbench_scheduler.CLI.start',return_value=dict(report=report,session_id='synthetic-session',process=dict(exit=0))):
    with self.assertRaises(Invalid):scheduler.native_turn(node,activation['id'],[],'',0)

@@ -16,11 +16,11 @@ export function ReadableContent({value}){
  const names={task:'任务',summary:'摘要',result:'结果',artifacts:'附件',issues:'待处理问题',evidence:'依据',accepted:'是否满足要求',next:'后续建议'};
  return <div className="readable-fields">{Object.entries(value).filter(([k])=>!hidden.has(k)).map(([k,v])=><section key={k}><small>{names[k]||k}</small><ReadableContent value={v}/></section>)}</div>;
 }
-export function InputCards({sections,names={}}){
+export function InputCards({sections,names={},actual=false}){
+ const task=actual?sections?.find(s=>s.title.startsWith('本次任务目标')):null;
  const upstream=sections?.find(s=>s.title.startsWith('上游输入'));let values;
  try{values=JSON.parse(upstream?.text||'[]')}catch{return upstream?<ReadableContent value={upstream.text}/>:null}
- if(!values.length)return null;
- return <section className="upstream-cards" aria-label="本轮收到的上游内容"><h4>已带入本轮的上游内容</h4>{values.map((v,i)=><article key={i}><header>{v.source_name||names[v.source]||v.source||'上游节点'}<small>第 {(v.source_round?.length?v.source_round:[1]).join(' / ')} 轮</small></header><ReadableContent value={v.content??v}/></article>)}</section>;
+ return <>{task&&<section className="upstream-cards" aria-label="本轮请求的任务目标"><h4>本轮请求的任务目标</h4><ReadableContent value={task.text}/></section>}{values.length>0&&<section className="upstream-cards" aria-label="本轮收到的上游内容"><h4>已带入本轮的上游内容</h4>{values.map((v,i)=><article key={i}><header>{v.source_name||names[v.source]||v.source||'上游节点'}<small>第 {(v.source_round?.length?v.source_round:[1]).join(' / ')} 轮</small></header><ReadableContent value={v.content??v}/></article>)}</section>}</>;
 }
 function visibleText(text){try{const v=JSON.parse(text);if(v&&typeof v==='object')return typeof v.answer==='string'?v.answer:typeof v.reply==='string'?v.reply:text}catch{}return text}
 export function ConversationMessages({messages=[],answer}){
@@ -30,7 +30,7 @@ export function ConversationMessages({messages=[],answer}){
 export function ConversationTimeline({turns}){
  return <div className="conversation-timeline" aria-label="对话时间线">{turns.map(turn=>turn.kind==='native'?<section key={turn.id} data-turn-id={turn.id} className="native-conversation-message"><small className="message-origin">原生会话</small><ConversationMessages messages={turn.messages}/></section>:<section key={turn.id} data-turn-id={turn.id}>
   <article className="message user"><span className="message-role">你{turn.kind==='workflow'?' · '+(turn.name||'工作流任务'):''}</span>{turn.user_text?<Markdown remarkPlugins={[remarkGfm]} skipHtml>{turn.user_text}</Markdown>:<small>原始任务文字未保存，可查看高级原生记录。</small>}</article>
-  <InputCards sections={turn.request_sections}/>
+  <InputCards sections={turn.request_sections} actual={turn.actual_request_recorded}/>
   {turn.answer?<article className={'message '+(turn.kind==='workflow'&&turn.answer_source==='saved-runtime-result'?'execution-result':'assistant')} data-result-id={turn.kind==='workflow'?turn.id:undefined}><span className="message-role">Agent{turn.kind==='workflow'?' · 工作流回答':''}</span>{turn.kind==='workflow'&&<small>第 {(turn.iteration_path?.length?turn.iteration_path:[1]).join(' / ')} 轮{turn.run_state!=='COMPLETED'?' · 整体流程'+({FAILED:'失败',CANCELLED:'已取消',RECOVERY_REQUIRED:'状态待确认',RUNNING:'运行中',QUEUED:'等待中'}[turn.run_state]||'状态待确认'):''}</small>}<Markdown remarkPlugins={[remarkGfm]} skipHtml>{turn.answer}</Markdown><details className="identity-evidence"><summary>原始运行身份与来源</summary><small>{turn.answer_source==='native-text'?'原生可见文本':'结构化执行结果'} · {turn.run||turn.id} · {turn.node||'对话'}</small></details></article>:<div className="turn-status"><StatusBadge state={turn.state}/>{turn.reason&&<p>{turn.reason}</p>}{['STARTING','RUNNING','QUEUED'].includes(turn.state)&&<span>等待原生 Agent 的可见输出…</span>}</div>}
  </section>)}</div>;
 }
@@ -49,7 +49,7 @@ export function NodeConversation({api,workspace,activation,run,names,onSession})
  const task=value.request_sections.find(s=>s.title.startsWith('每轮'))?.text;
  return <section className="node-conversation" aria-label="Agent 运行对话"><header><StatusBadge state={value.state}/>{['STARTING','RUNNING'].includes(value.state)&&<small role="status">{value.connection_check?'正在检查连接':value.process_alive?(value.activity.at(-1)?.name||'等待可见输出'):'正在准备'}</small>}{value.session&&<button onClick={()=>onSession(value.session)}>打开完整会话</button>}</header>
   <article className="message user"><span className="message-role">本次任务</span><Markdown remarkPlugins={[remarkGfm]} skipHtml>{value.task}</Markdown>{task&&task!==value.task&&<details><summary>给此 Agent 的指令</summary><Markdown skipHtml>{task}</Markdown></details>}</article>
-  <InputCards sections={value.request_sections} names={names}/>
+  <InputCards sections={value.request_sections} names={names} actual={value.actual_request_recorded}/>
   <ToolActivity items={value.activity}/>
   <ConversationMessages messages={value.messages.filter(m=>m.role==='assistant'&&m.text.trim()!=='No response requested.')} answer={value.saved_answer}/>
   {value.summaries.length>0&&<details className="reasoning-summary"><summary>Provider 公开推理摘要</summary>{value.summaries.map((s,i)=><Markdown key={i} skipHtml>{s.text}</Markdown>)}</details>}

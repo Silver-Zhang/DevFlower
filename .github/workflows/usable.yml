@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs tests/workbench_user_experience.test.mjs tests/inspection_identity.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
+          DEVFLOWER_UI_DEPS="$RUNNER_TEMP/workbench-ui" node --test tests/*.test.mjs tests/*.test.cjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
       - name: Real host isolation probes
         shell: bash
         run: |
