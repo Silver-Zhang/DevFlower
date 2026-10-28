@@ -1,9 +1,9 @@
 # 当前状态
 
-Task16 Codex多Agent审核收尾，旧Task15/R4 NEEDS_CORRECTION、Gate BLOCKED与全部负面不改。
+Task16仅Codex多Agent；旧Task15 NEEDS_CORRECTION/Gate BLOCKED与全部失败保留。
 
-当前source40：648cb9e/tree3e1afc67/CFf598bd0b，301文件，flow/workbench-guided-stable已push，PR22 Draft。DeepSeek一次配置本机私有持久保存；用户指南project/USER_GUIDE.md。Development入口仍source33，非新Stable。
+当前source43：e67c5de/tree1f7f0fff/CFddb4858a，306文件，已push，PR22 Draft。awesome-design-md已安装并用于全部主页面；UI_PRECHECK_PASS，134工作台HTTP浏览器0，真实DeepSeek4场景完成。全回归/新CI/真实六图仍执行。
 
-39全量1216Python/6host64JS251HTTP+16旧smoke0；独立235/26界面通过，标准旧CLI.start原UUIDIMPLEMENTED/0。云端Chromium400未通过，实际只读占用探测互斥反例已确认；Root最小shared-reader修复+4负例，140目标0，40全量/真实六图/AI产品图/原生终端/新CI重新验证中。39首图2付费调用明确撤回CANCELLED，不套新版本。
+source40实际五轮在2已发/3预留时因配置变化失败；原生Codex v3最小修已实施，原PARTIAL保留，Root111与独立37目标0。source41/42清单和UI失败保留并修复，不冒称已验收。
 
-正式双源码审核0/2、infra2/2；当前仍缺最终双硬ACCEPT/合同K/旧Gate、merge与Stable。main e0a0f92，旧Stable和原生记录保留，未清分支。详见任务README。
+Development入口.local/open-guided-development.py现source43，旧版本/原生会话保留，非正式Stable。完整双源码审核0/2、infra2/2，合同8032befd；仍缺同源K/双硬ACCEPT/旧Gate/merge/晋升。main e0a0f92未动，未清分支。见任务README和USER_GUIDE。
