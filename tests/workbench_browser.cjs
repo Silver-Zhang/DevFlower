@@ -278,7 +278,7 @@ await test('non-loop-results-use-first-human-round',async p=>{
 });
 await test('product-editor-copy-delete-undo-and-multiselect',async p=>{
  await openWorkspace(p);const graph=()=>p.evaluate(()=>JSON.parse(localStorage.getItem('devflower-workbench-view')).graph);
- const initial=await graph();await p.locator('.react-flow__pane').click({position:{x:25,y:300}});
+ const initial=await graph();await p.locator('.react-flow__pane').click({position:{x:25,y:25}});
  await p.keyboard.press('Control+a');await until(async()=>!(await p.getByRole('button',{name:'复制选中节点',exact:true}).isDisabled()));
  await p.getByRole('button',{name:'复制选中节点',exact:true}).click();await p.getByRole('button',{name:'粘贴节点',exact:true}).click();
  await until(async()=>(await graph()).nodes.length===initial.nodes.length*2-1);
@@ -847,6 +847,18 @@ await test('builtin-assistant-user-edit-during-inference-is-not-overwritten',asy
  await openWorkspace(p);await p.getByRole('button',{name:'AI 配置',exact:true}).click();const panel=p.getByTestId('assistant-dock');await panel.getByLabel('助手模型',{exact:true}).selectOption('auto');await panel.getByLabel('助手工作方式',{exact:true}).selectOption('workflow');await panel.locator('.assistant-options>summary').click();await panel.getByRole('checkbox',{name:/设计工作流模式生成后自动应用/}).check();let release;const hold=new Promise(r=>release=r);await p.route('**/api/canvas-assistant/conversation?*',async route=>{const response=await route.fetch();const body=await response.json();if(body.turn?.state==='COMPLETED')await hold;await route.fulfill({response})});try{await panel.getByRole('checkbox',{name:/允许发送.*对话/}).check();await panel.getByLabel('配置需求',{exact:true}).fill('生成过程中保留编辑');await panel.getByRole('button',{name:'发送',exact:true}).click();await p.getByLabel('工作流名称',{exact:true}).fill('用户手动保留的名称');release();await until(async()=>await panel.getByRole('alert').count()>0);assert.equal(await p.getByLabel('工作流名称',{exact:true}).inputValue(),'用户手动保留的名称');assert((await panel.getByRole('alert').first().innerText()).includes('修改'));}finally{release()}
 });
 
+await test('polish-network-warning-clears-after-same-run-recovers-and-keeps-success-notice',async p=>{
+ await openWorkspace(p);let offline=true;
+ await p.route('**/api/run?*',r=>offline?r.abort('connectionfailed'):r.continue());
+ await p.getByLabel('历史运行',{exact:true}).selectOption('A');await p.locator('.connection-warning').waitFor();
+ assert((await p.locator('.connection-warning').innerText()).includes('正在重新连接'));
+ assert(!(await p.locator('.notice').allInnerTexts()).join('').includes('Failed to fetch'));
+ await p.screenshot({path:out+'/network-warning.png'});
+ offline=false;await p.locator('.connection-warning').waitFor({state:'hidden'});
+ assert.equal(await p.getByLabel('历史运行',{exact:true}).inputValue(),'A');
+ assert(!(await p.locator('.notice').allInnerTexts()).join('').includes('Failed to fetch'));
+ await p.screenshot({path:out+'/network-reconnected.png'});
+});
 await test('polish-focus-canvas-expands-readable-graph-without-changing-workflow',async p=>{
  await openWorkspace(p);await until(async()=>await p.locator('.react-flow__node').count()===4);
  const before=await p.getByTestId('canvas').boundingBox(),nodeBefore=await p.locator('.react-flow__node').first().boundingBox();
@@ -926,7 +938,7 @@ await test('dock-assistant-two-conversations-rename-trash-and-restore',async p=>
  await dock.getByLabel('助手会话历史',{exact:true}).click();await dock.getByRole('button',{name:'删除助手会话 我的设计',exact:true}).click();await dock.getByRole('button',{name:'移入回收站',exact:true}).click();await until(async()=>await dock.getByRole('button',{name:'删除助手会话 我的设计',exact:true}).count()===0);await dock.getByRole('button',{name:'回收站',exact:true}).click();await dock.getByRole('button',{name:'恢复助手会话 我的设计',exact:true}).click();await dock.getByRole('button',{name:'对话',exact:true}).click();await dock.getByRole('button',{name:'我的设计 2 条消息',exact:true}).waitFor();assert.equal(calls,2,'History management must never trigger inference');
 });
 await test('dock-assistant-connection-settings-are-a-separate-subview',async p=>{
- await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();await p.getByLabel('助手模型设置',{exact:true}).click();const settings=p.getByLabel('助手模型连接',{exact:true});await settings.getByLabel('助手模型ID',{exact:true}).waitFor();assert.equal(await p.getByRole('log',{name:'画布助手对话',exact:true}).count(),0);assert.equal(await settings.getByLabel('助手API密钥',{exact:true}).inputValue(),'');await settings.getByLabel('助手模型ID',{exact:true}).focus();await p.keyboard.press('Escape');assert.equal(await settings.count(),0);assert(await p.getByTestId('assistant-dock').isVisible());
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();await p.getByLabel('助手模型设置',{exact:true}).click();const settings=p.getByLabel('助手模型连接',{exact:true});await settings.getByLabel('助手模型ID',{exact:true}).waitFor();assert.equal(await p.getByRole('log',{name:'画布助手对话',exact:true}).count(),0);assert.equal(await settings.getByLabel('助手API密钥',{exact:true}).inputValue(),'');assert(await settings.getByRole('button',{name:'返回助手对话',exact:true}).evaluate(e=>e===document.activeElement));await p.keyboard.press('Escape');assert.equal(await settings.count(),0);assert(await p.getByTestId('assistant-dock').isVisible());assert(await p.getByLabel('助手模型设置',{exact:true}).evaluate(e=>e===document.activeElement));
 });
 await test('dock-assistant-small-screen-has-a-usable-composer',async p=>{
  await p.setViewportSize({width:700,height:860});await openWorkspace(p);await p.getByRole('button',{name:'AI 配置',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.waitFor();const box=await dock.boundingBox(),composer=await dock.locator('.assistant-composer').boundingBox();assert(box.width>=280&&box.x+box.width<=701);assert(composer.y+composer.height<=860);assert.equal(await p.locator('.canvas-assistant-scrim').count(),0);await p.screenshot({path:out+'/assistant-dock-small.png'});
