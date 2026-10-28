@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_workbench_stable import StableFixture, serve
 import test_workbench_stable as boundary
-from orchestration.common import Blocked, digest, save
+from orchestration.common import Blocked, digest, manifest, save
+from orchestration.release_provenance import ReleaseProvenance
+from stable_provenance_fixture import SyntheticProvenance
 
 
 class InvocationTests(unittest.TestCase):
@@ -18,6 +21,74 @@ class InvocationTests(unittest.TestCase):
     def refused(self, f):
         with self.assertRaises((Blocked, ValueError, OSError)): f.launch()
         self.assertFalse((Path(f.operator['storage'])/'usable.sqlite').exists())
+
+    def codex_reviewer(self, e):
+        e.docs['review']['provider'] = 'codex'
+        e.docs['review_invocation']['binding']['provider'] = 'codex'
+        e.docs['owner']['native_bindings']['reviewer']['provider'] = 'codex'
+
+    def test_owner_bound_codex_reviewer_is_accepted(self):
+        f = StableFixture(self); e = SyntheticProvenance(f, f.workspace, {})
+        self.codex_reviewer(e); e.seal()
+        release = SimpleNamespace(root=f.workspace, data=e.data, record=f.record,
+                                  sha256=digest(f.record.read_bytes()))
+        ReleaseProvenance(release).verify(manifest(f.workspace))
+
+    def test_codex_graph_rejects_inconsistent_or_unsafe_evidence(self):
+        cases = ('review-only', 'owner-only', 'observation-only', 'unknown-provider',
+                 'reviewer-role', 'implementer-role', 'implementer-provider', 'same-session',
+                 'model', 'effort', 'source', 'contract', 'run', 'round', 'process',
+                 'result', 'raw-provider', 'raw-role', 'raw-identity', 'raw-report',
+                 'failed-contract', 'blocked-contract', 'open-finding', 'blocked-finding',
+                 'blocked-verdict', 'failed-verification')
+        for case in cases:
+            with self.subTest(case=case):
+                self.doCleanups()
+                f = StableFixture(self); e = SyntheticProvenance(f, f.workspace, {})
+                self.codex_reviewer(e)
+                review = e.docs['review']; observed = e.docs['review_invocation']
+                owner = e.docs['owner']; native = e.docs['native']
+                if case == 'review-only': review['provider'] = 'claude'
+                elif case == 'owner-only': owner['native_bindings']['reviewer']['provider'] = 'claude'
+                elif case == 'observation-only': observed['binding']['provider'] = 'claude'
+                elif case == 'unknown-provider':
+                    review['provider'] = observed['binding']['provider'] = owner['native_bindings']['reviewer']['provider'] = 'other'
+                elif case in ('reviewer-role', 'implementer-role', 'implementer-provider'):
+                    role = 'reviewer' if case == 'reviewer-role' else 'implementer'
+                    receipt = observed if role == 'reviewer' else e.docs['implementation_invocation']
+                    key, value = ('provider', 'claude') if case == 'implementer-provider' else ('role', 'implementer' if role == 'reviewer' else 'reviewer')
+                    receipt['binding'][key] = owner['native_bindings'][role][key] = value
+                elif case == 'same-session':
+                    sid = e.docs['implementation']['session_id']
+                    native['session_id'] = owner['reviewer_session_id'] = sid
+                    observed['binding']['session_id'] = owner['native_bindings']['reviewer']['session_id'] = sid
+                elif case in ('model', 'effort'):
+                    key = 'requested_' + case
+                    observed['binding'][key] = owner['native_bindings']['reviewer'][key] = 'changed'
+                elif case in ('source', 'contract', 'run', 'round'):
+                    key, value = {'source': ('candidate_sha256', '0'*64), 'contract': ('acceptance_sha256', '0'*64),
+                                  'run': ('run_id', 'other'), 'round': ('round', 2)}[case]
+                    observed['identity'][key] = value
+                elif case == 'process': observed['process']['exit'] = 1
+                elif case == 'result': observed['result'] = e.ref('implementation')
+                elif case == 'raw-provider': native['provider'] = 'claude'
+                elif case == 'raw-role': native['binding'] = {'role': 'implementer'}
+                elif case == 'raw-identity': native['identity'] = dict(e.identity, run_id='other')
+                elif case == 'raw-report': native['raw_report_sha256'] = '0'*64
+                elif case in ('failed-contract', 'blocked-contract'):
+                    e.docs['report']['contracts'][0]['status'] = 'FAIL' if case == 'failed-contract' else 'BLOCKED'
+                    e.sync_report()
+                elif case in ('open-finding', 'blocked-finding'):
+                    e.docs['report']['findings'] = [dict(id='required', severity='P1',
+                        status='OPEN' if case == 'open-finding' else 'BLOCKED', title='required',
+                        contract_ids=['fixture-contract'], evidence_refs=['fixture-check'])]
+                    e.sync_report()
+                elif case == 'blocked-verdict': e.docs['report']['verdict'] = 'BLOCKED'; e.sync_report()
+                elif case == 'failed-verification': e.docs['gate']['verification'][0]['passed'] = False
+                e.seal()
+                release = SimpleNamespace(root=f.workspace, data=e.data, record=f.record,
+                                          sha256=digest(f.record.read_bytes()))
+                with self.assertRaises(Blocked): ReleaseProvenance(release).verify(manifest(f.workspace))
 
     def test_exact_reviewer_counterexamples_are_refused_after_honest_repin(self):
         f = self.fixture(); e = f.evidence
