@@ -218,8 +218,8 @@ def handler(app):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise Invalid('Expected JSON object')
-                if not post and path in ('/', '/app.js', '/workspace.js', '/style.css'):
-                    name, mime = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/workspace.js': ('workspace.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8')}[path]
+                if not post and path in ('/', '/app.js', '/workspace.js', '/style.css', '/theme.css'):
+                    name, mime = {'/': ('index.html', 'text/html; charset=utf-8'), '/app.js': ('app.js', 'text/javascript; charset=utf-8'), '/workspace.js': ('workspace.js', 'text/javascript; charset=utf-8'), '/style.css': ('style.css', 'text/css; charset=utf-8'), '/theme.css': ('theme.css', 'text/css; charset=utf-8')}[path]
                     self.response(200, (STATIC / name).read_bytes(), mime); return
                 if not post and path == '/api/meta':
                     self.response(200, {'version': '0.1', 'profile': 'b-dual-review-v1', 'template': template(), 'launcher': app.launcher.status(), 'control_configured': app.reader.control is not None}); return

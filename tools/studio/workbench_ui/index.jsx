@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css';
 import './style.css';
 import './product.css';
 import './polish.css';
+import '../static/theme.css';
 import './studio.css';
 import './interactions.css';
 import './user_experience.css';

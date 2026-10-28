@@ -59,7 +59,8 @@ def handler(runtime, token):
                          "/usable.js": ("usable.js", "text/javascript; charset=utf-8"),
                          "/usable_canvas.js": ("usable_canvas.js", "text/javascript; charset=utf-8"),
                          "/usable_sessions.js": ("usable_sessions.js", "text/javascript; charset=utf-8"),
-                         "/usable.css": ("usable.css", "text/css; charset=utf-8")}
+                         "/usable.css": ("usable.css", "text/css; charset=utf-8"),
+                         "/theme.css": ("theme.css", "text/css; charset=utf-8")}
                 if not post and path in files:
                     name, mime = files[path]
                     return self.respond(200, (STATIC / name).read_bytes(), mime)

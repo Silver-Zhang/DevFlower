@@ -1,12 +1,10 @@
 /* Final shared type and interaction scale. Preserve the editor's existing
    light/dark worlds and runtime semantics; chrome must serve the task. */
-:root{--studio-faint:#686874;--ui-caption:11px;--ui-label:12px;--ui-body:14px}
-html[data-theme=dark]{--studio-faint:#a1a1ac}
 .workbench{font-size:var(--ui-body);caret-color:var(--studio-text)}
 .workbench ::selection{background:var(--studio-blue-bg);color:var(--studio-text)}
 .workbench *{scrollbar-width:thin;scrollbar-color:var(--studio-line-strong) transparent}
 .workbench button,.workbench input,.workbench select,.workbench textarea{font-size:var(--ui-label)}
-.workbench button:focus-visible,.workbench summary:focus-visible{outline:2px solid var(--studio-blue);outline-offset:2px}
+.workbench button:focus-visible,.workbench summary:focus-visible{outline:2px solid var(--studio-focus);outline-offset:2px}
 .workbench .workspace-name strong{font-size:14px}.workbench .workspace-name small{font-size:11px}
 .workbench .workspace-navigation>button,.workbench .workflow-list-row>button:first-child{font-size:12px;min-height:34px}
 .workbench .sidebar-title,.workbench .workspace-section-title,.workbench .session-search input{font-size:12px}
@@ -16,8 +14,8 @@ html[data-theme=dark]{--studio-faint:#a1a1ac}
 .workbench.sidebar-collapsed .workspace-navigation>button{font-size:0}
 .workbench .session-group-title,.workbench .session-node-title,.workbench .project-storage-note{font-size:11px}
 .workbench .editor-tabs{height:38px;flex-shrink:0}.workbench .editor-tabs button{font-size:12px}
-.workbench .canvas-toolbar{gap:7px;padding:8px 12px;min-height:48px;max-height:112px}
-.workbench .canvas-toolbar button,.workbench .canvas-toolbar>select{font-size:12px;min-height:31px}
+.workbench .canvas-toolbar{gap:6px;padding:7px 12px;min-height:46px;max-height:112px}
+.workbench .canvas-toolbar button,.workbench .canvas-toolbar>select{font-size:12px;min-height:32px}
 .workbench .workflow-title>input{font-size:13px}.workbench .dirty{font-size:11px}
 .workbench .canvas-edit-tools{max-width:calc(100% - 24px);overflow:visible;flex-wrap:wrap}
 .workbench .canvas-edit-tools>button,.workbench .arrange-menu>button{min-width:29px;min-height:30px;padding:5px}
@@ -25,7 +23,7 @@ html[data-theme=dark]{--studio-faint:#a1a1ac}
 .workbench .node-description,.workbench .node-description p{font-size:12px;line-height:1.6}
 .workbench .node-description>small,.workbench .provider,.workbench .node-card footer>small,.workbench .badge{font-size:11px}
 .workbench .design-banner,.workbench .notice,.workbench .alert,.workbench .design-banner p{font-size:12px;line-height:1.5}
-.workbench .workflow-guide{padding:9px 14px}.workflow-guide header{flex-wrap:wrap}.workflow-guide header>button:last-child{margin-left:auto}
+.workbench .workflow-guide{padding:7px 14px}.workflow-guide header{flex-wrap:wrap}.workflow-guide header>button:last-child{margin-left:auto}
 .workbench .inspector .field>span,.workbench .inspector small,.workbench .hint{font-size:12px;line-height:1.65}
 .workbench .inspector input:not([type=checkbox]):not([type=radio]),.workbench .inspector select,.workbench .inspector textarea{font-size:13px;min-height:36px}
 .workbench .inspector>nav button,.workbench .request-tabs button{font-size:12px}
@@ -39,7 +37,7 @@ html[data-theme=dark]{--studio-faint:#a1a1ac}
 .workbench .assistant-dock-header strong,.workbench .assistant-subview>header{font-size:13px}
 .workbench .assistant-dock .assistant-bubble{font-size:14px;line-height:1.8;margin-bottom:26px}
 .workbench .assistant-chat{padding:18px}.workbench .assistant-welcome p{font-size:13px}
-.workbench .assistant-welcome button{font-size:12px;padding:11px 12px}
+.workbench .assistant-welcome button{font-size:12px;padding:10px 12px}
 .workbench .assistant-composer textarea{font-size:14px;min-height:88px;max-height:180px}
 .workbench .assistant-composer-toolbar select,.workbench .assistant-intent select{font-size:12px}
 .workbench .assistant-check,.workbench .assistant-muted,.workbench .assistant-security,.workbench .assistant-options,.workbench .assistant-reply-kind{font-size:11px;line-height:1.6}
@@ -84,3 +82,31 @@ html[data-theme=dark]{--studio-faint:#a1a1ac}
 .workbench .brand>span{display:block;font-size:9px;border:0;padding:0;line-height:1.25;letter-spacing:0}
 .workbench.sidebar-collapsed .brand{display:none}
 .workbench input[type=checkbox],.workbench input[type=radio]{width:15px;height:15px;min-height:0;flex:0 0 15px;padding:0;accent-color:var(--studio-text);margin-right:6px}
+
+/* Reading surfaces use hierarchy and whitespace instead of nested debug cards. */
+.workbench .message{border-radius:12px;padding:18px 20px;box-shadow:none}
+.workbench .message.assistant{background:transparent;border-color:transparent;padding-left:4px}
+.workbench .message.user{background:var(--studio-subtle-bg);border-color:var(--studio-line-soft)}
+.workbench .message-role{text-transform:none;letter-spacing:0;color:var(--studio-text-secondary);display:flex;align-items:center;gap:8px}
+.workbench .message-role::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--studio-edge);flex:none}
+.workbench .message.user .message-role::before{background:var(--studio-focus)}
+.workbench .runtime-overview{background:var(--studio-bg);border-color:var(--studio-line);border-left:3px solid var(--studio-sent)}
+.workbench .runtime-overview.tone-unknown{background:var(--studio-bg);border-left-color:var(--studio-waiting)}
+.workbench .runtime-overview.tone-failed{background:var(--studio-bg);border-left-color:var(--studio-error)}
+.workbench .notice{background:var(--studio-subtle-bg);color:var(--studio-text-secondary);border-bottom:1px solid var(--line)}
+.workbench .alert{background:var(--studio-error-bg);color:var(--studio-error)}
+.workbench .dialog{border-radius:14px;box-shadow:var(--studio-shadow)}
+.workbench .dialog>header{padding-bottom:16px;border-bottom:1px solid var(--line)}
+.workbench .dialog>footer{position:sticky;bottom:-20px;background:var(--studio-bg);padding:16px 0 4px;z-index:1}
+.workbench .dialog>header h2{font-size:18px;letter-spacing:-.02em}
+.workbench .inspector-body>p:first-child{font-size:12px;line-height:1.6;color:var(--studio-muted)}
+.workbench .node-conversation .message.assistant{border-left:2px solid var(--studio-line);padding-left:14px}
+.workbench .node-conversation .message.user{margin-left:0}
+.workbench .conversation-toolbar{min-height:56px;gap:8px;background:var(--studio-bg)}
+.workbench .request-tabs{padding:3px;border-radius:8px;background:var(--studio-subtle-bg);border:1px solid var(--line)}
+.workbench .request-tabs button{flex:1;border:0;white-space:normal;box-shadow:none}
+.workbench .request-tabs button.active{background:var(--studio-bg);box-shadow:0 1px 3px #0001}
+.workbench .handoff-facts{background:var(--studio-subtle-bg);border-radius:8px;gap:12px;font-size:12px}
+.workbench .workspace-workflows{border-bottom-color:var(--studio-line-soft)}
+.workbench .workflow-list-row>button[aria-current=page]{background:var(--studio-selected);color:var(--studio-text)}
+@media(max-width:720px){.workbench .assistant-dock .assistant-composer{margin:6px 12px 12px}.workbench .assistant-welcome h3{font-size:18px}.workbench .overview-content{gap:12px}.workbench .overview-progress{min-width:90px}}
