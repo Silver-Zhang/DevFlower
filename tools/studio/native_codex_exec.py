@@ -147,7 +147,12 @@ def check_protected_hardlinks(paths):
                 if attempt==2:raise
     try:
         first,groups=resample();second,_=resample()
-        if first!=second:raise Blocked('受保护目录在检查期间变化；未启动任务。')
+        # Keep the original baseline for every existing sensitive entry. New
+        # directories are ordinary state updates only when the second scan
+        # contains no new symlinks or shared inodes beneath them (or elsewhere).
+        if (any(key not in second or second[key]!=value for key,value in first.items()) or
+            any(value is None or not stat.S_ISDIR(value[2]) for key,value in second.items() if key not in first)):
+            raise Blocked('受保护目录在检查期间变化；未启动任务。')
         for group in groups.values():
             if any(first[name][3]!=len(group['names']) for name in group['paths']):
                 raise Blocked('受保护文件存在未确认归属的硬链接；未启动任务。')
