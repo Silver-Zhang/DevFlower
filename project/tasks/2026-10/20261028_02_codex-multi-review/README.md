@@ -6,7 +6,7 @@
 
 ## 2. 做法与证据
 
-当前源码 ddd040d17fa1f2a5c691a8b59766f1aed98c16ea，tree 2cbda7a956a210d78f361d91785d70a4b688f1f5，306文件，完整候选 SHA256 81d55a7a91c710265b66f2b0c4e2e20d33d47ee95982f8acddef12c0e46b7709。flow/workbench-guided-stable已push，PR22仍Draft。44完整1231Python/6host/64JS/253HTTP+16smoke和全部21命令均exit0、FAIL/ERROR/SKIP0、sourceunchanged；云端contracts/studio/chromium三SUCCESS。实际新原UUID标准适配器IMPLEMENTED/exit0/源码前后44一致，仅只读ACK，未自签整版通过。
+当前源码 4eff18541562194a0ebda917dc2d981bfc415600，tree 973aea109c040389f09ff00bd318b3f548569189，306文件，完整候选SHA256 6e0cbd037f9c5261b3244456cbcf87ad034257934af1fc68500e80e7426262fc。flow/workbench-guided-stable已push，PR22仍Draft。45完整1239Python/6host/64JS/253HTTP+16smoke与全部21命令exit0、FAIL/ERROR/SKIP0、源码前后不变；云端三CI SUCCESS。45真实模型与原生终局/双审仍在执行，不套44证据。
 
 上游 awesome-design-md 为 MIT 设计文档合集，固定3b605329240ce735b510037cca322f1831fdd7f8，84份参考完整安装到本机同名适配skill，不冒称官方已提供SKILL.md。源码增加共享theme、永久设计规范和来源/许可证；统一浅深/系统、画布、聊天、助手设置与历史、检查器、文件夹/模板、弹窗、活动、终端与旧页面。保持用户Sim交互方向、真实状态、权限与模型设置。
 
@@ -22,6 +22,12 @@
 
 Claude统一管理新增核验：本机CLI2.1.303；桌面普通Chat与Code分开，Code索引ID和原生CLI ID不混用。实际Claude-3p索引3条均可经现有DevFlower原生解析器映射到对应CLI记录；仅记录数量/字段名与匹配结果，未复制历史/认证，未发起模型调用。83项Claude受管恢复/会话中心/存储回归全部0；其中恢复调用是合成CLI测试，不冒称真实桌面双向接管。官方桌面迁移有平台/登录约束，当前Linux+中转站组合尚无真实迁移验收；范围与边界已补用户指南。原始安全摘要在B/claude-desktop-session-inspection-20261028，不包含私有对话正文。
 
+source44六个真实Codex图21调用全部按合同通过（包含10调用5次拒绝达到上限FAILED）。AI图片复杂图首个驱动因保留历史存在同名草稿而选择器严格拒绝，原run未创建；修测试代码为唯一名称并核对提交draft ID和完整图后，真实7调用在2轮上限失败：独立Agent发现AI提案可省略带合同旧节点，且提供的4源文件不足以确认事务tx。原失败保留，不要求模型改判。
+
+Root在44真实plan_graph独立复现省略合同（0模型）；原原生实施者在固定旧监督器下实际修改configuration_assistant.py和test_assistant_preserved_contracts.py，原14纯测试0/IMPLEMENTED/退出0。新实现拒绝隐式省略带合同节点、含合同后代的循环和类型变更绕过，保留同ID同kind深拷贝、无合同删除及task_context。旧同名新ID测试保留原两个empty断言，只修fixture使旧guard继续存在。Root165相关/API测试0，独立辅助原14+6共20全0，分别署名。45将提供真实workbench_store.py给同源复查，不降低事务判据，未闭实际闭环/最终审核/Gate不冒称K通过。
+
+外部发布草案原v1/v2/v3独立NEEDS_CORRECTION及全部反例保留。v4双文件已完成作者44/独立46纯临时fixture，限定EXTERNAL_DRAFT_PRECHECK_PASS：固定argv/配置绑定、完整活动记录、持久启动nonce/进程所有权、READY身份与失败不重放；没有执行真实部署、修改Stable或发批准。正式计划/TrustedRelease/实际切换仍需最终关口。
+
 ## 3. 决策记录
 
 正式完整双审0/2，每轮2个独立原生Codex；基础设施恢复2/2已用不复位。旧Task15 R1–R4、R4 NEEDS_CORRECTION与Gate BLOCKED不改写。正式首审前按用户新增设计要求追加合同，当前SHA256 8032befda2fe2856ecdb02910c0d0449dc31b7df44baa618c520b2e74540d837；旧cedcf84f及更早合同原件保留。当前Controller不得自批准；用固定旧监督器与真实原生会话。
@@ -30,9 +36,9 @@ Claude统一管理新增核验：本机CLI2.1.303；桌面普通Chat与Code分�
 
 ## 4. 结论与边界
 
-界面定向预检通过，用户本人审美验收未代签。当前本地完整回归与三CI已通过；真实六图/复杂AI图、原生双端与合同K、最终双硬ACCEPT和固定旧Gate仍需同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
+界面定向预检通过，用户本人审美验收未代签。当前45本地完整回归与三CI已通过；真实六图/复杂AI图、原生双端与合同K、最终双硬ACCEPT和固定旧Gate仍需同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
 
-已验证Development入口：python3 /home/workspace/DevFlower/.local/open-guided-development.py，当前source44/ddd040d，独立预览不是Stable；原33/42服务、入口备份与版本保留。使用指南project/USER_GUIDE.md。API设置私有文件不入库。
+已验证Development入口：python3 /home/workspace/DevFlower/.local/open-guided-development.py，当前source45/4eff185，独立预览不是Stable；原33/42服务、入口备份与版本保留。使用指南project/USER_GUIDE.md。API设置私有文件不入库。
 
 ## 5. 过程记录
 
