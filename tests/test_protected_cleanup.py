@@ -37,6 +37,30 @@ class ProtectedCleanupTests(unittest.TestCase):
                               (link, lambda b,r:(r/'link').rename(r/'moved'))):
             with self.subTest(mutate=mutate): self.scenario(setup, mutate, True)
 
+    def test_incomplete_first_scan_cannot_reset_root_or_shared_anchor(self):
+        for replace_root in (True, False):
+            with self.subTest(root=replace_root), tempfile.TemporaryDirectory() as folder:
+                base = Path(folder); root = base/'root'; root.mkdir()
+                (root/'vanishing').write_text('ordinary state')
+                (root/'a').write_text('protected'); os.link(root/'a', root/'b')
+                real = os.fwalk; calls = 0
+                def walk(*args, **kwargs):
+                    nonlocal calls
+                    calls += 1
+                    for row in real(*args, **kwargs):
+                        yield row
+                        if calls == 1:
+                            if replace_root:
+                                root.rename(base/'outside'); root.mkdir()
+                            else:
+                                (root/'b').unlink(); os.link(root/'a', root/'b')
+                            raise FileNotFoundError('incomplete first scan')
+                before = len(os.listdir('/proc/self/fd'))
+                with patch.object(guard.os, 'fwalk', walk), self.assertRaises(Blocked):
+                    guard.check_protected_hardlinks([str(root)])
+                self.assertEqual(calls, 1, 'Initial anchors must never be silently reset')
+                self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+
     def test_replacement_and_escape_are_refused(self):
         def directory(b, r): (r/'d').mkdir()
         def link(b, r): (r/'link').symlink_to('first')
