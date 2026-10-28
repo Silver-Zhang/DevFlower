@@ -156,13 +156,16 @@ class LocalCodex:
             with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),wait,30),cancelled) as probe:
                 config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
         provider_args=provider_overrides(config)
-        if b.get('no_tools'):
-            require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,no_tools=True,ordinary_profile=ordinary)
-        else:
-            require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,ordinary_profile=ordinary)
-        read_only=b['role']!='implementer' or bool(b.get('admission_probe'))
-        capability=require_native_write_capability if ordinary else require_sandbox_capability
-        capability(b['executable'],artifacts,not read_only,timeout=remaining(),cancelled=cancelled)
+        # Probe fixtures are created under protected storage. Serialize their
+        # complete lifetime with metadata preflights, never the real request.
+        with metadata_guard(gate,min(remaining(),30),cancelled) if gate else nullcontext():
+            if b.get('no_tools'):
+                require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,no_tools=True,ordinary_profile=ordinary)
+            else:
+                require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,ordinary_profile=ordinary)
+            read_only=b['role']!='implementer' or bool(b.get('admission_probe'))
+            capability=require_native_write_capability if ordinary else require_sandbox_capability
+            capability(b['executable'],artifacts,not read_only,timeout=remaining(),cancelled=cancelled)
         if direct_environment_identity(b)!=environment:raise Blocked('原生模型配置在预检期间变化；未发送请求')
         if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
         if ordinary:

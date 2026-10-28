@@ -28,8 +28,10 @@ def native_workspace_hash(rt, view):
     """Hash only this partial view; fail closed on aliases and source races."""
     from orchestration.common import canonical, included, workspace_metadata
     from .native_codex_exec import check_protected_hardlinks,protected_paths
+    from .native_codex_rpc import metadata_guard
     if view!=native_workspace_view(rt,view['root']):raise Blocked('工作区保护范围已变化，请重新准备。')
-    check_protected_hardlinks(protected_paths(rt,{}))
+    with metadata_guard(rt.storage):
+        check_protected_hardlinks(protected_paths(rt,{}))
     root=Path(view['root']);excluded=list(view['excluded'])
     if workspace_metadata(root):excluded.append('.devflower')
     entries=[]
