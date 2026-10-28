@@ -28,9 +28,9 @@ class LocalCodex:
 
     def start(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
         version=self.b.get('direct_environment_version',1)
-        if type(version) is not int or version not in (1,2):
+        if type(version) is not int or version not in (1,2,3):
             raise Blocked('不支持的原生环境指纹版本')
-        if self.b.get('direct_environment_version')==2 and self.b.get('native_interaction')!='ordinary':
+        if version in (2,3) and self.b.get('native_interaction')!='ordinary':
             raise Blocked('此原生环境指纹仅适用于普通直接操作；未发送任务')
         if self.b.get('native_interaction')=='ordinary':
             if self.b.get('require_atomic_resume') and (session or self.b.get('session_id')):
@@ -130,7 +130,7 @@ class LocalCodex:
         import uuid
         b=self.b;cwd=str(cwd);artifacts=Path(artifacts)
         sid=session or b.get('session_id');ordinary=b.get('native_interaction')=='ordinary'
-        if b.get('direct_environment_version')==2 and not ordinary:
+        if b.get('direct_environment_version') in (2,3) and not ordinary:
             raise Blocked('此原生环境指纹仅适用于普通直接操作；未发送任务')
         if b.get('expected_native_turn_id') and not (ordinary and sid):raise Blocked('新会话不能带旧回合身份；请刷新')
         if b.get('admission_probe') or b.get('no_tools') and not ordinary:

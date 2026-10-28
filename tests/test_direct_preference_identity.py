@@ -72,7 +72,7 @@ class DirectPreferenceIdentityTests(unittest.TestCase):
     self.config.write_bytes(RAW)
     with self.assertRaises(Blocked):self.transport(during=self.mutate_preferences,b=b)
  def test_unsafe_binding_and_bad_version_rejected(self):
-  for change in (dict(direct_environment_version=3),dict(direct_environment_version=True),dict(provider='claude'),dict(provider='copilot'),dict(execution_backend='isolated'),dict(native_interaction='legacy'),dict(model=''),dict(model='unknown'),dict(effort=' '),dict(direct_environment_scope='other'),dict(config_root=str(self.root/'other'))):
+  for change in (dict(direct_environment_version=4),dict(direct_environment_version=True),dict(provider='claude'),dict(provider='copilot'),dict(execution_backend='isolated'),dict(native_interaction='legacy'),dict(model=''),dict(model='unknown'),dict(effort=' '),dict(direct_environment_scope='other'),dict(config_root=str(self.root/'other'))):
    with self.subTest(change=change),self.assertRaises((Blocked,ValueError)):direct_environment_identity(dict(self.b,**change))
   with self.assertRaises(Blocked):self.transport(b=dict(self.b,native_interaction=None))
  def test_invalid_config_rejected(self):
@@ -121,11 +121,11 @@ class DirectPreferenceIdentityTests(unittest.TestCase):
   native={k:v for k,v in self.b.items() if k not in ('direct_environment_version','direct_environment_scope','direct_environment_sha256','native_interaction')}
   node=dict(profile='p',model='explicit-model',effort='high',mode='Ask',direct_environment_version=999)
   with patch('studio.model_registration.ModelRegistration.choices',return_value={}),patch('studio.native_local.bind',return_value=native),patch('studio.agent_extensions.AgentExtensions.bind'):
-   new=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True)['binding']
+   new=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True,direct_environment_version=2)['binding']
    old=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True,direct_environment_version=1)['binding']
    self.assertEqual(new['direct_environment_version'],2);self.assertNotIn('direct_environment_version',old)
    new_pin=new['direct_environment_sha256'];old_pin=old['direct_environment_sha256'];self.mutate_preferences()
-   new_again=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True)['binding']
+   new_again=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True,direct_environment_version=2)['binding']
    old_again=WorkbenchRuntime.node_binding(rt,'w',node,admission=False,direct=True,direct_environment_version=1)['binding']
    self.assertEqual(new_again['direct_environment_sha256'],new_pin)
    self.assertNotEqual(old_again['direct_environment_sha256'],old_pin)

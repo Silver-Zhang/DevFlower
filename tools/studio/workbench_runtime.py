@@ -287,7 +287,7 @@ class WorkbenchRuntime(SessionRuntime):
             return native_workspace_hash(self,view)
         return workspace_hash(path)
 
-    def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=2):
+    def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=3):
         project = self.session_center.workspace(workspace)
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
@@ -369,10 +369,10 @@ class WorkbenchRuntime(SessionRuntime):
             # This is a fixed runtime choice, never a field accepted from the
             # graph, browser, or Agent. Legacy terminal permits can request v1.
             binding.pop('direct_environment_version',None);binding.pop('direct_environment_scope',None)
-            if binding.get('execution_backend')=='native-local' and binding.get('provider')=='codex' and direct_environment_version==2:
-                binding.update(direct_environment_version=2,direct_environment_scope='native-codex-ordinary')
-            elif type(direct_environment_version) is not int or direct_environment_version not in (1,2):
+            if type(direct_environment_version) is not int or direct_environment_version not in (1,2,3):
                 raise Blocked('不支持的原生环境指纹版本')
+            if binding.get('execution_backend')=='native-local' and binding.get('provider')=='codex' and direct_environment_version in (2,3):
+                binding.update(direct_environment_version=direct_environment_version,direct_environment_scope='native-codex-ordinary')
             binding['direct_environment_sha256']=direct_environment_identity(binding)
         if admission:
             from .model_admission import ModelAdmission

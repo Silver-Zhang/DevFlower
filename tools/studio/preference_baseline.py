@@ -3,10 +3,10 @@
 The baseline is kept in memory and passed to owned workers via an anonymous
 file descriptor, never persisted or substituted for the operator's pin.
 """
-import os,stat,tomllib
+import datetime,os,stat,tomllib
 from contextlib import contextmanager
 from pathlib import Path
-from orchestration.common import digest
+from orchestration.common import canonical,digest
 from .session_sources import opened
 
 ENV='DEVFLOWER_PINNED_CONFIG_FD'
@@ -38,12 +38,36 @@ def original(operator):
     if len(raw)>LIMIT or digest(raw)!=pin:return None
     try:parsed=tomllib.loads(raw.decode('utf-8'))
     except (ValueError,UnicodeDecodeError):return None
-    return dict(path=path,pin=pin,raw=raw,security=security_fields(parsed))
+    try:security=security_fields(parsed,desktop_detail=True)
+    except ValueError:return None
+    return dict(path=path,pin=pin,raw=raw,security=security)
 
-def security_fields(parsed):
+def security_fields(parsed, *, desktop_detail=False):
     value=dict(parsed)
-    value.pop('model',None);value.pop('model_reasoning_effort',None)
+    for key in ('model','model_reasoning_effort'):
+        if key in value and (not isinstance(value[key],str) or not value[key].strip()):raise ValueError('invalid preference')
+        value.pop(key,None)
+    if desktop_detail and 'desktop' in value:
+        desktop=value['desktop']
+        if not isinstance(desktop,dict):raise ValueError('invalid desktop table')
+        desktop=dict(desktop)
+        if 'conversationDetailMode' in desktop:
+            if desktop['conversationDetailMode'] not in ('STEPS_PROSE','STEPS_COMMANDS','STEPS_EXECUTION'):
+                raise ValueError('invalid conversation detail mode')
+            desktop.pop('conversationDetailMode')
+        if desktop:value['desktop']=desktop
+        else:value.pop('desktop')
     return value
+
+def security_identity(value):
+    # Preserve TOML types: Python considers True equal to 1 and 1 equal to 1.0.
+    def typed(item):
+        if isinstance(item,dict):return ['table',[[k,typed(v)] for k,v in sorted(item.items())]]
+        if isinstance(item,list):return ['array',[typed(v) for v in item]]
+        if isinstance(item,(datetime.datetime,datetime.date,datetime.time)):return [type(item).__name__,item.isoformat()]
+        if isinstance(item,float):return ['float',item.hex()]
+        return [type(item).__name__,item]
+    return digest(canonical(typed(value)))
 
 def preference_only(baseline,path):
     if not baseline or path!=baseline['path']:return False
@@ -51,9 +75,8 @@ def preference_only(baseline,path):
         with opened(path) as fd:raw=os.read(fd,LIMIT+1)
         if len(raw)>LIMIT:return False
         parsed=tomllib.loads(raw.decode('utf-8'))
-        if any(k in parsed and (not isinstance(parsed[k],str) or not parsed[k]) for k in ('model','model_reasoning_effort')):return False
-        return security_fields(parsed)==baseline['security']
-    except (OSError,ValueError,UnicodeDecodeError):return False
+        return security_identity(security_fields(parsed,desktop_detail=True))==security_identity(baseline['security'])
+    except (OSError,ValueError,UnicodeDecodeError,RecursionError,TypeError):return False
 
 @contextmanager
 def worker_baseline(runtime,env):

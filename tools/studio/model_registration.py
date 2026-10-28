@@ -5,7 +5,6 @@ import os
 from functools import lru_cache
 import time
 import tomllib
-import datetime
 from orchestration.common import canonical, digest, Blocked
 from .graph import Invalid
 from .server import Conflict
@@ -20,7 +19,7 @@ def _executable_hash(path, device, inode, size, mtime, ctime):
     return value.hexdigest()
 
 
-def profile_identity(profile, *, _codex_preferences=False):
+def profile_identity(profile, *, _codex_preferences=False, _desktop_detail=False):
     files = []
     for source, target in profile.get('readonly_files', []):
         with opened(source) as fd:
@@ -46,19 +45,9 @@ def profile_identity(profile, *, _codex_preferences=False):
             if _codex_preferences and name == 'config.toml':
                 try:
                     parsed=tomllib.loads(raw.decode('utf-8'))
-                    for key in ('model','model_reasoning_effort'):
-                        if key in parsed and (not isinstance(parsed[key],str) or not parsed[key].strip()):
-                            raise ValueError('invalid preference')
-                        parsed.pop(key,None)
-                    # Type-tag every value: TOML tables cannot collide with a
-                    # synthetic datetime/float marker.
-                    def typed(value):
-                        if isinstance(value,dict):return ['table',[[k,typed(v)] for k,v in sorted(value.items())]]
-                        if isinstance(value,list):return ['array',[typed(v) for v in value]]
-                        if isinstance(value,(datetime.datetime,datetime.date,datetime.time)):return [type(value).__name__,value.isoformat()]
-                        if isinstance(value,float):return ['float',value.hex()]
-                        return [type(value).__name__,value]
-                    config_hash=digest(canonical(typed(parsed)))
+                    from .preference_baseline import security_fields,security_identity
+                    parsed=security_fields(parsed,desktop_detail=_desktop_detail)
+                    config_hash=security_identity(parsed)
                 except (ValueError,UnicodeDecodeError,RecursionError,TypeError):
                     raise Blocked('本机 Codex 配置格式或默认偏好无效') from None
                 files.append([str(path),name,config_hash])
@@ -83,7 +72,7 @@ def profile_identity(profile, *, _codex_preferences=False):
 def direct_environment_identity(binding):
     """Legacy direct pins remain raw; v2 is issued only for ordinary Codex."""
     version=binding.get('direct_environment_version',1)
-    if type(version) is not int or version not in (1,2):raise Blocked('不支持的原生环境指纹版本')
+    if type(version) is not int or version not in (1,2,3):raise Blocked('不支持的原生环境指纹版本')
     if version==1:return profile_identity(binding)
     from .session_sources import clean_path
     if (binding.get('provider')!='codex' or binding.get('execution_backend')!='native-local' or
@@ -95,6 +84,8 @@ def direct_environment_identity(binding):
     home=clean_path(binding.get('home'));root=clean_path(binding.get('config_root'))
     if home!=binding['home'] or root!=binding['config_root'] or root!=str(Path(home)/'.codex'):
         raise Blocked('本机 Codex 配置路径与 HOME 不匹配')
+    if version==3:
+        return digest(canonical(['native-codex-ordinary-environment-v3',profile_identity(binding,_codex_preferences=True,_desktop_detail=True)]))
     return profile_identity(binding,_codex_preferences=True)
 
 

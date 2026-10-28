@@ -91,7 +91,9 @@ class PreferenceDriftTests(unittest.TestCase):
   graph=examples(self.rt.operator['profiles'])[0];p=self.rt.operator['profiles']['default-codex']
   for n in graph['nodes']:
    if n['kind']=='agent':n.update(profile='default-codex',provider='codex',model=p['model'],effort=p['effort'])
-  permit=self.rt.prepare_flow(dict(workspace=self.base.project['id'],graph=graph,task='synthetic',interaction='click'))
+  original=self.rt.node_binding
+  with patch.object(self.rt,'node_binding',side_effect=lambda *a,**kw:original(*a,**kw,direct_environment_version=2)):
+   permit=self.rt.prepare_flow(dict(workspace=self.base.project['id'],graph=graph,task='synthetic',interaction='click'))
   self.config.write_text('model="two"\nmodel_reasoning_effort="medium"\n[permissions]\ndefault="read"\n')
   with patch.object(self.rt,'spawn') as spawn:result=self.rt.launch_flow(permit['id'],permit['sha256'],{'action':'start'})
   self.assertEqual(spawn.call_count,1)
@@ -105,3 +107,16 @@ class PreferenceDriftTests(unittest.TestCase):
     self.config.write_text('model="two"\n[permissions]\ndefault="read"\n'+suffix)
     self.assertTrue(self.get()['configuration_warning'])
     with self.assertRaises(Blocked):self.rt.check_operator()
+ def test_new_v3_snapshot_accepts_bounded_desktop_detail(self):
+  from studio.workbench_examples import examples
+  from unittest.mock import patch
+  graph=examples(self.rt.operator['profiles'])[0];p=self.rt.operator['profiles']['default-codex']
+  for n in graph['nodes']:
+   if n['kind']=='agent':n.update(profile='default-codex',provider='codex',model=p['model'],effort=p['effort'])
+  permit=self.rt.prepare_flow(dict(workspace=self.base.project['id'],graph=graph,task='synthetic',interaction='click'))
+  self.config.write_text('model="one"\nmodel_reasoning_effort="high"\n[permissions]\ndefault="read"\n[desktop]\nconversationDetailMode="STEPS_PROSE"\n')
+  with patch.object(self.rt,'spawn') as spawn:result=self.rt.launch_flow(permit['id'],permit['sha256'],{'action':'start'})
+  self.assertEqual(spawn.call_count,1)
+  for selected in result['run']['bindings'].values():
+   self.assertEqual(selected['binding']['direct_environment_version'],3)
+   self.assertEqual((selected['binding']['model'],selected['binding']['effort']),(p['model'],p['effort']))
