@@ -5,6 +5,19 @@ from test_workbench_runtime import fixture
 from studio.workbench_examples import examples
 from studio.workflow_inspection import inspect_workflow
 
+class BoundedInspectionTests(unittest.TestCase):
+ def setUp(self):
+  from types import SimpleNamespace
+  self.rt=SimpleNamespace(operator={'profiles':{}},policy={})
+ def test_bounded_list_counts_every_finding_and_invalid_input(self):
+  def graph(n):return dict(version=3,name='repro',nodes=[dict(id=f'bad{i}',name=f'bad{i}',kind='agent') for i in range(n)],edges=[])
+  for n,total,errors,warnings,omitted in [(1,9,8,1,0),(36,255,253,2,0),(64,451,449,2,195)]:
+   result=inspect_workflow(self.rt,graph(n),'task')
+   self.assertEqual((result['total'],result['error_count'],result['warning_count'],result['omitted_count'],result['truncated']),(total,errors,warnings,omitted,omitted>0))
+   self.assertEqual(len(result['issues']),min(total,256))
+  invalid=inspect_workflow(self.rt,None,'task')
+  self.assertEqual((invalid['total'],invalid['error_count'],invalid['warning_count'],invalid['omitted_count'],invalid['truncated']),(1,1,0,0,False))
+
 class WorkflowInspectionTests(unittest.TestCase):
  def setUp(self):
   self.base,self.rt=fixture(self);self.w=self.base.project['id']
@@ -17,6 +30,17 @@ class WorkflowInspectionTests(unittest.TestCase):
   with patch('studio.workbench_runtime.WorkbenchRuntime.node_binding',side_effect=AssertionError('must not invoke executor')):
    result=inspect_workflow(self.rt,graph,'')
   issues=result['issues'];self.assertTrue(any(i.get('node')==loop['id']+'/'+agent['id'] for i in issues));self.assertTrue(any(i.get('edge')=='broken' for i in issues));self.assertTrue(any(i['field']=='task' for i in issues));self.assertTrue(all(i['severity'] in ('error','warning') for i in issues))
+ def test_http_reports_full_counts_for_bounded_list(self):
+  import json,threading
+  from urllib.request import Request,urlopen
+  from studio.workbench_server import create_server
+  graph=dict(version=3,name='repro',nodes=[dict(id=f'bad{i}',name=f'bad{i}',kind='agent') for i in range(64)],edges=[])
+  server,token=create_server(self.rt);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+  try:
+   request=Request('http://127.0.0.1:'+str(server.server_port)+'/api/workflow/check',data=json.dumps(dict(workspace=self.w,graph=graph,task='task')).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+   with urlopen(request) as response:result=json.load(response)
+   self.assertEqual((len(result['issues']),result['total'],result['error_count'],result['warning_count'],result['omitted_count'],result['truncated']),(256,451,449,2,195,True))
+  finally:server.shutdown();server.server_close();thread.join()
  def test_good_graph_never_claims_execution_success(self):
   graph=examples(self.rt.operator['profiles'])[0]
   result=inspect_workflow(self.rt,graph,'synthetic task')

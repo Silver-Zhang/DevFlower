@@ -248,6 +248,7 @@ class InspectionHandoffTests(unittest.TestCase):
         result=self.run_turn(data);self.assertEqual(result['turn']['state'],'COMPLETED')
         received=SyntheticBackend.calls[-1]['conversation'][-1]['inspection'];self.assertEqual(received['issues'],checked['issues']);self.assertEqual(received['workspace'],self.w)
         self.assertIn('graph_sha256',received);self.assertIn('task_sha256',received)
+        for key in ('total','error_count','warning_count','omitted_count','truncated'):self.assertEqual(received[key],checked[key])
         self.assertEqual(SyntheticBackend.calls[-1]['current_graph']['edges'][0]['id'],edge['id'])
         bad=self.data(graph=graph,intent='chat',inspection=dict(attachment,workspace='different'))
         with self.assertRaises(Exception):self.ai.start(bad)
@@ -255,6 +256,17 @@ class InspectionHandoffTests(unittest.TestCase):
         with self.assertRaises(Exception):self.ai.start(bad)
         changed=copy.deepcopy(graph);changed['name']='another';bad=self.data(graph=changed,intent='chat',inspection=attachment)
         with self.assertRaises(Exception):self.ai.start(bad)
+
+    def test_truncated_inspection_counts_reach_assistant(self):
+        from studio.workflow_inspection import inspect_workflow
+        graph=dict(version=3,name='repro',nodes=[dict(id=f'bad{i}',name=f'bad{i}',kind='agent') for i in range(64)],edges=[])
+        task='diagnose';checked=inspect_workflow(self.rt,graph,task,workspace_path=self.base.project['path'],workspace_id=self.w)
+        attachment=dict(workspace=self.w,graph=graph,task=task,issues=checked['issues'])
+        result=self.run_turn(self.data(graph=graph,intent='chat',inspection=attachment,message='请分批修复并重查'))
+        self.assertEqual(result['turn']['state'],'COMPLETED')
+        received=SyntheticBackend.calls[-1]['conversation'][-1]['inspection']
+        self.assertEqual((received['total'],received['error_count'],received['warning_count'],received['omitted_count'],received['truncated']),(451,449,2,195,True))
+        self.assertEqual(len(received['issues']),256)
 
     def test_invalid_checked_graph_can_be_explained_and_proposal_uses_cas(self):
         from studio.workflow_inspection import inspect_workflow

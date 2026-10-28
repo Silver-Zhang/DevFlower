@@ -14,10 +14,12 @@ export function WorkflowGuide({open,onClose,onFolder,onTemplates,onNodes,onTask,
 export function WorkflowIssues({result,stale,onLocate,onAssistant,onClose}) {
  const [expanded,setExpanded]=useState(false);
  if(!result)return null;
- const errors=result.issues.filter(i=>i.severity==='error').length;
- return <section className="workflow-issues" aria-label="工作流检查结果" role="region"><header><strong><ListChecks size={15}/>检查结果 · {errors} 个错误 · {result.issues.length-errors} 条提醒</strong><button onClick={onClose} aria-label="关闭检查结果"><X size={15}/></button></header>
+ const errors=result.error_count ?? result.issues.filter(i=>i.severity==='error').length;
+ const warnings=result.warning_count ?? (result.issues.length-errors);
+ return <section className="workflow-issues" aria-label="工作流检查结果" role="region"><header><strong><ListChecks size={15}/>检查结果 · {errors} 个错误 · {warnings} 条提醒</strong><button onClick={onClose} aria-label="关闭检查结果"><X size={15}/></button></header>
+ {result.truncated&&<p role="status">共发现 {result.total} 条，显示 {result.issues.length} 条，遗漏 {result.omitted_count} 条。请分批修复已列问题后重新检查。</p>}
  {stale&&<p role="status">草稿或任务已变化，请重新检查。</p>}
  <ul>{(expanded?result.issues:result.issues.slice(0,1)).map((issue,index)=><li key={index} className={issue.severity}><span>{issue.severity==='error'?'错误':'提醒'}</span><button onClick={()=>onLocate(issue)}>{issue.message}</button></li>)}</ul>
- {result.issues.length>1&&<button aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'收起问题':'查看全部问题'}</button>}
+ {result.issues.length>1&&<button aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'收起问题':result.truncated?'查看已列问题':'查看全部问题'}</button>}
  <button disabled={Boolean(stale)} onClick={onAssistant}><Sparkles size={14}/>发给 DevFlower 助手</button></section>;
 }

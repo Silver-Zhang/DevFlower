@@ -208,7 +208,7 @@ class CanvasAssistant:
             from .workflow_inspection import inspect_workflow
             fresh=inspect_workflow(self.rt,data['graph'],supplied['task'],workspace_path=project['path'],workspace_id=data['workspace'])
             if supplied['issues']!=fresh['issues']:raise Conflict('检查结果已变化，请重新检查')
-            inspection=self._redact(dict(workspace=data['workspace'],graph_sha256=digest(canonical(data['graph'])),task_sha256=digest(supplied['task'].encode()),issues=fresh['issues']))
+            inspection=self._redact(dict(workspace=data['workspace'],graph_sha256=digest(canonical(data['graph'])),task_sha256=digest(supplied['task'].encode()),issues=fresh['issues'], total=fresh['total'], error_count=fresh['error_count'], warning_count=fresh['warning_count'], omitted_count=fresh['omitted_count'], truncated=fresh['truncated']))
         intent=data.get('intent','auto')
         if intent not in ('auto','chat','workflow'):raise Invalid('助手工作方式无效')
         if (not isinstance(data['request_id'],str) or len(data['request_id'])!=32 or any(c not in '0123456789abcdef' for c in data['request_id']) or
