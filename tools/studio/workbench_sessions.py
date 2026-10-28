@@ -46,16 +46,25 @@ class WorkbenchSessions:
         chat = self.db.get('node-session', item['chat_key']); binding = chat['binding']
         secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
         snapshot = self.rt.snapshot(run)
-        state = item['state']
-        if snapshot['state'] == 'RECOVERY_REQUIRED' or state == 'RUNNING' and not group_alive(item.get('process')):
+        state = item['state'];alive=bool(group_alive(item.get('process')))
+        if snapshot['state'] == 'RECOVERY_REQUIRED' or state == 'RUNNING' and not alive:
             state = 'UNKNOWN'
         value = dict(workspace=workspace, run=run, activation=activation, node=item['node'],
             iteration_path=item.get('iteration_path', []), state=state,
-            process_alive=group_alive(item.get('process')), task=safe_text(redact(flow['task'],secret)),
+            process_alive=alive, task=safe_text(redact(flow['task'],secret)),
             connection_check=bool(item.get('connection_check')),
             request_sections=redact(item.get('request_sections', []), secret),
             actual_request_recorded=bool(item.get('actual_request')),
             messages=[],activity=[],summaries=[],session=None,history_status='waiting')
+        from .tool_activity import journal_tools,merge_activity
+        sid=binding.get('session_id')
+        from .session_sources import UUID
+        scoped=(item.get('id')==activation==digest(canonical([run,item['node'],item.get('iteration_path',[])])) and
+                chat.get('id')==item['chat_key']==digest(canonical([run,item['node']])) and
+                chat.get('run')==run and chat.get('node')==item['node'] and chat.get('workspace')==workspace and
+                binding.get('project',workspace)==workspace and isinstance(sid,str) and UUID.fullmatch(sid) and item.get('observed_session')==sid)
+        journal=journal_tools(item.get('native_tool_activity',[]),secret,state) if scoped else []
+        value['activity']=journal
         try:
             if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not getattr(self.rt,'readonly_configuration_warning',lambda:None)():
                 from .native_local import codex_history
@@ -64,20 +73,20 @@ class WorkbenchSessions:
                 session=self.activation_session(workspace,run,activation)
                 messages=codex_history(dict(binding,_metadata_guard=str(self.rt.storage)),chat['cwd'],binding['session_id'],turn_id=turn)
                 value.update(session=session,history_status='available',messages=redact(messages,secret))
-                return value
-            offset=item.get('native_history_offset');end=item.get('native_history_end')
-            if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
-                raise Invalid('此历史运行没有记录可核验的本轮原生范围')
-            session = self.activation_session(workspace,run,activation)
-            _,native=self.rt.session_center.resolve(workspace,session['handle'])
-            if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
-                raise Blocked('原生历史路径与本轮绑定不一致')
-            history = self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
-            current=self.db.get('activation',activation)
-            if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
-                raise Invalid('本轮记录正在提交，下一次读取核验')
-            value.update(session=session,history_status='available',
-                **{k:history.get(k,[]) for k in ('messages','activity','summaries')})
+            else:
+                offset=item.get('native_history_offset');end=item.get('native_history_end')
+                if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
+                    raise Invalid('此历史运行没有记录可核验的本轮原生范围')
+                session = self.activation_session(workspace,run,activation)
+                _,native=self.rt.session_center.resolve(workspace,session['handle'])
+                if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
+                    raise Blocked('原生历史路径与本轮绑定不一致')
+                history = self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
+                current=self.db.get('activation',activation)
+                if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
+                    raise Invalid('本轮记录正在提交，下一次读取核验')
+                value.update(session=session,history_status='available',messages=history.get('messages',[]),
+                             activity=merge_activity(history.get('activity',[]),journal),summaries=history.get('summaries',[]))
         except (Invalid,Blocked,ValueError,OSError):
             # Growing/unflushed native records may not yet have a stable readable
             # snapshot. Absence is not evidence of model thinking or success.
@@ -638,9 +647,10 @@ class WorkbenchSessions:
             from .agent_extensions import capabilities as extension_capabilities
             extensions=extension_capabilities(profile)
             local=bool(self.rt.operator.get('native_local',{}).get(profile['provider']))
+            if local:extensions=dict(extensions,skills=extensions['skills'] if profile['provider']=='codex' else False,subagents=False)
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
                 execution_backend='native-local' if local else 'isolated',
-                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and not local,subagents=extensions['subagents'] and not local,extensions=extensions,
+                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and (not local or profile['provider']=='codex'),subagents=extensions['subagents'] and not local,extensions=extensions,
                 model=profile['model'],effort=profile['effort'],timeout_seconds=profile.get('timeout_seconds',1800),resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
         if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):

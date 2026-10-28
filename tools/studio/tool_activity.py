@@ -91,3 +91,46 @@ def group_tools(events):
     if len(rows)>100:
         rows[-100]['history_truncated']=True
     return rows[-100:]
+
+
+def journal_tools(events,secrets,state):
+    """Project only persisted command events from one already-verified activation."""
+    from orchestration.privacy import redact
+    from .agent_sessions import safe_text
+    latest={}
+    for event in events[-40:] if isinstance(events,list) else []:
+        if not isinstance(event,dict) or event.get('event') not in ('item.started','item.updated','item.completed'):continue
+        key=event.get('id')
+        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,256}',key):continue
+        prior=latest.get(key,{})
+        latest[key]=dict(prior,**{k:v for k,v in event.items() if v not in (None,'') or k in ('event','exit_code')})
+    projected=[]
+    for key,event in latest.items():
+        key=safe_text(redact(key,secrets))
+        command=event.get('command');output=event.get('output')
+        def clean(value,protocol=False):return safe_text(redact(visible_content(value,protocol=protocol),secrets))[:4000] if isinstance(value,str) else ''
+        rows=[]
+        if isinstance(command,str) and command:rows.append(dict(kind='function_call',name='命令',call_id=key,content=clean(command),at=None,source='activation-journal'))
+        if isinstance(output,str) and output or event['event']=='item.completed':rows.append(dict(kind='function_call_output',name='命令结果',call_id=key,content=clean(output,True),at=None,source='activation-journal'))
+        for row in group_tools(rows):
+            row.update(source='activation-journal',activation_state=state,status=clean(event.get('status')),exit_code=event.get('exit_code') if type(event.get('exit_code')) is int else None)
+            for ev in row['events']:ev['source']='activation-journal'
+            projected.append(row)
+    return projected
+
+
+def merge_activity(history,journal):
+    result=[dict(row,source=row.get('source','native-history'),events=[dict(e,source=e.get('source','native-history')) for e in row.get('events',[]) if isinstance(e,dict)]) for row in history if isinstance(row,dict)]
+    seen={row.get('call_id'):row for row in result if row.get('call_id')}
+    for row in journal:
+        prior=seen.get(row.get('call_id'))
+        if prior:
+            prior['source']='native-history+activation-journal'
+            prior['events']=[*prior.get('events',[]),*row.get('events',[])]
+            conflict=any(prior.get(key) is not None and row.get(key) is not None and prior[key]!=row[key] for key in ('arguments','result'))
+            for key in ('arguments','result'):
+                if prior.get(key) is None:prior[key]=row.get(key)
+            if conflict:prior.update(association='conflict',arguments=None,result=None,content='')
+            else:prior['content']='\n'.join(v for v in (prior.get('arguments'),prior.get('result')) if isinstance(v,str))
+        else:result.append(row)
+    return result[-100:]

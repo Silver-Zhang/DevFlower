@@ -43,6 +43,6 @@ Agent 模型从当前账号目录中选择后直接保存本次选择，不再�
 
 `/home/workspace/DevFlower` 是包含仓库、Stable 和运行证据的总目录：可以作为项目记录容器打开，但不能直接让 Agent 操作其中所有内容。开发 DevFlower 时应打开具体源码仓库，例如 `/home/workspace/DevFlower/development/copilot-canvas-assistant`。打开项目只初始化记录，不授予源码执行或写入权限；现有部署许可仍需匹配具体项目，工作台会显示原因。
 
-流程图图片、原生 Skill 和子 Agent：助手输入区点击“图片”上传 PNG/JPEG，识别结果先成为可编辑草稿。旧隔离执行配置中，经能力核验后可在节点“高级 → Skills 与子 Agent”选择只读挂载或 Ask/Plan 只读子任务。本机 native-local 模式的额外 Skill 挂载及子 Agent 边界尚未实现和验证，当前不能选择；这是仍待完成的能力，不是用户放弃该需求。Copilot 暂不提供该扩展，写入任务仍只有一个源码写入者。详见 [工作台操作说明](../WORKBENCH.md#打开任意本机文件夹流程图和原生扩展)。
+流程图图片、Skill 和子 Agent：助手输入区点击“图片”上传 PNG/JPEG，识别结果先成为可编辑草稿。节点“高级 → Skills 与子 Agent”可选择 Skill。本机 Codex 普通执行使用 DevFlower 冻结 Skill 包，提供所选入口及 references/scripts 等资源的只读路径，并在实际请求中注明身份；这不是 CLI 原生安装或注册，且不改变权限。旧隔离配置仍使用其原有只读挂载。本机 native-local 的子 Agent、以及 Claude/Copilot 的本机 Skill 包尚未开放，是仍待完成的能力。详见 [工作台操作说明](../WORKBENCH.md#打开任意本机文件夹流程图和原生扩展)。
 
 Claude 会话中心以原 HOME 中的 CLI 原生 UUID 和工作目录核对会话身份。桌面 Code 的 `cliSessionId` 可用于只读对照对应的 CLI 记录；普通 Chat 使用不同的会话容器。这样的元数据对照不复制或同步记录，也不表示工作台已经接管桌面会话；实际恢复仍须满足身份和占用检查。

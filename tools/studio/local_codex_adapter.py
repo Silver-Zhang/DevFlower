@@ -32,6 +32,21 @@ class LocalCodex:
             raise Blocked('不支持的原生环境指纹版本')
         if version in (2,3) and self.b.get('native_interaction')!='ordinary':
             raise Blocked('此原生环境指纹仅适用于普通直接操作；未发送任务')
+        if self.b.get('skills'):
+            if self.b.get('native_interaction')!='ordinary' or self.b.get('subagents','disabled')!='disabled':
+                raise Blocked('本机 Skill 包仅支持普通执行，子 Agent 尚未开放')
+            if self.b.get('require_atomic_resume') and (session or self.b.get('session_id')):
+                raise Blocked('此请求需要原子历史比较；原生 Codex 不支持，未发送任务')
+            if self.b.get('no_tools') or self.b.get('admission_probe'):
+                raise Blocked('无工具诊断不能使用 Skill 资源包；未发送任务')
+            from .native_skill_pack import native_skill_pack
+            started=time.monotonic()
+            secrets=credentials(self.b['home'],[p for p,_ in self.b.get('readonly_files',[])])
+            with native_skill_pack(self.b,cwd,secrets) as pack:
+                left=min(self.limits['step_timeout_seconds'],self.b.get('timeout_seconds',300))-(time.monotonic()-started)
+                if left<=0:raise Blocked('原生调用达到本次等待预算；未自动重发')
+                result=LocalCodex(self.b,dict(self.limits,step_timeout_seconds=left))._start_new(pack.prompt(prompt),cwd,artifacts,output_schema,store,run,session=session,managed_pack=pack)
+                result['skills']=pack.receipt();return result
         if self.b.get('native_interaction')=='ordinary':
             if self.b.get('require_atomic_resume') and (session or self.b.get('session_id')):
                 raise Blocked('此请求需要原子历史比较；原生 Codex 不支持，未发送任务')
@@ -118,7 +133,7 @@ class LocalCodex:
             process=process,raw_report_sha256=digest(canonical(report)),provider='codex',home=b['home'],cwd=cwd,
             transport={'mode':'native-local'},adapter_version='native-local/1',usage={})
 
-    def _start_new(self,prompt,cwd,artifacts,output_schema,store,run,session=None):
+    def _start_new(self,prompt,cwd,artifacts,output_schema,store,run,session=None,managed_pack=None):
         # A new thread has no earlier turn to race. Existing threads remain on
         # the guarded RPC path: exec cannot atomically compare the prior turn.
         from orchestration.adapters import CLI,native_errors
@@ -135,7 +150,7 @@ class LocalCodex:
         if b.get('expected_native_turn_id') and not (ordinary and sid):raise Blocked('新会话不能带旧回合身份；请刷新')
         if b.get('admission_probe') or b.get('no_tools') and not ordinary:
             raise Blocked('本机 Codex 的无工具模式仍暴露询问工具；该入口尚未验证，未调用模型。')
-        if b.get('skills') or b.get('subagents','disabled')!='disabled':raise Blocked('本机 Codex 尚未验证所选扩展的隔离')
+        if b.get('skills') and managed_pack is None or b.get('subagents','disabled')!='disabled':raise Blocked('本机 Codex 尚未验证所选扩展的隔离')
         if not artifacts.is_dir():raise Blocked('本次原生产物目录不可用')
         timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300));deadline=time.monotonic()+timeout
         cancelled=lambda:bool(store and store.get(run)['data'].get('cancel_requested'))
@@ -174,6 +189,9 @@ class LocalCodex:
                 check_protected_hardlinks(b.get('native_protected',[]))
         remaining()
         argv=exec_args(b,provider_args,schema=output_schema)
+        if managed_pack is not None:
+            managed_pack.verify()
+            argv[-1:-1]=['-c','skills.include_instructions=false','-c','skills.bundled.enabled=false']
         if sid:
             try:
                 if str(uuid.UUID(sid))!=sid:raise ValueError()
@@ -220,7 +238,7 @@ class LocalCodex:
                              output=visible(item.get('aggregated_output'),8000),
                              status=visible(item.get('status'),80),exit_code=code if type(code) is int else None)
                     store.native_tool_event(row)
-        process=None
+        process=None;pack_validation_failed=False
         try:
             process,out,err=execute(argv,cwd,b['home'],timeout=remaining(),cap=self.limits['max_log_bytes'],
                 input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
@@ -237,15 +255,25 @@ class LocalCodex:
                 diagnostic=_stderr_diagnostic(stderr,secrets_found)
                 details='；'.join(x for x in (detail,diagnostic) if x)
                 raise Blocked('原生 Codex 回合未完成（退出码 '+str(process['exit'])+'）；没有自动重发'+((': '+details) if details else ''))
+            if managed_pack is not None:
+                try:managed_pack.verify()
+                except Exception as exc:
+                    pack_validation_failed=True
+                    detail=str(exc).replace('；未发送任务','').replace('未发送任务','')
+                    raise Blocked('原生调用已经发生，Skill 资源核验失败，结果未批准且未重发：'+detail) from None
             result=CLI('codex',b,self.limits).collect(process,out)
             if not observed or result['session_id']!=observed or sid and observed!=sid:raise Blocked('原生回执与会话身份不匹配')
             result['report']=redact(result['report'],secrets_found)
-            if store:store.finish(op,'AGENT_COMPLETED',actual_session=observed,native_turn_id=observed_turn,transport={'mode':'native-exec'})
+            cleanup_warning=managed_pack.cleanup() if managed_pack is not None else None
+            cleanup_info=managed_pack.cleanup_info if managed_pack is not None else None
+            cleanup_result=cleanup_warning or cleanup_info
+            if store:store.finish(op,'AGENT_COMPLETED',actual_session=observed,native_turn_id=observed_turn,transport={'mode':'native-exec'},**({'skill_cleanup':cleanup_result} if cleanup_result else {}))
+            if cleanup_result:result['skill_cleanup']=cleanup_result
             result.update(requested_model=b['model'],requested_effort=b['effort'],native_turn_id=observed_turn,
                 home=b['home'],cwd=cwd,provider='codex',permission_mode='native-read-only' if read_only else 'native-workspace-write',
                 transport={'mode':'native-exec','history':'native-latest-under-cli-lock' if sid else 'new', 'atomic_expected_turn':False},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-exec/1')
             return result
         except BaseException as exc:
-            if store:store.finish(op,'AGENT_FAILED',error_category='native-exec',**({'process':process} if process is not None else {}))
+            if store:store.finish(op,'AGENT_FAILED',error_category='skill-pack-validation' if pack_validation_failed else 'native-exec',**({'native_session':observed,'visible_error':redact(str(exc),secrets_found)} if pack_validation_failed and observed else {}),**({'process':process} if process is not None else {}))
             if isinstance(exc,Exception):raise Blocked(redact(str(exc),secrets_found)) from None
             raise

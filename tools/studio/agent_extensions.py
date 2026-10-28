@@ -112,11 +112,13 @@ class AgentExtensions:
         project=self.rt.session_center.workspace(workspace);p=self.rt.operator['profiles'].get(profile)
         if not p:raise Invalid('请选择已配置的 Agent')
         cap=capabilities(p);rows=[]
-        if self.rt.operator.get('native_local',{}).get(p['provider']):
+        local=bool(self.rt.operator.get('native_local',{}).get(p['provider']))
+        if local and p['provider']!='codex':
             return dict(capabilities=dict(skills=False,subagents=False,
                 reason='本机原生模式沿用原客户端扩展；额外挂载与子 Agent 策略尚未验证'),
                 skills=[],subagent_modes=['disabled'],
                 notice='不会改写本机 Skills 或子 Agent 配置。旧隔离模式的已验证挂载仍保留。')
+        if local:cap=dict(cap,subagents=False)
         if cap['skills'] and not project.get('protected_container'):
             roots=[Path(project['path'])/x for x in ('.agents/skills','.claude/skills','skills')]
             roots += [Path.home()/x for x in ('.agents/skills','.codex/skills','.claude/skills')]
@@ -139,14 +141,19 @@ class AgentExtensions:
                         except (OSError,ValueError,Blocked,Invalid):row=dict(id=key,name=folder.name,available=False,reason='包含不支持的配置、链接或超过预算')
                         rows.append(row)
                 except (OSError,ValueError):continue
-        return dict(capabilities=cap,skills=rows,subagent_modes=['disabled','readonly'] if cap['subagents'] else ['disabled'],notice='子 Agent 仅在 Ask/Plan 强制只读下开放；写入任务保持一个源码写入者。')
+        notice=('DevFlower 冻结 Skill 包提供所选资源的只读入口，不是 CLI 原生注册；本机子 Agent 尚未开放。' if local else '子 Agent 仅在 Ask/Plan 强制只读下开放；写入任务保持一个源码写入者。')
+        return dict(capabilities=cap,skills=rows,subagent_modes=['disabled','readonly'] if cap['subagents'] else ['disabled'],notice=notice)
     def bind(self,workspace,node,binding):
         ids=node.get('skills',[]);policy=node.get('subagents','disabled')
         if not isinstance(ids,list) or len(ids)>6 or any(not isinstance(k,str) for k in ids) or len(set(ids))!=len(ids):raise Invalid('每个节点最多选择六个不同 Skill')
         if policy not in ('disabled','readonly'):raise Invalid('子 Agent 策略无效')
         if not ids and policy=='disabled':
             binding.update(skills=[],skill_ids=[],subagents='disabled');return
+        local=binding.get('execution_backend')=='native-local'
+        if local and (binding.get('provider')!='codex' or policy!='disabled'):
+            raise Blocked('本机模式仅支持 Codex 冻结 Skill 包；子 Agent 尚未开放')
         cap=capabilities(binding)
+        if local:cap=dict(cap,subagents=False)
         if ids and not cap['skills'] or policy!='disabled' and not cap['subagents']:raise Blocked(cap.get('reason') or '原生扩展接口不可用')
         if policy!='disabled' and (node.get('mode','Ask')=='Agent' or binding['role']=='implementer'):raise Blocked('子 Agent 当前只开放只读 Ask/Plan，写入任务必须保持一个源码写入者')
         selected=[]
@@ -171,5 +178,5 @@ class AgentExtensions:
                         import shutil;shutil.rmtree(temporary)
             from orchestration.native_features import verify_skill
             verify_skill(dict(path=str(target),manifest=manifest,sha256=sha))
-            selected.append(dict(id=key,path=str(target),manifest=manifest,sha256=sha))
+            selected.append(dict(id=key,path=str(target),manifest=manifest,sha256=sha,**({'source':source['path']} if local else {})))
         binding.update(skills=selected,skill_ids=ids,subagents=policy)

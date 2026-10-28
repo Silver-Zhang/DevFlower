@@ -188,6 +188,8 @@ class ModelCatalog:
                 unavailable_reason='已登记，执行能力待验证' if registered else '已发现但未获执行授权'))
         try:auth=self.db.get('auth-probe',key)
         except Invalid:auth=dict(logged_in=None,auth_method='unknown',service_verified=False)
+        effort_stale=profile['provider']=='claude' and any(m['selectable_effort_source']=='current profile preference; model support unknown' for m in models)
         return dict(models=models, authentication=auth, source=source, updated_at=at, attempted_at=cached.get('attempted_at') if cached else None,
-                    stale=not fresh, error=error, ttl_seconds=TTL,
+                    stale=not fresh or effort_stale, effort_metadata_stale=effort_stale,
+                    effort_metadata_notice='CLI 强度元数据不可用或已过期，请刷新能力；当前仅保留 Profile 强度。' if effort_stale else None, error=error, ttl_seconds=TTL,
                     discovery_complete=bool(fresh), physical_backend='unknown')

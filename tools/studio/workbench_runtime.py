@@ -306,18 +306,23 @@ class WorkbenchRuntime(SessionRuntime):
         registration=registry.choices(workspace,node['profile']).get(model)
         known = self.policy.get('models', {}).get(profile['provider'], [])
         if registration:known=[*known,dict(id=model,efforts=[registration['effort']])]
+        direct_efforts=None
         if direct:
+            from .model_catalog import selectable_efforts
+            discovered=None
             try: catalog=self.flow.get('model-discovery',node['profile'])
             except Invalid: catalog=None
             if catalog and not catalog.get('error'):
                 from .model_registration import profile_identity
-                from .model_catalog import selectable_efforts
                 if catalog.get('environment_sha256')==profile_identity(profile):
                     discovered=next((row for row in catalog.get('models',[]) if row.get('id')==model),None)
-                    if discovered:
-                        efforts,_=selectable_efforts(self,node['profile'],profile,discovered)
-                        known=[*known,dict(id=model,efforts=efforts)]
-        if not any(v['id'] == model and effort in v.get('efforts', []) for v in known) and (model, effort) != (profile['model'], profile['effort']):
+            registered_ids={entry['id'] for entry in known}|{profile['model']}
+            if discovered or model in registered_ids:
+                efforts,_=selectable_efforts(self,node['profile'],profile,discovered or {})
+                direct_efforts=efforts
+                known=[*known,dict(id=model,efforts=efforts)]
+        if (direct_efforts is not None and effort not in direct_efforts or direct_efforts is None and
+            not any(v['id'] == model and effort in v.get('efforts', []) for v in known) and (model, effort) != (profile['model'], profile['effort'])):
             raise Invalid('模型/强度尚未发现或显式登记，请刷新能力或选择已批准配置')
         handle = node.get('session', 'new');native_sha = None;cwd = project['path']
         if node.get('context_from') and handle!='new':raise Invalid('上下文新建与原生恢复是不同操作，请只选一种')
@@ -362,7 +367,9 @@ class WorkbenchRuntime(SessionRuntime):
             binding.update(model_registration_key=registration['id'],model_registration_sha256=digest(canonical(registration)))
         from .agent_extensions import AgentExtensions
         AgentExtensions(self).bind(workspace,node,binding)
-        if binding.get('execution_backend')=='native-local' and (binding.get('skills') or binding.get('subagents') not in (None,'disabled')):
+        if binding.get('execution_backend')=='native-local' and binding.get('skills') and not direct:
+            raise Blocked('本机 Codex Skill 包仅支持普通直接操作；旧受控任务不自动迁移')
+        if binding.get('execution_backend')=='native-local' and (binding.get('subagents') not in (None,'disabled') or binding.get('skills') and binding.get('provider')!='codex'):
             raise Blocked('本机模式的定制 Skill 挂载/子Agent边界尚未验证；不会假装旧隔离挂载仍然有效')
         if direct:
             from .model_registration import direct_environment_identity

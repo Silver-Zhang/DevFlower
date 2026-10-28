@@ -256,7 +256,7 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                 if not isinstance(skills,list) or len(skills)>6 or any(not isinstance(v,str) or not re.fullmatch(r'[a-f0-9]{64}',v) for v in skills):add('error',f'「{name}」的 Skill 选择身份无效。',node=path,field='skills')
                 elif skills:
                     if workspace_id:
-                        if rt.operator.get('native_local',{}).get(profile.get('provider') if profile else n.get('provider')):
+                        if (profile.get('provider') if profile else n.get('provider'))!='codex' and rt.operator.get('native_local',{}).get(profile.get('provider') if profile else n.get('provider')):
                             add('error',f'「{name}」的本机原生模式尚不支持附加 Skill，请移除选择。',node=path,field='skills')
                         for skill in skills:
                             try:source=rt.flow.get('skill-source',skill)
