@@ -49,3 +49,5 @@ Root在44真实plan_graph独立复现省略合同（0模型）；原原生实施
 - 原始日志/截图/会话/私密配置仅留archives/devflower-guided-stable-20261028及独立test工作区；此分支只同步摘要与使用指南。
 
 - source43云端单个WAL并发夹具首次扫描ERROR保留；独立实际复现缺失workbench.sqlite-journal（原云端未记录路径，不断言唯一时序）。44仅先预建WAL并明确close测试连接，23压力/边界负例0，生产检查和旧assert原样；43前4真实图完成，第5主动撤回CANCELLED，完整K不通过。44等待本地/CI/助手全部绿后才启动新六图，目前执行中。
+
+2026-10-29 source45六图全部完成，调用2/3/1/2/10/3=21，五轮上限按合同FAILED/passTrue。AI图run3738e3ce837a3c5645e8862c7a08d957真实5调用后FAILED(database is locked)，原生审核UUID01a18367-8480-7a92-bc0d-db7258097d4f的Desktop读回turn01a18367-87a5-7ba1-b565-a408bd1faa8c为completed/无native error/accepted=false，CLI process0；原始模型否定和本地metadata错误分别保留。当前缺口包括节点数据合同被QA请求/生成提示扩成Python API完全保持、以及collect成功后的journal metadata锁异常，后者正在独立反例定位；未重放原请求，未更改正式预算/旧裁决。独立最终审核未启动，main/Stable未动。
