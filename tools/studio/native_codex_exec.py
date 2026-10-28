@@ -84,6 +84,11 @@ def protected_paths(runtime,binding):
     if binding.get('config_root'):paths.append(binding['config_root'])
     return sorted({str(Path(p)) for p in paths})
 
+# The canonical native store already contains more than 4,096 directories and
+# links. Keep a bounded scan without excluding a normal installed plugin tree;
+# a lower operating-system descriptor limit still fails closed and releases FDs.
+_PROTECTED_FD_LIMIT=32768
+
 def check_protected_hardlinks(paths):
     """Count names inside deny roots using metadata only, with two bounded scans."""
     if not isinstance(paths,(list,tuple)) or not paths or len(paths)>512:
@@ -102,19 +107,39 @@ def check_protected_hardlinks(paths):
     for path in roots:
         if not any(path.is_relative_to(parent) for parent in unique):unique.append(path)
     deadline=time.monotonic()+30
+    held=[]
     def onerror(exc):raise Blocked('无法核验受保护目录的硬链接：'+str(exc))
-    def snapshot():
-        entries={};groups={};count=0
-        def add(path,s,parent_identity,*,root=False):
+    def identity(s):return (s.st_dev,s.st_ino,s.st_mode)
+    def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_nlink,s.st_ctime_ns)
+    def snapshot(anchor=False):
+        entries={};groups={};seen=set();count=0
+        def add(path,s,parent_identity,dirfd,name,root_path,*,root=False):
             nonlocal count
             count+=1
             if time.monotonic()>deadline or count>200000:
                 raise Blocked('受保护目录检查超过时间或文件数量限制；未启动任务。')
-            key=str(path);mode=s.st_mode
-            # Contents can change normally; link metadata of shared inodes must
-            # remain stable, including an unlink/relink with the same count.
-            if root or stat.S_ISDIR(mode) or stat.S_ISLNK(mode) or s.st_nlink>1:
-                entries[key]=(s.st_dev,s.st_ino,mode,None if stat.S_ISDIR(mode) else s.st_nlink,s.st_ctime_ns if s.st_nlink>1 and not stat.S_ISDIR(mode) else None)
+            key=str(path);mode=s.st_mode;seen.add(key)
+            sensitive=root or stat.S_ISDIR(mode) or stat.S_ISLNK(mode) or s.st_nlink>1
+            if sensitive:
+                target=None;fd=None
+                if anchor:
+                    if len(held)>=_PROTECTED_FD_LIMIT:raise Blocked('受保护目录句柄超过限制；未启动任务。')
+                    try:fd=os.open(name,os.O_PATH|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=dirfd)
+                    except FileNotFoundError:
+                        raise Blocked('受保护目录在固定句柄期间变化；未启动任务。') from None
+                    held.append(fd)
+                    pinned=os.fstat(fd)
+                    if (identity(pinned)!=identity(s) or
+                            not stat.S_ISDIR(mode) and pinned.st_nlink!=s.st_nlink or
+                            not stat.S_ISDIR(mode) and (stat.S_ISLNK(mode) or s.st_nlink>1) and stable(pinned)!=stable(s)):
+                        raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                if stat.S_ISLNK(mode):
+                    target=os.readlink('',dir_fd=fd) if fd is not None else os.readlink(name,dir_fd=dirfd)
+                    after=os.fstat(fd) if fd is not None else os.stat(name,dir_fd=dirfd,follow_symlinks=False)
+                    if stable(after)!=stable(s):raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                entries[key]=(s.st_dev,s.st_ino,mode,None if stat.S_ISDIR(mode) else s.st_nlink,
+                              s.st_ctime_ns if (s.st_nlink>1 or stat.S_ISLNK(mode)) and not stat.S_ISDIR(mode) else None,
+                              target,str(root_path),fd)
             if not stat.S_ISDIR(mode) and s.st_nlink>1:
                 if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):raise Blocked('受保护特殊文件存在硬链接；未启动任务。')
                 group=groups.setdefault((s.st_dev,s.st_ino),{'names':set(),'paths':[]})
@@ -123,12 +148,15 @@ def check_protected_hardlinks(paths):
             try:s=os.lstat(root)
             except FileNotFoundError:entries[str(root)]=None;continue
             if stat.S_ISLNK(s.st_mode):raise Blocked('受保护目录含符号链接，无法确认边界；未启动任务。')
-            parent=os.stat(root.parent,follow_symlinks=False)
-            add(root,s,(parent.st_dev,parent.st_ino),root=True)
+            parentfd=os.open(root.parent,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+            try:
+                parent=os.fstat(parentfd)
+                add(root,s,(parent.st_dev,parent.st_ino),parentfd,root.name,root,root=True)
+            finally:os.close(parentfd)
             if stat.S_ISDIR(s.st_mode):
                 for folder,dirs,files,fd in os.fwalk(root,topdown=True,follow_symlinks=False,onerror=onerror):
                     current=os.fstat(fd);previous=entries.get(str(folder))
-                    if not previous or (current.st_dev,current.st_ino)!=(previous[0],previous[1]):raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                    if not previous or identity(current)!=previous[:3]:raise Blocked('受保护目录在检查期间变化；未启动任务。')
                     for name in dirs+files:
                         try:entry=os.stat(name,dir_fd=fd,follow_symlinks=False)
                         except FileNotFoundError:
@@ -136,28 +164,69 @@ def check_protected_hardlinks(paths):
                             # independent connection checkpoints and closes.
                             if name in files and name.endswith(('.sqlite-wal','.sqlite-shm','.db-wal','.db-shm')):continue
                             raise
-                        add(Path(folder)/name,entry,(current.st_dev,current.st_ino))
-        return entries,groups
-    def resample():
-        # A non-WAL single-link file may also disappear after readdir. Retry
-        # only that incomplete scan, preserving any completed earlier scan.
+                        add(Path(folder)/name,entry,(current.st_dev,current.st_ino),fd,name,root)
+        return entries,groups,seen
+    def resample(anchor=False):
+        # A non-WAL single-link file may disappear after readdir. Discard
+        # only incomplete scans, including every descriptor they opened.
         for attempt in range(3):
-            try:return snapshot()
+            mark=len(held)
+            try:return snapshot(anchor)
             except FileNotFoundError:
+                while len(held)>mark:os.close(held.pop())
                 if attempt==2:raise
     try:
-        first,groups=resample();second,_=resample()
-        # Keep the original baseline for every existing sensitive entry. New
-        # directories are ordinary state updates only when the second scan
-        # contains no new symlinks or shared inodes beneath them (or elsewhere).
-        if (any(key not in second or second[key]!=value for key,value in first.items()) or
-            any(value is None or not stat.S_ISDIR(value[2]) for key,value in second.items() if key not in first)):
-            raise Blocked('受保护目录在检查期间变化；未启动任务。')
+        if not all(hasattr(os,k) for k in ('O_PATH','O_NOFOLLOW','O_CLOEXEC','O_DIRECTORY')):
+            raise Blocked('无法安全固定受保护目录；未启动任务。')
+        first,groups,_=resample(True);second,_,seen=resample()
+        # Shared inodes retain exact names, count and ctime. In particular,
+        # moving an ancestor cannot conceal a shared name change.
         for group in groups.values():
             if any(first[name][3]!=len(group['names']) for name in group['paths']):
                 raise Blocked('受保护文件存在未确认归属的硬链接；未启动任务。')
-    except OSError as exc:
+        matched=set()
+        locations={}
+        for key,value in second.items():
+            if value is not None:locations.setdefault((value[6],value[0],value[1]),[]).append(key)
+        for key,value in first.items():
+            if value is None:
+                if second.get(key,'missing') is not None:raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                matched.add(key);continue
+            fd=value[7];current=second.get(key)
+            if value[3] is not None and value[3]>1:
+                st=os.fstat(fd)
+                if (identity(st)!=value[:3] or st.st_nlink!=value[3] or st.st_ctime_ns!=value[4] or
+                        current is None or current[:7]!=value[:7]):raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                matched.add(key);continue
+            st=os.fstat(fd)
+            if identity(st)!=value[:3]:raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            if stat.S_ISLNK(value[2]) and os.readlink('',dir_fd=fd)!=value[5]:
+                raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            if stat.S_ISLNK(value[2]) and stable(os.fstat(fd))!=stable(st):
+                raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            if current is not None:
+                if (value[3] is not None and st.st_nlink!=value[3] or
+                        current[:4]!=value[:4] or current[5:7]!=value[5:7] or
+                        stat.S_ISLNK(value[2]) and (current[4]!=value[4] or st.st_ctime_ns!=value[4])):
+                    raise Blocked('受保护目录在检查期间变化；未启动任务。')
+                matched.add(key);continue
+            # Never accept a replacement at the old name, even a single-link
+            # ordinary file omitted from the sensitive-entry map.
+            if key in seen or key==value[6]:raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            if st.st_nlink==0:continue
+            candidates=locations.get((value[6],value[0],value[1]),[])
+            if len(candidates)!=1:raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            moved=candidates[0];other=second[moved]
+            if (value[3] is not None and st.st_nlink!=value[3] or
+                    other[:4]!=value[:4] or other[5:7]!=value[5:7]):raise Blocked('受保护目录在检查期间变化；未启动任务。')
+            matched.add(moved)
+        if any(value is None or not stat.S_ISDIR(value[2]) for key,value in second.items() if key not in matched):
+            raise Blocked('受保护目录在检查期间变化；未启动任务。')
+        if time.monotonic()>deadline:raise Blocked('受保护目录检查超过时间或文件数量限制；未启动任务。')
+    except (OSError,NotImplementedError,AttributeError) as exc:
         raise Blocked('无法核验受保护目录的硬链接：'+str(exc)) from None
+    finally:
+        while held:os.close(held.pop())
 
 def permission_profile_args(paths,write,*,select_default=True):
     if not isinstance(paths,(list,tuple)) or len(paths)>512 or type(write) is not bool:raise Blocked('原生权限保护路径无效')
