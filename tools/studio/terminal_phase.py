@@ -31,6 +31,11 @@ def terminal_phase(provider, text, alive):
         return dict(phase=phase, label=label, phase_sha256=digest(clean.encode()))
     if provider=='codex' and last('Ask Codex')>at:
         return dict(phase='ready',label='已进入原生 Agent 会话')
-    if last_prompt >= 0 and ('/effort' in clean[last_prompt:] or 'for shortcuts' in clean[last_prompt:] or 'Ask Codex' in clean):
+    # Claude can render its plan-mode footer without /effort (for example
+    # after resuming a session). Require both the actual empty input prompt
+    # and its later footer; quoted output or an earlier footer is not ready.
+    plan_footer = (provider == 'claude' and last_prompt >= 0 and
+                   last('plan mode on (shift+tab to cycle)') > last_prompt)
+    if last_prompt >= 0 and (plan_footer or '/effort' in clean[last_prompt:] or 'for shortcuts' in clean[last_prompt:] or 'Ask Codex' in clean):
         return dict(phase='ready',label='已进入原生 Agent 会话')
     return dict(phase='output' if clean.strip() else 'starting',label='原生工具已输出，等待输入状态确认' if clean.strip() else '正在启动原生 Agent')

@@ -59,6 +59,16 @@ class NativePresentationTests(unittest.TestCase):
   self.assertEqual(terminal_phase('claude','Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\r\n❯No,exit\r\nYes,Itrustthisfolder\r\nEntertoconfirm·Esctocancel',True)['phase'],'trust')
  def test_actual_later_prompt_supersedes_setup(self):self.assertEqual(terminal_phase('claude','Choose the text style\n❯ \n high /effort',True)['phase'],'ready')
  def test_output_without_prompt_is_not_ready(self):self.assertEqual(terminal_phase('claude','Welcome to Claude',True)['phase'],'output')
+ def test_actual_plan_footer_without_effort_is_ready(self):
+  for text in ('❯\u00a0\r\n⏸ plan mode on (shift+tab to cycle) · ← 4 agents',
+               '\x1b[32m❯\x1b[0m\r\n⏸planmodeon(shift+tabtocycle)·←4agents'):
+   with self.subTest(text=text):self.assertEqual(terminal_phase('claude',text,True)['phase'],'ready')
+ def test_plan_footer_requires_later_actual_prompt_and_no_new_setup(self):
+  for text,expected in [('⏸ plan mode on (shift+tab to cycle)','output'),
+                        ('⏸ plan mode on (shift+tab to cycle)\n❯\n','output'),
+                        ('❯\n⏸ plan mode on (shift+tab to cycle)\nPlease run /login','authentication'),
+                        ('❯\n⏸ plan mode on (shift+tab to cycle)\nDo you trust the files','trust')]:
+   with self.subTest(text=text):self.assertEqual(terminal_phase('claude',text,True)['phase'],expected)
  def test_exited_not_ready(self):self.assertEqual(terminal_phase('codex','Ask Codex',False)['phase'],'closed')
  def test_conversation_accepts_plain_text_and_legacy_reply(self):
   for text in ['用户可读回答。','{"reply":"老会话"}']:
