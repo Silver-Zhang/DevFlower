@@ -31,12 +31,26 @@
       "fail": 1,
       "expected_negative": true
     },
-    "full_current_regression": "NOT_RUN",
     "current_real_product": "NOT_RUN",
     "formal_rounds_used": 0,
     "formal_maximum": 2,
     "infrastructure_used": 2,
-    "infrastructure_maximum": 2
+    "infrastructure_maximum": 2,
+    "local_full_current_regression": "NOT_RUN",
+    "cloud_ci": {
+      "head": "0fd979129398dd89d5137759d2a8ca0dbc7bef85",
+      "all_three_success": true,
+      "python": 1256,
+      "host": 6,
+      "js": 64,
+      "failure": 0,
+      "error": 0,
+      "skip": 0,
+      "run_ids": [
+        "40745143030",
+        "40745143120"
+      ]
+    }
   },
   "native_implementation": {
     "provider": "codex",
@@ -53,8 +67,43 @@
     "final_acceptance": false
   },
   "source46_complex_failure_preserved": true,
-  "skill_pack_implementation": "IN_PROGRESS",
+  "skill_pack_implementation": "PARTIAL_NEW_UNCOMMITTED_SOURCE_UNDER_CORRECTION",
   "managed_child_tool": "PLANNED_NOT_IMPLEMENTED",
   "main_unchanged": true,
-  "stable_unchanged": true
+  "stable_unchanged": true,
+  "successor_development": {
+    "committed": false,
+    "last_frozen_candidate_sha256": "33b97223bca614db816882bafa250b7803ca2a5cc99986b8f25eea2cebbf615d",
+    "files": 312,
+    "root_targeted": {
+      "count": 267,
+      "exit": 0,
+      "fail": 0,
+      "error": 0,
+      "skip": 0
+    },
+    "local_protocol_first_integration": {
+      "exit": 1,
+      "cli": 9,
+      "local_requests": 7,
+      "external_requests": 0,
+      "final_exec_seconds": 10.228,
+      "total_seconds": 76.37,
+      "receipt_complete": false
+    },
+    "limited_followup": {
+      "count": 5,
+      "pass": 4,
+      "fail": 1,
+      "issue": "named rmdir can remove empty replacement directory"
+    },
+    "current_native_job": "developer-native-user-path-corrections",
+    "current_findings": [
+      "safe empty-root retention",
+      "exact-model effort UI/admission consistency and stale metadata",
+      "persisted native tool activity projection"
+    ],
+    "managed_child_tool": "NOT_IMPLEMENTED",
+    "formal_acceptance": false
+  }
 }

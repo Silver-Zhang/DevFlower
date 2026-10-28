@@ -59,3 +59,7 @@ source46真实新负面：六图前五完整通过，第六run4019b56ae…risks�
 2026-10-29 source47：独立实际4个无付费CLI能力检查复现自有probe造成guard229拒绝；同storage锁协调生命周期后通过，根替换/新链接仍拒绝；原46现场path仍unknown。原生同UUID两次实施由固定旧监督器执行，原报告IMPLEM/exit0，前后CF a1ef609→f130ed→1a8d13，6文件最终commit0fd9791/treec905ae/309files。Root90项0、独立16项0（其首15/1静态范围错误另存），原生54/30项分别署名且有重叠不加总；新反例修前FAIL与fixture路径ERROR保留。严格handoff直接读原工作树曾因旧空.aws拒绝，未删除；全309文件单链接/无symlink/特殊文件检查，旧监督器只文件snapshot后严格collect通过，原空目录仍保留。
 
 原需求继续：本地实际2次伪Provider schema和4次synthetic spawn请求证明原生default model/effort可被覆盖，不能当准入强制；均0真实模型/不改原HOME。已制定受控只读子任务工具与完整只读Skill资源包路线，不用假开关、两普通节点或纯inline冒充挂载。source47之后同原生实施者正实现Codex冻结Skill包，尚无实现完成/真实资源调用证明；Claude/Copilot边界与用户审美仍不冒充完成。
+
+source47三CI现已真实SUCCESS，日志读回1256Python/6host/64JS全0（本地仍90定向），未套46。K2新Skill原型原生PARTIAL/exit0，Root228项0；内核C47两实际进程36字段可读/拒写已证。首次本模块完整实际CLI集成9进程/7全本地请求、0外部，读取资源/执行helper/拒改成功、actual input与Journal hash一致、未选Skill/MCP未注入；整段76.37s而exec仅10.228s剩余预算被停-15，无最终receipt，FAILED保留。native JSONL task_complete不等于stdout turn.completed/正常进程退出，原因unknown。独立另复现COMPLETED后context再verify因source修改抛“未发送”且外层无receipt，当前原生同UUID定向修复；无source48完整验收/最终ACCEPT，不提交有此缺陷原型。
+
+新Skill提交点修复原生IMPLEMENTED/exit0、Root267项目标全0，候选33b972…/312files/tree3ae4e17只读完整冻结（仍未提交）。限定独立5项4PASS/1FAIL继续发现清理末尾stat→named-rmdir能删替代空目录；只删空目录、不穿越其文件，保持准确范围。第二实际local CLI集成尚0调用即停。另独立完整runtime定位Claude精确默认model被目录遗漏时UI五档而max准入拒绝（high通过）、过期CLI元数据静默回high、原持久工具活动被节点对话API丢弃；0模型及原设置不变。当前同原生writer正定向修这三类确证问题，根清理选择保留空根/info而不删不明命名对象；不通过弱化保护追求PASS。
