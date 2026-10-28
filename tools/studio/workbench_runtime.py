@@ -503,7 +503,7 @@ class WorkbenchRuntime(SessionRuntime):
             if current.get('workspace') != workspace:
                 raise Conflict('工作流不属于此工作区；未分配的旧工作流请先新建工作区副本')
             if current['graph'] != graph: raise Conflict('运行图和已保存草稿不一致，请先保存')
-        return self.db.prepare(dict(purpose='workbench-v3',workspace=workspace,graph=graph,task=task,bindings=bindings,
+        return self.db.prepare(dict(purpose='workbench-v3',workspace=workspace,graph=graph,task=task,task_sha256=digest(task.encode('utf-8')),bindings=bindings,
             draft_id=draft_id,admission_checks=list(checks.values()),automatic_admission=automatic,
             interaction='click' if direct else 'legacy',click_action='start' if direct else None,
             graph_sha256=digest(canonical(graph)),candidate_sha256=self.candidate_sha256,operator_sha256=self.operator_sha256,

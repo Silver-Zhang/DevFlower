@@ -27,7 +27,7 @@ class WorkflowLibrary:
         graph=copy.deepcopy(graph)
         def clean(g):
             for node in g['nodes']:
-                keep={'id','kind','name','position','provider','profile','model','effort','mode','permission','subagents','timeout','responsibility','background','initial_prompt','round_prompt','handoff_prompt','tools','input_contract','output_contract','strategy','test','missing_policy','routes','default_route','classifier','max_rounds','until','body','external_profile'}
+                keep={'id','kind','name','position','provider','profile','model','effort','mode','permission','subagents','timeout','responsibility','background','initial_prompt','round_prompt','handoff_prompt','task_context','tools','input_contract','output_contract','strategy','test','missing_policy','routes','default_route','classifier','max_rounds','until','body','external_profile'}
                 for key in set(node)-keep:node.pop(key)
                 if node['kind']=='agent':node['session']='new'
                 if node['kind']=='loop':clean(node['body'])
