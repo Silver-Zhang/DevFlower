@@ -29,9 +29,32 @@ def schema(profiles,depth=0):
         nodes=dict(type='array',minItems=3,items=node),edges=dict(type='array',minItems=2,items=edge)))
 
 
+def _guarded_path(node, prefix=''):
+    path=prefix+node['id']
+    if any(node.get(k) for k in ('input_contract','output_contract')):return path
+    if node.get('kind')=='loop':
+        for child in (node.get('body') or {}).get('nodes',[]):
+            found=_guarded_path(child,path+'/')
+            if found:return found
+    return None
+
+
+def _retain_contract_nodes(plan, previous, prefix=''):
+    proposed={node['id']:node for node in plan.get('nodes',[])}
+    for old in (previous or {}).get('nodes',[]):
+        current=proposed.get(old['id']);path=prefix+old['id']
+        if not current or current.get('kind')!=old.get('kind'):
+            guarded=_guarded_path(old,prefix)
+            if guarded:
+                raise Invalid('节点「'+guarded+'」已有数据合同，AI提案不能省略该节点或替换其类型；请先在画布中显式编辑数据合同。')
+        elif old.get('kind')=='loop':
+            _retain_contract_nodes(current.get('body') or {},old.get('body'),path+'/')
+
+
 def plan_graph(plan, choices, *, previous=None):
     validate(plan,schema(choices))
     if len(canonical(plan))>150000 or len(plan['nodes'])>12 or len(plan['edges'])>24:raise Invalid('配置提案超过大小预算')
+    _retain_contract_nodes(plan,previous)
     old_nodes={n['id']:n for n in (previous or {}).get('nodes',[])}
     nodes=[];ids=set();depth={};incoming={n['id']:[] for n in plan['nodes']}
     for edge in plan['edges']:
