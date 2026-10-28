@@ -1,0 +1,35 @@
+{
+  "candidate_sha256": "a1ef609b4577bfa34b9c2ab134bf8f056c22128a07f86b81b5d26c459d3ceaf4",
+  "head": "e4a593c030da43125be59009023e079efb7b1d2d",
+  "git_tree": "0d952e38f9cce131a53603a28ff3f3006c2ab342",
+  "files": 307,
+  "formal_accepted": false,
+  "gate_passed": false,
+  "stable_promoted": false,
+  "evidence": [
+    {
+      "name": "full-regression",
+      "sha256": "edfc1449834c0eca189a0f366ce37dea5e1f2b9029017a54ae80afcbba1d5bd2"
+    },
+    {
+      "name": "github-ci",
+      "sha256": "aeca82591c47eb9b546a22108dffef99c214f85f1706d23eefa1b12991b73832"
+    },
+    {
+      "name": "actual-native-writer",
+      "sha256": "d1548abb516889f9678fa5bbbf741bb140df37c38fc2df5ba82b381e74aa231d"
+    }
+  ],
+  "tests": {
+    "python": 1246,
+    "host": 6,
+    "js": 64,
+    "chromium_http": 253,
+    "legacy_smoke": 16,
+    "commands": 21,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "local_raw_logs_and_sessions_retained": true
+}

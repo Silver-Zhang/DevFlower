@@ -1,9 +1,11 @@
 # 当前状态
 
-Task16仅Codex多Agent；旧Task15 NEEDS_CORRECTION/Gate BLOCKED及所有失败保留。
+Task16仅Codex多Agent；原Task15 NEEDS_CORRECTION/Gate BLOCKED及所有失败保留。
 
-最新45：4eff185/tree973aea10/CF6e0cbd03，306文件，已push，PR22 Draft。完整1239Python/6host/64JS/253HTTP+16smoke及21命令全0、sourceunchanged；三CI SUCCESS。DeepSeek45四场景及六图21调用完成；随后真实AI45在5调用后database is locked失败，尚不具备正式审核/交付条件。
+最新46：e4a593c030da43125be59009023e079efb7b1d2d/tree0d952e38f9cce131a53603a28ff3f3006c2ab342/CFa1ef609b4577bfa34b9c2ab134bf8f056c22128a07f86b81b5d26c459d3ceaf4，307文件；S/K2 clean、已正常push，PR22 Draft。完整1246Python/6host/64JS/253HTTP+16smoke、21命令全0，FAIL/ERROR/SKIP0，三CI SUCCESS。
 
-44六图21真实调用均按合同通过；AI图片图7调用发现真实“省略带合同节点会丢合同”后达到2轮失败。Root独立复现，原生Codex实际修2文件，14纯/Root165/独立20全0；旧assert保留，不改负面。45补事务源资料并重跑，不套旧通过。发布v4纯临时独立46项通过，未部署。
+45六图21调用通过，后续真实AI图5调用数据库锁FAILED；原生审核exit0/completed/accepted=false与本地metadata失败分列。独立复现同值upsert仍取写锁；原生同UUID实际修usable_store.py并新增7项：只对完整canonical同值先读返回，其余事务/重试/CAS/授权消费不变。原生14/Root202/独立11+7全0；原locker未知，不泛称所有持久化故障已修。
 
-CLI/Claude桌面Code3条metadata关联经真实parser确认，83相关回归0；不冒充桌面接管。Development入口已实际更新并核验45/41761，保留旧会话/版本。原生UUID01a18367…最终回答completed/accepted=false、process exit0；native-step在AGENT_COMPLETED后metadata写入异常转AGENT_FAILED。锁持有者尚未确认，不称模型失败或已修复。正式双源码审核0/2、infra2/2，合同8032befd；仍缺完整K/双硬ACCEPT/旧Gate/merge/正式Stable。main e0a0f92未动，未清分支。
+46内置DeepSeek四场景已COMPLETED（实际修复apply错误1→0）；同原助手对话澄清节点合同，revision2→4，旧reply/receipt/proposal逐字保留。新实际六图正执行，首顺序2calls已完成；当前Desktop同UUID/原回执hash实读对应，未复制原生历史。后续AI八文件图/PTY/浏览器/host未完成。
+
+Development唯一入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py；实际46/44375，非正式Stable。main仍e0a0f92，旧Stable未动。完整双审0/2、infra2/2、合同8032befd不变；最终K/双硬ACCEPT/固定旧Gate/merge/正式Stable/已合并闲置分支清理仍PENDING。
