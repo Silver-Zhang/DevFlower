@@ -1,6 +1,6 @@
 /* Sim-style workspace chrome, implemented for DevFlower's existing runtime.
    Layout reference: official Sim v0.9.32 editor; no copied code or assets. */
-:root{color-scheme:light;color:var(--studio-text);background:var(--studio-bg);--line:var(--studio-line);--muted:var(--studio-muted);--accent:var(--studio-text);--surface:var(--studio-bg);--raised:var(--studio-hover);--sidebar-width:232px;--tools-width:344px;--header-height:56px;font-size:13px}
+:root{color-scheme:light;color:var(--studio-text);background:var(--studio-bg);--line:var(--studio-line);--muted:var(--studio-muted);--accent:var(--studio-text);--surface:var(--studio-bg);--raised:var(--studio-hover);--sidebar-width:224px;--tools-width:320px;--header-height:56px;font-size:13px}
 body{color:var(--studio-text);background:var(--studio-bg)}
 button{background:var(--studio-bg);border-color:var(--studio-line);color:var(--studio-text);border-radius:var(--ui-radius);padding:6px 10px;font-weight:500;box-shadow:0 1px 1px #18181b04}
 button:hover{background:var(--studio-hover);border-color:var(--studio-line-strong)}

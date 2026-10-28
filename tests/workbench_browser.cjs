@@ -24,7 +24,7 @@ async function test(name,fn){
  }
 }
 async function openWorkspace(p,chooseExample=true){await p.getByRole('button',{name:'打开文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor();await p.getByRole('button',{name:'选择此文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor({state:'hidden'});await until(async()=>!(await p.getByRole('button',{name:'开始运行',exact:true}).isDisabled()));if(chooseExample)await example(p,0);}
-async function example(p,index){await p.getByRole('button',{name:'示例',exact:true}).click();await p.locator('.example-library .built-in-template').nth(index).click();if(await p.getByRole('dialog',{name:'未保存的草稿',exact:true}).count())await p.getByRole('button',{name:'丢弃草稿并关闭',exact:true}).click();}
+async function example(p,index,overview=true){await p.getByRole('button',{name:'示例',exact:true}).click();await p.locator('.example-library .built-in-template').nth(index).click();if(await p.getByRole('dialog',{name:'未保存的草稿',exact:true}).count())await p.getByRole('button',{name:'丢弃草稿并关闭',exact:true}).click();if(overview){await p.locator('.react-flow__node').first().waitFor();await p.getByRole('button',{name:'适应画布',exact:true}).click();}}
 async function displayedCanvasEdges(p,graph){
  const paths=p.locator('.react-flow__edge-path'),nodes=p.locator('.react-flow__node');
  await until(async()=>await paths.count()===graph.edges.length&&await nodes.count()===graph.nodes.length&&await nodes.evaluateAll(es=>es.every(e=>getComputedStyle(e).visibility==='visible')));
@@ -511,6 +511,36 @@ await test('i16-top-level-handoff-round-and-missing-activation-are-distinct',asy
  v.events=[{seq:1,at:1,run:'A',edge:'edge1',source:'analyze',node:'review',kind:'handoff-sent',activation:'A',target_activation:'target-A',iteration:0,iteration_path:[],source_round:[],target_round:[],content:{answer:'TOP-LEVEL-HANDOFF'}}];}await route.fulfill({json:v});});
  await p.getByLabel('历史运行',{exact:true}).selectOption('A');await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()==='运行 A');const path=p.locator('.react-flow__edge[data-id="edge1"] .react-flow__edge-path');const point=await path.evaluate(e=>{const q=e.getPointAtLength(e.getTotalLength()/2).matrixTransform(e.getScreenCTM());return{x:q.x,y:q.y}});await p.mouse.click(point.x,point.y);
  const panel=p.locator('.edge-inspector');await panel.getByText('高级：字段、时间与运行身份',{exact:true}).click();const value=label=>panel.locator('dt').filter({hasText:label}).locator('xpath=following-sibling::dd[1]').innerText();assert.equal((await value('来源轮次')).trim(),'1');assert.equal((await value('目标轮次')).trim(),'1');missing=true;await until(async()=>(await value('目标轮次')).trim()==='unknown');assert.equal((await value('来源轮次')).trim(),'1');
+});
+await test('design-md-default-canvas-readable-explicit-overview-and-no-selection-jump',async p=>{
+ await openWorkspace(p,false);
+ for(const width of [700,952,1512]){
+  await p.setViewportSize({width,height:900});await example(p,0,false);
+  const nodes=p.locator('.react-flow__node');await until(async()=>await nodes.count()===4&&await nodes.evaluateAll(es=>es.every(e=>getComputedStyle(e).visibility==='visible')));
+  const scale=()=>p.locator('.react-flow__viewport').evaluate(e=>new DOMMatrix(getComputedStyle(e).transform).a);
+  assert(await scale()>=.9,'Default editing text must remain readable at '+width);
+  const title=await nodes.first().locator('header strong').evaluate(e=>parseFloat(getComputedStyle(e).fontSize));
+  assert(title*await scale()>=12,'Node title cannot be reduced to a tiny overview caption');
+  const before=await p.locator('.react-flow__viewport').getAttribute('style');
+  await nodes.first().click();await p.keyboard.press('Escape');await p.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  assert.equal(await p.locator('.react-flow__viewport').getAttribute('style'),before,'Inspecting a node must not move the current camera');
+  await p.screenshot({path:out+'/design-md-readable-'+width+'.png'});
+  await p.getByRole('button',{name:'适应画布',exact:true}).click();
+  await until(async()=>{const canvas=await p.getByTestId('canvas').boundingBox();return nodes.evaluateAll((es,c)=>es.every(e=>{const r=e.getBoundingClientRect();return r.left>=c.x-2&&r.right<=c.x+c.width+2&&r.top>=c.y-2&&r.bottom<=c.y+c.height+2}),canvas)});
+  assert(await scale()<=1,'The explicit overview remains available for the entire graph');
+ }
+});
+await test('design-md-new-chat-error-keeps-introduction-visible',async p=>{
+ await openWorkspace(p,false);
+ await p.route('**/api/models',r=>r.fulfill({status:400,json:{error:'模型目录暂时不可达，请检查连接后刷新'}}));
+ await p.getByRole('button',{name:'开始对话',exact:true}).click();
+ await p.getByText('模型目录暂时不可达，请检查连接后刷新',{exact:true}).waitFor();
+ for(const width of [700,952,1512]){
+  await p.setViewportSize({width,height:756});await p.evaluate(()=>document.fonts.ready);
+  await until(async()=>p.locator('.messages').evaluate(e=>{const box=e.getBoundingClientRect();return [...e.querySelectorAll('.empty-chat h2,.empty-chat p')].every(x=>{const r=x.getBoundingClientRect();return r.top>=box.top&&r.bottom<=box.bottom&&r.left>=box.left&&r.right<=box.right})}));
+  assert.equal(await p.locator('.messages').evaluate(e=>e.scrollTop),0,'The introduction is visible without scrolling past blank space');
+  await p.screenshot({path:out+'/design-md-chat-error-'+width+'.png'});
+ }
 });
 await test('i16-sim-studio-chrome-reserves-inspector-and-keeps-native-actions-explicit',async p=>{
  await p.setViewportSize({width:1512,height:1080});await openWorkspace(p,false);

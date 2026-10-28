@@ -110,3 +110,6 @@
 .workbench .workspace-workflows{border-bottom-color:var(--studio-line-soft)}
 .workbench .workflow-list-row>button[aria-current=page]{background:var(--studio-selected);color:var(--studio-text)}
 @media(max-width:720px){.workbench .assistant-dock .assistant-composer{margin:6px 12px 12px}.workbench .assistant-welcome h3{font-size:18px}.workbench .overview-content{gap:12px}.workbench .overview-progress{min-width:90px}}
+
+.canvas-navigation-hint{position:absolute;top:12px;right:14px;z-index:3;pointer-events:none;font-size:11px;line-height:1.5;color:var(--studio-muted);background:var(--studio-overlay);padding:4px 7px;border:1px solid var(--studio-line-soft);border-radius:6px}
+@media(max-width:720px){.canvas-navigation-hint{max-width:180px;right:10px;text-align:right}}

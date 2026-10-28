@@ -69,6 +69,12 @@ html[data-reduce=true] .handoff-pulse { display:none!important; }
 .conversation-toolbar { flex-wrap:wrap; gap:10px; }
 .conversation-identity { color:var(--studio-muted); flex:1; }
 .messages { padding:28px max(22px,calc((100% - 820px)/2)); scrollbar-gutter:stable; }
+.messages:has(> .empty-chat) { padding:12px max(16px,calc((100% - 820px)/2)); }
+.empty-chat { margin:0 auto; padding:0; max-width:500px; }
+.empty-chat svg { width:24px; height:24px; margin-bottom:8px; }
+.empty-chat h2 { margin:0 0 8px; font-size:20px; line-height:1.3; }
+.empty-chat p { margin:0; line-height:1.5; }
+
 .message { line-height:1.8; margin-bottom:24px; }
 .message.user { margin-left:35px; }
 .message.assistant { margin-right:14px; }
