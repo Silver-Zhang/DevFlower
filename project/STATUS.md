@@ -2,16 +2,14 @@
 
 Task16仅Codex多Agent审核；原始负面、原生会话、中转和认证保留。
 
-远端源码source49：HEADa56895ff09a403575b368456ffd353ed4ca88d5f/treeb9182a5e78ac88282ab46ae492da005de548b898/CFe6935ad3/327files，正常push读回一致，PR22 OPEN Draft。新CI studio已过、其余待读回；旧48清单失败原件保留。
+远端源码source50：HEAD59a00d233c848c757dbd473c7451dd4e7ea33e7c/tree0167c9ac78ce27766097896d470f12da58ba42e0/CF00b4dae2647e7b3614b510a13ff7278cbd47cf515d25e6d26ef2a7d52a3b9c6c/327files；正常push/读回一致，PR22 Draft。S/K2均干净，无活跃原生源码writer。
 
-本地已实装：进程成功能力cache/TTL修正、protected Attach v2、预算等待/父死亡、受控只读子Agent预留/私有桥/生命周期。0b6 Root237项0及独立source漂移/foreign进程/paired-intent三例关闭；真实native MCP第一例0child/原因未知，25f新例明确tools/list外层_meta被拒，CLI1/0task/0child，原失败保留。
+当前完整同源21命令全部exit0：1430Python、6host、65JS、253Chromium/HTTP+16smoke，FAIL/ERROR/SKIP0；Baseline/前端语法/构建资产字节一致，三CI全部SUCCESS。旧source49三子进程测试env失败原件保留，原assert未降。逐页截图发现终局缺结束时间继续计时，现修为耗时未知并有真实DOM/截图。
 
-最新冻结7bdb82ef0c449bc66741baa9884670d48906fe198c3d6ffe3392bfaa4c919e4b/tree972a369318bce892cddcc0bf4219ad6cdefb47b9/327files：原生同UUID PARTIAL/0修_meta、父期限、effort错误可见、managed父自动Skill禁用，独立20 Host检查通过，实际MCP重跑进行中（0外部模型）。Root217项0FAIL/2ERROR，其中1自选不存在模块、1旧DB夹具缺tx；原件保留，不能报全通过。
+真实DeepSeek原连接4项完成（说明/实际公开源码诊断/图修复应用/同对话图片图合同澄清），source不变。真实Codex六图全部按合同通过，实际21调用；五轮拒绝是预期FAILED/10calls/pass=true，非假成功。物理后端/生效effort unknown。
 
-UI源5cdc由Root实建25f，Node22/构建0/语法0；新子Agent开关名使旧Chromium定位实际1FAIL。原生只更新2处定位至072d5，原保存/刷新/Skill断言不降；尚待新候选实际Chrome复验。上述测试夹具已修，原断言保留。所有原生writer已终局；最新未提交5d8f7681/327files（固定唯一MCP工具临时approve，global never与用户config不改；新增两子进程测试显式tools路径）。Root修前三反例及修后6项全0保留。
+新managed只读子任务bf2d实际CLI+local Provider：16检查全PASS/20CLI16local/0外部，两子真正重叠、3UUID、读public/拒写/拒私有、预算3及重播不再spawn、正常owned收尾。source50-v3取消安全11项全PASS，但随后crash前提未成立：极速工具请求早于父SID stdout发布，0child/未SIGKILL，整轮exit1不改判。独立0调用继续构造该可达竞态反例，不猜会话或放宽权限。
 
-Claude CLI已统一会话中心；Desktop Code的cliSessionId可只读核对原生CLI，普通Chat不同容器；历史3条实际匹配不等于桌面实时双向接管。本任务无新Claude模型调用。
+因此Root已暂停正在运行的source50 AI复杂图fe74f0b5c4256a6be68690a2d7ca0384的新调度（2calls/2actual，已在途允许结束），不是用户暂停/最终撤回。总监督工具1307仍在等待该图；勿重启/重放。后续真实managed模型/PTY/Desktop尚未开始。正式双审0/2、infra2/2不复位；K/双硬ACCEPT/旧Gate/merge/Stable/分支清理仍未通过，不以CI绿色推导。
 
-main e0a0f92/正式Stable cfea19不变；Development入口仍 python3 /home/workspace/DevFlower/.local/open-guided-development.py（46/44375）。双审0/2、infra2/2不复位。当前全量/真实模型图、产品K/原生双端/双硬ACCEPT/旧Gate/merge/正式Stable/分支清理未完成。19worktree与所有旧版本保留。
-
-实际f95完整Python1430/1FAIL2ERROR0SKIP：全为新增子进程测试模块路径，修后真实Host6项0。浏览器仍运行。MCP实际f95虽工具可见但审批拒绝、9CLI/14local/0child；harness收到错误仍重复发的缺陷单独保留，新finite驱动已修纯反例，9d新Host实际执行中，不称子任务成功。
+Claude CLI统一中心，Desktop Code cliSessionId仅只读关联，普通DesktopChat不同容器；非桌面实时接管。本任务未调用Claude模型。main e0a0f92、正式Stable cfea19未动，旧19worktree/会话/失败保留。Development入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py 仍46/44375，非本次新候选或Stable。

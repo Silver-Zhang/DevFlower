@@ -1,0 +1,164 @@
+{
+  "kind": "SOURCE50_CHECKPOINT_NOT_FINAL_ACCEPTANCE",
+  "head": "59a00d233c848c757dbd473c7451dd4e7ea33e7c",
+  "git_tree": "0167c9ac78ce27766097896d470f12da58ba42e0",
+  "candidate_sha256": "00b4dae2647e7b3614b510a13ff7278cbd47cf515d25e6d26ef2a7d52a3b9c6c",
+  "files": 327,
+  "remote_verified": true,
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/22",
+  "draft": true,
+  "full_regression": {
+    "complete": true,
+    "source_unchanged": true,
+    "commands": 21,
+    "all_exit_zero": true,
+    "python": {
+      "tests": 1430,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "js": {
+      "tests": 65,
+      "failures": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "host": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "chromium_http": {
+      "tests": 253,
+      "failures": 0,
+      "skipped": 0,
+      "exit": 0
+    },
+    "smoke": {
+      "tests": 16,
+      "exit": 0
+    }
+  },
+  "ci": {
+    "head": "59a00d233c848c757dbd473c7451dd4e7ea33e7c",
+    "all_three_success": true,
+    "readback": "pr-readback-stage50-final.json"
+  },
+  "real_assistant": {
+    "complete": true,
+    "source_unchanged": true,
+    "scenarios": [
+      {
+        "label": "普通使用说明",
+        "state": "COMPLETED",
+        "seconds": 2.214
+      },
+      {
+        "label": "真实源码诊断",
+        "state": "COMPLETED",
+        "seconds": 11.922
+      },
+      {
+        "label": "完整性问题修复与应用",
+        "state": "COMPLETED",
+        "seconds": 6.259
+      },
+      {
+        "label": "图片工作流节点合同澄清",
+        "state": "COMPLETED",
+        "seconds": 23.251
+      }
+    ],
+    "physical_backend": "unknown",
+    "effective_effort": "unknown"
+  },
+  "real_graphs": {
+    "complete": true,
+    "source_unchanged": true,
+    "total_actual_task_calls": 21,
+    "results": [
+      {
+        "label": "顺序与暂停恢复",
+        "state": "COMPLETED",
+        "calls": 2,
+        "passed": true,
+        "seconds": 109.505
+      },
+      {
+        "label": "两路并发汇合",
+        "state": "COMPLETED",
+        "calls": 3,
+        "passed": true,
+        "seconds": 131.813
+      },
+      {
+        "label": "真实判断与路由",
+        "state": "COMPLETED",
+        "calls": 1,
+        "passed": true,
+        "seconds": 62.698
+      },
+      {
+        "label": "明确文字合同的提前成功",
+        "state": "COMPLETED",
+        "calls": 2,
+        "passed": true,
+        "seconds": 126.549
+      },
+      {
+        "label": "五轮上限真实拒绝",
+        "state": "FAILED",
+        "calls": 10,
+        "passed": true,
+        "seconds": 484.067
+      },
+      {
+        "label": "复杂并行判断与修订",
+        "state": "COMPLETED",
+        "calls": 3,
+        "passed": true,
+        "seconds": 120.5
+      }
+    ]
+  },
+  "ai_canvas": {
+    "run_id": "fe74f0b5c4256a6be68690a2d7ca0384",
+    "qa_pause": true,
+    "calls_at_pause": 2,
+    "actual_calls_at_pause": 2,
+    "reason": "independent diagnosis of managed parent native-session publication race; no candidate change or final withdrawal yet"
+  },
+  "managed_bf2d": {
+    "kind": "actual CLI with local synthetic Provider, not external model",
+    "checks": 16,
+    "all_pass": true,
+    "exit": 0,
+    "actual_cli": 20,
+    "all_local_http": 16,
+    "external_models": 0,
+    "source_scope": "bf2d before UI duration/docs changes; not source50 final model evidence"
+  },
+  "lifecycle_stage50_v3": {
+    "exit": 1,
+    "actual_cli": 20,
+    "all_local_http": 14,
+    "external_models": 0,
+    "cancel_safety_checks": 11,
+    "cancel_safety_all_pass": true,
+    "crash_verified": false,
+    "crash_action_not_performed": true,
+    "reason": "second parent tool arrived before native SID callback; no child/no crash action; original failure preserved"
+  },
+  "formal_rounds": 0,
+  "formal_max": 2,
+  "infrastructure_used": 2,
+  "infrastructure_max": 2,
+  "main_changed": false,
+  "stable_changed": false,
+  "all_old_versions_native_sessions_failures_preserved": true,
+  "final_approved": false
+}
