@@ -22,6 +22,78 @@ SID='00000000-0000-4000-8000-000000000001'
 RAW=('\n'.join(json.dumps(x) for x in [dict(type='thread.started',thread_id=SID),dict(type='item.completed',item=dict(type='agent_message',text='synthetic')),dict(type='turn.completed',usage={})])+'\n').encode()
 
 class ParentContextTests(RunnerTests):
+ def context_fixture(self,baseline_sid=None):
+  from studio.managed_children import ManagedContext
+  chat=self.db.get('node-session','chat');chat['id']='chat';chat['binding']['session_id']=baseline_sid;self.db.put('node-session','chat',chat)
+  activation=self.db.get('activation','a');activation.pop('observed_session',None);self.db.put('activation','a',activation)
+  c=ManagedContext.__new__(ManagedContext);c.journal=self.journal;c.rt=self.rt;c.binding=dict(self.effective,session_id=baseline_sid);c.baseline=dict(chat['binding']);c.cwd=chat['cwd'];c.chat_key='chat';c.node='node';c.workspace='w';c.deadline=time.monotonic()+5;c.parent=self.parent;c.owner=None;c.closed=threading.Event();c.lock=threading.Lock()
+  return c
+ def test_delayed_real_session_publication_unblocks_one_call(self):
+  c=self.context_fixture();results=[];owners=[]
+  class Owner:
+   def __init__(self,*args):owners.append(1)
+   def call(self,slot,task):return self_journal.reserve_managed_child(slot,task,c.parent)
+  self_journal=self.journal
+  def run():
+   try:results.append(c.call(1,'inspect'))
+   except Exception as e:results.append(e)
+  with patch('studio.managed_children.OwnedChildren',Owner):
+   t=threading.Thread(target=run);t.start();time.sleep(.1)
+   op=self.journal.intent('r','AGENT_REQUEST',{});self.journal.finish(op,'AGENT_SESSION',actual_session=SID)
+   t.join(4)
+  self.assertFalse(t.is_alive());self.assertEqual(len(owners),1);self.assertEqual(results[0]['state'],'RESERVED');self.assertEqual(self.db.get('run','r')['calls'],2)
+ def test_resume_mismatched_paired_identity_never_reserves(self):
+  c=self.context_fixture(SID);other='00000000-0000-4000-8000-000000000002'
+  self.db.change('activation','a',{'observed_session':other});chat=self.db.get('node-session','chat');chat['binding']['session_id']=other;self.db.put('node-session','chat',chat)
+  with patch('studio.managed_children.OwnedChildren') as owner:
+   with self.assertRaises(Blocked):c.call(1,'inspect')
+   owner.assert_not_called()
+  self.assertEqual(self.db.get('run','r')['calls'],1)
+ def test_two_calls_wait_for_paired_journal_publication_and_share_owner(self):
+  c=self.context_fixture();results=[];owners=[];entered=threading.Event();release=threading.Event();original=self.journal.bind_session
+  class Owner:
+   def __init__(self,*args):owners.append(1)
+   def call(self,slot,task):return journal.reserve_managed_child(slot,task,c.parent)
+  journal=self.journal
+  def bind(sid):entered.set();release.wait(3);original(sid)
+  def call():
+   try:results.append(c.call(1,'same'))
+   except Exception as e:results.append(e)
+  op=journal.intent('r','AGENT_REQUEST',{})
+  with patch.object(journal,'bind_session',side_effect=bind),patch('studio.managed_children.OwnedChildren',Owner):
+   publisher=threading.Thread(target=lambda:journal.finish(op,'AGENT_SESSION',actual_session=SID));publisher.start();self.assertTrue(entered.wait(3))
+   threads=[threading.Thread(target=call) for _ in range(2)]
+   for thread in threads:thread.start()
+   time.sleep(.1);self.assertEqual(owners,[]);release.set();publisher.join(4)
+   for thread in threads:thread.join(4)
+  self.assertFalse(publisher.is_alive());self.assertTrue(all(not t.is_alive() for t in threads));self.assertEqual(owners,[1]);self.assertEqual(len(results),2);self.assertEqual(results[0],results[1]);self.assertEqual(self.db.get('run','r')['calls'],2)
+ def test_wait_refuses_timeout_cancel_close_dead_parent_and_binding_tamper(self):
+  for change in ('timeout','cancel','close','dead','model','role','home','runtime_profile'):
+   with self.subTest(change=change):
+    c=self.context_fixture();run=self.db.get('run','r');run.pop('cancel_requested',None);self.db.put('run','r',run)
+    if change=='timeout':c.deadline=time.monotonic()+.12
+    elif change=='cancel':self.db.change('run','r',{'cancel_requested':True})
+    elif change=='close':c.closed.set()
+    elif change=='dead':c.parent=dict(self.parent,start='0')
+    else:
+     chat=self.db.get('node-session','chat');chat['binding'][change]='tampered';self.db.put('node-session','chat',chat)
+    with patch('studio.managed_children.OwnedChildren') as owner:
+     with self.assertRaises(Blocked):c.call(1,'inspect')
+     owner.assert_not_called()
+    self.assertEqual(self.db.get('run','r')['calls'],1)
+ def test_resume_wrong_thread_event_is_not_published(self):
+  chat=self.db.get('node-session','chat');chat['id']='chat';chat['binding'].update(conversation_format='text',session_id=SID,executable='synthetic',project='w');self.db.put('node-session','chat',chat)
+  b=dict(chat['binding'],native_interaction='ordinary',_metadata_guard=str(self.rt.storage));from studio.native_codex_exec import protected_paths
+  b['native_protected']=protected_paths(self.rt,b);statuses=[]
+  def execute(argv,cwd,home,**kw):
+   op=kw['store'].intent('r','PROCESS',dict(context={'provider':'codex'}));kw['store'].finish(op,'RUNNING',process=process_identity(os.getpid()))
+   kw['on_stdout']((json.dumps(dict(type='thread.started',thread_id='00000000-0000-4000-8000-000000000002'))+'\n').encode())
+   raise AssertionError('wrong session accepted')
+  original=self.journal.finish
+  def finish(key,status,**updates):statuses.append(status);return original(key,status,**updates)
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+   with self.assertRaises(Blocked):LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
+  self.assertNotIn('AGENT_SESSION',statuses);self.assertEqual(self.db.get('node-session','chat')['binding']['session_id'],SID);self.assertEqual(self.db.list('managed-child'),[])
  def test_effort_error_is_visible_without_sensitive_detail_on_actual_failure_path(self):
   from studio.local_codex_adapter import _stderr_diagnostic
   secret='credential-sentinel'

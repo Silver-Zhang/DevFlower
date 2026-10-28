@@ -232,7 +232,7 @@ class LocalCodex:
         op=store.intent(run,'AGENT_REQUEST',dict(kind='codex',project=b['project'],role=b['role'],
             requested_session=sid,requested_model=b['model'],requested_effort=b['effort'])) if store else None
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
-        pending=bytearray();observed=None;observed_turn=None
+        pending=bytearray();observed=None;observed_turn=None;requested_sid=sid
         def observe(chunk):
             nonlocal observed,observed_turn
             pending.extend(chunk)
@@ -243,12 +243,12 @@ class LocalCodex:
                 except (ValueError,TypeError):continue
                 if not isinstance(event,dict):continue
                 if event.get('type')=='thread.started':
-                    sid=event.get('thread_id')
+                    event_sid=event.get('thread_id')
                     try:
-                        if not isinstance(sid,str) or str(uuid.UUID(sid))!=sid or observed is not None:raise ValueError()
+                        if not isinstance(event_sid,str) or str(uuid.UUID(event_sid))!=event_sid or observed is not None or requested_sid and event_sid!=requested_sid:raise ValueError()
                     except ValueError:raise Blocked('原生会话身份无效或重复') from None
-                    observed=sid
-                    if store:store.finish(op,'AGENT_SESSION',actual_session=sid,resolved_model='unknown')
+                    observed=event_sid
+                    if store:store.finish(op,'AGENT_SESSION',actual_session=event_sid,resolved_model='unknown')
                 if event.get('type')=='turn.completed':
                     turn=event.get('turn_id')
                     if turn is None and isinstance(event.get('turn'),dict):turn=event['turn'].get('id')

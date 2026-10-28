@@ -209,6 +209,7 @@ class ManagedContext:
         self.parent=None;self.owner=None;self.closed=threading.Event();self.lock=threading.Lock();self.close_lock=threading.Lock();self.outcome=None
         activation=journal.s.db.get('activation',journal.key);chat=journal.s.db.get('node-session',activation['chat_key'])
         self.baseline=copy.deepcopy(chat['binding'])
+        self.chat_key=activation['chat_key'];self.node=activation['node'];self.workspace=chat.get('workspace')
         run=journal.s.db.get('run',journal.s.run)
         if (run.get('state')!='RUNNING' or run.get('interaction')!='click' or run.get('cancel_requested') or
             activation.get('run')!=journal.s.run or activation.get('kind')!='agent' or activation.get('state') not in ('STARTING','RUNNING') or
@@ -229,15 +230,37 @@ class ManagedContext:
                 raise Blocked('父进程身份发布不一致')
             self.parent=copy.deepcopy(record)
     def call(self,slot,task):
-        with self.lock:
-            if self.closed.is_set() or not self.parent or not alive(self.parent):raise Blocked('父进程尚未就绪或已结束')
-            activation=self.journal.s.db.get('activation',self.journal.key);chat=self.journal.s.db.get('node-session',activation['chat_key'])
-            sid=activation.get('observed_session');expected=copy.deepcopy(self.baseline);expected['session_id']=sid
-            if not sid or chat['binding']!=expected or chat['binding'].get('session_id')!=sid:raise Blocked('父原生会话尚未就绪或绑定已变化')
-            if self.owner is None:
-                effective=copy.deepcopy(self.binding);effective['session_id']=sid
-                self.owner=OwnedChildren(self.journal,effective,self.cwd,self.parent,self.deadline)
-            owner=self.owner
+        wait_until=min(self.deadline,time.monotonic()+3)
+        while True:
+            with self.lock:
+                if self.closed.is_set() or not self.parent or not alive(self.parent):raise Blocked('父进程尚未就绪或已结束')
+                if time.monotonic()>=wait_until:raise Blocked('父原生会话尚未完成发布；未启动子任务')
+                with self.journal.s.db.tx(read=True) as db:
+                    def read(kind,key):
+                        row=db.execute('SELECT data FROM records WHERE kind=? AND id=?',(kind,key)).fetchone()
+                        if not row:raise Blocked('父运行记录已变化')
+                        return json.loads(row[0])
+                    run=read('run',self.journal.s.run);activation=read('activation',self.journal.key);chat=read('node-session',self.chat_key)
+                if (run.get('state')!='RUNNING' or run.get('cancel_requested') or run.get('workspace')!=self.workspace or activation.get('process')!=self.parent or activation.get('run')!=self.journal.s.run or activation.get('state')!='RUNNING' or activation.get('node')!=self.node or activation.get('chat_key')!=self.chat_key or chat.get('workspace')!=self.workspace or chat.get('run')!=self.journal.s.run or chat.get('node')!=self.node or chat.get('cwd')!=self.cwd):raise Blocked('父运行已停止或身份已变化')
+                binding=chat.get('binding');sid=activation.get('observed_session');base_sid=self.baseline.get('session_id')
+                if not isinstance(binding,dict) or {k:v for k,v in binding.items() if k!='session_id'}!={k:v for k,v in self.baseline.items() if k!='session_id'}:raise Blocked('父会话冻结绑定已变化')
+                current=binding.get('session_id')
+                if base_sid and (current!=base_sid or sid is not None and sid!=base_sid):raise Blocked('父恢复会话身份不匹配')
+                if sid is not None:
+                    try:
+                        if not isinstance(sid,str) or str(uuid.UUID(sid))!=sid:raise ValueError()
+                    except ValueError:raise Blocked('父原生会话身份无效') from None
+                if current not in (base_sid,sid) or sid is None and current!=base_sid:raise Blocked('父会话绑定已变化')
+                if sid and current==sid:
+                    if time.monotonic()>=wait_until:raise Blocked('父原生会话尚未完成发布；未启动子任务')
+                    if self.owner is None:
+                        effective=copy.deepcopy(self.binding);effective['session_id']=sid
+                        self.owner=OwnedChildren(self.journal,effective,self.cwd,self.parent,self.deadline)
+                    owner=self.owner
+                    break
+            left=wait_until-time.monotonic()
+            if left<=0:raise Blocked('父原生会话尚未完成发布；未启动子任务')
+            self.closed.wait(min(.05,left))
         return owner.call(slot,task)
     def stop_children(self):
         self.closed.set()
