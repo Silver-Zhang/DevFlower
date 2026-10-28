@@ -41,6 +41,13 @@ class ExecConfigTests(unittest.TestCase):
     with self.assertRaisesRegex(Blocked,'沙箱'):require_sandbox_capability('/bin/true',folder,True)
    with patch('studio.native_codex_exec_probe._run_command',return_value=SimpleNamespace(returncode=0,stdout=b'[true,true,false,false,true,true]')):
     with self.assertRaisesRegex(Blocked,'沙箱'):require_sandbox_capability('/bin/true',folder,True)
+ def test_slow_native_resume_startup_does_not_release_the_first_writer(self):
+  with tempfile.TemporaryDirectory() as folder:
+   executable=os.environ.get('DEVFLOWER_TEST_CODEX_SUPPORTED','/usr/lib/chatgpt/resources/codex')
+   wrapper=Path(folder)/'slow-native-startup'
+   wrapper.write_text('#!/usr/bin/python3\nimport os,sys,time\nif sys.argv[1:3]==["exec","resume"]:time.sleep(6)\nos.execv('+repr(executable)+',['+repr(executable)+',*sys.argv[1:]])\n')
+   wrapper.chmod(0o700)
+   self.assertTrue(require_exec_capability(str(wrapper),folder,ordinary_profile=True))
  def test_new_turn_uses_real_identity_and_preserves_tool_events(self):
   class RPC:
    def __init__(self,*a,**k):pass

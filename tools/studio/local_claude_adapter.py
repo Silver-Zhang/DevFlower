@@ -7,6 +7,7 @@ from orchestration.common import Blocked,canonical,digest
 from orchestration.privacy import credentials,redact
 from orchestration.process import execute
 from .native_local import native_environment
+from .agent_sessions import safe_text
 
 
 class LocalClaude:
@@ -38,9 +39,20 @@ class LocalClaude:
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:
             secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
-            detail=redact('; '.join(native_errors('claude',out))[:1200],secret)
+            detail=safe_text(redact('; '.join(native_errors('claude',out))[:1200],secret))
+            if process.get('timeout'):
+                limit=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
+                reason=f"Claude 本次请求超时（已用 {process.get('duration','unknown')} 秒，单次上限 {limit} 秒，退出码 {process.get('exit','unknown')}）；所属进程已停止，没有自动重发。请检查中转站连接，或在节点高级设置延长超时后明确提交新任务"
+            elif process.get('cancelled'):
+                reason='Claude 本次请求已取消，所属进程已停止，没有自动重发'
+            elif process.get('overflow'):
+                reason='Claude 输出超过本次限制，所属进程已停止，没有自动重发'
+            elif process.get('exit'):
+                reason=f"Claude 原生请求失败（退出码 {process['exit']}），没有自动重发；请检查 Agent 登录、模型和中转站连接"
+            else:
+                reason=str(exc)
             if store:store.finish(key,'AGENT_FAILED',process=process,error_category='native-local')
-            raise Blocked(str(exc)+((': '+detail) if detail else '')) from None
+            raise Blocked(reason+((': '+detail) if detail else '')) from None
         if result['session_id']!=requested:raise Blocked('原生 CLI 返回了不同的会话身份')
         secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
         result['report']=redact(result['report'],secret)

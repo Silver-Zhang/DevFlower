@@ -11,6 +11,7 @@ from .session_center import SessionJournal
 from .model_admission import ModelAdmission
 from .agent_sessions import safe_text
 from .workbench_graph import validate_graph
+from .node_defaults import profile_timeout
 
 
 def schema(profiles,depth=0):
@@ -51,7 +52,7 @@ def plan_graph(plan, choices):
             if not allowed or (n['model'],n['effort']) not in [(m['id'],e) for m in allowed['models'] for e in m['efforts']]:raise Invalid('AI提案选择了尚未配置的模型或强度')
             if allowed['provider']=='copilot' and n['mode'] not in ('Ask','Plan'):raise Invalid('Copilot 提案仅允许 Ask/Plan 上下文分析')
             v.update(profile=n['profile'],provider=allowed['provider'],model=n['model'],effort=n['effort'],mode=n['mode'],permission='workspace-write' if n['mode']=='Agent' else 'read',
-                session='new',subagents='disabled',timeout=300,responsibility=n['name'],initial_prompt=n['initial_prompt'],round_prompt=n['round_prompt'],handoff_prompt=n['handoff_prompt'])
+                session='new',subagents='disabled',timeout=profile_timeout(allowed),responsibility=n['name'],initial_prompt=n['initial_prompt'],round_prompt=n['round_prompt'],handoff_prompt=n['handoff_prompt'])
         nodes.append(v)
     if not any(n['kind'] in ('agent','loop') for n in nodes) or sum(n['kind']=='result' for n in nodes)!=1:raise Invalid('提案需要Agent与唯一结果节点')
     graph=dict(version=3,name=plan['name'],nodes=nodes,edges=[dict(dict(id='ai-edge'+str(i),transfer='result'),**e) for i,e in enumerate(plan['edges'])],budget=dict(calls=24,seconds=3600))
@@ -90,7 +91,7 @@ class ConfigurationAssistant:
 
     def choices(self,workspace):
         from .workbench_sessions import WorkbenchSessions
-        return {p['id']:dict(provider=p['provider'],modes=p.get('modes',['Ask','Plan']),models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
+        return {p['id']:dict(provider=p['provider'],timeout_seconds=profile_timeout(p),modes=p.get('modes',['Ask','Plan']),models=[dict(id=m['id'],efforts=m['efforts']) for m in p.get('models',[]) if m.get('operator_registered')])
                 for p in WorkbenchSessions(self.rt).capabilities(False,workspace=workspace) if p.get('available')}
 
     def _base(self,data,*,canvas_only=False,allow_invalid=False):

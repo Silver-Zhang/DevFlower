@@ -1,4 +1,5 @@
 import {inspectionCurrent,inspectionSummary} from './inspection_identity.mjs';
+import {profileTimeout} from './node_defaults.mjs';
 import React,{useState,useEffect,useRef,useCallback} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,Background,MiniMap,Handle,Position,MarkerType,applyNodeChanges,applyEdgeChanges,addEdge,SelectionMode,useStore,useUpdateNodeInternals} from '@xyflow/react';
@@ -248,7 +249,7 @@ setStatus(s);setChatProfile(s.profiles.find(p=>p.available)?.id||'');
  async function nextTask(){const r=await api('/api/run?run='+run);if(r.run.id!==run||r.run.workspace!==workspaceRef.current?.id)throw Error('任务身份已变化，请重新选择');const matching=status.drafts.find(d=>d.id===r.run.draft_id&&JSON.stringify(d.graph)===JSON.stringify(r.run.graph));newDocument(r.run.graph,matching||null,'已复用流程。填写新的本次任务；上轮对话和运行保留在历史中。',()=>{setTask('');selectRun(null);setTab('canvas');requestAnimationFrame(()=>document.querySelector('[aria-label="本次任务"]')?.focus())})}
  async function control(action){if(run)await api('/api/control',{run,action})}
  function addNode(kind,edit=()=>{}){const profile=status.profiles.find(p=>p.available);const n={id:uid(),kind,name:KINDS[kind][0],position:{x:220+(currentGraph.nodes.length%4)*280,y:120+Math.floor(currentGraph.nodes.length/4)*230}};
-  if(kind==='agent')Object.assign(n,{provider:profile.provider,profile:profile.id,model:profile.model,effort:profile.effort,mode:'Ask',permission:'read',role:'通用 Agent',session:'new',initial_prompt:'',round_prompt:'',handoff_prompt:'提供回答、摘要、产物、证据和未解决问题。',timeout:300,subagents:'disabled'});
+  if(kind==='agent')Object.assign(n,{provider:profile.provider,profile:profile.id,model:profile.model,effort:profile.effort,mode:'Ask',permission:'read',role:'通用 Agent',session:'new',initial_prompt:'',round_prompt:'',handoff_prompt:'提供回答、摘要、产物、证据和未解决问题。',timeout:profileTimeout(profile),subagents:'disabled'});
   if(kind==='loop'){n.max_rounds=5;n.body=clone(status.examples[2].nodes[1].body);n.until={field:'result.accepted',op:'equals',value:true}}
   if(kind==='router'){n.routes=[{label:'code',test:{field:'result.task_type',op:'equals',value:'code'}},{label:'research',test:{field:'result.task_type',op:'equals',value:'research'}}];n.default_route='default';n.input_contract=[{field:'result.task_type',type:'string',required:false}]}
   if(kind==='condition')n.test={field:'result.accepted',op:'equals',value:true};updateCurrent(g=>{g.nodes.push(n);edit(g,n)});setPalette(false);setSelected(n.id);setAnchor({x:Math.min(innerWidth-440,500),y:150});return n}

@@ -63,7 +63,12 @@ def _probe(executable,stamp,root,deadline,cancelled,*,no_tools=False,ordinary_pr
                 n=int(self.headers.get('Content-Length','0'))
                 if n<1 or n>2000000:raise ValueError()
                 body=json.loads(self.rfile.read(n));calls.append(body)
-                if len(calls)>1:waiting.set();hold.wait(10)
+                if len(calls)>1:
+                    waiting.set()
+                    # Keep the first writer alive until the refusal has been
+                    # checked. Slow CLI startup must not accidentally release
+                    # its lock and turn this into two sequential writers.
+                    hold.wait(max(0,deadline-time.monotonic()))
                 msg={'id':'msg','type':'message','status':'completed','role':'assistant',
                      'content':[{'type':'output_text','text':'synthetic','annotations':[]}]}
                 response={'id':'resp','object':'response','created_at':0,'status':'completed','model':'fixture',
@@ -116,7 +121,7 @@ def _probe(executable,stamp,root,deadline,cancelled,*,no_tools=False,ordinary_pr
             from .native_local import native_busy
             if not native_busy({'provider':'codex','home':str(base),'config_root':str(home)},sid):raise ValueError('native writer lock is not held')
             third=subprocess.Popen(resume,cwd=work,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-            try:_collect(third,min(deadline,time.monotonic()+5),cancelled)
+            try:_collect(third,min(deadline,time.monotonic()+20),cancelled)
             except Blocked:
                 _remaining(deadline,cancelled)
                 raise ValueError('concurrent native writer was not refused') from None

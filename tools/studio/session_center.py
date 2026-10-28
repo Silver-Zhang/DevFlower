@@ -187,7 +187,17 @@ class SessionCenter:
                 if r['binding'].get('home')==cfg['home'] and r['binding'].get('provider')==p['provider']
                 and r['binding'].get('session_id')==native['session_id']),None)
             if previous:
-                name=previous['runtime_profile'];profile=self.runtime.operator['profiles'][name]
+                name=previous.get('runtime_profile')
+                profile=self.runtime.operator['profiles'].get(name)
+                if not profile:
+                    return None,'此历史会话的 Agent 配置已移除；历史保留，只读查看。请选择当前 Agent 新建会话'
+                if profile['provider'] != p['provider']:
+                    return None,'此历史会话的 Agent 配置已更换 Provider；历史保留，不会自动转交会话'
+                # Keep reading old native history without silently adopting a
+                # new executable or a broader set of paths for that writer.
+                if any(previous.get(k) != profile.get(k) for k in
+                       ('executable','read_paths','write_paths','readonly_files')):
+                    return None,'此历史会话的工具或路径权限已变化；历史保留，请使用当前配置新建会话'
             binding=bind(self.runtime,profile,project['id'])
             if previous:binding.update({k:previous[k] for k in ('model','effort')})
             binding.update(runtime_profile=name,session_id=native['session_id'])

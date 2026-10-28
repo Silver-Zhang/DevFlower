@@ -1,4 +1,7 @@
 """Editable executable v3 examples populated from actual approved native profiles."""
+from .node_defaults import profile_timeout
+
+
 def examples(profiles):
     names=list(profiles);first=next((k for k in names if profiles[k]['provider']=='codex'),names[0])
     second=next((k for k in names if profiles[k]['provider']=='claude'),names[-1])
@@ -6,7 +9,7 @@ def examples(profiles):
     def agent(key,name,profile,x,y):
         p=profiles[profile]
         return node(key,'agent',name,x,y,provider=p['provider'],profile=profile,model=p['model'],effort=p['effort'],
-            role='通用 Agent',responsibility=name,mode='Ask',session='new',subagents='disabled',timeout=300,
+            role='通用 Agent',responsibility=name,mode='Ask',session='new',subagents='disabled',timeout=profile_timeout(p),
             initial_prompt='理解本次工作流的目标和已授权边界。',round_prompt='完成当前任务，参考上游提供的结果。',
             handoff_prompt='提供简明回答。摘要只写要点，产物、依据和未解决问题仅在适用时填写；避免重复长文，不虚构工具执行。')
     def edges(pairs):return [dict(id='edge'+str(i),source=s,target=t,transfer='result') for i,(s,t) in enumerate(pairs)]
