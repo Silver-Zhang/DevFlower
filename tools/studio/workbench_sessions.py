@@ -603,7 +603,7 @@ class WorkbenchSessions:
         binding,reason=self.rt.session_center._binding(row,project)
         if not binding or self.busy(binding,row['native']['session_id']):raise Blocked(reason or '原生会话正被占用')
         command=[sys.executable,str(Path(__file__).parents[1]/'devflower_native_terminal.py')]
-        for key,value in dict(operator=str(self.rt.operator_file),operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=str(self.rt.policy_file),policy_sha256=self.rt.policy_sha,workspace=workspace,handle=handle).items():command+=['--'+key.replace('_','-'),value]
+        for key,value in dict(operator=str(self.rt.operator_file),operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=str(self.rt.policy_file),policy_sha256=self.rt.policy_sha,assistant_settings=str(self.rt.assistant_settings),workspace=workspace,handle=handle).items():command+=['--'+key.replace('_','-'),value]
         return dict(command=shlex.join(command),cwd=row['native']['cwd'],mode='只读原生终端；启动前重新核验原环境和占用，退出后释放同一 HOME 锁',attached=False)
 
     _catalog_locks={}

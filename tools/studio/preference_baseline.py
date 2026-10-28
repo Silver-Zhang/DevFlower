@@ -57,6 +57,11 @@ def preference_only(baseline,path):
 
 @contextmanager
 def worker_baseline(runtime,env):
+    # Owned controller workers must protect exactly the same host settings as
+    # the server, even when clean_env drops HOME/XDG launch preferences. Native
+    # Agent adapters subsequently construct their own clean environment.
+    settings=getattr(runtime,'assistant_settings',None)
+    if settings is not None:env['DEVFLOWER_SETTINGS_HOME']=str(settings)
     baseline=getattr(runtime,'preference_baseline',None)
     if not baseline:
         yield ()

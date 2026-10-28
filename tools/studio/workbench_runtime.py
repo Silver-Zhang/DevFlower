@@ -31,7 +31,9 @@ READONLY_VIEW = ContextVar('workbench_readonly_view',default=False)
 class WorkbenchRuntime(SessionRuntime):
     operator_metadata_fields = frozenset({'stable','native_local'})
 
-    def __init__(self, operator, operator_sha, candidate_sha, policy, policy_sha):
+    def __init__(self, operator, operator_sha, candidate_sha, policy, policy_sha, *, assistant_settings=None):
+        from .assistant_settings import settings_root
+        self.assistant_settings = Path(clean_path(str(assistant_settings or settings_root())))
         self.policy_file, self.policy_sha = Path(clean_path(str(policy))), policy_sha
         with opened(self.policy_file) as fd: raw = os.read(fd, 200001)
         if len(raw) > 200000 or digest(raw) != policy_sha: raise Blocked('工作台策略身份不一致')
@@ -56,7 +58,7 @@ class WorkbenchRuntime(SessionRuntime):
         self.rpc_home = self.native / 'metadata'
 
     def operator_protected_paths(self):
-        protected = [self.policy_file]
+        protected = [self.policy_file, self.assistant_settings]
         self.trust = None
         if 'stable' in self.operator:
             binding = self.operator['stable']

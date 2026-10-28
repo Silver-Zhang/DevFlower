@@ -17,7 +17,7 @@ class UnicodeSSE(unittest.TestCase):
       send({'choices':[{'delta':{'content':'正在检查工作流配置。秘密令'},'finish_reason':None}]});sent.set();release.wait(3)
       send({'choices':[{'delta':{'content':'牌甲乙完成。','reasoning_content':'隐藏推理'},'finish_reason':'stop'}]});send('[DONE]')
      except (BrokenPipeError,ConnectionResetError):pass
-   server=ThreadingHTTPServer(('127.0.0.1',0),Handler);t=threading.Thread(target=server.serve_forever,daemon=True);t.start();rt=SimpleNamespace(storage=home,operator={'profiles':{'fixture':{'home':str(home),'readonly_files':[]}}},check_operator=lambda:None)
+   server=ThreadingHTTPServer(('127.0.0.1',0),Handler);t=threading.Thread(target=server.serve_forever,daemon=True);t.start();rt=SimpleNamespace(assistant_settings=home/'settings',storage=home,operator={'profiles':{'fixture':{'home':str(home),'readonly_files':[]}}},check_operator=lambda:None)
    AgentConnection(rt).save(dict(expected=None,protocol='openai',base_url='http://127.0.0.1:'+str(server.server_port),model='fixture',effort='default',api_key=''))
    def work():
     try:

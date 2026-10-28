@@ -23,7 +23,7 @@ def fixture(owner, admission=False):
     base=test_agent_sessions.CenterTests();base.setUp();owner.addCleanup(base.doCleanups)
     old=base.development_runtime();policy=base.root/'workbench-policy.json'
     save(policy,dict(version=1,models={},external_steps={}))
-    rt=WorkbenchRuntime(old.operator_file,old.operator_sha256,tree_hash(Path(__file__).resolve().parents[1]),policy,digest(policy.read_bytes()))
+    rt=WorkbenchRuntime(old.operator_file,old.operator_sha256,tree_hash(Path(__file__).resolve().parents[1]),policy,digest(policy.read_bytes()),assistant_settings=base.root/'assistant-settings')
     base.runtime=rt;base.project=rt.open_workspace(str(base.source))
     # Reuse the old filesystem-fixture builder without adding a production API.
     rt.sessions=rt.session_center.discover

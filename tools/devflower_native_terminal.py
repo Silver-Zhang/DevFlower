@@ -110,7 +110,8 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('operator','operator-sha256','candidate-sha256','policy','policy-sha256','workspace','handle'):p.add_argument('--'+key,required=True)
     p.add_argument('--terminal-id')
-    a=p.parse_args();rt=WorkbenchRuntime(a.operator,a.operator_sha256,a.candidate_sha256,a.policy,a.policy_sha256)
+    p.add_argument('--assistant-settings')
+    a=p.parse_args();rt=WorkbenchRuntime(a.operator,a.operator_sha256,a.candidate_sha256,a.policy,a.policy_sha256,assistant_settings=a.assistant_settings)
     parent=os.environ.get('DEVFLOWER_TERMINAL_PARENT_PID')
     if parent:
         # Popen created a new session with this PTY on stdin. Do this in the

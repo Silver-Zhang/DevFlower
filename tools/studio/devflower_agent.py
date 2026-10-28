@@ -40,31 +40,29 @@ def canvas_tools():
              input_schema=dict(type='object',additionalProperties=False,required=['reply','task'],properties=dict(reply=dict(type='string'),task=dict(type='string',minLength=1,maxLength=12000))))]
 
 
+class ConnectionMissing(Blocked):
+    pass
+
+
 class AgentConnection:
     """Private connection settings independent of execution Agent profiles."""
-    def __init__(self,rt):self.rt=rt;self.path=rt.storage/'devflower-agent-connection.json'
-    def read(self):
+    def __init__(self,rt):
+        from .assistant_settings import ConnectionStore,settings_root
+        self.rt=rt;self.store=ConnectionStore(getattr(rt,'assistant_settings',None) or settings_root())
+        self.path=self.store.path;self.legacy=rt.storage/'devflower-agent-connection.json'
+    def read(self,*,migrate=True):
         self.rt.check_operator()
-        if self.path.exists():
-            with opened(self.path) as fd:raw=os.read(fd,100001)
+        legacy=False
+        try:value=self.store.read()
+        except FileNotFoundError:
+            # Only migrate an explicitly saved connection. Native CLI login and
+            # relay settings are neither a default assistant nor an API grant.
+            try:
+                with opened(self.legacy) as fd:
+                    self.store.private(fd);raw=os.read(fd,100001)
+            except FileNotFoundError:raise ConnectionMissing('请先保存 DeepSeek 助手连接；只需设置一次，以后自动恢复') from None
             if len(raw)>100000:raise Blocked('助手模型连接配置过大')
-            value=json.loads(raw)
-        else:
-            # Reuse an already owner-approved API credential reference, not its
-            # CLI, sessions, prompts or permissions; never copy a native HOME.
-            value=None
-            for name,p in self.rt.operator['profiles'].items():
-                for source,target in p.get('readonly_files',[]):
-                    if target=='.claude/settings.json':
-                        with opened(source) as fd:d=json.loads(os.read(fd,200001))
-                        e=d.get('env',{});model=e.get('ANTHROPIC_MODEL')
-                        if e.get('ANTHROPIC_BASE_URL') and (e.get('ANTHROPIC_AUTH_TOKEN') or e.get('ANTHROPIC_API_KEY')) and model:
-                            # [1m] is CLI context selection, not an API model ID.
-                            api_model=model[:-4] if model.endswith('[1m]') else model
-                            value=dict(version=1,protocol='anthropic',base_url=e['ANTHROPIC_BASE_URL'],model=api_model,
-                                effort=d.get('effortLevel','high'),credential_ref=source,context=model[len(api_model):]);break
-                if value:break
-            if value is None:raise Blocked('请先为 DevFlower 助手配置模型 API；助手不依赖任何编程 Agent 登录')
+            value=json.loads(raw);legacy=True
         self.validate(value)
         secret=value.get('api_key','')
         if value.get('credential_ref'):
@@ -73,6 +71,13 @@ class AgentConnection:
             with opened(value['credential_ref']) as fd:env=json.loads(os.read(fd,200001)).get('env',{})
             secret=env.get('ANTHROPIC_AUTH_TOKEN') or env.get('ANTHROPIC_API_KEY') or ''
         if not secret and not self.local(value['base_url']):raise Blocked('助手模型接口缺少认证')
+        if legacy and migrate:
+            with self.store.locked() as directory:
+                try:self.store.read()
+                except FileNotFoundError:
+                    saved={k:v for k,v in value.items() if k!='credential_ref'}
+                    self.store.write(dict(saved,api_key=secret),directory)
+            return self.read(migrate=False)
         return dict(value,api_key=secret,fingerprint=digest(canonical(value)))
     @staticmethod
     def local(url):return urlsplit(url).hostname in ('127.0.0.1','localhost','::1')
@@ -89,28 +94,23 @@ class AgentConnection:
     def public(self):
         try:v=self.read()
         except Blocked:
-            return dict(agent_id=AGENT_ID,name='DevFlower 助手',configured=False,protocol='anthropic',base_url='',model='',effort='high',fingerprint=None,has_credentials=False,coding_cli_required=False)
-        return {k:v[k] for k in ('protocol','base_url','model','effort','fingerprint')}|dict(agent_id=AGENT_ID,name='DevFlower 助手',configured=True,has_credentials=bool(v['api_key']),credential_source='已批准接口引用' if v.get('credential_ref') else '助手专用连接',coding_cli_required=False)
+            from .assistant_settings import DEFAULT_CONNECTION
+            return dict(DEFAULT_CONNECTION,agent_id=AGENT_ID,name='DevFlower 助手',configured=False,fingerprint=None,has_credentials=False,coding_cli_required=False,settings_scope='host')
+        return {k:v[k] for k in ('protocol','base_url','model','effort','fingerprint')}|dict(agent_id=AGENT_ID,name='DevFlower 助手',configured=True,has_credentials=bool(v['api_key']),credential_source='已批准接口引用' if v.get('credential_ref') else '助手专用连接',coding_cli_required=False,settings_scope='host')
     def save(self,data):
-        from orchestration.store import lease
-        with lease(self.path.with_suffix('.lock')):
-            return self._save(data)
-    def _save(self,data):
+        with self.store.locked() as directory:
+            return self._save(data,directory)
+    def _save(self,data,directory):
         self.rt.check_operator()
         if set(data)!={'expected','protocol','base_url','model','effort','api_key'}:raise Invalid('助手连接设置字段无效')
-        try:previous=self.read()
-        except Blocked:previous=None
+        try:previous=self.read(migrate=False)
+        except ConnectionMissing:previous=None
         if data['expected']!=(previous or {}).get('fingerprint'):raise Conflict('助手连接已变化，请刷新后再保存')
         same_origin=previous and urlsplit(data['base_url'])[:2]==urlsplit(previous['base_url'])[:2] and data['protocol']==previous['protocol']
         key=data['api_key'] or ((previous or {}).get('api_key','') if same_origin else '')
         if not key and not self.local(data['base_url']):raise Invalid('新的模型服务需要单独填写密钥；不会把旧服务密钥转发到新地址')
         v=dict(version=1,**{k:data[k] for k in ('protocol','base_url','model','effort')},api_key=key);self.validate(v)
-        tmp=self.path.with_name('.agent-'+secrets.token_hex(16));fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-        try:
-            with os.fdopen(fd,'wb') as f:f.write(canonical(v));f.flush();os.fsync(f.fileno())
-            os.replace(tmp,self.path)
-        finally:
-            if tmp.exists():tmp.unlink()
+        self.store.write(v,directory)
         return self.public()
 
 

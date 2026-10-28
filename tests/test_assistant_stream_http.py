@@ -9,7 +9,7 @@ from orchestration.common import Blocked
 
 class StreamHTTP(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.rt=SimpleNamespace(storage=Path(self.tmp.name),operator={'profiles':{}},check_operator=lambda:None)
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.rt=SimpleNamespace(assistant_settings=Path(self.tmp.name)/'settings',storage=Path(self.tmp.name),operator={'profiles':{}},check_operator=lambda:None)
   self.release=threading.Event();self.sent=threading.Event();self.request_seen=threading.Event();self.before_first=threading.Event();self.before_first.set();self.requests=[];self.break_stream=False;self.error_message=None;self.first_text='Visible early ';owner=self
   class Handler(BaseHTTPRequestHandler):
    def log_message(self,*args):pass

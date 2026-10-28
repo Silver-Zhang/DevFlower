@@ -847,6 +847,38 @@ await test('builtin-assistant-user-edit-during-inference-is-not-overwritten',asy
  await openWorkspace(p);await p.getByRole('button',{name:'AI 配置',exact:true}).click();const panel=p.getByTestId('assistant-dock');await panel.getByLabel('助手模型',{exact:true}).selectOption('auto');await panel.getByLabel('助手工作方式',{exact:true}).selectOption('workflow');await panel.locator('.assistant-options>summary').click();await panel.getByRole('checkbox',{name:/设计工作流模式生成后自动应用/}).check();let release;const hold=new Promise(r=>release=r);await p.route('**/api/canvas-assistant/conversation?*',async route=>{const response=await route.fetch();const body=await response.json();if(body.turn?.state==='COMPLETED')await hold;await route.fulfill({response})});try{await panel.getByRole('checkbox',{name:/允许发送.*对话/}).check();await panel.getByLabel('配置需求',{exact:true}).fill('生成过程中保留编辑');await panel.getByRole('button',{name:'发送',exact:true}).click();await p.getByLabel('工作流名称',{exact:true}).fill('用户手动保留的名称');release();await until(async()=>await panel.getByRole('alert').count()>0);assert.equal(await p.getByLabel('工作流名称',{exact:true}).inputValue(),'用户手动保留的名称');assert((await panel.getByRole('alert').first().innerText()).includes('修改'));}finally{release()}
 });
 
+await test('deepseek-settings-and-model-choice-survive-reopen-without-exposing-key',async p=>{
+ await p.route('**/api/assistant/models*',async route=>{
+  const response=await p.request.get(access.url+'/api/devflower-agent/config',{headers:{Authorization:'Bearer '+access.token}}),config=await response.json();
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({models:[{id:'synthetic-deepseek-one'},{id:'synthetic-deepseek-two'}],default_model:config.configured?config.model:'synthetic-deepseek-one',source:'SYNTHETIC catalog; no inference'})});
+ });
+ await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();
+ await p.getByLabel('助手模型设置',{exact:true}).click();const settings=p.getByLabel('助手模型连接',{exact:true});
+ await settings.getByLabel('助手模型ID',{exact:true}).fill('synthetic-deepseek-one');
+ await settings.getByLabel('助手API协议',{exact:true}).selectOption('openai');
+ await settings.getByLabel('模型服务地址',{exact:true}).fill('http://127.0.0.1:1');
+ await settings.getByLabel('助手推理强度',{exact:true}).selectOption('medium');
+ await settings.getByLabel('助手API密钥',{exact:true}).fill('SYNTHETIC_PERSISTENCE_SECRET');
+ await settings.getByRole('button',{name:'保存连接',exact:true}).click();
+ let dock=p.getByTestId('assistant-dock');await until(async()=>await dock.getByLabel('助手模型',{exact:true}).inputValue()==='synthetic-deepseek-one');
+ await dock.getByLabel('助手模型',{exact:true}).selectOption('synthetic-deepseek-two');
+ await until(async()=>(await dock.innerText()).includes('助手模型已保存'));
+ await p.reload();await p.getByRole('button',{name:'AI 助手',exact:true}).click();dock=p.getByTestId('assistant-dock');
+ await until(async()=>await dock.getByLabel('助手模型',{exact:true}).inputValue()==='synthetic-deepseek-two');
+ await p.getByLabel('助手模型设置',{exact:true}).click();const reopened=p.getByLabel('助手模型连接',{exact:true});
+ assert.equal(await reopened.getByLabel('助手模型ID',{exact:true}).inputValue(),'synthetic-deepseek-two');
+ assert.equal(await reopened.getByLabel('助手推理强度',{exact:true}).inputValue(),'medium');
+ assert.equal(await reopened.getByLabel('模型服务地址',{exact:true}).inputValue(),'http://127.0.0.1:1');
+ assert.equal(await reopened.getByLabel('助手API密钥',{exact:true}).inputValue(),'');
+ assert((await reopened.getByLabel('助手API密钥',{exact:true}).getAttribute('placeholder')).includes('已保存'));
+ assert(!(await p.content()).includes('SYNTHETIC_PERSISTENCE_SECRET'));
+ // Saving a different default must replace the previous selection even when
+ // both models remain in the provider catalog.
+ await reopened.getByLabel('助手模型ID',{exact:true}).fill('synthetic-deepseek-one');
+ await reopened.getByRole('button',{name:'保存连接',exact:true}).click();
+ await until(async()=>await p.getByTestId('assistant-dock').getByLabel('助手模型',{exact:true}).inputValue()==='synthetic-deepseek-one');
+
+});
 await test('dock-assistant-is-inline-retains-input-and-never-creates-a-modal',async p=>{
  await openWorkspace(p);await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');await dock.waitFor();assert.equal(await p.locator('.canvas-assistant-scrim').count(),0);assert.equal(await p.getByRole('dialog',{name:'AI配置助手',exact:true}).count(),0);assert.equal(await dock.locator('xpath=ancestor::aside[contains(@class,"studio-tools")]').count(),1);await dock.getByLabel('配置需求',{exact:true}).fill('保留这段未发送需求');await p.getByRole('button',{name:'查看节点工具库',exact:true}).click();assert.equal(await dock.isVisible(),false);await p.getByRole('button',{name:'AI 助手',exact:true}).click();assert.equal(await dock.getByLabel('配置需求',{exact:true}).inputValue(),'保留这段未发送需求');await p.screenshot({path:out+'/assistant-dock-light.png'});await p.getByLabel('外观主题',{exact:true}).selectOption('dark');await p.screenshot({path:out+'/assistant-dock-dark.png'});
 });
