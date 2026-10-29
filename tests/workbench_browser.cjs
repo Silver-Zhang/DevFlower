@@ -169,6 +169,40 @@ await test('loop-permission-preview-includes-nested-agents',async p=>{
  for(const [path,selected] of nodes){assert(path.startsWith('cycle/'));assert.equal(selected.binding.execution_mode,'Ask');assert.equal(selected.binding.role,'reviewer');assert.equal(selected.binding.effort,'high')}
  await delay(150);assert.equal(starts,1);assert.equal(probes,0);assert.equal(await p.getByLabel('本次授权确认意见').count(),0);
 });
+await test('skipped-loop-body-is-unexecuted-not-pending-or-a-fake-session',async p=>{
+ await openWorkspace(p);await example(p,2);
+ const graph=await p.evaluate(()=>JSON.parse(localStorage.getItem('devflower-workbench-view')).graph);
+ const loop=graph.nodes.find(n=>n.kind==='loop');assert(loop&&loop.body.nodes.length>0);
+ const writes=[],conversations=[];p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|chat\/start|terminal\/start)$/.test(r.url()))writes.push(r.url());if(/\/api\/node-(conversation|session)\?/.test(r.url()))conversations.push(r.url())});
+ await p.route('**/api/run?**',async route=>{
+  const response=await route.fetch(),v=await response.json();
+  if(v.run?.id==='A'){
+   v.state='COMPLETED';v.run.graph=graph;v.run.paused=false;v.run.finished_at=100;v.run.created_at=50;
+   v.nodes=graph.nodes.map(n=>({id:'synthetic-skip-'+n.id,run:'A',node:n.id,kind:n.kind,name:n.name,state:n.kind==='loop'?'SKIPPED':'COMPLETED',iteration:0,iteration_path:[]}));
+  }
+  await route.fulfill({response,json:v});
+ });
+ await p.getByLabel('历史运行',{exact:true}).selectOption('A');
+ const overview=p.getByLabel('运行总览',{exact:true});
+ await until(async()=>(await overview.innerText()).includes(`${graph.nodes.length} / ${graph.nodes.length}`));
+ assert((await overview.innerText()).includes(`${loop.body.nodes.length} 个设计节点未激活`));
+ assert((await overview.innerText()).includes('随所属循环跳过'));
+ await p.locator(`.react-flow__node[data-id="${loop.id}"]`).getByRole('button',{name:'编辑循环内流程',exact:true}).click();
+ await until(async()=>await p.locator('.react-flow__node').count()===loop.body.nodes.length);await settleCanvas(p);
+ await until(async()=>(await p.locator('.react-flow__node .badge').allTextContents()).every(t=>t.includes('已跳过')));
+ for(const n of loop.body.nodes){
+  const card=p.locator(`.react-flow__node[data-id="${n.id}"]`);
+  assert((await card.locator('.badge').innerText()).includes('已跳过'));
+  assert((await card.innerText()).includes('未执行：所属循环已跳过'));
+  assert(!/第 \d+ 轮/.test(await card.locator('footer').innerText()),'No invented execution round');
+ }
+ const agent=loop.body.nodes.find(n=>n.kind==='agent');await p.locator(`.react-flow__node[data-id="${agent.id}"]`).click();
+ await p.getByText('本节点没有实际调用、请求或原生会话。',{exact:false}).waitFor({state:'visible'});
+ assert.equal(await p.getByTestId('actual-provider-request').count(),0);
+ assert.equal(await p.getByRole('button',{name:'查看同一会话',exact:true}).count(),0);
+ assert.deepEqual(conversations,[]);assert.deepEqual(writes,[]);
+ await p.screenshot({path:out+'/skipped-loop-unexecuted.png'});
+});
 await test('frozen-budget-does-not-display-or-edit-draft',async p=>{await openWorkspace(p);await p.locator('.react-flow__node[data-id="analyze"]').click();await p.getByRole('button',{name:'高级',exact:true}).click();await p.getByLabel('运行调用预算',{exact:true}).fill('24');await p.getByLabel('运行时间预算（秒）',{exact:true}).fill('1200');await p.getByLabel('历史运行',{exact:true}).selectOption('A');await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()==='运行 A');await p.locator('.react-flow__node[data-id="analyze"]').click();await p.getByRole('button',{name:'高级',exact:true}).click();assert.equal(await p.getByLabel('运行调用预算',{exact:true}).inputValue(),'10');assert.equal(await p.getByLabel('运行时间预算（秒）',{exact:true}).inputValue(),'600');assert(await p.getByLabel('运行调用预算',{exact:true}).isDisabled());assert(await p.getByLabel('运行时间预算（秒）',{exact:true}).isDisabled());await p.getByLabel('历史运行',{exact:true}).selectOption('B');await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()==='运行 B');await p.locator('.react-flow__node[data-id="analyze"]').click();await p.getByRole('button',{name:'高级',exact:true}).click();assert.equal(await p.getByLabel('运行调用预算',{exact:true}).inputValue(),'12');await p.getByRole('button',{name:'编辑草稿',exact:true}).click();await p.locator('.react-flow__node[data-id="analyze"]').click();await p.getByRole('button',{name:'高级',exact:true}).click();assert.equal(await p.getByLabel('运行调用预算',{exact:true}).inputValue(),'24');assert.equal(await p.getByLabel('运行时间预算（秒）',{exact:true}).inputValue(),'1200');assert(await p.getByLabel('运行调用预算',{exact:true}).isEnabled());});
 await test('slow-poll-eventually-displays-real-snapshot',async p=>{await openWorkspace(p);let responses=0;await p.route('**/api/run?**',async route=>{const response=await route.fetch();await delay(1400);responses++;await route.fulfill({response});});await p.getByLabel('历史运行',{exact:true}).selectOption('A');await delay(4600);const title=await p.getByLabel('工作流名称',{exact:true}).inputValue();assert(responses>=2,'Actual HTTP replies must have returned');assert.equal(title,'运行 A','Slow valid responses must eventually update the selected run');});
 await test('hung-snapshot-becomes-unknown-without-restarting-run',async p=>{await openWorkspace(p);let release;const hold=new Promise(r=>release=r);let held=0;await p.route('**/api/run?**',async route=>{const response=await route.fetch();held++;await hold;await route.fulfill({response});});try{await p.getByLabel('历史运行',{exact:true}).selectOption('A');await until(async()=>held===1);await delay(3000);assert.equal(held,1,'An outstanding snapshot must not overlap before its deadline');await delay(2600);assert((await p.locator('.activity-tabs').innerText()).includes('状态未确认'));assert(held<=2,'Only a timed-out read may be retried');}finally{release();}});

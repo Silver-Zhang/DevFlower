@@ -73,6 +73,8 @@ test('disconnection and foreign-run skip records never produce a trusted inherit
   const p=projectRun(v,connection,run);assert.equal(visibleNodeState(p,'loop/agent').state,'UNKNOWN');assert.equal(p.inheritedSkipped,0);assert.equal(p.activated,0);assert.equal(p.settled,0);
  }
  v.nodes[0].run='other-run';const p=projectRun(v,'connected','skip-run');assert.equal(p.inheritedSkipped,0);assert.equal(p.latest.find(x=>x.node.path==='loop/agent').activation,undefined);
+ delete v.nodes[0].run;assert.equal(projectRun(v,'connected','skip-run').inheritedSkipped,0);
+ v.nodes[0].run='skip-run';delete v.nodes[0].id;assert.equal(projectRun(v,'connected','skip-run').inheritedSkipped,0);
 });
 test('settled progress includes actual failures without calling them passed',()=>{
  const v=skippedLoop();v.state='FAILED';v.nodes[0].state='FAILED';const p=projectRun(v,'connected','skip-run');

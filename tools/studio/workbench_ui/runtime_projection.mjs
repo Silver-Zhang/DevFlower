@@ -41,7 +41,7 @@ export function projectRun(snapshot,connection,runId){
   const parent=!a&&trusted?nodes.filter(p=>p.kind==='loop'&&n.path.startsWith(p.path+'/'))
    .sort((x,y)=>y.path.length-x.path.length)
    .map(p=>({node:p,activation:latestActivation(activations,p.path)}))
-   .find(p=>p.activation?.state==='SKIPPED'):null;
+   .find(p=>p.activation?.state==='SKIPPED'&&p.activation.run===runId&&typeof p.activation.id==='string'&&p.activation.id):null;
   const presentation=parent?{state:'SKIPPED',reason:'未执行：所属循环已跳过。',
    derived_from_parent:{node:parent.node.path,activation_id:parent.activation.id}}:null;
   return {node:n,activation:stale?{...a,recorded_state:a.state,state:'UNKNOWN',reason:'本次运行已结束，节点记录尚未确认终态。'}:a,presentation};
