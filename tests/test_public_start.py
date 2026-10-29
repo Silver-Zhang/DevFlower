@@ -24,14 +24,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
 import devflower_start as start
 from orchestration.common import tree_hash
 from studio import session_runtime, workbench_runtime, workbench_server
+from studio.native_codex_rpc import metadata_guard
 from studio.public_source_tool import PUBLIC_FILES, PublicSourceReader
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def quiet_start(args):
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        raise SystemExit(start.main(args))
+def quiet_start(args, root, bwrap):
+    # A fresh interpreter matches the public CLI. fork would inherit a previous
+    # Controller test's irreversible non-dumpable flag, unlike a real exec.
+    with contextlib.ExitStack() as stack:
+        for item in (patch.object(start, 'ROOT', root), patch.object(start, 'BWRAP', bwrap),
+                     patch.object(workbench_runtime, 'ROOT', root), patch.object(session_runtime, 'ROOT', root),
+                     patch.object(workbench_server, 'STATIC', root/'tools/studio/static'),
+                     patch('orchestration.sandbox.abi', return_value=6)):
+            stack.enter_context(item)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            raise SystemExit(start.main(args))
 
 
 class PublicStartTests(unittest.TestCase):
@@ -101,8 +110,8 @@ class PublicStartTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def running(self):
-        process = multiprocessing.get_context('fork').Process(target=quiet_start,
-            args=(['--state-dir', str(self.state), '--no-browser'],))
+        process = multiprocessing.get_context('spawn').Process(target=quiet_start,
+            args=(['--state-dir', str(self.state), '--no-browser'], self.root, self.bin/'bwrap'))
         process.start()
         def stop():
             if process.is_alive():
@@ -362,6 +371,101 @@ class PublicStartTests(unittest.TestCase):
         unknown.unlink()
         op=self.state/'config/operator.json';os.link(op,self.base/'alias')
         with self.assertRaises(start.Blocked):start.inspect_state(self.state)
+
+    def test_runtime_metadata_guard_is_known_without_http(self):
+        self.initialize_with_bind_failure()
+        record=start.inspect_state(self.state)
+        storage=self.state/'runtime'
+        with metadata_guard(storage):
+            lock=storage/'.native-metadata-preflight.lock'
+            self.assertEqual(stat.S_IMODE(lock.stat().st_mode),0o600)
+            self.assertEqual(lock.stat().st_nlink,1)
+            self.assertEqual(start.inspect_state(self.state),record)
+        self.assertEqual(start.inspect_state(self.state),record)
+        start.verify(self.state,record,self.before_source)
+
+    def test_runtime_managed_child_artifacts_are_known_without_http(self):
+        self.initialize_with_bind_failure()
+        record=start.inspect_state(self.state)
+        artifacts=self.state/'runtime/managed-child-artifacts'
+        artifacts.mkdir(mode=0o700)
+        reservation=artifacts/'SYNTHETIC-reservation'
+        reservation.mkdir(mode=0o700)
+        start.write_new(reservation/'result.json',{'source':'SYNTHETIC; no child or model executed'})
+        self.assertEqual(start.inspect_state(self.state),record)
+        start.verify(self.state,record,self.before_source)
+
+    def test_runtime_metadata_guard_reuses_healthy_service(self):
+        process=self.running()
+        receipt=(self.state/'runtime/service.json').read_bytes()
+        with metadata_guard(self.state/'runtime'):pass
+        start.inspect_state(self.state)
+        self.assertEqual(self.http('/api/status')[0],200)
+        code,out,err=self.call('--no-browser')
+        self.assertEqual(code,0,err)
+        self.assertTrue(process.is_alive())
+        self.assertEqual((self.state/'runtime/service.json').read_bytes(),receipt)
+
+    def test_runtime_managed_child_artifacts_reuse_healthy_service(self):
+        process=self.running()
+        receipt=(self.state/'runtime/service.json').read_bytes()
+        artifacts=self.state/'runtime/managed-child-artifacts'
+        artifacts.mkdir(mode=0o700)
+        (artifacts/'SYNTHETIC-reservation').mkdir(mode=0o700)
+        start.inspect_state(self.state)
+        self.assertEqual(self.http('/api/status')[0],200)
+        code,out,err=self.call('--no-browser')
+        self.assertEqual(code,0,err)
+        self.assertTrue(process.is_alive())
+        self.assertEqual((self.state/'runtime/service.json').read_bytes(),receipt)
+
+    def test_runtime_known_names_reject_symlinks_nonprivate_and_hardlinks(self):
+        self.initialize_with_bind_failure()
+        target=self.base/'unrelated-private.json'
+        start.write_new(target,{'keep':'SYNTHETIC private bytes'})
+        before=target.read_bytes()
+        for name,is_dir in (('.native-metadata-preflight.lock',False),('managed-child-artifacts',True)):
+            path=self.state/'runtime'/name
+            with self.subTest(name=name,case='symlink'):
+                path.symlink_to(target)
+                with self.assertRaises(start.Blocked):start.inspect_state(self.state)
+                if not is_dir:
+                    with self.assertRaises(start.Blocked):
+                        with metadata_guard(self.state/'runtime'):pass
+                self.assertEqual(target.read_bytes(),before)
+                path.unlink()
+            with self.subTest(name=name,case='nonprivate'):
+                if is_dir:path.mkdir(mode=0o700)
+                else:start.write_new(path,{})
+                path.chmod(0o755 if is_dir else 0o644)
+                with self.assertRaises(start.Blocked):start.inspect_state(self.state)
+                if is_dir:path.rmdir()
+                else:path.unlink()
+        lock=self.state/'runtime/.native-metadata-preflight.lock'
+        os.link(target,lock)
+        with self.assertRaises(start.Blocked):start.inspect_state(self.state)
+        with self.assertRaises(start.Blocked):
+            with metadata_guard(self.state/'runtime'):pass
+        lock.unlink()
+        artifacts=self.state/'runtime/managed-child-artifacts'
+        artifacts.mkdir(mode=0o700)
+        os.link(target,artifacts/'linked-result.json')
+        with self.assertRaises(start.Blocked):start.inspect_state(self.state)
+        self.assertEqual(target.read_bytes(),before)
+
+    def test_runtime_known_names_do_not_accept_unknown_neighbours(self):
+        self.initialize_with_bind_failure()
+        for name,is_dir in (('.native-metadata-preflight.lock.extra',False),('managed-child-artifacts-extra',True)):
+            path=self.state/'runtime'/name
+            with self.subTest(name=name):
+                if is_dir:path.mkdir(mode=0o700)
+                else:start.write_new(path,{'keep':'unknown'})
+                with self.assertRaisesRegex(start.Blocked,'运行目录含未知文件'):start.inspect_state(self.state)
+                self.assertTrue(path.exists())
+                if is_dir:path.rmdir()
+                else:
+                    self.assertEqual(json.loads(path.read_text()),{'keep':'unknown'})
+                    path.unlink()
 
     def test_environment_only_gateway_or_ambiguous_preference_is_not_silently_changed(self):
         with patch.dict(os.environ,{'ANTHROPIC_BASE_URL':'https://SYNTHETIC.invalid'}):

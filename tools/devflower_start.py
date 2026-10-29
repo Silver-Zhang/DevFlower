@@ -246,10 +246,10 @@ def inspect_state(state):
         with directory(state/name): pass
     if set(os.listdir(state/'config')) - {'operator.json', 'policy.json', 'assistant-settings'}:
         raise Blocked('配置目录含未知文件。'+GUIDANCE)
-    runtime_names = {'.devflower-session-center', 'installation.json', 'service.json', 'start-intent.json',
+    runtime_names = {'.devflower-session-center', '.native-metadata-preflight.lock', 'installation.json', 'service.json', 'start-intent.json',
         'workbench-capability', 'workbench-service.lock', 'canvas-assistant', 'discovery',
         'configuration-context', 'configuration-artifacts', 'session-artifacts', 'model-checks',
-        'model-check-homes', 'skill-snapshots', 'managed-child-endpoints', 'native-attach',
+        'model-check-homes', 'skill-snapshots', 'managed-child-endpoints', 'managed-child-artifacts', 'native-attach',
         'metadata-artifacts', 'project-records', 'flow-artifacts', 'external-artifacts'}
     runtime_names |= {db+suffix for db in ('usable.sqlite', 'workbench.sqlite', 'sessions.sqlite')
                       for suffix in ('', '-wal', '-shm', '-journal')}
