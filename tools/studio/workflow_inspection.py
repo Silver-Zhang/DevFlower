@@ -6,6 +6,22 @@ from .graph import Invalid
 from .workbench_graph import validate_graph
 
 
+def _current_model_catalog(rt, name, profile):
+    """Read the same identity/TTL-scoped view as the picker, without refresh."""
+    from .model_catalog import ModelCatalog
+    from .workbench_sessions import WorkbenchSessions
+    try:
+        # No discovery record means unknown; do not read credential overlays or
+        # compatibility registrations when there is nothing to authenticate.
+        rt.flow.get('model-discovery', name)
+        catalog = ModelCatalog(WorkbenchSessions(rt)).get(name, profile, refresh=False)
+    except (Blocked, Invalid, OSError, ValueError, KeyError, TypeError):
+        return None
+    if catalog.get('error') or catalog.get('stale') or not catalog.get('discovery_complete'):
+        return None
+    return catalog
+
+
 def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None):
     issues=[]
     counts={'error':0,'warning':0}
@@ -159,11 +175,10 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                             try:auth=rt.flow.get('auth-probe',classifier['profile'])
                             except Invalid:auth=None
                             if auth and auth.get('logged_in') is False:add('warning',f'「{name}」的分类器上次检查显示未登录。',node=path,field='classifier.profile')
-                            try:catalog=rt.flow.get('model-discovery',classifier['profile'])
-                            except Invalid:catalog=None
-                            if catalog and not catalog.get('error'):
-                                selected=next((row for row in catalog.get('models',[]) if row.get('id')==classifier.get('model')),None)
-                                if selected and selected.get('efforts') and classifier.get('effort') not in selected['efforts']:
+                            catalog=_current_model_catalog(rt,classifier['profile'],profile)
+                            if catalog:
+                                selected=next((row for row in catalog.get('models',[]) if row.get('id')==classifier.get('model') and row.get('discovered') and row.get('discovery_current')),None)
+                                if selected and selected.get('native_efforts') and classifier.get('effort') not in selected['native_efforts']:
                                     add('error',f'「{name}」的分类器推理强度不在模型目录中。',node=path,field='classifier.effort')
                                 elif not selected and classifier.get('model')!=profile.get('model'):
                                     add('warning',f'「{name}」的分类器模型不在上次目录中，请刷新。',node=path,field='classifier.model')
@@ -192,12 +207,11 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                     try: auth=rt.flow.get('auth-probe',n['profile'])
                     except Invalid:auth=None
                     if auth and auth.get('logged_in') is False:add('warning',f'「{name}」上次检查显示未登录，请检查原生登录状态。',node=path,field='profile')
-                    try: catalog=rt.flow.get('model-discovery',n['profile'])
-                    except Invalid:catalog=None
-                    if catalog and not catalog.get('error'):
-                        found=next((x for x in catalog.get('models',[]) if x.get('id')==n.get('model')),None)
+                    catalog=_current_model_catalog(rt,n['profile'],profile)
+                    if catalog:
+                        found=next((x for x in catalog.get('models',[]) if x.get('id')==n.get('model') and x.get('discovered') and x.get('discovery_current')),None)
                         if found:
-                            efforts=found.get('efforts') or []
+                            efforts=found.get('native_efforts') or []
                             if efforts and n.get('effort') not in efforts:add('error',f'「{name}」的推理强度不在模型目录中，请重新选择。',node=path,field='effort')
                         elif n.get('model')!=profile.get('model'):add('warning',f'「{name}」的模型不在上次目录中，请刷新目录核对。',node=path,field='model')
                     else:add('warning',f'「{name}」尚无可用模型目录，请刷新后核对模型。',node=path,field='model')

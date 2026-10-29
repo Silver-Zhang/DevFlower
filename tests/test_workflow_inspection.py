@@ -159,3 +159,78 @@ class WorkflowInspectionTests(unittest.TestCase):
   f.write_text('---\nname: chosen\ndescription: Example\n---\nChanged\n');self.assertTrue(any('变化' in i['message'] for i in issues()))
   f.unlink();self.assertTrue(any('缺失' in i['message'] for i in issues()))
   f.write_text('---\nname: chosen\ndescription: Example\nallowed-tools: all\n---\n');self.assertTrue(any('不支持' in i['message'] for i in issues()))
+
+
+class CurrentCatalogInspectionTests(unittest.TestCase):
+ def setUp(self):
+  self.base,self.rt=fixture(self)
+ def graph(self,kind):
+  graph=examples(self.rt.operator['profiles'])[0 if kind=='agent' else 3]
+  node=next(n for n in graph['nodes'] if n['kind']==kind)
+  name=next(k for k,p in self.rt.operator['profiles'].items() if p['provider']=='codex')
+  profile=self.rt.operator['profiles'][name]
+  config=dict(profile=name,provider='codex',model=profile['model'],effort='high')
+  if kind=='agent':node.update(config)
+  else:node['classifier']=dict(config,timeout=60)
+  return graph,node,name,profile
+ def cache(self,name,profile,**changes):
+  import json,time
+  from orchestration.common import digest
+  from studio.model_registration import profile_identity
+  value=dict(id=name,profile_sha256=digest(json.dumps(profile,sort_keys=True).encode()),
+   environment_sha256=profile_identity(profile),at=time.time(),attempted_at=time.time(),
+   source='synthetic model/list; no provider call',error=None,
+   models=[dict(id=profile['model'],name=profile['model'],efforts=['low'],source='synthetic model/list')])
+  value.update(changes);self.rt.flow.put('model-discovery',name,value)
+ def inspect(self,graph):
+  with patch('studio.workbench_sessions.WorkbenchSessions.rpc',side_effect=AssertionError('static check must not query provider')),patch.object(self.rt.flow,'put',side_effect=AssertionError('static check must not write cache')):
+   value=inspect_workflow(self.rt,graph,'task')
+  self.assertFalse(value['execution_verified'])
+  return value
+ def test_fresh_native_effort_conflict_still_blocks_agent_and_classifier(self):
+  for kind in ['agent','router']:
+   with self.subTest(kind=kind):
+    graph,node,name,profile=self.graph(kind);self.cache(name,profile)
+    result=self.inspect(graph)
+    field='effort' if kind=='agent' else 'classifier.effort'
+    self.assertTrue(any(i['severity']=='error' and i['node']==node['id'] and i['field']==field for i in result['issues']))
+ def test_stale_or_foreign_catalog_cannot_refute_current_effort(self):
+  import time
+  from studio.model_catalog import TTL
+  cases=[dict(profile_sha256='0'*64),dict(environment_sha256='0'*64),dict(at=time.time()-TTL-1),dict(at=time.time()+TTL+1),dict(error='synthetic discovery failure'),dict(profile_sha256=None)]
+  for kind in ['agent','router']:
+   for changes in cases:
+    with self.subTest(kind=kind,changes=changes):
+     graph,node,name,profile=self.graph(kind);self.cache(name,profile,**changes)
+     result=self.inspect(graph)
+     self.assertEqual(result['error_count'],0,result)
+     self.assertTrue(any(i['severity']=='warning' and i['node']==node['id'] and '目录' in i['message'] for i in result['issues']))
+ def test_registration_efforts_do_not_become_native_capabilities(self):
+  for kind in ['agent','router']:
+   with self.subTest(kind=kind):
+    graph,node,name,profile=self.graph(kind);self.cache(name,profile,models=[])
+    self.assertEqual(self.inspect(graph)['error_count'],0)
+ def test_refresh_replaces_old_error_with_current_evidence(self):
+  for kind in ['agent','router']:
+   with self.subTest(kind=kind):
+    graph,node,name,profile=self.graph(kind);self.cache(name,profile)
+    self.assertGreater(self.inspect(graph)['error_count'],0)
+    self.cache(name,profile,models=[dict(id=profile['model'],name=profile['model'],efforts=['high'],source='synthetic current model/list')])
+    self.assertEqual(self.inspect(graph)['error_count'],0)
+ def test_nested_router_uses_the_same_current_catalog_rules(self):
+  graph=examples(self.rt.operator['profiles'])[2];loop=next(n for n in graph['nodes'] if n['kind']=='loop')
+  body,node,name,profile=self.graph('router');loop['body']=body
+  self.cache(name,profile);result=self.inspect(graph)
+  self.assertTrue(any(i['severity']=='error' and i['node']==loop['id']+'/'+node['id'] and i['field']=='classifier.effort' for i in result['issues']))
+  self.cache(name,profile,environment_sha256='0'*64);result=self.inspect(graph)
+  self.assertFalse(any(i['severity']=='error' and i['field']=='classifier.effort' for i in result['issues']))
+ def test_missing_catalog_is_unknown_without_provider_or_cache_write(self):
+  for kind in ['agent','router']:
+   graph,node,name,profile=self.graph(kind)
+   self.assertEqual(self.inspect(graph)['error_count'],0)
+ def test_stale_catalog_does_not_relax_provider_or_permission_checks(self):
+  graph,node,name,profile=self.graph('agent');self.cache(name,profile,environment_sha256='0'*64)
+  node.update(provider='claude',mode='Ask',permission='workspace-write')
+  issues=self.inspect(graph)['issues']
+  self.assertTrue(any(i['severity']=='error' and i['field']=='profile' and '不一致' in i['message'] for i in issues))
+  self.assertTrue(any(i['severity']=='error' and i['field']=='permission' for i in issues))
