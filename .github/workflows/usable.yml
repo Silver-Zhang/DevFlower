@@ -3,7 +3,7 @@ name: Usable regression
 on:
   pull_request:
   push:
-    branches: ['main', 'flow/devflower-usable-v1', 'flow/template-governance-ci', 'flow/agent-workspace-vnext']
+    branches: ['main', 'develop']
   workflow_dispatch:
 
 permissions:

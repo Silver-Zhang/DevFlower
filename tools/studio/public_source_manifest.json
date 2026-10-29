@@ -22,6 +22,7 @@
   "tools/devflower_native_terminal.py",
   "tools/devflower_sessions.py",
   "tools/devflower_stable_bridge.py",
+  "tools/devflower_start.py",
   "tools/devflower_studio.py",
   "tools/devflower_usable.py",
   "tools/devflower_workbench.py",

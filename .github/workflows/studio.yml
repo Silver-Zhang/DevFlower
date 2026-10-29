@@ -9,7 +9,7 @@ on:
       - 'tests/studio_browser.py'
       - '.github/workflows/studio.yml'
   push:
-    branches: ['flow/studio-mvp', 'flow/workspace-session-m0']
+    branches: ['main', 'develop']
   workflow_dispatch:
 permissions:
   contents: read

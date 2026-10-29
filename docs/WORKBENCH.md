@@ -1,6 +1,6 @@
 # Agent 工作台
 
-默认是独立的 Development 预览；部署者也可使用外部已批准的固定 Stable 副本，工作台本身不能签发批准。旧 Studio、v1/v2 草稿、授权和历史仍由原入口读取；v3 工作流另存，不迁移正在执行的旧任务。
+运行时默认是 Development；部署者也可使用外部已批准并绑定本机安装的固定 Stable 副本，工作台本身不能签发批准。Development 表示缺少有效的本机 Stable 部署绑定，不表示 main 是未审主线。GitHub 的 Stable Release/tag 标识正式源码版本，与每台机器的受信部署绑定不同。旧 Studio、v1/v2 草稿、授权和历史仍由原入口读取；v3 工作流另存，不迁移正在执行的旧任务。
 
 ## 日常操作
 
@@ -30,9 +30,66 @@
 
 ## 部署与开发
 
-前端静态资源随仓库提供；普通启动不需要 Node/npm。部署者需 Python 3.11+、Git、Linux bwrap、显式隔离的原生工具及只读认证挂载。服务只监听 127.0.0.1，按端口隔离浏览器能力，不使用跨 localhost 端口的认证 Cookie；禁止将它直接暴露到公网。
+### 本机公共启动
 
-高级部署入口是 `tools/devflower_workbench.py`，明确传入 operator、policy 及完整候选哈希。策略中的模型来自原生发现或有来源标注的显式登记；模型和 effort 沿用用户批准配置。源码变化需生成新的 Development 快照与配置 pin，不能覆盖运行中的 Stable。
+在仓库根目录运行 `python3 -B tools/devflower_start.py`。这是普通本机 Development 入口，不需要分发发布者的 `.local` 脚本、私有 operator 或认证，也不签发 Stable 批准。默认在当前终端运行服务并打开浏览器，Ctrl-C 正常停止；重开命令可核验并复用仍在运行的同一服务，不回放 Agent。
+
+```sh
+python3 -B tools/devflower_start.py --help
+python3 -B tools/devflower_start.py --check
+python3 -B tools/devflower_start.py --no-browser
+```
+
+`--check` 只读检查平台、CLI 元数据、实际隔离依赖、完整源码身份及已有状态，不创建目录、配置或服务，不调用模型。需要 Python 3.11+、Linux、Git、可运行的 `/usr/bin/bwrap` 与 Landlock ABI >= 6；bwrap 只执行 `/bin/true` 隔离预检。使用随库构建的静态前端，无需 Node 启动。CLI 的版本与帮助参数只证明安装版支持所需接口，不证明登录、模型目录、具体模型或推理强度可用。
+
+启动器只登记实际找到的 Codex/Claude CLI，沿用自己的 HOME 与 `.codex`/`.claude` 配置根。Codex 从 `config.toml` 的 `model`/`model_reasoning_effort` 读取偏好；Claude 从用户 `settings.json` 的 `model`/`effortLevel` 或其中明确的 `env.ANTHROPIC_MODEL`/`env.CLAUDE_CODE_EFFORT_LEVEL` 读取。缺失时会说明所需参数，可用 `--codex-model`、`--codex-effort`、`--claude-model`、`--claude-effort` 明确本次请求；不会猜一个模型或强度，再次启动需沿用相同参数。`--provider codex`/`--provider claude` 可只登记其中一个，`--codex-cli`/`--claude-cli` 可指定已安装的可执行文件。首次登录、账号、目录信任及服务配置须由本人在原生 CLI 完成；不会代建原生配置、复制认证或启动登录/推理探针。自定义配置根、未支持的 Codex profile、冲突偏好或仅由继承环境变量提供的服务/认证需明确核对或使用管理员入口，不静默迁移或更换服务。安装目录如含 `.codex`/`.claude`/`.aws`/`.ssh` 会拒绝读取其内容来计算候选哈希，请使用干净的完整公开源码副本。Copilot 不登记为可执行 Provider。
+
+默认状态目录为 `${XDG_STATE_HOME:-~/.local/state}/devflower/workbench`，可用 `--state-dir` 指定新的绝对路径。初始空 `projects`、`config`、`runtime`、`native-cache` 是互不重叠的兄弟目录；`runtime`/`native-cache` 及 marker 由 WorkbenchRuntime 初始化。生成的 operator/policy 只登记本机 CLI、明确偏好、实际依赖摘要和完整源码哈希，`external_steps` 为空。原生 HOME/config 仅引用，用户项目由之后的“打开文件夹”明确选择，不因启动扫描项目或会话。
+
+状态目录和文件分别要求 0700/0600；启动器拒绝符号链接、未知内容、权限不符和并发启动冲突，不自动 chmod、覆盖或清空已有配置。服务身份、访问令牌与启动意图位于受保护的 `rt.storage`（`runtime/`）内。重复启动须核验源码、配置、依赖摘要、真实 PID/启动时间、该 PID 的 loopback 监听 socket 与实际 HTTP 身份；源码或配置变化、进程不明、上次异常中断均拒绝盲目复用，不无限重试。保留原目录，核对并停止旧服务，或选择新的 `--state-dir`；不通过删除旧记录修复未知状态。
+
+服务只绑定 `127.0.0.1`，`--port` 默认 `0`（系统分配端口），不提供公网监听选项。`--no-browser` 打印的完整地址含私有访问令牌，仅给本人使用，勿发布终端日志；默认打开浏览器时不打印令牌。普通入口始终为 Development，认证、推理与自动交付未获验证。GitHub 的正式 Stable 源码发行不会为任意机器生成 per-install v2 批准；管理员正式 Stable 入口和下述真实证据要求保持不变。
+
+定向测试：`python3 -B -m unittest discover -s tests -p test_public_start.py -v`。测试使用临时 HOME、合成 Provider/受控假 CLI 和真实 WorkbenchRuntime/HTTP，不接触真实认证或会话，不证明真实模型或全产品发布验收；HTTP 用例需要允许本机 socket 的测试环境。
+
+### 依赖与本机准备
+
+从仓库根目录启动，需要 Linux、Python 3.11+ 和 Git；Python 服务使用标准库，无第三方 Python 包安装步骤。前端 `tools/studio/static/workbench.html`、`workbench.css`、`workbench.js` 已随仓库构建提供，普通启动不需要 Node/npm 或前端开发服务器。只有修改前端源码后重建才需要 Node/npm，见下文。
+
+在自己的机器安装所需 Codex / Claude Code CLI，并用自己的账号在原生 CLI 完成登录、目录信任及必要的服务配置；按所安装 CLI 的登录指引操作。不附带账号、API 密钥或模型权重，不借用发布机器的认证、私有批准或原生会话。原生 CLI 若依赖 Node 等运行环境，仍需满足该 CLI 自身的依赖，这与前端启动无关。旧隔离执行模式还要求 Linux bwrap（bubblewrap）、显式依赖目录和本机认证的只读挂载；本机原生模式使用原用户 HOME/配置，权限边界见下文“本机原生模式”。
+
+助手连接沿用已有本机共享设置（默认 XDG 配置目录下的 devflower），更换版本或运行状态目录不会复制或清空已保存的 DeepSeek 连接。对话和任务仍按工作区保存。
+
+### 配置与实际启动命令
+
+1. 在源码目录和 Agent 可写范围之外准备本机私有 operator 与 policy。operator 的结构参考 [现有示例](../examples/usable/session_operator.example.json)，实际字段由 [SessionRuntime](../tools/studio/session_runtime.py) 与 [WorkbenchRuntime](../tools/studio/workbench_runtime.py) 核验。必需字段为 `version: 1`、`kind: "development-sessions"`、`storage`、`native`、`allowed_roots`、`profiles`、`dependencies`；每个 profile 明确 Provider、可执行文件、模型/effort、只读依赖和认证挂载，相关文件/目录摘要须来自本机实际字节。`storage`/`native` 使用互不重叠且不包含源码、配置或凭据的新目录，父目录须已存在，由服务初始化；重启复用已有服务目录，不清空旧目录。示例的路径、模型、哈希占位值都需逐项核对替换，不是即用配置或批准。需要本机原生模式时，另按下文配置 `native_local`；不要复制其他机器的 HOME 或会话。
+2. policy 是独立 JSON，`version` 为 `1`，可含 `label`、按 Provider 分组的 `models` 和固定执行器 `external_steps`；仅普通对话/画布使用时可从 `{"version":1,"models":{},"external_steps":{}}` 开始。策略中的模型来自原生发现或有来源标注的显式登记，模型和 effort 沿用用户批准配置；空 `external_steps` 不提供验证/交付能力。外部执行器必须另行固定和授权，不能把任意命令放进浏览器。
+3. 对最终完整安装副本计算候选摘要。`--candidate-sha256` 是 `orchestration.common.tree_hash` 对完整文件清单的 SHA-256，不是 Git commit/tree ID，也不是三个文档的摘要；清单包含忽略及未跟踪文件，排除 `.git`。只在干净、可公开的完整安装副本中运行以下命令，不把凭据、私有配置、运行状态或 node_modules 放入候选目录：
+
+```sh
+python3 -B -c 'import sys; sys.path.insert(0, "tools"); from orchestration.common import tree_hash; print(tree_hash("."))'
+```
+
+由部署者核对 operator、policy 各自原始文件字节的 SHA-256，再在同一安装副本的仓库根目录启动。下列带尖括号的值都是无效占位符，需替换为自己的路径和真实摘要；不含示例密钥或 Stable 证书：
+
+```sh
+python3 -B tools/devflower_workbench.py --help
+python3 -B tools/devflower_workbench.py \
+  --operator "/absolute/private/operator.json" \
+  --operator-sha256 "<operator 原始字节的 SHA-256>" \
+  --candidate-sha256 "<完整安装副本的 tree_hash>" \
+  --policy "/absolute/private/policy.json" \
+  --policy-sha256 "<policy 原始字节的 SHA-256>"
+```
+
+这五个参数均为必需；可选 `--port` 默认 `0`，由系统选择空闲端口。启动后打开终端打印的完整本机地址，保密其中的访问令牌。服务只监听 `127.0.0.1`，按端口隔离浏览器能力，不使用跨 localhost 端口的认证 Cookie；不要将它直接暴露到公网。缺参会由 CLI 拒绝，配置或候选身份不匹配会阻止启动；源码（包括文档）、依赖或配置变化需核对新的候选与配置 pin 并重启，不能覆盖运行中的 Stable。
+
+### 正式源码版本与受信部署
+
+长期分支只保留 main、develop 和 project/*：main 是 Stable 正式版本，develop 是日常唯一源码开发入口；每次发布后两者同步到同一提交，开发期间 develop 可以领先，project/* 保留过程记录且不整体回 main/develop。对外 Stable Release 与版本 tag 绑定获准的 main 提交。临时分支只有在完整历史已备份、代码已由 develop/main 保全并另获明确删除授权后才能清理；旧原生会话、工作目录和 worktree 保留。完整流程见 [分支与历史保留](BRANCHING.md)。
+
+
+GitHub 下载、Release 或 tag 不包含可移植的本机 Stable 证书。每台机器需要由获准的外部部署流程绑定其实际安装根、完整候选、配置、原生调用与真实批准证据；不能复制发布机器的私有授权来获得信任。没有绑定时正常显示 Development，不以修改标签、重算哈希或 Agent 自签将其升级为 Stable。
 
 正式 Stable 启动在 operator 中增加 `stable: {"record": "<外部批准记录绝对路径>", "sha256": "<外部固定的记录哈希>"}`，保留原 kind 和存储/HOME 路径。新 v3 必须使用 [version 2 来源证明](STABLE_PROVENANCE.md)：外部固定的实际 native hard-ACCEPT 结果、精确合同、旧固定 Gate 回执、引用真实用户授权的 owner 记录及原始 Git commit 对象均须有可复核文件和哈希，不能用 ACCEPT 字符串、随机收据哈希或标签替代。完整源码字节计算出的 Git tree 必须匹配 commit 对象；安装副本无需 .git。启动和执行前重验全部证据；证据文件受保护，不能当原生凭据或源码挂载。现有 v1 Usable/Studio 记录保留原语义，不能用于新 v3 Stable。缺少绑定仍为 Development，独立 Session 入口拒绝 Stable，模型准入仍绑定 operator 哈希。公开状态只显示核验后的版本身份。真正审批、独立复核、Gate、合并及部署由外部流程完成，合成测试不构成发布批准。
 
