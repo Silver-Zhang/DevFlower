@@ -1,31 +1,25 @@
 {
   "source": {
-    "head": "22b4bb9698eef7019c957c5d0fc2a7f00b0c7101",
-    "git_tree": "51efe627339d9794bc618c03a9317b4b411cbd7c",
-    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+    "head": "154a153edde379586fc1b5aa03c6b898b9cf9f1b",
+    "git_tree": "4151c85f739aa3855d51a6fdfdc2dce04566691c",
+    "candidate_sha256": "64728274cad007acb5d6d647cc0c094d0e06044a68205e612bea50df9f6ab7cc",
     "files": 333
   },
   "regression": {
-    "python": 1525,
+    "scope": "TARGETED_ONLY_CURRENT_CANDIDATE",
+    "inspection": 30,
+    "provider_effort": 13,
     "host_isolation": 6,
-    "javascript": 73,
-    "chromium_http": 266,
-    "legacy_smoke": 16,
+    "baseline_exit": 0,
     "fail": 0,
     "error": 0,
-    "skip": 0
+    "skip": 0,
+    "full_current_suite_not_rerun": true,
+    "initial_provider_harness_import_error_preserved": true
   },
-  "commands": 22,
-  "all_regression_exits_zero": true,
-  "generated_assets_equal": {
-    "tools/studio/static/workbench.css": true,
-    "tools/studio/static/workbench.js": true,
-    "tools/studio/workbench_ui/THIRD_PARTY_LICENSES.txt": true
-  },
-  "ci_checks_success": 6,
   "remote_source_readback": {
-    "head_and_tree_verified": true,
     "remote": "origin/develop",
+    "head_and_tree_verified": true,
     "pr": 24,
     "base": "main",
     "draft": true,
@@ -61,9 +55,143 @@
         ]
       },
       "fixed_gate": "NOT_RUN; source11 not eligible; original verdicts unchanged"
+    },
+    {
+      "label": "source12",
+      "source": {
+        "head": "22b4bb9698eef7019c957c5d0fc2a7f00b0c7101",
+        "git_tree": "51efe627339d9794bc618c03a9317b4b411cbd7c",
+        "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+        "files": 333
+      },
+      "regression": {
+        "python": 1525,
+        "host_isolation": 6,
+        "javascript": 73,
+        "chromium_http": 266,
+        "legacy_smoke": 16,
+        "fail": 0,
+        "error": 0,
+        "skip": 0
+      },
+      "native_final_implementation": {
+        "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+        "session_id": "01a18582-e292-76b1-afd8-20c5a58aff38",
+        "max_starts": 2,
+        "actual_starts": 2,
+        "read_only": true,
+        "source_unchanged": true,
+        "attempts": [
+          {
+            "path": "developer-release12-final-adapter",
+            "status": "PARTIAL",
+            "exit": 0,
+            "seconds": 310.013,
+            "reason": "assistant12-selected/proof.json absent from 71-file input; original proof and PARTIAL record unchanged"
+          },
+          {
+            "path": "developer-release12-final-adapter-correction1",
+            "status": "IMPLEMENTED",
+            "exit": 0,
+            "seconds": 140.255,
+            "new_input_files": 78,
+            "aggregate_references": 14,
+            "unique_reference_files": 9,
+            "same_original_uuid": true,
+            "no_source_changes": true
+          }
+        ],
+        "not_independent_review": true
+      },
+      "real_models": {
+        "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+        "workflow_obligation_calls": 21,
+        "six_workflow_obligations_passed": true,
+        "loop_max5_expected_failed_run": true,
+        "managed_calls": 3,
+        "managed_identity_process_budget_checks": 12,
+        "terra_actual_calls": 1,
+        "terra_requested_effort": "high",
+        "assistant_selected_recovery_passed": true,
+        "original_dsml_failure_preserved": true,
+        "ai_canvas_original_r2": {
+          "passed": false,
+          "actual_calls": 7,
+          "reason": "default16000 handoff truncation; bounded loop exhausted"
+        },
+        "ai_repair": "real assistant compact-output/prompt repair; proposal API max_chars unsupported; no manual graph rewrite",
+        "ai_canvas_first_repair_run": {
+          "passed": false,
+          "reserved_calls": 2,
+          "actual_native_invocations": 1,
+          "reason": "protected-directory guard refusal",
+          "root_cause": "unknown"
+        },
+        "ai_canvas_one_bounded_fresh_retry": {
+          "passed": true,
+          "actual_calls": 3,
+          "activated_nodes": 8,
+          "derived_unactivated_skipped": 4,
+          "refresh_calls_unchanged": true
+        },
+        "native_browser_two_uuid_ready": true,
+        "two_native_uuid_restore_and_single_writer": true,
+        "native_normal_exit_zero_and_owned_stop": true,
+        "first_two_terminal_harness_attempts_zero_cli": true,
+        "qa_native_config_delta": "Only explicit W12 QA Enter trusted workspace; models/auth/relay unchanged",
+        "desktop_canonical_record_observed": true,
+        "desktop_live_pty_takeover_claimed": false,
+        "physical_backend": "unknown",
+        "effective_effort": "unknown",
+        "human_ux_acceptance": false
+      },
+      "full_independent_verdict": {
+        "round": 2,
+        "A": "BLOCKED",
+        "B": "BLOCKED",
+        "required_open_at_that_round": [
+          "A-R2-D04-STALE-PROVIDER-CATALOG",
+          "A-R2-D08-MISSING-DESKTOP-RAW",
+          "B-D08-DESKTOP-RAW-EVIDENCE"
+        ],
+        "original_verdicts_unchanged": true
+      },
+      "fixed_gate": "NOT_RUN: same-candidate hard ACCEPT unavailable, source12 ineligible"
+    },
+    {
+      "label": "source15",
+      "source": {
+        "head": "eeadaa72ee4f04931069787e4870980a0aa1058f",
+        "git_tree": "c5975157d4b3763e370f37752b71746105e5cf35",
+        "candidate_sha256": "04914125fc1db3e47527d787cbd0e2003da5b47aaee6d434d6ef36a753137e0c",
+        "files": 333
+      },
+      "regression": {
+        "python": 1533,
+        "host_isolation": 6,
+        "javascript": 73,
+        "chromium_http": 266,
+        "legacy_smoke": 16,
+        "fail": 0,
+        "error": 0,
+        "skip": 0
+      },
+      "commands": 22,
+      "all_regression_exits_zero": true,
+      "real_models": {
+        "six_workflow_obligation_calls": 21,
+        "managed_native_sessions": 3,
+        "managed_checks": 12,
+        "assistant_original_requests": 4,
+        "assistant_diagnostic_followup": 1,
+        "terra_original": "FAILED: native cleanup timeout; canonical final present",
+        "terra_one_supplement": "COMPLETED, 1 actual call, original unchanged",
+        "ai_image_complex": "FAILED: 7 actual calls, loop max2; required problems unresolved; never converted to ACCEPT"
+      },
+      "full_independent_verdict": "R3_NOT_STARTED; not accepted"
     }
   ],
-  "scoped_independent_checks": {
+  "scoped_independent_checks_history": {
     "AS-PROTOCOL-01": "CLOSED only frozen11 scope 9 persisted +32 direct; not native full-source ACCEPT",
     "MF-01": "CLOSED scope frozen08 inherited unchanged",
     "UI-FINAL-PAUSE": "CLOSED scope frozen09 inherited unchanged",
@@ -82,92 +210,69 @@
       "not_actual_fixed_gate": true
     }
   },
+  "current_corrections": {
+    "A-R2-D04-STALE-PROVIDER-CATALOG": {
+      "original_status": "OPEN source12 R2",
+      "source13_fix": "Root two-file model catalog identity/staleness correction",
+      "source14_fix": "Root broker-mock negative exposed adjacent path; minimal correction retained",
+      "source15_change_from14": [
+        "README.md"
+      ],
+      "independent_scoped_cases": 26,
+      "independent_broker_cases": 2,
+      "counts_source": "Root handoff; not rerun by record curator",
+      "formal_closure": "PENDING R3; scoped pass is not full ACCEPT"
+    },
+    "desktop_raw_missing_in_r2_packet": {
+      "finding_ids": [
+        "A-R2-D08-MISSING-DESKTOP-RAW",
+        "B-D08-DESKTOP-RAW-EVIDENCE"
+      ],
+      "original_status": "BLOCKED",
+      "cause": "Raw source12 Desktop observation existed locally but was omitted from delivered R2 evidence packet",
+      "curation_fix": "Plan-time and materialized-reference closure guards added; source15 drafts still reject missing actual evidence",
+      "formal_closure": "PENDING R3; no reuse of source12 Desktop evidence as source15 actual run"
+    }
+  },
   "real_models": {
-    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
-    "workflow_obligation_calls": 21,
-    "six_workflow_obligations_passed": true,
-    "loop_max5_expected_failed_run": true,
-    "managed_calls": 3,
-    "managed_identity_process_budget_checks": 12,
-    "terra_actual_calls": 1,
-    "terra_requested_effort": "high",
-    "assistant_selected_recovery_passed": true,
-    "original_dsml_failure_preserved": true,
-    "ai_canvas_original_r2": {
-      "passed": false,
-      "actual_calls": 7,
-      "reason": "default16000 handoff truncation; bounded loop exhausted"
-    },
-    "ai_repair": "real assistant compact-output/prompt repair; proposal API max_chars unsupported; no manual graph rewrite",
-    "ai_canvas_first_repair_run": {
-      "passed": false,
-      "reserved_calls": 2,
-      "actual_native_invocations": 1,
-      "reason": "protected-directory guard refusal",
-      "root_cause": "unknown"
-    },
-    "ai_canvas_one_bounded_fresh_retry": {
-      "passed": true,
-      "actual_calls": 3,
-      "activated_nodes": 8,
-      "derived_unactivated_skipped": 4,
-      "refresh_calls_unchanged": true
-    },
-    "native_browser_two_uuid_ready": true,
-    "two_native_uuid_restore_and_single_writer": true,
-    "native_normal_exit_zero_and_owned_stop": true,
-    "first_two_terminal_harness_attempts_zero_cli": true,
-    "qa_native_config_delta": "Only explicit W12 QA Enter trusted workspace; models/auth/relay unchanged",
-    "desktop_canonical_record_observed": true,
-    "desktop_live_pty_takeover_claimed": false,
+    "scope": "current source16 native implementation, not full source16 real acceptance",
+    "provider": "codex",
+    "requested_model": "gpt-6.1-sol",
+    "requested_effort": "xhigh",
     "physical_backend": "unknown",
     "effective_effort": "unknown",
-    "human_ux_acceptance": false
-  },
-  "public_entry": {
-    "channel": "Development",
-    "port": 39731,
-    "startup_model_calls": 0,
-    "stable_approved": false,
-    "private_url_in_records": false
-  },
-  "native_final_implementation": {
-    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
-    "session_id": "01a18582-e292-76b1-afd8-20c5a58aff38",
-    "max_starts": 2,
-    "actual_starts": 2,
-    "read_only": true,
-    "source_unchanged": true,
-    "attempts": [
-      {
-        "path": "developer-release12-final-adapter",
-        "status": "PARTIAL",
-        "exit": 0,
-        "seconds": 310.013,
-        "reason": "assistant12-selected/proof.json absent from 71-file input; original proof and PARTIAL record unchanged"
-      },
-      {
-        "path": "developer-release12-final-adapter-correction1",
-        "status": "IMPLEMENTED",
-        "exit": 0,
-        "seconds": 140.255,
-        "new_input_files": 78,
-        "aggregate_references": 14,
-        "unique_reference_files": 9,
-        "same_original_uuid": true,
-        "no_source_changes": true
-      }
+    "implementation_status": "IMPLEMENTED",
+    "implementation_source_after": "64728274cad007acb5d6d647cc0c094d0e06044a68205e612bea50df9f6ab7cc",
+    "process_exit": 0,
+    "process_seconds": 339.537,
+    "timeout": false,
+    "overflow": false,
+    "cancelled": false,
+    "changed_files": [
+      "tools/studio/workflow_inspection.py",
+      "tests/test_workflow_inspection.py"
     ],
-    "not_independent_review": true
+    "native_environment_results": "Before patch3 tests FAIL; after patch3 PASS; full30 had26 fixture initialization ERRORs due protected temporary-root overlap; Root outside environment ran all30 PASS; originals preserved"
   },
-  "full_independent_verdict": "R2_NATIVE_A_B_RUNNING; no final verdict; source11 R1 A ACCEPT / B BLOCKED preserved",
-  "fixed_gate": "NOT_YET_RUN",
+  "formal_review": {
+    "max_rounds": 5,
+    "started_rounds": 2,
+    "completed_rounds": 2,
+    "next_round": 3,
+    "status": "NOT_STARTED_FOR_SOURCE16; user chose preview delivery and point fixes",
+    "verdict": null,
+    "source12_R2_original_verdicts": {
+      "A": "BLOCKED",
+      "B": "BLOCKED"
+    }
+  },
+  "full_independent_verdict": "NONE for current source16; R1/R2 originals remain",
+  "fixed_gate": "NOT_RUN; no hard ACCEPT",
   "unresolved_required_evidence": [
-    "source12 product K independent final judgment",
-    "source12 two full native Codex hard ACCEPT",
-    "fixed old Gate",
-    "conditional merge/main readback and integration regression",
-    "formal Stable/tag"
+    "current final full regression and real product K",
+    "current dual native hard ACCEPT",
+    "fixed final Gate",
+    "formal main integration/Stable promotion"
   ],
   "main": {
     "head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
@@ -176,7 +281,7 @@
   "merged": false,
   "stable_promoted": false,
   "stable": "accepted-cfea19cac598",
-  "new_tag": false,
+  "new_tag": "v2026.10.29-preview.1",
   "evidence_root": "archives/devflower-public-stable-release-20261029 (local only)",
   "evidence_refs": [
     {
@@ -314,46 +419,105 @@
     {
       "path": "developer-release12-final-adapter-correction1/native-result.json",
       "sha256": "9a3ccd39f710a9594c5e12310a7b788dc03f38db098b1d2af050d74f67e4f678"
+    },
+    {
+      "path": "verification-15.json",
+      "sha256": "cb92d17cca5e3916f90d1a807b5a9cecf98dd6701078c033378a1ebe7fbc701f"
+    },
+    {
+      "path": "candidate-15/manifest.json",
+      "sha256": "fc38f615a2df672c597e178b1e33683604b9b5a27820c08b0954874e19671adb"
+    },
+    {
+      "path": "regression-15/summary.json",
+      "sha256": "cb14c8ff5f7a6a79c90f4661abe35c33265ad1269bc4fb37c03cb9b82ea7306f"
+    },
+    {
+      "path": "exec15-regression/process.json",
+      "sha256": "9c246edf90ab1b025c6a8b841a908b85b382e1a3784ab9979a469392b0767c76"
+    },
+    {
+      "path": "remote-source-readback-final15-raw.json",
+      "sha256": "40480e27023c29e6d00d6e188cbda2006dd962b65138b792c0459872ab251ec2"
+    },
+    {
+      "path": "remote-ci-pr-final15-observation1.json",
+      "sha256": "12c38ba0b1860ca496ccac77be75e46d547df1d1ae2cc58010911e22cd47852c"
+    },
+    {
+      "path": "r2-summary.json",
+      "sha256": "975802d39e419ed0adf82c4cc7e902b03ca58429b69fc6737069457355ccdf93"
+    },
+    {
+      "path": "r2/A/independent-verdict.json",
+      "sha256": "0a30d5c4d51198ebece811452c04a134ce00e84faad02b040e31a75e71fd1609"
+    },
+    {
+      "path": "r2/B/independent-verdict.json",
+      "sha256": "baa01e68a0b01e36d14de1382bb3864da00123aadec5a8de1adb269b4984f2c5"
+    },
+    {
+      "path": "candidate-16/manifest.json",
+      "sha256": "2d9dc169d1d16c9bdd633fea4b3b48666dd30d8464ab75f553e916b38c0cca24"
+    },
+    {
+      "path": "candidate-16/privacy-check.json",
+      "sha256": "7045d5908f7dcd3e05da40c32025d70bb1da75aaa052ffa70abeb53c6650fbf6"
+    },
+    {
+      "path": "preview16-targeted/summary.json",
+      "sha256": "2ff9a5a02aa6f2c74df0f20a6c7ec95e90df93b20cc3405bc13aacc9d7521102"
+    },
+    {
+      "path": "preview16-targeted/provider-effort-corrected.json",
+      "sha256": "4cce39061c4af1f41233798c425c4e6a8bef9b9d036f324c3cbb7c45324ec233"
+    },
+    {
+      "path": "native-current-catalog-p2-correction16/session.json",
+      "sha256": "e478404d328af7bfe357fdd8ac13df09cce9cada63c88b8c7c20ee12b1940a77"
+    },
+    {
+      "path": "native-current-catalog-p2-correction16/process.json",
+      "sha256": "a19fd0ccce1efbd6507fb651d55f740c547010418ba7897f7c5b6c6fe04a27e1"
+    },
+    {
+      "path": "native-current-catalog-p2-correction16/native-result.json",
+      "sha256": "12c2e471ccada04b8fdeb31f864980ca2a7a18feed5d5b9da4cba43e0a049af3"
+    },
+    {
+      "path": "flows15/proof.json",
+      "sha256": "7575560b08f5c56158b2d6d74d7e08ad97b9e913b787dedddcd0b0f2a1d8e9de"
+    },
+    {
+      "path": "managed15/proof.json",
+      "sha256": "e83eb85e9cab47d167741296f993d4042bc3565161cfcfdb3e079e14332b3720"
+    },
+    {
+      "path": "terra15/proof.json",
+      "sha256": "d72606f98a65516aeaf5a7c06384b2c57e2f410960b4631899a78382a6c57863"
+    },
+    {
+      "path": "terra15-recovery1/proof.json",
+      "sha256": "7c219b7b688883dd62a9ed916ed17acb882ffb8b4cb3fbc86a854ce618786041"
+    },
+    {
+      "path": "assistant15/proof.json",
+      "sha256": "3b083e69fe61981761d59b20ba9866096c15c90ee6774bde8cd90a19288fbebe"
+    },
+    {
+      "path": "assistant15-diagnostic-followup1/proof.json",
+      "sha256": "f1b0fe8265c7f01b783290fc6ba480f81bc4980e66129e1e5f6dea98c732769c"
+    },
+    {
+      "path": "ai-canvas15/proof.json",
+      "sha256": "0296c3dc83008220bc0b8951b083361ebeccc3c760cde4577e11406835b68bc9"
+    },
+    {
+      "path": "preview16-release-readback.json",
+      "sha256": "81292a4db4a2376d55be257cfe79768e9068db8b4de74b71f4c0196c071c5121"
     }
   ],
-  "status_boundary": "Curated development record draft; not an audit verdict, Gate receipt, human UX approval or Stable authorization.",
-  "formal_review": {
-    "max_rounds": 5,
-    "started_rounds": 2,
-    "completed_rounds": 1,
-    "current_round": 2,
-    "current_candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
-    "status": "RUNNING",
-    "roles": [
-      "A",
-      "B"
-    ],
-    "native_kernel_process_observations": {
-      "A": {
-        "pid": 3342756,
-        "pgid": 3342756,
-        "start": "19622004",
-        "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295"
-      },
-      "B": {
-        "pid": 3342986,
-        "pgid": 3342986,
-        "start": "19622119",
-        "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295"
-      }
-    },
-    "native_session_ids": "awaiting final native CLI receipt; not inferred from process identity",
-    "verdict": null,
-    "packet": {
-      "path": "codex-final-audit-release12-r2",
-      "indexed_evidence_files": 2332,
-      "indexed_files_including_read_first_and_developer": 2334,
-      "evidence_index_sha256": "abf88ab16325b2e704d7d3db15e0007696682c1593e9d749184571ed1f9d1278",
-      "source_files": 333
-    },
-    "not_gate_or_stable_approval": true
-  },
-  "external_preparation_refs": [
+  "external_preparation_refs_history": [
     {
       "path": "finalization-input12/input-index.json",
       "sha256": "00d0063f0ce78d354b96d459cde64adb7d5c6a82dfd3cab62abd07e89cbf9dbd"
@@ -382,5 +546,14 @@
       "path": "independent-desktop-preference-check/curation12/gate12-actual-readonly-correction1.json",
       "sha256": "b86b1cee27f05b8d6b0faaa1c066ae12dbbfbcd840207f448962df4b543f251c"
     }
-  ]
+  ],
+  "status_boundary": "Published testing prerelease; not final Gate, independent ACCEPT, human UX acceptance or trusted Stable promotion.",
+  "release": {
+    "tag": "v2026.10.29-preview.1",
+    "url": "https://github.com/Silver-Zhang/DevFlower/releases/tag/v2026.10.29-preview.1",
+    "prerelease": true,
+    "published": true,
+    "trusted_stable": false,
+    "user_scope": "先发布供Dot测试；通过Issue逐项定向修复，不追加无休止纠错"
+  }
 }
