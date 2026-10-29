@@ -3,6 +3,7 @@ from contextlib import contextmanager, closing
 import json
 from pathlib import Path
 import sqlite3
+import stat
 import time
 from orchestration.common import canonical, digest
 from .graph import Invalid
@@ -16,7 +17,14 @@ class WorkbenchStore:
         self.scoped_drafts = scoped_drafts
         self.path = Path(path)
         for p in (self.path, *(Path(str(self.path)+suffix) for suffix in ('-wal','-shm','-journal'))):
-            if p.is_symlink() or p.exists() and (not p.is_file() or p.stat().st_nlink != 1):
+            try:
+                metadata = p.lstat()
+                # SQLite may unlink a sidecar while lstat is in flight. Obtain
+                # a fresh snapshot for that unlinked inode; never accept nlink=0.
+                if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 0:
+                    metadata = p.lstat()
+            except FileNotFoundError: continue
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise Invalid('运行数据库及日志需要私有常规文件')
         with closing(sqlite3.connect(self.path, timeout=20)) as db:
             if db.execute('PRAGMA journal_mode=WAL').fetchone()[0].lower() != 'wal':

@@ -98,5 +98,120 @@ class DraftWorkspaceOwnershipTests(unittest.TestCase):
             with self.subTest(workspace=workspace),self.assertRaises(Invalid):self.store.save('new',self.graph,None,workspace)
         self.assertEqual(self.store.list('draft'),[self.legacy])
 
+class SQLiteSidecarRaceTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from studio.workbench_store import WorkbenchStore
+        self.tmp=tempfile.TemporaryDirectory(prefix='devflower-sqlite-sidecar-test-');self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve();self.path=self.root/'library.sqlite'
+        self.store=WorkbenchStore(self.path,scoped_drafts=True)
+        self.expected=self.store.save('A',{'name':'retained draft','nodes':[],'edges':[]},None,'synthetic-A')
+
+    def test_real_sidecar_disappearance_during_metadata_check_preserves_draft(self):
+        import stat
+        from unittest.mock import patch
+        from studio.workbench_store import WorkbenchStore
+        original=Path.lstat
+        for suffix in ('-wal','-shm','-journal'):
+            with self.subTest(suffix=suffix):
+                sidecar=Path(str(self.path)+suffix)
+                self.assertEqual(sidecar.parent,self.root)
+                with sidecar.open('xb'):pass
+                removed=[]
+                def disappear(path,*args,**kwargs):
+                    if path==sidecar and not removed:
+                        metadata=original(path)
+                        self.assertTrue(stat.S_ISREG(metadata.st_mode));self.assertEqual(metadata.st_nlink,1)
+                        path.unlink();removed.append(path)
+                    return original(path,*args,**kwargs)
+                with patch.object(Path,'lstat',disappear):
+                    self.assertEqual(WorkbenchStore(self.path).list('draft'),[self.expected])
+                self.assertEqual(removed,[sidecar])
+                self.assertEqual(self.store.get('draft','A'),self.expected)
+
+    def test_2000_normal_concurrent_opens_and_closes_keep_fixed_draft(self):
+        import concurrent.futures
+        from studio.workbench_store import WorkbenchStore
+        def worker(number):
+            errors=[]
+            for iteration in range(250):
+                try:self.assertEqual(WorkbenchStore(self.path).list('draft'),[self.expected])
+                except Exception as exc:errors.append((number,iteration,type(exc).__name__,str(exc)))
+            return errors
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            errors=sum(pool.map(worker,range(8)),[])
+        self.assertEqual(errors,[])
+        self.assertEqual(self.store.get('draft','A'),self.expected)
+        with self.store.tx(read=True) as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM drafts').fetchone()[0],1)
+
+    def test_database_and_all_sidecars_reject_links_fifo_and_directory_before_connect(self):
+        import os,stat,tempfile
+        from unittest.mock import patch
+        from studio.workbench_store import WorkbenchStore
+        for suffix in ('','-wal','-shm','-journal'):
+            for kind in ('symlink','hardlink','fifo','directory'):
+                with self.subTest(suffix=suffix,kind=kind),tempfile.TemporaryDirectory(dir=self.root) as name:
+                    root=Path(name).resolve();database=root/'library.sqlite';node=Path(str(database)+suffix)
+                    self.assertEqual(node.parent,root);self.assertTrue(root.is_relative_to(self.root))
+                    target=root/'private-regular';target.write_bytes(b'SYNTHETIC unchanged private bytes')
+                    metadata=target.lstat();self.assertTrue(stat.S_ISREG(metadata.st_mode));self.assertEqual(metadata.st_nlink,1)
+                    if kind=='symlink':node.symlink_to(target)
+                    elif kind=='hardlink':os.link(target,node)
+                    elif kind=='fifo':os.mkfifo(node)
+                    else:node.mkdir()
+                    with patch('studio.workbench_store.sqlite3.connect') as connect:
+                        with self.assertRaises(Invalid):WorkbenchStore(database)
+                        connect.assert_not_called()
+                    self.assertEqual(target.read_bytes(),b'SYNTHETIC unchanged private bytes')
+
+    def test_metadata_errors_other_than_missing_file_propagate_without_connect(self):
+        import errno
+        from unittest.mock import patch
+        from studio.workbench_store import WorkbenchStore
+        original=Path.lstat
+        sidecar=Path(str(self.path)+'-shm');self.assertEqual(sidecar.parent,self.root)
+        for error in (PermissionError(errno.EACCES,'synthetic permission failure'),OSError(errno.EIO,'synthetic I/O failure'),NotADirectoryError(errno.ENOTDIR,'synthetic ancestor failure')):
+            with self.subTest(error=type(error).__name__):
+                def inaccessible(path,*args,**kwargs):
+                    if path==sidecar:raise error
+                    return original(path,*args,**kwargs)
+                with patch.object(Path,'lstat',inaccessible),patch('studio.workbench_store.sqlite3.connect') as connect:
+                    with self.assertRaises(type(error)) as raised:WorkbenchStore(self.path)
+                    self.assertIs(raised.exception,error);connect.assert_not_called()
+        self.assertEqual(self.store.get('draft','A'),self.expected)
+
+    def test_unlinked_inode_snapshot_requires_fresh_single_link_metadata(self):
+        import os,stat
+        from unittest.mock import patch
+        from studio.workbench_store import WorkbenchStore
+        sidecar=Path(str(self.path)+'-shm');self.assertEqual(sidecar.parent,self.root)
+        with sidecar.open('xb'):pass
+        original=Path.lstat;metadata=original(sidecar)
+        self.assertTrue(stat.S_ISREG(metadata.st_mode));self.assertEqual(metadata.st_nlink,1)
+        values=list(metadata);values[3]=0;unlinked=os.stat_result(values)
+        calls=[]
+        def transient(path,*args,**kwargs):
+            if path==sidecar:
+                calls.append(path)
+                if len(calls)==1:return unlinked
+            return original(path,*args,**kwargs)
+        with patch.object(Path,'lstat',transient):
+            self.assertEqual(WorkbenchStore(self.path).list('draft'),[self.expected])
+        self.assertEqual(len(calls),2)
+        def still_unlinked(path,*args,**kwargs):
+            return unlinked if path==sidecar else original(path,*args,**kwargs)
+        with patch.object(Path,'lstat',still_unlinked),patch('studio.workbench_store.sqlite3.connect') as connect:
+            with self.assertRaises(Invalid):WorkbenchStore(self.path)
+            connect.assert_not_called()
+
+    def test_absent_new_database_still_initializes_as_regular_single_link(self):
+        import stat
+        from studio.workbench_store import WorkbenchStore
+        path=self.root/'new-library.sqlite';self.assertEqual(path.parent,self.root)
+        self.assertFalse(path.exists());self.assertEqual(WorkbenchStore(path).list('draft'),[])
+        metadata=path.lstat();self.assertTrue(stat.S_ISREG(metadata.st_mode));self.assertEqual(metadata.st_nlink,1)
+        self.assertEqual(stat.S_IMODE(metadata.st_mode),0o600)
+
+
 if __name__ == '__main__':
     unittest.main()
