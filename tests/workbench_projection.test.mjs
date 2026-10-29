@@ -16,3 +16,24 @@ test('preflight never pretends to replace backend graph and permission validatio
 test('elapsed uses actual timestamps and clamps invalid/future start',()=>{assert.equal(duration(10,75),'1 分 5 秒');assert.equal(duration(90,75),'0 秒');assert.equal(duration(undefined),'耗时未知')});
 
 test('terminal and unknown durations require an end timestamp',()=>{const old=Date.now;try{for(const now of [100000,200000]){Date.now=()=>now;for(const state of ['COMPLETED','FAILED','CANCELLED','SKIPPED','UNKNOWN','RECOVERY_REQUIRED','UNRECOGNIZED'])assert.equal(stateDuration(1,undefined,state),'耗时未知',state);assert.equal(stateDuration(10,75,'COMPLETED'),'1 分 5 秒');assert.equal(stateDuration(90,75,'FAILED'),'0 秒');}Date.now=()=>100000;assert.equal(stateDuration(1,undefined,'RUNNING'),'1 分 39 秒');assert.equal(stateDuration(1,undefined,'PAUSED'),'1 分 39 秒');}finally{Date.now=old}});
+
+test('terminal run wins over a persisted pause without rewriting evidence',()=>{
+ for(const state of ['COMPLETED','FAILED','CANCELLED']){
+  const v={...snapshot,state,run:{...snapshot.run,paused:true,finished_at:75}};
+  const before=JSON.stringify(v),p=projectRun(v,'connected','A');
+  assert.equal(p.state,state);assert.deepEqual(p.active,[]);assert.deepEqual(p.waiting,[]);
+  assert.equal(stateDuration(10,v.run.finished_at,p.state),'1 分 5 秒');
+  assert.equal(JSON.stringify(v),before);
+ }
+});
+test('terminal run does not advertise stale nodes as active or waiting',()=>{
+ for(const state of ['COMPLETED','FAILED','CANCELLED'])for(const recorded of ['STARTING','RUNNING','PENDING','WAITING_CONFIRMATION']){
+  const v={...snapshot,state,nodes:[{run:'A',node:'a',state:recorded,started_at:10,waiting:['b']},{run:'A',node:'b',state:'COMPLETED'}]};
+  const before=JSON.stringify(v),p=projectRun(v,'connected','A'),a=p.latest[0].activation;
+  assert.equal(a.state,'UNKNOWN');assert.equal(a.recorded_state,recorded);
+  assert.match(a.reason,/尚未确认/);assert.deepEqual(p.active,[]);assert.deepEqual(p.waiting,[]);
+  assert.equal(p.done,1);assert.equal(p.latest[1].activation.state,'COMPLETED');
+  assert.equal(stateDuration(a.started_at,undefined,a.state),'耗时未知');
+  assert.equal(JSON.stringify(v),before);
+ }
+});

@@ -30,13 +30,20 @@ export function projectRun(snapshot,connection,runId){
  const graph=snapshot?.run?.id===runId?snapshot.run.graph:null;
  const walk=(g,p='')=>(g?.nodes||[]).flatMap(n=>[{...n,path:p+n.id},...(n.body?walk(n.body,p+n.id+'/'):[])]);
  const nodes=walk(graph),activations=(snapshot?.nodes||[]).filter(a=>!a.run||a.run===runId);
- const latest=nodes.map(n=>({node:n,activation:latestActivation(activations,n.path)}));
- const active=trusted?latest.filter(x=>['RUNNING','STARTING'].includes(x.activation?.state)):[];
- const waiting=trusted?latest.filter(x=>x.activation?.state==='WAITING_CONFIRMATION'||
+ const ended=['COMPLETED','PASSED','FAILED','CANCELLED','SKIPPED'].includes(snapshot?.state);
+ const latest=nodes.map(n=>{
+  const a=latestActivation(activations,n.path);
+  // Preserve the stored evidence. A finished run cannot prove a stale
+  // activation is still executing, or that it reached a successful end.
+  const stale=ended&&a&&!['COMPLETED','PASSED','FAILED','CANCELLED','SKIPPED','RECOVERY_REQUIRED','UNKNOWN'].includes(a.state);
+  return {node:n,activation:stale?{...a,recorded_state:a.state,state:'UNKNOWN',reason:'本次运行已结束，节点记录尚未确认终态。'}:a};
+ });
+ const active=trusted&&!ended?latest.filter(x=>['RUNNING','STARTING'].includes(x.activation?.state)):[];
+ const waiting=trusted&&!ended?latest.filter(x=>x.activation?.state==='WAITING_CONFIRMATION'||
   !['COMPLETED','FAILED','SKIPPED','CANCELLED','RECOVERY_REQUIRED'].includes(x.activation?.state)&&x.activation?.waiting?.length):[];
  const done=trusted?latest.filter(x=>['COMPLETED','SKIPPED','CANCELLED'].includes(x.activation?.state)).length:0;
  return {trusted,graph,latest,active,waiting,done,total:nodes.length,
-  state:trusted?(snapshot.run.paused?'PAUSED':snapshot.state):'UNKNOWN',
+  state:trusted?(!ended&&snapshot.run.paused?'PAUSED':snapshot.state):'UNKNOWN',
   reason:trusted?(snapshot.run.reason||latest.find(x=>['FAILED','RECOVERY_REQUIRED'].includes(x.activation?.state))?.activation.reason||''):'连接或运行身份尚未核验。正在读取同一运行，不会重复启动 Agent。'};
 }
 export function edgeEvidence(events,edge,prefix,runId){

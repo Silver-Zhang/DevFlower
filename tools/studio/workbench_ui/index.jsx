@@ -244,7 +244,7 @@ setStatus(s);setChatProfile(s.profiles.find(p=>p.available)?.id||'');
   return {x:40-(first?.position?.x||0),y:48-(first?.position?.y||0),zoom:1};
  },[canvasKey]);
  const projection=projectRun(snapshot,connection,run);
- const activationFor=id=>viewMode==='run'?latestActivation(snapshot?.nodes||[],pathPrefix+id):null;
+ const activationFor=id=>viewMode==='run'?projection.latest.find(x=>x.node.path===pathPrefix+id)?.activation:null;
  const names=Object.fromEntries(projection.latest.map(x=>[x.node.path,x.node.name]));
  const liveIssues=viewMode==='draft'&&inspectionCurrent(inspection,workspace?.id,graph,task)?inspection.result.issues:[];
  useEffect(()=>{if(focusBefore.current===focusCanvas)return;focusBefore.current=focusCanvas;let second;const first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>rf?.fitView({padding:.12,maxZoom:1}))});return()=>{cancelAnimationFrame(first);if(second)cancelAnimationFrame(second)}},[focusCanvas,rf]);
