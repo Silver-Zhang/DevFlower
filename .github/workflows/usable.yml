@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser; do
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser design_system_browser; do
             if python3 "tests/$suite.py" --chromium "$CHROMIUM" --node node --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
               :
             else
@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser; do
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser design_system_browser; do
             mkdir -p "$PUBLIC_BROWSER_EVIDENCE/$suite"
             for file in "$RUNNER_TEMP/$suite/"*results.json "$RUNNER_TEMP/$suite/"*.png; do
               if [[ -f "$file" && ! -L "$file" ]]; then
