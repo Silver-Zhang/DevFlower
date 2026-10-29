@@ -87,3 +87,7 @@ source50 lifecycle v2因测试rt缺snapshot进入rescue/FAIL保留；v3挂真API
 2026-10-29 source51：真实父SID发布竞态和resume错身份反例已由同一原生writer窄修，commit2881a9b/tree d7522a/CF693248/327files；完整1435Python/6host/65JS/253HTTP+16smoke/21命令全0，三CI SUCCESS。实际取消及真实父SIGKILL生命周期22CLI/14全本地HTTP/0外部各11断言全PASS，无rescue/foreign误杀，旧50失败不覆盖。
 
 真实AI50 check_contract accepted=false继续发现raw条件省略input_contract时effective默认字段可能改写/删除；Root2实API反例FAIL、独立9项5FAIL。原生同UUID只修2文件，effective守卫/复制与validator一致，保留rawCAS和invalid repair；Root123项、独立同9项均0，原生PARTIAL/0。正常commit/push source52 1ed2b0341c738bd574274c9c0e09c9c636394139/tree857d0e14171db50ebcf236852940f24b1a7454f3/CFbf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292/327files，PR22 Draft。新全量/CI在跑，真实套件提供完整公开源用于import测试，不stub/不逼ACCEPT。AI50此前暂停后Root准确撤回CANCELLED/2actual，总监督1307终局1；旧negative/readback永久保留。main/Stable/分支未动。
+
+source52最终本轮补证：完整1441Python/6host/65JS/253HTTP+16smoke/21命令和三CI均0；真实DeepSeek4项完成、同旧cid revision6→8且原reply/receipt/proposal完全不变；六真实Codex图21call全部按各自合同通过。AI图831d…真实合同支路acceptedtrue并跑20真实API测试；deadline支路原acceptedfalse因无其他支路输入、未声明本地deadline反例，Root额外按其建议执行真实文件SQLite/socket19项0。第三汇总原生exit1“Selected model is at capacity”，整体FAILED/3尝试不改判，完整K不通过；不发新健康请求、切模型或复位infra2/2。
+
+主监督67542终局1后，只完成不生成模型请求的独立补测36084：两原UUID PTY ready/输入接管/双写拒绝/正常退出/同UUID恢复、真实Chromium终端、本地Host三步骤全0，原operator不re-pin；本地异常生命周期22CLI14local0外部/cancel+crash各11全真。Desktop实际原UUID/cwd/finalhash同一原生记录，非复制；一次live元数据读取非原子且缺当前内容，不能报桌面实时接管。最终真实managed模型、实际同源原生收尾、双独立硬ACCEPT/固定Gate/merge/正式Stable/分支清理继续BLOCKED；main和旧版未动，原始false/error/失败记录全保留。

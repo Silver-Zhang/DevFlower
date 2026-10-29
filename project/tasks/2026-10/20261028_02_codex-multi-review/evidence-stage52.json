@@ -42,9 +42,24 @@
     "all_pass": true,
     "fixture_not_real_model": true
   },
-  "new_full_regression": "running",
-  "new_ci": "running",
-  "new_actual_models_launched": 0,
+  "new_full_regression": {
+    "complete": true,
+    "source_unchanged": true,
+    "commands": 21,
+    "all_exit_zero": true,
+    "python": 1441,
+    "host": 6,
+    "js": 65,
+    "chromium_http": 253,
+    "smoke": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "new_ci": {
+    "all_three_success": true,
+    "head": "1ed2b0341c738bd574274c9c0e09c9c636394139"
+  },
   "ai50": {
     "run_id": "fe74f0b5c4256a6be68690a2d7ca0384",
     "state": "CANCELLED",
@@ -58,5 +73,89 @@
   "infrastructure_max": 2,
   "final_approved": false,
   "main_changed": false,
-  "stable_changed": false
+  "stable_changed": false,
+  "real_assistant": {
+    "scenarios": 4,
+    "all_complete": true,
+    "source_unchanged": true,
+    "original_deepseek_connection_preserved": true,
+    "old_conversation_reply_receipt_proposal_exact_unchanged": true
+  },
+  "real_graphs": {
+    "scenarios": 6,
+    "all_pass_according_to_each_contract": true,
+    "actual_calls": 21,
+    "per_scenario_calls": [
+      2,
+      3,
+      1,
+      2,
+      10,
+      3
+    ],
+    "max5_state": "FAILED expected negative, not product success"
+  },
+  "real_ai_canvas": {
+    "run_id": "831d722cda1ad1446d558668444187e8",
+    "state": "FAILED",
+    "actual_attempts": 3,
+    "original_contract_branch_accepted": true,
+    "original_deadline_branch_accepted": false,
+    "deadline_reason": "Lack of other-branch input, not an asserted local code counterexample",
+    "aggregator_error": "Selected model is at capacity. Please try a different model.",
+    "aggregator_native_exit": 1,
+    "overall_pass": false,
+    "old_negative_preserved": true,
+    "no_retry": true,
+    "no_alternate_model": true
+  },
+  "new_local_lifecycle": {
+    "actual_cli": 22,
+    "all_local_http": 14,
+    "external_models": 0,
+    "checks": 22,
+    "all_pass": true,
+    "exit": 0
+  },
+  "after_capacity_non_generation": {
+    "steps": 3,
+    "all_exit_zero": true,
+    "pty_sessions": 2,
+    "same_native_uuid_restore": true,
+    "same_pty_input_takeover": true,
+    "old_writers_rejected": true,
+    "actual_browser_pass": true,
+    "new_model_prompts": 0,
+    "original_operator_pins_used": true
+  },
+  "reviewer_requested_runner": {
+    "actor": "Root",
+    "tests": 19,
+    "exit": 0,
+    "reason": "readonly reviewer could not create file SQLite/socket fixtures",
+    "new_models": 0,
+    "original_verdict_changed": false
+  },
+  "native_desktop_history": {
+    "same_uuid_cwd_final_report_hash": true,
+    "transcript_copied": false,
+    "live_status_or_desktop_keyboard_takeover_proven": false,
+    "non_atomic_live_observation_retained": true
+  },
+  "independent_current_auxiliary": {
+    "policy_checks": 118,
+    "contract_tests": 26,
+    "all_exit_zero": true,
+    "counts_overlap_other_runs": true,
+    "formal_accept": false
+  },
+  "remaining": [
+    "complete actual AI aggregation/K",
+    "actual external model managed children",
+    "honest final native implementation receipt",
+    "two independent whole-source hard ACCEPT",
+    "two fixed old gates",
+    "conditional merge/main integration/Stable/branch cleanup"
+  ],
+  "current_stop": "real native Codex selected model at capacity; infrastructure budget2/2, no new model probes/retries or silent fallback"
 }
