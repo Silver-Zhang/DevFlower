@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {projectRun,edgeEvidence,latestActivation,preflight,statusInfo,duration,stateDuration} from '../tools/studio/workbench_ui/runtime_projection.mjs';
+import {projectRun,edgeEvidence,latestActivation,preflight,statusInfo,duration,stateDuration,visibleNodeState} from '../tools/studio/workbench_ui/runtime_projection.mjs';
 const snapshot={run:{id:'A',graph:{nodes:[{id:'a',name:'分析'},{id:'b',name:'汇合'}]}},state:'RUNNING',nodes:[{run:'A',node:'a',state:'COMPLETED'},{run:'A',node:'b',state:'PENDING',received:1,expected:2,waiting:['c']}]};
 test('offline hides passed, running, progress and waits instead of retaining success',()=>{const p=projectRun(snapshot,'unknown','A');assert.equal(p.state,'UNKNOWN');assert.equal(p.done,0);assert.deepEqual(p.active,[]);assert.deepEqual(p.waiting,[]);assert(!p.trusted)});
 test('late run A cannot project onto B',()=>{const p=projectRun(snapshot,'connected','B');assert.equal(p.graph,null);assert.equal(p.state,'UNKNOWN')});
@@ -36,4 +36,45 @@ test('terminal run does not advertise stale nodes as active or waiting',()=>{
   assert.equal(stateDuration(a.started_at,undefined,a.state),'耗时未知');
   assert.equal(JSON.stringify(v),before);
  }
+});
+
+const skippedLoop=()=>({run:{id:'skip-run',graph:{nodes:[{id:'loop',name:'补证',kind:'loop',body:{nodes:[{id:'agent',name:'补证者',kind:'agent'},{id:'end',kind:'result'}]}},{id:'end',kind:'result'}]}},state:'COMPLETED',nodes:[{id:'real-loop',run:'skip-run',node:'loop',kind:'loop',state:'SKIPPED'},{id:'real-end',run:'skip-run',node:'end',kind:'result',state:'COMPLETED'}]});
+test('unentered skipped loop descendants have presentation without invented activations',()=>{
+ const v=skippedLoop(),before=JSON.stringify(v),p=projectRun(v,'connected','skip-run');
+ assert.equal(p.total,4);assert.equal(p.activated,2);assert.equal(p.settled,2);assert.equal(p.unactivated,2);assert.equal(p.inheritedSkipped,2);
+ for(const path of ['loop/agent','loop/end']){
+  const entry=p.latest.find(x=>x.node.path===path),card=visibleNodeState(p,path);
+  assert.equal(entry.activation,undefined);assert.equal(card.state,'SKIPPED');
+  assert.deepEqual(card.derived_from_parent,{node:'loop',activation_id:'real-loop'});assert.match(card.reason,/未执行/);
+  for(const key of ['id','receipt','session_id','round','iteration','iteration_path','started_at','finished_at','actual_request'])assert(!Object.hasOwn(card,key),key);
+ }
+ assert.equal(JSON.stringify(v),before);assert.deepEqual(p.active,[]);assert.deepEqual(p.waiting,[]);
+});
+test('nearest persisted skipped loop explains an unactivated nested child',()=>{
+ const v=skippedLoop();v.run.graph.nodes[0].body.nodes=[{id:'inner',kind:'loop',body:{nodes:[{id:'agent',kind:'agent'}]}}];
+ v.nodes.push({id:'inner-real',run:'skip-run',node:'loop/inner',kind:'loop',state:'SKIPPED'});
+ const p=projectRun(v,'connected','skip-run');assert.equal(visibleNodeState(p,'loop/inner/agent').derived_from_parent.node,'loop/inner');
+});
+test('real child evidence including old-round receipt takes precedence over inherited presentation',()=>{
+ const v=skippedLoop(),child={id:'real-child',run:'skip-run',node:'loop/agent',state:'COMPLETED',iteration_path:[1],receipt:{session_id:'original-session'},output:{answer:'original answer'}};
+ v.nodes.push(child);const before=JSON.stringify(v),p=projectRun(v,'connected','skip-run'),entry=p.latest.find(x=>x.node.path==='loop/agent');
+ assert.equal(entry.activation,child);assert.equal(entry.presentation,null);assert.equal(visibleNodeState(p,'loop/agent'),child);assert.equal(p.inheritedSkipped,1);assert.equal(JSON.stringify(v),before);
+});
+test('non-skipped parents and matching name prefixes cannot invent a skip',()=>{
+ for(const state of ['PENDING','RUNNING','FAILED','CANCELLED','UNKNOWN']){
+  const v=skippedLoop();v.nodes[0].state=state;const p=projectRun(v,'connected','skip-run');
+  assert.equal(p.latest.find(x=>x.node.path==='loop/agent').presentation,null);assert.equal(p.inheritedSkipped,0);
+ }
+ const v=skippedLoop();v.run.graph.nodes.push({id:'loopish',kind:'loop',body:{nodes:[{id:'agent',kind:'agent'}]}});
+ assert.equal(projectRun(v,'connected','skip-run').latest.find(x=>x.node.path==='loopish/agent').presentation,null);
+});
+test('disconnection and foreign-run skip records never produce a trusted inherited state',()=>{
+ const v=skippedLoop();for(const [connection,run] of [['unknown','skip-run'],['connected','other-run']]){
+  const p=projectRun(v,connection,run);assert.equal(visibleNodeState(p,'loop/agent').state,'UNKNOWN');assert.equal(p.inheritedSkipped,0);assert.equal(p.activated,0);assert.equal(p.settled,0);
+ }
+ v.nodes[0].run='other-run';const p=projectRun(v,'connected','skip-run');assert.equal(p.inheritedSkipped,0);assert.equal(p.latest.find(x=>x.node.path==='loop/agent').activation,undefined);
+});
+test('settled progress includes actual failures without calling them passed',()=>{
+ const v=skippedLoop();v.state='FAILED';v.nodes[0].state='FAILED';const p=projectRun(v,'connected','skip-run');
+ assert.equal(p.state,'FAILED');assert.equal(p.settled,2);assert.equal(p.activated,2);assert.equal(p.done,1);assert.equal(p.inheritedSkipped,0);
 });
