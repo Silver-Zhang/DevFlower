@@ -3,12 +3,12 @@
   "id": "20261029_02_public-stable-release",
   "date": "2026-10-29",
   "mode": "B",
-  "status": "实施中",
+  "status": "待复核",
   "source_refs": [
     {
       "repo": "https://github.com/Silver-Zhang/DevFlower",
       "branch": "develop",
-      "commit": "df03af7a30260ac594e522e960e4a81406c598cf"
+      "commit": "708c5834e96d2161345f8b97c10d2571e9e0e0df"
     }
   ]
 }

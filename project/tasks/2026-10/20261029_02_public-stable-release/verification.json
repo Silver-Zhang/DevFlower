@@ -1,12 +1,12 @@
 {
   "source": {
-    "head": "df03af7a30260ac594e522e960e4a81406c598cf",
-    "git_tree": "aa2d37e61aa374345dcebdc2fb21e1cfa2eaecf2",
-    "candidate_sha256": "c606af1997030c3e219873850a12e609eff04a3ea731ab04e611fdd90e4b0d10",
+    "head": "708c5834e96d2161345f8b97c10d2571e9e0e0df",
+    "git_tree": "57a66e65ea9da33446999c0d48428719e2b21e70",
+    "candidate_sha256": "1753a8a6989821a0edb3a4448b711a8e29488499113b7708bc37a1e9cc763236",
     "files": 333
   },
   "regression": {
-    "python": 1516,
+    "python": 1525,
     "host_isolation": 6,
     "javascript": 67,
     "chromium_http": 265,
@@ -19,31 +19,30 @@
   "all_regression_exits_zero": true,
   "ci_checks_success": 6,
   "scoped_independent_checks": {
-    "ui_final_snapshot": "ACCEPT only two P2 display scopes, CLOSED",
-    "external_publisher": {
-      "tests": 93,
-      "fail": 0,
-      "error": 0,
-      "skip": 0,
-      "verdict": "EXTERNAL_DRAFT_PRECHECK_PASS only"
-    }
+    "AS-PROTOCOL-01": "CLOSED only frozen11 scope 9 persisted +32 direct; not native full-source ACCEPT",
+    "MF-01": "CLOSED scope frozen08 inherited unchanged",
+    "UI-FINAL-PAUSE": "CLOSED scope frozen09 inherited unchanged",
+    "UI-FINAL-ACTIVE": "CLOSED scope frozen09 inherited unchanged",
+    "external_release11_tests": 122
   },
   "real_models": {
-    "codex_workflow_calls": 21,
-    "codex_managed_calls": 3,
-    "outer_processes_exit": 0,
-    "native_terminal_same_uuid_and_single_writer": true,
-    "builtin_assistant": "basic four calls completed; complex semantic misrouting plus two same-conversation correction failures retained"
+    "workflow_obligation_calls": 21,
+    "managed_calls": 3,
+    "ai_canvas_calls": 3,
+    "original_failed_flow_retained": true,
+    "original_assistant_failed_states_retained": 2,
+    "bounded_recoveries_per_failed_obligation": 1,
+    "two_native_uuid_restore_and_single_writer": true,
+    "desktop_live_pty_takeover_claimed": false
   },
-  "mandatory_open_findings": [],
-  "unresolved_required_evidence": [
-    "complex assistant workflow correction reliability",
-    "product K final independent judgment",
-    "full native A/B hard ACCEPT",
-    "fixed old final Gate"
-  ],
-  "full_independent_verdict": "NOT_YET_ISSUED",
+  "full_independent_verdict": "R1_NATIVE_A_B_RUNNING",
   "fixed_gate": "NOT_YET_RUN",
+  "unresolved_required_evidence": [
+    "product K independent final judgment",
+    "two full native Codex hard ACCEPT",
+    "fixed old Gate"
+  ],
   "merged": false,
-  "stable_promoted": false
+  "stable_promoted": false,
+  "native_final_implementation": "IMPLEMENTED / original UUID / read-only / source before=after / exit0 / 231.653s"
 }
