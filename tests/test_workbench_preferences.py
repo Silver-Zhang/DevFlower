@@ -8,6 +8,91 @@ from orchestration.common import save,digest,tree_hash
 from studio.workbench_runtime import WorkbenchRuntime
 from studio.workbench_server import create_server
 
+class OpenTargetSecurityFieldsTests(unittest.TestCase):
+ def setUp(self):
+  self.before=dict(model='SYNTHETIC-explicit',model_reasoning_effort='high',permissions={'default':'read'},model_provider='SYNTHETIC-relay')
+  self.target={'open-in-target-preferences':{'global':'vscodeInsiders'}}
+ def identity(self,value,detail=True):
+  from studio.preference_baseline import security_fields,security_identity
+  return security_identity(security_fields(value,desktop_detail=detail))
+ def test_observed_target_is_ignored_only_in_explicit_desktop_semantics(self):
+  after=dict(self.before,desktop=copy.deepcopy(self.target));snapshot=copy.deepcopy(after)
+  self.assertEqual(self.identity(self.before),self.identity(after))
+  self.assertNotEqual(self.identity(self.before,False),self.identity(after,False))
+  self.assertEqual(after,snapshot)
+ def test_unknown_target_values_and_types_remain_identity_sensitive(self):
+  for value in ('vscode','terminal','/bin/true','file:///tmp/editor','https://example.invalid','code --wait',True,1,1.0,None,[],{},['vscodeInsiders'],{'command':'vscodeInsiders'}):
+   with self.subTest(value=value):
+    after=dict(self.before,desktop={'open-in-target-preferences':{'global':value}})
+    self.assertNotEqual(self.identity(self.before),self.identity(after))
+  for table in ('vscodeInsiders',True,1,[],['vscodeInsiders']):
+   with self.subTest(table=table):
+    self.assertNotEqual(self.identity(self.before),self.identity(dict(self.before,desktop={'open-in-target-preferences':table})))
+ def test_unknown_nested_and_sibling_fields_are_retained(self):
+  from studio.preference_baseline import security_fields
+  for extra in ({'command':'editor'},{'path':'/tmp/editor'},{'uri':'file:///tmp/editor'},{'nested':{'global':'vscodeInsiders'}},{'unknown':True}):
+   with self.subTest(extra=extra):
+    after=dict(self.before,desktop={'open-in-target-preferences':{'global':'vscodeInsiders',**extra},'other':{'enabled':True}})
+    fields=security_fields(after,desktop_detail=True)
+    self.assertEqual(fields['desktop'],{'open-in-target-preferences':extra,'other':{'enabled':True}})
+    self.assertNotEqual(self.identity(self.before),self.identity(after))
+ def test_security_fields_and_nested_types_stay_bound(self):
+  from studio.preference_baseline import security_identity
+  for key,value in (('permissions',{'default':'write'}),('model_provider','other'),('approval_policy','never'),('auth',{'method':'other'}),('model_providers',{'relay':{'base_url':'https://other.invalid'}}),('hooks',{'command':'unsafe'}),('tools',{'write':True})):
+   with self.subTest(key=key):
+    after=dict(self.before,desktop=copy.deepcopy(self.target));after[key]=value
+    self.assertNotEqual(self.identity(self.before),self.identity(after))
+  identities=[self.identity(dict(self.before,desktop={'open-in-target-preferences':{'global':'vscodeInsiders','unknown':value}})) for value in (True,1,1.0)]
+  self.assertEqual(len(set(identities)),3)
+  self.assertEqual(len({security_identity({'x':v}) for v in (True,1,1.0)}),3)
+ def test_conversation_detail_enum_and_bad_desktop_types_remain_checked(self):
+  for mode in ('STEPS_PROSE','STEPS_COMMANDS','STEPS_EXECUTION'):
+   after=dict(self.before,desktop={**self.target,'conversationDetailMode':mode})
+   self.assertEqual(self.identity(self.before),self.identity(after))
+  for value in ('UNKNOWN',True,1,[],{}):
+   with self.subTest(mode=value),self.assertRaises(ValueError):
+    self.identity(dict(self.before,desktop={**self.target,'conversationDetailMode':value}))
+  for value in (True,1,'vscodeInsiders',[]):
+   with self.subTest(desktop=value),self.assertRaises(ValueError):self.identity(dict(self.before,desktop=value))
+ def test_direct_v1_v2_and_raw_config_pins_do_not_upgrade(self):
+  import tempfile
+  from studio.model_registration import direct_environment_identity
+  with tempfile.TemporaryDirectory() as folder:
+   home=Path(folder);root=home/'.codex';root.mkdir();config=root/'config.toml'
+   config.write_text('model="SYNTHETIC-default"\nmodel_reasoning_effort="high"\n')
+   binding=dict(provider='codex',execution_backend='native-local',home=str(home),config_root=str(root),model='SYNTHETIC-explicit',effort='high',native_interaction='ordinary',execution_mode='Ask',direct_environment_scope='native-codex-ordinary',readonly_files=[])
+   versions=[dict(binding,direct_environment_version=v) for v in (1,2,3)]
+   before=[direct_environment_identity(b) for b in versions]
+   raw=dict(versions[2],readonly_files=[[str(config),'.codex/config.toml']]);pin=direct_environment_identity(raw)
+   config.write_text(config.read_text()+'[desktop.open-in-target-preferences]\nglobal="vscodeInsiders"\n')
+   after=[direct_environment_identity(b) for b in versions]
+   self.assertNotEqual(before[0],after[0]);self.assertNotEqual(before[1],after[1]);self.assertEqual(before[2],after[2])
+   self.assertNotEqual(direct_environment_identity(raw),pin)
+ def test_original_pin_worker_fd_and_missing_baseline_remain_authentic(self):
+  import os,tempfile
+  from types import SimpleNamespace
+  from unittest.mock import patch
+  from studio.preference_baseline import ENV,original,preference_only,worker_baseline
+  raw=b'model="SYNTHETIC-original"\nmodel_reasoning_effort="high"\n[permissions]\ndefault="read"\n'
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);config=root/'config.toml';config.write_bytes(raw)
+   operator=dict(native_local={'codex':{'config_root':folder}},dependencies={str(config):digest(raw)})
+   with patch.dict(os.environ,{ENV:''}):baseline=original(operator)
+   self.assertEqual(baseline['raw'],raw)
+   config.write_bytes(raw+b'[desktop.open-in-target-preferences]\nglobal="vscodeInsiders"\n')
+   self.assertTrue(preference_only(baseline,str(config)))
+   self.assertEqual(operator['dependencies'][str(config)],digest(raw))
+   with patch.dict(os.environ,{ENV:''}):self.assertIsNone(original(operator))
+   self.assertFalse(preference_only(None,str(config)))
+   env={};runtime=SimpleNamespace(preference_baseline=baseline,assistant_settings=None)
+   with worker_baseline(runtime,env) as fds:
+    self.assertEqual(len(fds),1);self.assertEqual(os.pread(fds[0],len(raw),0),raw)
+    with patch.dict(os.environ,{ENV:str(os.dup(fds[0]))}):restored=original(operator)
+   self.assertEqual(restored['raw'],raw);self.assertTrue(preference_only(restored,str(config)))
+   self.assertNotIn(ENV,env);self.assertEqual(list(root.iterdir()),[config])
+   config.write_bytes(raw.replace(b'default="read"',b'default="write"')+b'[desktop.open-in-target-preferences]\nglobal="vscodeInsiders"\n')
+   self.assertFalse(preference_only(restored,str(config)))
+
 class PreferenceDriftTests(unittest.TestCase):
  def setUp(self):
   self.base,old=fixture(self);home=self.base.root/'native-preferences';home.mkdir();root=home/'.codex';root.mkdir();self.config=root/'config.toml';self.config.write_text('model="one"\nmodel_reasoning_effort="high"\n[permissions]\ndefault="read"\n')
@@ -120,3 +205,25 @@ class PreferenceDriftTests(unittest.TestCase):
   for selected in result['run']['bindings'].values():
    self.assertEqual(selected['binding']['direct_environment_version'],3)
    self.assertEqual((selected['binding']['model'],selected['binding']['effort']),(p['model'],p['effort']))
+
+ def test_http_frozen_v3_selection_starts_once_after_observed_open_target_change(self):
+  from studio.workbench_examples import examples
+  from unittest.mock import patch
+  graph=examples(self.rt.operator['profiles'])[0];p=self.rt.operator['profiles']['default-codex']
+  expected=(p['model'],p['effort']);pin=self.rt.operator['dependencies'][str(self.config)]
+  for node in graph['nodes']:
+   if node['kind']=='agent':node.update(profile='default-codex',provider='codex',model=expected[0],effort=expected[1])
+  def post(path,value):
+   request=Request(self.url+path,data=json.dumps(value).encode(),headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json','Origin':self.url})
+   with urlopen(request) as response:return json.load(response)
+  permit=post('/api/prepare',dict(workspace=self.base.project['id'],graph=graph,task='SYNTHETIC frozen model after display preference',interaction='click'))
+  self.config.write_text(self.config.read_text()+'[desktop.open-in-target-preferences]\nglobal="vscodeInsiders"\n')
+  self.assertIsNone(self.get()['configuration_warning'])
+  with patch.object(self.rt,'spawn') as spawn:result=post('/api/start',dict(id=permit['id'],sha256=permit['sha256'],answer={'action':'start'}))
+  self.assertEqual(spawn.call_count,1)
+  self.assertEqual(self.rt.operator['dependencies'][str(self.config)],pin)
+  for selected in result['run']['bindings'].values():
+   self.assertEqual(selected['binding']['direct_environment_version'],3)
+   self.assertEqual((selected['binding']['model'],selected['binding']['effort']),expected)
+  from orchestration.common import Blocked
+  with self.assertRaises(Blocked):WorkbenchRuntime(self.rt.operator_file,self.rt.operator_sha256,self.rt.candidate_sha256,self.rt.policy_file,self.rt.policy_sha)

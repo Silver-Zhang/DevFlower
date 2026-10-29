@@ -55,6 +55,11 @@ def security_fields(parsed, *, desktop_detail=False):
             if desktop['conversationDetailMode'] not in ('STEPS_PROSE','STEPS_COMMANDS','STEPS_EXECUTION'):
                 raise ValueError('invalid conversation detail mode')
             desktop.pop('conversationDetailMode')
+        targets=desktop.get('open-in-target-preferences')
+        if isinstance(targets,dict) and type(targets.get('global')) is str and targets['global']=='vscodeInsiders':
+            targets=dict(targets);targets.pop('global')
+            if targets:desktop['open-in-target-preferences']=targets
+            else:desktop.pop('open-in-target-preferences')
         if desktop:value['desktop']=desktop
         else:value.pop('desktop')
     return value
