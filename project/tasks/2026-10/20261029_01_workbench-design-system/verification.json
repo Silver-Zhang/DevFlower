@@ -1,0 +1,139 @@
+{
+  "candidate_sha256": "0c717aebff081d2f842710988e7d2a47ee88a43e0c3a2f4b5ebb736dc6d6f9bf",
+  "git_tree": "1dfbc6d1be5fcf65525e16e782411f7074b11601",
+  "files": 331,
+  "counts": {
+    "python": 1441,
+    "host_isolation": 6,
+    "javascript": 65,
+    "chromium_http": 265,
+    "legacy_smoke": 16,
+    "fail": 0,
+    "error": 0,
+    "skip": 0
+  },
+  "real_model_calls_this_ui_task": 0,
+  "provider_evidence": "synthetic fixtures for automated regression; real preview settings/save/reload checked without inference",
+  "scope": "UI and interaction task only; old Task16 K/Stable remain BLOCKED",
+  "source_commit": "d9904d9bc6e4d3e2190b8595d40ae7b06e76d93f",
+  "branch": "flow/workbench-design-system",
+  "base_branch": "flow/workbench-guided-stable",
+  "base_commit": "1ed2b0341c738bd574274c9c0e09c9c636394139",
+  "pull_request": "https://github.com/Silver-Zhang/DevFlower/pull/23",
+  "draft": true,
+  "review_rounds": [
+    {
+      "round": 1,
+      "candidate": "d9ca66b99af580104490130536086cc03a07c86cf17fe76802bcc92d652c005b",
+      "verdict": "NEEDS_CORRECTION",
+      "report_sha256": "c5be1695579cd308a46378870be99346352ef881e431be081be9f9bd8480c642"
+    },
+    {
+      "round": 2,
+      "candidate": "0c717aebff081d2f842710988e7d2a47ee88a43e0c3a2f4b5ebb736dc6d6f9bf",
+      "verdict": "ACCEPT",
+      "scope": "new UI task only",
+      "report_sha256": "6683cb1179c10e541e22c7d858ceeb974726a544f3c02bda54ae4c6b76ea8740"
+    }
+  ],
+  "scope_review_model": "unknown",
+  "scope_review_effort": "unknown",
+  "scope_review_native_uuid": "unknown",
+  "infrastructure_failures_preserved": true,
+  "old_task16_gate": "BLOCKED",
+  "user_aesthetic_acceptance": "PENDING",
+  "stable_unchanged": true,
+  "commands": [
+    {
+      "id": "python-c02",
+      "exit": 0,
+      "log_sha256": "0702f489bd29fdb85fb4c1eaa09245f40047770e0cb8a0d52935299d0ef3a306"
+    },
+    {
+      "id": "browser-c02",
+      "exit": 0,
+      "log_sha256": "2f6562cd2676be9b558d83b577df7aee7124d3b6cf549f444064a3bbdff6ee10"
+    },
+    {
+      "id": "design-c02",
+      "exit": 0,
+      "log_sha256": "cb9787f4e33116ca91f3dd0ad8d0bb5d3b61ddbf71b1da1c104d923ea7822da9"
+    },
+    {
+      "id": "workspace-c02",
+      "exit": 0,
+      "log_sha256": "9b32dfa96405bc01badcd0794c9f61682684bfa6e173123b9a806b3e24916d5e"
+    },
+    {
+      "id": "session-c02",
+      "exit": 0,
+      "log_sha256": "16e7881f4f04e00ed1278c5bf20ad688abfb8e2bc3dfd0dd3839331189cfee23"
+    },
+    {
+      "id": "template-c02",
+      "exit": 0,
+      "log_sha256": "62b2f3c89faf00ad8484cbbb1ff3ac08b0eeb80c082c51f6d60b9c867e93afb3"
+    },
+    {
+      "id": "project_files-c02",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "workbench_stable-c02",
+      "exit": 0,
+      "log_sha256": "756831ae0005e153a194a77362cd09e767500a6dd5f35a57f133648f6e9cac5c"
+    },
+    {
+      "id": "usable-c02",
+      "exit": 0,
+      "log_sha256": "8eca9a6363d3f9fbf00de67119ecc33fdb1b0685264f6ab51f6caaedcbe1fb6f"
+    },
+    {
+      "id": "studio_races-c02",
+      "exit": 0,
+      "log_sha256": "45d33fb7331505e6417ee8b30bee4895318270d565ca2fbdd3e26c1819eea993"
+    },
+    {
+      "id": "studio_identity_races-c02",
+      "exit": 0,
+      "log_sha256": "2dfa7508a14f82b605a6b9afa00b2f55ca8274eea550461873d1ef89c564d8b8"
+    },
+    {
+      "id": "studio-smoke-c02",
+      "exit": 0,
+      "log_sha256": "0220f5b1b0650f0b9e831808b32edf26551c1a289ac815037513a36d686198ad"
+    },
+    {
+      "id": "javascript-c02",
+      "exit": 0,
+      "log_sha256": "69d22899ce1051381f6202c005c7fa7e78a6a0a5b8cb3f03514a0a1d0369f4d3"
+    },
+    {
+      "id": "isolation-c02",
+      "exit": 0,
+      "log_sha256": "2ca8e0cbae47179603d447d30a9cfd31850e03cadf7a6e3ccf5f5ae16ccdaaf1"
+    },
+    {
+      "id": "baseline-c02",
+      "exit": 0,
+      "log_sha256": "328260c6882ae7d98082730ce4206161b5a5f15b44a7426538254946732217f1"
+    },
+    {
+      "id": "syntax-c02",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "contract_sha256": "208b5bd0ce3fdb05717201294e05b552f78ce4d24d6bbc2d4543c3e79789589e",
+  "ci": {
+    "as_observed": "2026-10-29T02:06:00Z",
+    "Studio contracts": "success",
+    "Usable regression": "in_progress"
+  },
+  "records_check": {
+    "command": "python3 -B tools/devflower.py check",
+    "exit": 0,
+    "baseline_note": "--baseline is intentionally inapplicable to a project branch; source candidate baseline passed"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "20261029_01_workbench-design-system",
+  "date": "2026-10-29",
+  "mode": "B",
+  "status": "已完成",
+  "source_refs": [
+    {
+      "repo": "https://github.com/Silver-Zhang/DevFlower",
+      "branch": "flow/workbench-design-system",
+      "base": "1ed2b0341c738bd574274c9c0e09c9c636394139",
+      "worktree": "/home/workspace/DevFlower/development/workbench-design-system",
+      "commit": "d9904d9bc6e4d3e2190b8595d40ae7b06e76d93f",
+      "tree": "1dfbc6d1be5fcf65525e16e782411f7074b11601",
+      "candidate_sha256": "0c717aebff081d2f842710988e7d2a47ee88a43e0c3a2f4b5ebb736dc6d6f9bf",
+      "pr": "https://github.com/Silver-Zhang/DevFlower/pull/23"
+    }
+  ]
+}

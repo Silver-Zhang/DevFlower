@@ -1,5 +1,11 @@
 # 当前状态
 
+2026-10-29 新UI任务已完成实现和独立技术审核：flow/workbench-design-system/d9904d9；候选0c717a…9bf/tree1dfbc6…601/331文件，Draft PR23依赖PR22。1441Python/6host/65JS/265ChromiumHTTP+16smoke全0；Codex R1 NEEDS_CORRECTION→同候选R2 ACCEPT，仅UI。用户本人审美待确认。
+
+新预览入口 python3 /home/workspace/DevFlower/.local/open-design-development.py，实际Development/candidate02/35485。旧Stable/current/原生会话/认证均不动。详见tasks/2026-10/20261029_01_workbench-design-system。
+
+## 原Task16关口（原记录保留，不因UI审核改写）
+
 Task16因真实Codex所选模型容量不足暂停模型依赖步骤；不是用户暂停，未重置预算。产品Claude支持、原HOME/会话、中转认证、旧版和全部失败保留。
 
 远端source52 HEAD1ed2b0341c738bd574274c9c0e09c9c636394139/tree857d0e14171db50ebcf236852940f24b1a7454f3/CFbf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292/327files，PR22 Draft/main；S/K2干净，无活跃源码writer。

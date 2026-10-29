@@ -1,5 +1,9 @@
 # DevFlower 接续入口
 
+最新任务tasks/2026-10/20261029_01_workbench-design-system：独立UI重构已交付Draft PR23，源码d9904d9/tree1dfbc6/CF0c717a…9bf/331文件，R1 NEEDS_CORRECTION→R2 scoped ACCEPT，全量测试0。新UI入口 .local/open-design-development.py，Development02/35485。它基于PR22，不是新Stable；用户本人审美待确认，旧Task16/K/双审/Gate仍BLOCKED。
+
+## 原Task16接续资料（原文保留）
+
 任务tasks/2026-10/20261028_02_codex-multi-review；用户全部功能/视觉目标仍有效，仅读局部预检不得称整体完成。当前只Codex开发/审核，产品Claude/原生会话/中转保留，不新调用Claude模型。
 
 M=/home/workspace/DevFlower/DevFlower，main/origin最后e0a0f92fed7f94bfef3a01b1298f8465c008023d/tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039。S=development/guided-stable；K2=/home/workspace/claude_workspace/DevFlower测试/guided-stable/product-k-final。S/K2当前干净source52 HEAD1ed2b0341c738bd574274c9c0e09c9c636394139/tree857d0e14171db50ebcf236852940f24b1a7454f3/CFbf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292/327files；远端已读回一致，PR22 Draft/main，不合并。
