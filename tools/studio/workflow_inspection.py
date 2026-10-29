@@ -8,6 +8,11 @@ from .workbench_graph import validate_graph
 
 def _current_model_catalog(rt, name, profile):
     """Read the same identity/TTL-scoped view as the picker, without refresh."""
+    # Copilot's environment identity resolves its secret through the approved
+    # CLI broker. Static inspection must not start that broker; its capability
+    # remains unknown here and is checked by the actual provider path.
+    if profile.get('provider') == 'copilot':
+        return None
     from .model_catalog import ModelCatalog
     from .workbench_sessions import WorkbenchSessions
     try:

@@ -164,6 +164,13 @@ class WorkflowInspectionTests(unittest.TestCase):
 class CurrentCatalogInspectionTests(unittest.TestCase):
  def setUp(self):
   self.base,self.rt=fixture(self)
+ def test_static_copilot_identity_never_starts_credential_broker(self):
+  from studio.workflow_inspection import _current_model_catalog
+  name,profile=next(iter(self.rt.operator['profiles'].items()))
+  profile=dict(profile,provider='copilot')
+  self.rt.flow.put('model-discovery',name,dict(id=name))
+  with patch('studio.copilot_adapter.credential',side_effect=AssertionError('static check must not start gh auth token')):
+   self.assertIsNone(_current_model_catalog(self.rt,name,profile))
  def graph(self,kind):
   graph=examples(self.rt.operator['profiles'])[0 if kind=='agent' else 3]
   node=next(n for n in graph['nodes'] if n['kind']==kind)
