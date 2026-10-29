@@ -286,7 +286,14 @@ class DevFlowerAgent:
                 result=dict(reply=result['reply'],plan=None,run_request=dict(task=result['task']))
             elif name!='propose_workflow':raise Blocked('助手请求了未提供的软件工具')
             self.notify(dict(type='assistant.message'))
-        else:result=dict(reply=text,plan=None)
+        else:
+            # Recognize only a whole unsupported control envelope, never parse
+            # or execute it. Quoted examples and explanatory prose stay text.
+            final_text=text.strip();closing='</｜｜DSML｜｜ calls>'
+            if (final_text.startswith('<｜｜DSML｜｜ calls>') and final_text.endswith(closing)
+                and final_text.count(closing)==1):
+                raise Blocked('助手模型返回了不受支持的工具调用协议文本，未执行这段文本中的工具调用、未修改画布。请检查所选模型服务是否支持标准 tool_use/tool_calls，或缩小问题范围后重新提问；本轮未自动重试。')
+            result=dict(reply=text,plan=None)
         if not isinstance(result,dict) or set(result)-{'reply','plan','run_request'} or not {'reply','plan'}<=set(result):raise Blocked('助手工具参数无效，未改画布')
         # Only explicitly returned public text fields. Never thinking/encrypted
         # Anthropic payloads or reconstructed hidden reasoning.

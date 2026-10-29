@@ -191,6 +191,117 @@ class CanvasAssistantTests(unittest.TestCase):
         plan=dict(version=1,name='bad',summary='bad',nodes=[dict(id='a',kind='agent',name='分析',profile='default-codex')],edges=[dict(source='a',target='a')])
         with self.assertRaises(Invalid):decode_reply(json.dumps(dict(reply='bad',plan=plan)),self.choices)
 
+class AssistantToolEnvelopeTests(unittest.TestCase):
+    """Synthetic API replies through the real Agent, finalizer and private SQLite."""
+    envelope='<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_public_source">\n<｜｜DSML｜｜ parameter name="path" string="true">tools/studio/workbench_graph.py</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>'
+
+    def scenario(self,protocol,text,*,source_first=False,proposal=False):
+        from types import SimpleNamespace
+        from studio.devflower_agent import DevFlowerAgent
+        from studio.workbench_store import WorkbenchStore
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);flow=WorkbenchStore(root/'private.sqlite')
+            graph=dict(version=3,name='Private protocol fixture',nodes=[],edges=[])
+            rt=SimpleNamespace(storage=root,operator=dict(profiles={}),flow=flow,db=flow,check_operator=lambda:None,
+                session_center=SimpleNamespace(workspace=lambda _:dict(id='W',path=str(root))))
+            choices={'fixture-codex':dict(provider='codex',models=[dict(id='SYNTHETIC',efforts=['medium'])])}
+            plan=dict(version=1,name='未执行草稿',summary='仅合成传输',nodes=[dict(id='a',kind='agent',name='分析',profile='fixture-codex',round_prompt='只读分析')],edges=[])
+            requests=[];source_calls=[]
+            args=dict(path='tools/studio/workbench_graph.py',start=60,end=60)
+            class Reader:
+                def __init__(self,*a,**kw):pass
+                def read(self,*a):
+                    source_calls.append(a)
+                    return dict(path=args['path'],start=60,end=60,text='60: SYNTHETIC PUBLIC SOURCE')
+                def search(self,*a):raise AssertionError('No undeclared source search')
+            class Backend(DevFlowerAgent):
+                def __init__(self,cwd,**kw):super().__init__(rt,cwd,**kw)
+                def __enter__(self):
+                    self.config=dict(protocol=protocol,base_url='http://127.0.0.1',model='SYNTHETIC',effort='medium',api_key='',fingerprint='private-fixture')
+                    return self
+                def _request(self,method,path,payload=None):
+                    requests.append((method,path,copy.deepcopy(payload)))
+                    if len(requests)>(2 if source_first else 1):raise AssertionError('No automatic protocol retry')
+                    source=source_first and len(requests)==1
+                    name='read_public_source' if source else 'propose_workflow'
+                    inputs=args if source else dict(reply='仅生成未执行草稿',plan=plan)
+                    structured=source or proposal
+                    if protocol=='anthropic':
+                        content=[dict(type='text',text=text)]
+                        if structured:content.append(dict(type='tool_use',id='fixture-tool',name=name,input=inputs))
+                        return dict(id='fixture-response',model='SYNTHETIC',content=content,usage={}),None
+                    message=dict(role='assistant',content=text)
+                    if structured:message['tool_calls']=[dict(id='fixture-tool',type='function',function=dict(name=name,arguments=json.dumps(inputs)))]
+                    return dict(id='fixture-response',model='SYNTHETIC',choices=[dict(message=message)],usage={}),None
+            manager=CanvasAssistant(rt);manager.backend=Backend
+            messages=[dict(role='user',text='解释并修复当前错误')]
+            flow.put('canvas-conversation','C',dict(id='C',workspace='W',messages=messages,revision=1,agent_id='devflower-assistant/v1',active_turn='T'))
+            flow.put('canvas-turn','T',dict(id='T',state='QUEUED',workspace='W',conversation='C',intent='workflow',source=dict(kind='canvas-only',root=str(root)),choices=choices,context=graph,messages=messages,model='SYNTHETIC',images=[],base_graph=graph,base_graph_sha256='private-fixture',proposal=None,reply=None,receipt=None))
+            try:
+                with patch('studio.public_source_tool.PublicSourceReader',Reader),patch.object(ConfigurationAssistant,'choices',return_value=choices):
+                    manager._run('T',threading.Event())
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        with manager.lock:active=bool(manager.active)
+                        if not active:break
+                        time.sleep(.01)
+                    self.assertFalse(active,'Private finalizer did not finish')
+                # A fresh store reads committed state, not an in-memory projection.
+                persisted=WorkbenchStore(flow.path);turn=persisted.get('canvas-turn','T');conversation=persisted.get('canvas-conversation','C')
+                self.assertEqual(persisted.list('run'),[])
+                self.assertEqual(source_calls,[(args['path'],60,60)] if source_first else [])
+                self.assertEqual(len(requests),2 if source_first else 1)
+                self.assertEqual([r[1] for r in requests],['/v1/messages' if protocol=='anthropic' else '/v1/chat/completions']*len(requests))
+                for _,_,payload in requests:
+                    self.assertEqual(payload['model'],'SYNTHETIC')
+                    self.assertEqual(payload.get('output_config',{}).get('effort') if protocol=='anthropic' else payload['reasoning_effort'],'medium')
+                if source_first:self.assertEqual([v['name'] for v in turn['tool_activity']],['read_public_source','read_public_source'])
+                return turn,conversation
+            finally:manager.shutdown()
+
+    def failed_envelope(self,protocol,source_first=False):
+        turn,conversation=self.scenario(protocol,' \n'+self.envelope+'\n ',source_first=source_first)
+        self.assertEqual(turn['state'],'FAILED')
+        for text in ('协议','未执行','未修改画布','tool_use','tool_calls','请'):
+            self.assertIn(text,turn['reason'])
+        self.assertIsNone(turn['proposal']);self.assertIsNone(turn['reply']);self.assertIsNone(turn['receipt'])
+        self.assertEqual([m['role'] for m in conversation['messages']],['user'])
+        self.assertEqual(conversation['revision'],1)
+
+    def test_anthropic_initial_envelope_is_persisted_as_failed(self):self.failed_envelope('anthropic')
+    def test_openai_initial_envelope_is_persisted_as_failed(self):self.failed_envelope('openai')
+    def test_anthropic_envelope_after_source_tool_is_persisted_as_failed(self):self.failed_envelope('anthropic',True)
+    def test_openai_envelope_after_source_tool_is_persisted_as_failed(self):self.failed_envelope('openai',True)
+
+    def test_plain_clarification_and_other_tags_remain_answers(self):
+        for protocol in ('anthropic','openai'):
+            for text in ('请先说明需要修复哪个节点。','<example>这是普通标签文本</example>'):
+                with self.subTest(protocol=protocol,text=text):
+                    turn,_=self.scenario(protocol,text)
+                    self.assertEqual(turn['state'],'COMPLETED');self.assertEqual(turn['reply'],text);self.assertIsNone(turn['proposal'])
+
+    def test_quoted_or_explained_envelopes_remain_answers(self):
+        for protocol in ('anthropic','openai'):
+            for text in ('```text\n'+self.envelope+'\n```','这是待解释的协议示例：\n'+self.envelope,self.envelope+'\n以上是协议示例，请勿执行。'):
+                with self.subTest(protocol=protocol,text=text):
+                    turn,_=self.scenario(protocol,text)
+                    self.assertEqual(turn['state'],'COMPLETED');self.assertEqual(turn['reply'],text)
+
+    def test_structured_source_tool_then_plain_answer_remains_supported(self):
+        for protocol in ('anthropic','openai'):
+            with self.subTest(protocol=protocol):
+                turn,_=self.scenario(protocol,'根据公开源码，字段应使用 result.accepted。',source_first=True)
+                self.assertEqual(turn['state'],'COMPLETED');self.assertIsNone(turn['proposal'])
+
+    def test_structured_source_tool_then_proposal_remains_supported(self):
+        for protocol in ('anthropic','openai'):
+            with self.subTest(protocol=protocol):
+                turn,conversation=self.scenario(protocol,self.envelope,source_first=True,proposal=True)
+                self.assertEqual(turn['state'],'COMPLETED',turn.get('reason'));self.assertTrue(turn['proposal']['graph'])
+                self.assertEqual(conversation['messages'][-1]['kind'],'proposal')
+                self.assertEqual(turn['receipt']['inference_calls'],2)
+
+
 class CopilotProtocolTests(unittest.TestCase):
     def test_burst_stream_backpressure_keeps_final_rpc_response(self):
         with tempfile.TemporaryDirectory() as root:
