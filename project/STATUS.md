@@ -1,15 +1,15 @@
 # 当前状态
 
-Task16仅Codex多Agent审核；原始负面、原生会话、中转和认证保留。
+Task16只用Codex作开发与独立审核；Claude产品支持、原HOME/会话、中转认证、旧版和失败原件保留。
 
-远端源码source50：HEAD59a00d233c848c757dbd473c7451dd4e7ea33e7c/tree0167c9ac78ce27766097896d470f12da58ba42e0/CF00b4dae2647e7b3614b510a13ff7278cbd47cf515d25e6d26ef2a7d52a3b9c6c/327files；正常push/读回一致，PR22 Draft。S/K2均干净，无活跃原生源码writer。
+远端source52：HEAD1ed2b0341c738bd574274c9c0e09c9c636394139/tree857d0e14171db50ebcf236852940f24b1a7454f3/CFbf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292/327files，明确2路径commit、正常push/远端读回一致，PR22 Draft/main。S/K2干净，无活跃源码writer。
 
-当前完整同源21命令全部exit0：1430Python、6host、65JS、253Chromium/HTTP+16smoke，FAIL/ERROR/SKIP0；Baseline/前端语法/构建资产字节一致，三CI全部SUCCESS。旧source49三子进程测试env失败原件保留，原assert未降。逐页截图发现终局缺结束时间继续计时，现修为耗时未知并有真实DOM/截图。
+Source51完整同源21命令全0：1435Python/6host/65JS/253ChromiumHTTP+16smoke，FAIL/ERROR/SKIP0，三CI成功。SID合法延迟发布/两事务窗口和resume错SID已窄修；原51生命周期22真实CLI/14本地HTTP/0外部模型，cancel+真实父SIGKILL各11断言全PASS，无rescue/foreign误杀/重放，原失败未改判。
 
-真实DeepSeek原连接4项完成（说明/实际公开源码诊断/图修复应用/同对话图片图合同澄清），source不变。真实Codex六图全部按合同通过，实际21调用；五轮拒绝是预期FAILED/10calls/pass=true，非假成功。物理后端/生效effort unknown。
+真实AI50独立Codex发现缺省条件数据合同可能被AI提案隐式重定向/删除，Root真实公开API2FAIL、独立9项5FAIL原件留存。唯一原生writer修2文件，原raw CAS和invalid repair不变，source52 Root123项0、独立13项（含原9项）全PASS；原生PARTIAL不改ACCEPT。52完整回归/CI正在跑，不能套51绿色。
 
-新managed只读子任务bf2d实际CLI+local Provider：16检查全PASS/20CLI16local/0外部，两子真正重叠、3UUID、读public/拒写/拒私有、预算3及重播不再spawn、正常owned收尾。source50-v3取消安全11项全PASS，但随后crash前提未成立：极速工具请求早于父SID stdout发布，0child/未SIGKILL，整轮exit1不改判。独立0调用继续构造该可达竞态反例，不猜会话或放宽权限。
+历史source50 DeepSeek4项和真实Codex六图21调用均按合同完成；AI图fe74…先Root诊断暂停后准确撤回CANCELLED/2actual，accepted=false原意见保留，总监督1307终局exit1，勿重放。52新真实套件待同源本地/CI全绿后运行，补完整公开源码用于真实import反例，不用stub或逼迫模型改判。
 
-因此Root已暂停正在运行的source50 AI复杂图fe74f0b5c4256a6be68690a2d7ca0384的新调度（2calls/2actual，已在途允许结束），不是用户暂停/最终撤回。总监督工具1307仍在等待该图；勿重启/重放。后续真实managed模型/PTY/Desktop尚未开始。正式双审0/2、infra2/2不复位；K/双硬ACCEPT/旧Gate/merge/Stable/分支清理仍未通过，不以CI绿色推导。
+Claude CLI统一中心以原HOME/原UUID管理；实际3条Desktop Code元数据可对应CLI记录，普通Desktop Chat不同容器，未实现/未宣称桌面实时接管。官方迁移还有平台/登录限制；本任务0新Claude模型调用。
 
-Claude CLI统一中心，Desktop Code cliSessionId仅只读关联，普通DesktopChat不同容器；非桌面实时接管。本任务未调用Claude模型。main e0a0f92、正式Stable cfea19未动，旧19worktree/会话/失败保留。Development入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py 仍46/44375，非本次新候选或Stable。
+K/两个原生Codex硬ACCEPT/固定旧Gate/merge/正式Stable/分支清理仍未全部完成。正式双审0/2、infra2/2不复位。main e0a0f92和正式Stable cfea19不动，19worktree/原生历史完整保留。Development入口 python3 /home/workspace/DevFlower/.local/open-guided-development.py 仍46/44375，非52或新Stable。

@@ -1,0 +1,62 @@
+{
+  "kind": "SOURCE52_CHECKPOINT_NOT_FINAL_ACCEPTANCE",
+  "head": "1ed2b0341c738bd574274c9c0e09c9c636394139",
+  "git_tree": "857d0e14171db50ebcf236852940f24b1a7454f3",
+  "candidate_sha256": "bf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292",
+  "files": 327,
+  "draft": true,
+  "remote_verified": true,
+  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/22",
+  "root_targeted": {
+    "tests": 123,
+    "exit": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "real_provider_calls": 0
+  },
+  "independent_targeted": {
+    "tests": 13,
+    "exit": 0,
+    "old_source51_failures": 5,
+    "real_provider_calls": 0,
+    "formal_accept": false,
+    "original_assertions": 9
+  },
+  "source51_full_regression": {
+    "commands": 21,
+    "python": 1435,
+    "host": 6,
+    "js": 65,
+    "chromium_http": 253,
+    "smoke": 16,
+    "all_exit_zero": true,
+    "all_three_ci_success": true
+  },
+  "source51_lifecycle": {
+    "actual_cli": 22,
+    "all_local_http": 14,
+    "external_models": 0,
+    "cancel_checks": 11,
+    "crash_checks": 11,
+    "all_pass": true,
+    "fixture_not_real_model": true
+  },
+  "new_full_regression": "running",
+  "new_ci": "running",
+  "new_actual_models_launched": 0,
+  "ai50": {
+    "run_id": "fe74f0b5c4256a6be68690a2d7ca0384",
+    "state": "CANCELLED",
+    "actor": "Root QA withdrawal after diagnostic pause",
+    "actual_calls": 2,
+    "raw_codex_finding_preserved": true
+  },
+  "formal_rounds": 0,
+  "formal_max": 2,
+  "infrastructure_used": 2,
+  "infrastructure_max": 2,
+  "final_approved": false,
+  "main_changed": false,
+  "stable_changed": false
+}

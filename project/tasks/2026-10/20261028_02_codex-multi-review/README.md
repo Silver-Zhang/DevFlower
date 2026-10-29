@@ -6,7 +6,7 @@
 
 ## 2. 做法与证据
 
-当前source48：6c298fe3dc0560f8d513f9e7594428d35a558020/treec952f20fd3cbd33d3043d8e79f5514c30949f87d/CFfcb2806d118851fd498945c527a7854372a9b5ed78cb97bcf12b144ae413fcea，313文件；已正常push，PR22保持Draft。完整冻结Skill资源、提交边界、Claude effort与实时工具活动修复均已实施；Root283项产品测试通过，首联合命令另1个模块名loader ERROR/exit1保留，正确工具活动17项另跑0。独立5项安全边界与唯一完整本地CLI集成23项核验通过，9CLI/7全本地请求、0真实模型。source48全量/真实K/最终双审未通过，仍不可合并。
+历史source48：6c298fe3dc0560f8d513f9e7594428d35a558020/treec952f20fd3cbd33d3043d8e79f5514c30949f87d/CFfcb2806d118851fd498945c527a7854372a9b5ed78cb97bcf12b144ae413fcea，313文件；已正常push，PR22保持Draft。完整冻结Skill资源、提交边界、Claude effort与实时工具活动修复均已实施；Root283项产品测试通过，首联合命令另1个模块名loader ERROR/exit1保留，正确工具活动17项另跑0。独立5项安全边界与唯一完整本地CLI集成23项核验通过，9CLI/7全本地请求、0真实模型。source48全量/真实K/最终双审未通过，仍不可合并。
 
 上游 awesome-design-md 为 MIT 设计文档合集，固定3b605329240ce735b510037cca322f1831fdd7f8，84份参考完整安装到本机同名适配skill，不冒称官方已提供SKILL.md。源码增加共享theme、永久设计规范和来源/许可证；统一浅深/系统、画布、聊天、助手设置与历史、检查器、文件夹/模板、弹窗、活动、终端与旧页面。保持用户Sim交互方向、真实状态、权限与模型设置。
 
@@ -36,7 +36,7 @@ Root在44真实plan_graph独立复现省略合同（0模型）；原原生实施
 
 ## 4. 结论与边界
 
-界面定向预检通过，用户本人审美验收未代签。当前48仅完成定向回归、限定反例及本地合成CLI集成；完整回归、真实六图/复杂AI图、原生双端与合同K、最终双硬ACCEPT和固定旧Gate仍需同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
+界面定向预检通过，用户本人审美验收未代签。当前source52定向123项和原独立9项反例通过；完整回归/CI正在新源执行。source51完整1435Python等及生命周期通过是旧身份历史证据。复杂AI图、当前真实原生场景与合同K、最终双硬ACCEPT和固定旧Gate仍须同源完成后才进入普通merge/集成/正式Stable。main仍e0a0f92，Stable未晋升，未删分支、worktree或任何原生会话。
 
 已验证Development入口：python3 /home/workspace/DevFlower/.local/open-guided-development.py，当前source46/e4a593c（44375），独立预览不是Stable；原33/42服务、入口备份与版本保留。使用指南project/USER_GUIDE.md。API设置私有文件不入库。
 
@@ -83,3 +83,7 @@ Managed子Agent目前仍未用户可用：原生reserve层→host runner/私有e
 2026-10-29 source50：唯一原生writer补精确固定MCP单工具approve/服务parallel（global never不动）、两子进程测试导入路径及两用户指南；真实bf2d本地CLI父+2子并发16检查全PASS/20CLI16local/0外部，不能冒称模型K。Root逐页新截图发现终局缺finish伪增耗时，原生只修UI state-aware projection，旧duration API/assert保留，Root构建后CF00b4d/327/tree0167c9，明确13路径commit59a00d2并push读回。当前完整21命令0（1430Python、6host、65JS、253HTTP+16smoke）、三CI SUCCESS、真实DeepSeek4项与Codex六图21call按合同全部通过，旧49三fixture失败不改判。
 
 source50 lifecycle v2因测试rt缺snapshot进入rescue/FAIL保留；v3挂真API且0调用12checks后仅cancel负例11项全PASS/无rescue/历史留，但crash前提因快速MCP先到SID回调未发布而安全拒绝，0child/未SIGKILL，整轮exit1/20CLI14local/0外部。时间证据和独立0调用反例仍在查，不归因产品异常清理、不能隐藏原始FAIL。Root暂停AI复杂图新调度（fe74…，2/2调用，已在途不重发）以避免确认竞态前继续付费后续场景；原模型过程/记录保留，不是用户暂停或新审核轮。总监督1307仍原进程，尚无正式双审/Gate/merge/Stable，main与旧版不变。
+
+2026-10-29 source51：真实父SID发布竞态和resume错身份反例已由同一原生writer窄修，commit2881a9b/tree d7522a/CF693248/327files；完整1435Python/6host/65JS/253HTTP+16smoke/21命令全0，三CI SUCCESS。实际取消及真实父SIGKILL生命周期22CLI/14全本地HTTP/0外部各11断言全PASS，无rescue/foreign误杀，旧50失败不覆盖。
+
+真实AI50 check_contract accepted=false继续发现raw条件省略input_contract时effective默认字段可能改写/删除；Root2实API反例FAIL、独立9项5FAIL。原生同UUID只修2文件，effective守卫/复制与validator一致，保留rawCAS和invalid repair；Root123项、独立同9项均0，原生PARTIAL/0。正常commit/push source52 1ed2b0341c738bd574274c9c0e09c9c636394139/tree857d0e14171db50ebcf236852940f24b1a7454f3/CFbf48b9a78a93db53cf7145b7ea37db3fcbb8fe369e8b3c1912969f9d1226c292/327files，PR22 Draft。新全量/CI在跑，真实套件提供完整公开源用于import测试，不stub/不逼ACCEPT。AI50此前暂停后Root准确撤回CANCELLED/2actual，总监督1307终局1；旧negative/readback永久保留。main/Stable/分支未动。
