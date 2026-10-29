@@ -227,3 +227,142 @@ class PreferenceDriftTests(unittest.TestCase):
    self.assertEqual((selected['binding']['model'],selected['binding']['effort']),expected)
   from orchestration.common import Blocked
   with self.assertRaises(Blocked):WorkbenchRuntime(self.rt.operator_file,self.rt.operator_sha256,self.rt.candidate_sha256,self.rt.policy_file,self.rt.policy_sha)
+
+
+class OwnedTerminalControlRouteTests(unittest.TestCase):
+ """Real guard/handler/store/OS PTY; memory HTTP transport, no native CLI."""
+ use_http=False
+ def setUp(self):
+  import os,pty,subprocess,sys,tempfile,time
+  from unittest.mock import patch
+  from studio import session_runtime,workbench_runtime,workbench_server
+  from studio.terminal_text import TerminalText
+  from orchestration.common import clean_env
+  from orchestration.store import process_identity
+  self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+  source=self.root/'source';source.mkdir();self.source_file=source/'public.txt';self.source_file.write_text('SYNTHETIC source')
+  home=self.root/'home';home.mkdir();native_config=home/'.codex';native_config.mkdir()
+  self.config=native_config/'config.toml';self.raw=b'model="SYNTHETIC"\n[permissions]\ndefault="read"\n';self.config.write_bytes(self.raw)
+  self.exe=self.root/'synthetic-cli';self.exe.write_text('SYNTHETIC pinned executable; never invoked')
+  project=self.root/'project';project.mkdir();self.workspace='SYNTHETIC-workspace';self.key='SYNTHETIC-owned-pty'
+  self.operator=self.root/'operator.json';self.policy=self.root/'policy.json'
+  profile=dict(provider='codex',executable=str(self.exe),model='SYNTHETIC',effort='high',read_paths=[],readonly_files=[])
+  save(self.operator,dict(version=1,kind='development-sessions',storage=str(self.root/'storage'),native=str(self.root/'native-cache'),allowed_roots=[str(project)],profiles={'default-codex':profile},native_local={'codex':dict(home=str(home),config_root=str(native_config))},dependencies={str(self.config):digest(self.raw),str(self.exe):digest(self.exe.read_bytes())}))
+  save(self.policy,dict(version=1,models={},external_steps={}))
+  for module in (session_runtime,workbench_runtime):
+   item=patch.object(module,'ROOT',source);item.start();self.addCleanup(item.stop)
+  self.rt=WorkbenchRuntime(self.operator,digest(self.operator.read_bytes()),tree_hash(source),self.policy,digest(self.policy.read_bytes()),assistant_settings=self.root/'assistant-settings')
+  class MemoryServer:
+   def __init__(self,address,handler):self.server_port=18080;self.RequestHandlerClass=handler
+   def server_close(self):pass
+  if self.use_http:
+   self.server,self.token=create_server(self.rt)
+   thread=threading.Thread(target=self.server.serve_forever,daemon=True);thread.start()
+   self.addCleanup(thread.join);self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown)
+  else:
+   with patch.object(workbench_server,'ThreadingHTTPServer',MemoryServer):self.server,self.token=create_server(self.rt)
+   self.addCleanup(self.server.server_close)
+  self.manager=self.server.native_terminals
+  master,slave=pty.openpty()
+  script="import os,tty;tty.setraw(0);os.write(1,b'READY\\n')\nwhile True:\n b=os.read(0,1024)\n if not b:break\n os.write(1,b'Got:'+b)\n"
+  try:self.process=subprocess.Popen([sys.executable,'-B','-c',script],stdin=slave,stdout=slave,stderr=slave,start_new_session=True,close_fds=True,env=clean_env(home))
+  finally:os.close(slave)
+  os.set_blocking(master,False);identity=process_identity(self.process.pid)
+  entry=dict(proc=self.process,master=master,process=identity,home=str(home),session_id='SYNTHETIC-session',text='',first=0,next=0,total=0,filter=TerminalText(),inputs={},owner='workbench',generation=0,deadline=time.monotonic()+30,state='RUNNING',execution_binding={},cwd=str(project),admission_verification=None)
+  self.rt.flow.put('terminal',self.key,dict(id=self.key,workspace=self.workspace,provider='codex',session_id='SYNTHETIC-session',state='RUNNING',process=identity,input_sequence=0,input_generation=0,input_owner='workbench'))
+  self.manager.entries[self.key]=entry
+  entry['thread']=threading.Thread(target=self.manager._read,args=(self.key,entry),daemon=True);entry['thread'].start()
+  self.wait(lambda:'READY' in self.manager.snapshot(self.workspace,self.key)['output'])
+ def wait(self,predicate):
+  import time
+  for _ in range(100):
+   if predicate():return
+   time.sleep(.02)
+  self.fail('controlled OS PTY deadline')
+ def post(self,path,data,authorized=True):
+  import io
+  from studio.workbench_runtime import READONLY_VIEW
+  raw=json.dumps(data).encode();headers={'Host':'127.0.0.1:'+str(self.server.server_port),'Content-Type':'application/json','Content-Length':str(len(raw)),'Authorization':'Bearer '+(self.token if authorized else 'wrong')}
+  if self.use_http:
+   request=Request('http://'+headers['Host']+path,data=raw,headers=headers)
+   try:
+    with urlopen(request) as response:return response.status,json.load(response)
+   except HTTPError as error:return error.code,json.load(error)
+  handler=self.server.RequestHandlerClass.__new__(self.server.RequestHandlerClass)
+  handler.server=self.server;handler.headers=headers;handler.path=path;handler.rfile=io.BytesIO(raw)
+  responses=[];handler.respond=lambda status,value,mime=None:responses.append((status,value))
+  before=READONLY_VIEW.get();handler.route(True);self.assertEqual(READONLY_VIEW.get(),before)
+  self.assertEqual(len(responses),1);return responses[0]
+ def control(self,action,**extra):return self.post('/api/terminal/'+action,dict(workspace=self.workspace,id=self.key,**extra))
+ def drift(self,kind='trust'):
+  if kind=='permission':
+   self.config.write_bytes(self.raw.replace(b'default="read"',b'default="write"'));return
+  suffix={'trust':b'[projects."/SYNTHETIC/qa"]\ntrust_level="trusted"\n','provider':b'model_provider="other"\n'}[kind]
+  self.config.write_bytes(suffix+self.raw if kind=='provider' else self.raw+suffix)
+ def test_existing_input_resize_and_close_survive_security_config_drift(self):
+  from orchestration.common import Blocked
+  from unittest.mock import patch
+  for kind in ('trust','permission','provider'):
+   with self.subTest(kind=kind):
+    self.drift(kind)
+    with self.assertRaises(Blocked):self.rt.check_operator()
+    sequence=self.rt.flow.get('terminal',self.key)['input_sequence']+1
+    with patch('studio.native_terminals.subprocess.Popen',side_effect=AssertionError('must not spawn')):
+     code,value=self.control('input',sequence=sequence,text='SYNTHETIC-'+kind+'\n',generation=0)
+     self.assertEqual(code,200,value);self.assertTrue(value['accepted'])
+     self.assertEqual(self.control('resize',cols=90,rows=25,generation=0)[0],200)
+    self.wait(lambda:'Got:SYNTHETIC-'+kind in self.manager.snapshot(self.workspace,self.key)['output'])
+  code,value=self.control('close');self.assertEqual(code,200,value);self.assertTrue(value['stopped'])
+  self.assertIsNotNone(self.process.poll())
+ def test_drift_does_not_bypass_session_generation_or_replay_guards(self):
+  self.drift()
+  self.assertEqual(self.post('/api/terminal/input',dict(workspace='foreign',id=self.key,sequence=1,text='bad',generation=0))[0],400)
+  self.assertEqual(self.post('/api/terminal/close',dict(workspace=self.workspace,id='1234'))[0],400)
+  code,value=self.control('claim',generation=0);self.assertEqual(code,200,value)
+  self.assertEqual(self.control('input',sequence=1,text='old',generation=0)[0],409)
+  self.assertEqual(self.control('resize',cols=80,rows=24,generation=0)[0],409)
+  self.assertEqual(self.control('claim',generation=0)[0],409)
+  self.assertEqual(self.control('input',sequence=1,text='once\n',generation=1)[0],200)
+  code,value=self.control('input',sequence=1,text='once\n',generation=1);self.assertEqual(code,200);self.assertTrue(value['duplicate'])
+  self.assertEqual(self.control('input',sequence=1,text='different\n',generation=1)[0],409)
+  self.assertEqual(self.control('input',sequence=3,text='gap\n',generation=1)[0],409)
+  self.wait(lambda:'Got:once' in self.manager.snapshot(self.workspace,self.key)['output'])
+  self.assertEqual(self.manager.snapshot(self.workspace,self.key)['output'].count('Got:once'),1)
+  self.rt.flow.change('terminal',self.key,{'input_status':'UNKNOWN'})
+  self.assertEqual(self.control('input',sequence=1,text='once\n',generation=1)[0],400)
+  self.assertEqual(self.control('claim',generation=1)[0],400)
+  self.assertEqual(self.control('close')[0],200)
+ def test_share_only_connects_owned_pty_and_release_is_not_an_http_route(self):
+  from unittest.mock import patch
+  from types import SimpleNamespace
+  self.drift()
+  if self.use_http:code,value=self.control('share')
+  else:
+   with patch('studio.native_attach.NativeAttach',return_value=SimpleNamespace(path=self.root/'SYNTHETIC-attach.json',close=lambda:None)):
+    code,value=self.control('share')
+  self.assertEqual(code,200,value);self.assertEqual(value['mechanism'],'same-supervised-pty')
+  self.assertEqual(self.post('/api/terminal/share',dict(workspace='foreign',id=self.key))[0],400)
+  self.assertIn('Approved native',self.control('release',generation=0)[1]['error'])
+ def test_new_process_and_unknown_posts_stay_strict_after_drift(self):
+  from unittest.mock import patch
+  self.drift()
+  with patch('studio.native_terminals.subprocess.Popen',side_effect=AssertionError('must not spawn')):
+   for path in ('/api/terminal/prepare','/api/terminal/start','/api/prepare','/api/start','/api/chat/prepare','/api/chat/start','/api/terminal/input/unknown','/api/unknown'):
+    with self.subTest(path=path):
+     code,value=self.post(path,{});self.assertEqual(code,400);self.assertIn('Approved native',value['error'])
+  self.assertEqual(self.post('/api/terminal/close',dict(workspace=self.workspace,id=self.key),authorized=False)[0],403)
+ def test_controls_still_reject_source_policy_operator_and_executable_changes(self):
+  self.drift()
+  for path in (self.source_file,self.policy,self.operator,self.exe):
+   original=path.read_bytes()
+   try:
+    path.write_bytes(original+b'\nSYNTHETIC changed identity')
+    for action,data in (('input',dict(sequence=1,text='no\n',generation=0)),('resize',dict(cols=80,rows=24,generation=0)),('claim',dict(generation=0)),('share',{}),('close',{})):
+     with self.subTest(path=path.name,action=action):self.assertEqual(self.control(action,**data)[0],400)
+   finally:path.write_bytes(original)
+  self.assertEqual(self.rt.flow.get('terminal',self.key)['input_sequence'],0)
+
+
+class OwnedTerminalControlHTTPTests(OwnedTerminalControlRouteTests):
+ """Run in the outer host: real loopback HTTP and the same controlled OS PTY."""
+ use_http=True

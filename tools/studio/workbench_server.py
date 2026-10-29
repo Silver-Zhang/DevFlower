@@ -54,7 +54,10 @@ def create_server(runtime,port=0):
                 if not secrets.compare_digest(self.headers.get('Authorization',''),'Bearer '+token):
                     raise PermissionError('请使用本机启动入口打开已登录的工作台')
                 if post and path=='/api/connect':return self.respond(200,{'connected':True})
-                if not post and path in ('/api/status','/api/sessions','/api/history','/api/run','/api/run-conversation','/api/node-session','/api/node-conversation','/api/terminal/output','/api/terminals'):
+                # Existing PTY controls cannot spawn a native CLI. Keep them
+                # usable after config drift; all other identity checks remain.
+                if (not post and path in ('/api/status','/api/sessions','/api/history','/api/run','/api/run-conversation','/api/node-session','/api/node-conversation','/api/terminal/output','/api/terminals') or
+                        post and path in ('/api/terminal/input','/api/terminal/resize','/api/terminal/share','/api/terminal/claim','/api/terminal/close')):
                     from .workbench_runtime import READONLY_VIEW
                     read_token=READONLY_VIEW.set(True)
                 runtime.check_operator()
