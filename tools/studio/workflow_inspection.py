@@ -22,7 +22,10 @@ def _current_model_catalog(rt, name, profile):
         catalog = ModelCatalog(WorkbenchSessions(rt)).get(name, profile, refresh=False)
     except (Blocked, Invalid, OSError, ValueError, KeyError, TypeError):
         return None
-    if catalog.get('error') or catalog.get('stale') or not catalog.get('discovery_complete'):
+    # Aggregate stale also covers missing effort metadata on unrelated models.
+    # Discovery completeness retains identity/TTL checks; callers require the
+    # selected row's current discovery and native efforts before a conflict.
+    if catalog.get('error') or not catalog.get('discovery_complete'):
         return None
     return catalog
 

@@ -241,3 +241,80 @@ class CurrentCatalogInspectionTests(unittest.TestCase):
   issues=self.inspect(graph)['issues']
   self.assertTrue(any(i['severity']=='error' and i['field']=='profile' and '不一致' in i['message'] for i in issues))
   self.assertTrue(any(i['severity']=='error' and i['field']=='permission' for i in issues))
+
+
+class PartialClaudeCatalogInspectionTests(unittest.TestCase):
+ def setUp(self):
+  from test_provider_effort_activity import EffortTests
+  base=EffortTests();base.setUp();self.addCleanup(base.doCleanups)
+  self.rt,self.profile,self.records=base.rt,base.p,base.records
+  self.rt.rpc_home=base.root
+  self.profile.update(model='directory-A',effort='high')
+ inspect=CurrentCatalogInspectionTests.inspect
+
+ def catalog_and_graph(self,kind,*,registered=True,cli=False,model='directory-A',changes=None):
+  import json,time
+  from pathlib import Path
+  from studio.model_catalog import ModelCatalog
+  from studio.workbench_sessions import WorkbenchSessions
+  self.records.clear()
+  self.rt.policy['models']={'claude':[dict(id='registered-B',efforts=['high'])] if registered else []}
+  if cli:
+   from orchestration.common import digest
+   self.rt.flow.put('cli-probe','p',dict(available=True,at=time.time(),executable_sha256=digest(Path(self.profile['executable']).resolve().read_bytes()),efforts=['low','high']))
+  manager=WorkbenchSessions(self.rt)
+  payload=json.dumps(dict(data=[dict(id='directory-A',supported_reasoning_efforts=['low'])])).encode()
+  with patch('studio.model_catalog.configured_env',return_value={'ANTHROPIC_BASE_URL':'https://fixture.invalid','ANTHROPIC_AUTH_TOKEN':'synthetic-not-a-real-credential'}),patch('studio.model_catalog.urllib.request.build_opener') as opener,patch.object(manager,'rpc',return_value=dict(logged_in=True,auth_method='synthetic')) as rpc,patch('subprocess.Popen',side_effect=AssertionError('No real CLI/model process')),patch('socket.socket.connect',side_effect=AssertionError('No real HTTP')):
+   response=opener.return_value.open.return_value.__enter__.return_value
+   response.read.return_value=payload
+   ModelCatalog(manager).get('p',self.profile,refresh=True)
+   opener.return_value.open.assert_called_once()
+   request=opener.return_value.open.call_args.args[0]
+   self.assertEqual(request.full_url,'https://fixture.invalid/v1/models')
+   self.assertEqual(rpc.call_count,1);self.assertEqual(rpc.call_args.args[2],'claude/auth-status')
+   if changes:self.records['model-discovery','p'].update(changes)
+   catalog=ModelCatalog(manager).get('p',self.profile,refresh=False)
+   graph=examples(self.rt.operator['profiles'])[0 if kind=='agent' else 3]
+   for node in graph['nodes']:
+    if node['kind']=='agent':node['effort']='low'
+   node=next(n for n in graph['nodes'] if n['kind']==kind)
+   selected=dict(profile='p',provider='claude',model=model,effort='high')
+   if kind=='agent':node.update(selected)
+   else:node['classifier']=dict(selected,timeout=60)
+   result=self.inspect(graph)
+   self.assertEqual(opener.return_value.open.call_count,1);self.assertEqual(rpc.call_count,1)
+  self.assertTrue(all(m['execution_allowed'] is False for m in catalog['models']))
+  return catalog,node,result
+
+ def test_mixed_claude_catalog_keeps_current_agent_and_classifier_conflicts(self):
+  for kind in ('agent','router'):
+   for registered,cli in ((False,False),(True,False),(True,True)):
+    with self.subTest(kind=kind,registered=registered,cli=cli):
+     catalog,node,result=self.catalog_and_graph(kind,registered=registered,cli=cli)
+     self.assertIsNone(catalog['error']);self.assertTrue(catalog['discovery_complete'])
+     self.assertEqual(catalog['stale'],registered and not cli)
+     self.assertEqual(catalog['effort_metadata_stale'],registered and not cli)
+     current=next(m for m in catalog['models'] if m['id']=='directory-A')
+     self.assertTrue(current['discovery_current']);self.assertEqual(current['native_efforts'],['low'])
+     field='effort' if kind=='agent' else 'classifier.effort'
+     self.assertTrue(any(i['severity']=='error' and i['node']==node['id'] and i['field']==field for i in result['issues']),result)
+
+ def test_unknown_registered_claude_model_remains_a_warning(self):
+  for kind in ('agent','router'):
+   with self.subTest(kind=kind):
+    catalog,node,result=self.catalog_and_graph(kind,model='registered-B')
+    unknown=next(m for m in catalog['models'] if m['id']=='registered-B')
+    self.assertFalse(unknown['discovered']);self.assertFalse(unknown['discovery_current']);self.assertEqual(unknown['native_efforts'],[])
+    self.assertEqual(result['error_count'],0,result)
+    field='model' if kind=='agent' else 'classifier.model'
+    self.assertTrue(any(i['severity']=='warning' and i['node']==node['id'] and i['field']==field for i in result['issues']),result)
+
+ def test_mixed_claude_catalog_still_rejects_expired_foreign_or_failed_discovery(self):
+  import time
+  from studio.model_catalog import TTL
+  for kind in ('agent','router'):
+   for changes in (dict(at=time.time()-TTL-1),dict(profile_sha256='0'*64),dict(environment_sha256='0'*64),dict(error='synthetic discovery failure')):
+    with self.subTest(kind=kind,changes=changes):
+     catalog,node,result=self.catalog_and_graph(kind,changes=changes)
+     self.assertFalse(catalog['discovery_complete']);self.assertEqual(result['error_count'],0,result)
+     self.assertTrue(any(i['severity']=='warning' and i['node']==node['id'] and '目录' in i['message'] for i in result['issues']),result)
