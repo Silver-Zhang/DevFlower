@@ -1,146 +1,38 @@
 {
-  "candidate_sha256": "6db329466370457ac9bd4338b0337439be8ffd42b2005af6895da905fb175284",
-  "git_tree": "9408bee5e606f187045d7af0682882960c30890f",
-  "head": "357327f380e8b2bda291df3f28d0312ae1dbd585",
-  "files": 333,
-  "counts": {
-    "chromium_http": 265,
-    "error": 0,
-    "fail": 0,
+  "source": {
+    "head": "75ff2b8895f8a9bb7b2b085cdc8d2b6c0bde2dc9",
+    "git_tree": "b01349b9c5583581c09be97bb11c865ebfc57d9e",
+    "candidate_sha256": "78724ca8d7939bcc1daa5985576018bcef00ef00d90798dc20ea1eb880977afb",
+    "files": 333
+  },
+  "regression": {
+    "python": 1505,
     "host_isolation": 6,
     "javascript": 65,
+    "chromium_http": 265,
     "legacy_smoke": 16,
-    "python": 1481,
+    "fail": 0,
+    "error": 0,
     "skip": 0
   },
-  "command_receipts": [
-    {
-      "id": "python",
-      "exit": 0,
-      "sha256": "6eca7a2aaba35335afb90c98428a0abab84f3a4b1fe6879caefbb8dd09f57905"
-    },
-    {
-      "id": "host",
-      "exit": 0,
-      "sha256": "5f829c59f746dd14f3ccabbb24bf0476b473ea09de9e306a27bf20f57752ea53"
-    },
-    {
-      "id": "baseline",
-      "exit": 0,
-      "sha256": "328260c6882ae7d98082730ce4206161b5a5f15b44a7426538254946732217f1"
-    },
-    {
-      "id": "javascript",
-      "exit": 0,
-      "sha256": "6bdc783ef42548556fa89268df697bea8a1007b399d50558fc9de5c9e7f343ea"
-    },
-    {
-      "id": "syntax-app.js",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "syntax-workspace.js",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "syntax-usable.js",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "syntax-usable_canvas.js",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "syntax-usable_sessions.js",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "syntax-workbench",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "build",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "legacy-smoke",
-      "exit": 0,
-      "sha256": "0220f5b1b0650f0b9e831808b32edf26551c1a289ac815037513a36d686198ad"
-    },
-    {
-      "id": "studio_races",
-      "exit": 0,
-      "sha256": "45d33fb7331505e6417ee8b30bee4895318270d565ca2fbdd3e26c1819eea993"
-    },
-    {
-      "id": "studio_identity_races",
-      "exit": 0,
-      "sha256": "57f317982a3ccad28b91470ff2f144891c1343055520ca8a278cee1a247a9ac8"
-    },
-    {
-      "id": "workspace_browser",
-      "exit": 0,
-      "sha256": "9b32dfa96405bc01badcd0794c9f61682684bfa6e173123b9a806b3e24916d5e"
-    },
-    {
-      "id": "usable_browser",
-      "exit": 0,
-      "sha256": "8eca9a6363d3f9fbf00de67119ecc33fdb1b0685264f6ab51f6caaedcbe1fb6f"
-    },
-    {
-      "id": "template_browser",
-      "exit": 0,
-      "sha256": "62b2f3c89faf00ad8484cbbb1ff3ac08b0eeb80c082c51f6d60b9c867e93afb3"
-    },
-    {
-      "id": "session_browser",
-      "exit": 0,
-      "sha256": "16e7881f4f04e00ed1278c5bf20ad688abfb8e2bc3dfd0dd3839331189cfee23"
-    },
-    {
-      "id": "workbench_browser",
-      "exit": 0,
-      "sha256": "9895941e152069202f4e1fce0319b6e046bdd1261df4635cc37b6cc982f7b786"
-    },
-    {
-      "id": "workbench_stable_browser",
-      "exit": 0,
-      "sha256": "756831ae0005e153a194a77362cd09e767500a6dd5f35a57f133648f6e9cac5c"
-    },
-    {
-      "id": "project_files_browser",
-      "exit": 0,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "id": "design_system_browser",
-      "exit": 0,
-      "sha256": "8d4d6d8a6ff20bb8990f38f8638cd31172bb598e02dc24beb7fc8d653e401de5"
-    }
+  "commands": 22,
+  "all_regression_exits_zero": true,
+  "scoped_independent_checks": {
+    "original": 76,
+    "additional_nlink": 11,
+    "verdict": "ACCEPT only three patch scopes"
+  },
+  "real_models": {
+    "codex_workflow_calls": 21,
+    "codex_managed_calls": 3,
+    "outer_processes_exit": 0,
+    "builtin_assistant": "initial invalid-field FAILED preserved; same-conversation explicit correction COMPLETED"
+  },
+  "mandatory_open_findings": [
+    "MF-01"
   ],
-  "ci_runs": [
-    {
-      "id": 40812976964,
-      "name": "Studio contracts",
-      "conclusion": "success"
-    },
-    {
-      "id": 40812976969,
-      "name": "Usable regression",
-      "conclusion": "success"
-    }
-  ],
-  "pr": "https://github.com/Silver-Zhang/DevFlower/pull/24",
-  "release": "NOT_PUBLISHED",
-  "main": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
-  "independent_final": "PENDING",
-  "gate": "NOT_RUN",
-  "old_records_preserved": true
+  "full_independent_verdict": "NOT_YET_ISSUED",
+  "fixed_gate": "NOT_YET_RUN",
+  "merged": false,
+  "stable_promoted": false
 }
