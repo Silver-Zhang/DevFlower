@@ -29,9 +29,18 @@ def schema(profiles,depth=0):
         nodes=dict(type='array',minItems=3,items=node),edges=dict(type='array',minItems=2,items=edge)))
 
 
+def _effective_contracts(node):
+    # Match validate_graph's defaults without normalizing the source draft.
+    from .data_contracts import normalize
+    reads=([node.get('test',{}).get('field','result.accepted')] if node.get('kind')=='condition'
+           else [route['test']['field'] for route in node.get('routes',[])])
+    defaults=[dict(field=field,type='any',required=False) for field in dict.fromkeys(reads)]
+    return (normalize(node.get('input_contract'),defaults),normalize(node.get('output_contract'),[]))
+
+
 def _guarded_path(node, prefix=''):
     path=prefix+node['id']
-    if any(node.get(k) for k in ('input_contract','output_contract')):return path
+    if any(_effective_contracts(node)):return path
     if node.get('kind')=='loop':
         for child in (node.get('body') or {}).get('nodes',[]):
             found=_guarded_path(child,path+'/')
@@ -73,11 +82,11 @@ def plan_graph(plan, choices, *, previous=None):
         old=old_nodes.get(n['id'],{})
         # A prompt-only proposal cannot silently remove existing typed data
         # guards. These are edited through the data-contract UI, not this tool.
-        if old.get('kind') != n['kind'] and any(old.get(k) for k in ('input_contract','output_contract')):
+        if old.get('kind') != n['kind'] and old and any(_effective_contracts(old)):
             raise Invalid('节点「'+n['id']+'」已有数据合同，不能复用其身份替换节点类型；请创建新节点。')
         if old.get('kind') == n['kind']:
-            for contract in ('input_contract','output_contract'):
-                if contract in old:v[contract]=copy.deepcopy(old[contract])
+            for contract,value in zip(('input_contract','output_contract'),_effective_contracts(old)):
+                v[contract]=copy.deepcopy(value)
         if n['kind']=='loop':v.update(body=plan_graph(n.get('body'),choices,previous=old.get('body') if old.get('kind')=='loop' else None),max_rounds=n.get('max_rounds',5),until=n.get('until',dict(field='result.accepted',op='equals',value=True)))
         if n['kind']=='agent':
             allowed=choices.get(n['profile'])
