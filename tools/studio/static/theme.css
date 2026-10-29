@@ -2,25 +2,25 @@
    Adapted from VoltAgent's MIT DESIGN.md analyses; no brand assets or fonts. */
 :root {
   color-scheme: light dark;
-  --studio-bg: light-dark(#ffffff, #1b1b1e);
-  --studio-subtle-bg: light-dark(#f7f8fa, #121419);
-  --studio-input: light-dark(#ffffff, #1d2027);
-  --studio-hover: light-dark(#f0f2f6, #252a34);
-  --studio-selected: light-dark(#eaf0ff, #29354f);
-  --studio-line: light-dark(#e3e6ec, #2c323d);
-  --studio-line-soft: light-dark(#edf0f4, #252b35);
-  --studio-line-strong: light-dark(#c7ced9, #475262);
-  --studio-text: light-dark(#20242c, #e7ebf2);
-  --studio-text-secondary: light-dark(#515b6b, #c1c9d7);
-  --studio-muted: light-dark(#647084, #a2aec0);
-  --studio-faint: light-dark(#6e7888, #98a5b8);
-  --studio-icon-bg: light-dark(#eef1f6, #282f3a);
-  --studio-grid: light-dark(#e0e5ee, #2c3441);
+  --studio-bg: light-dark(#ffffff, #141416);
+  --studio-subtle-bg: light-dark(#fafafa, #101012);
+  --studio-input: light-dark(#ffffff, #1a1a1d);
+  --studio-hover: light-dark(#f4f4f5, #242427);
+  --studio-selected: light-dark(#f0f0f3, #29292e);
+  --studio-line: light-dark(#e5e5e8, #2c2c31);
+  --studio-line-soft: light-dark(#efeff1, #242428);
+  --studio-line-strong: light-dark(#d1d1d6, #48484f);
+  --studio-text: light-dark(#18181b, #ededf0);
+  --studio-text-secondary: light-dark(#52525b, #c4c4cc);
+  --studio-muted: light-dark(#67676f, #aaaab4);
+  --studio-faint: light-dark(#71717a, #a1a1aa);
+  --studio-icon-bg: light-dark(#f0f0f3, #29292f);
+  --studio-grid: light-dark(#e1e1e6, #303036);
   --studio-edge: light-dark(#8792a3, #8997ad);
-  --studio-focus: light-dark(#536bc4, #a6b7ff);
+  --studio-focus: light-dark(#3b5ccc, #a6b7ff);
   --studio-sent: light-dark(#18775b, #8acfb6);
-  --studio-overlay: light-dark(#fffffff5, #17191ef5);
-  --studio-minimap-mask: light-dark(#f7f8fac4, #121419b8);
+  --studio-overlay: light-dark(#fffffff5, #141416f5);
+  --studio-minimap-mask: light-dark(#fafafac4, #101012b8);
   --studio-success-bg: light-dark(#edf7f2, #20372e);
   --studio-success: light-dark(#226a50, #9ed5bc);
   --studio-waiting-bg: light-dark(#fff7e7, #3d3321);
@@ -33,16 +33,16 @@
   --studio-purple: light-dark(#7452a2, #ceb5f0);
   --studio-claude-bg: light-dark(#f8eee7, #3d2f28);
   --studio-claude: light-dark(#916448, #e2b99b);
-  --studio-primary-bg: light-dark(#22262e, #e7ebf2);
+  --studio-primary-bg: light-dark(#22262e, #ededf0);
   --studio-primary-fg: light-dark(#ffffff, #1d222b);
-  --studio-shadow: 0 1px 3px light-dark(#20242c08,#0002), 0 12px 36px light-dark(#20242c14,#0005);
-  --ui-caption: 11px;
+  --studio-shadow: 0 1px 3px light-dark(#18181b08,#0002), 0 12px 36px light-dark(#18181b14,#0005);
+  --ui-caption: 12px;
   --ui-label: 12px;
   --ui-body: 14px;
   --ui-control: 32px;
   --ui-radius: 6px;
   --ui-radius-panel: 12px;
-  --ui-motion: 160ms;
+  --ui-motion: 140ms;
 }
 html[data-theme=light] { color-scheme:light; }
 html[data-theme=dark] { color-scheme:dark; }
@@ -84,7 +84,7 @@ html[data-theme=dark] { color-scheme:dark; }
 :is(.legacy-studio,.legacy-usable) :is(pre,code,.viewport,.session-row) { background-color: var(--studio-subtle-bg); color: var(--studio-text); border-color: var(--studio-line); }
 :is(.legacy-studio,.legacy-usable) .viewport { background-image: radial-gradient(var(--studio-grid) .7px,transparent .7px); }
 :is(.legacy-studio,.legacy-usable) :is(h1,h2,h3) { color: var(--studio-text); font-weight: 600; letter-spacing: -.02em; }
-:is(.legacy-studio,.legacy-usable) .node { border-radius: 10px; box-shadow: 0 2px 8px #20242c08; }
+:is(.legacy-studio,.legacy-usable) .node { border-radius: 10px; box-shadow: 0 2px 8px #18181b08; }
 :is(.legacy-studio,.legacy-usable) :is(dialog,#session-panel) { border-radius: 14px; box-shadow: var(--studio-shadow); }
 @media (prefers-reduced-motion:reduce) {
   :is(.legacy-studio,.legacy-usable) * { transition:none!important; animation:none!important; }
