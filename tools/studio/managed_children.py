@@ -1,7 +1,7 @@
-"""Host-only managed readonly child runner; no browser-facing API.
+"""Host-owned readonly children with an authenticated private parent endpoint.
 
-The authenticated endpoint and parent lifecycle integration are not yet wired;
-the capability remains disabled in the catalog until those checks exist.
+The ordinary native Codex workflow integrates this runner with parent process,
+session publication and close checks; it is not a browser execution API.
 """
 import copy
 import json
@@ -107,7 +107,7 @@ class OwnedChildren:
         child=copy.deepcopy(self.binding)
         child.update(session_id=None,subagents='disabled',skills=[],skill_ids=[],role='reviewer',conversation_format='text')
         for name in ('expected_native_turn_id','require_atomic_resume','admission_probe'):child.pop(name,None)
-        process_started=False
+        process_started=False;completed=False
         try:
             if self.closed.is_set() or not alive(self.parent) or time.monotonic()>=self.deadline:raise Blocked('父任务已结束；未启动子任务')
             run=self.db.get('run',self.scheduler.run)
@@ -155,17 +155,28 @@ class OwnedChildren:
                 current.update(result=result.get('report'),session_id=session,usage=result.get('usage') or 'unknown')
                 db.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",(canonical(actual).decode(),child_id))
                 transition(db,current,'COMPLETED')
+            completed=True
+            with self.lock:self.proofs.pop(child_id,None)
             self.journal.native_tool_event(dict(event='item.completed',id='managed:'+child_id,tool_kind='managed_child',command='只读子任务 '+str(slot),output='子任务已完成 · 会话 '+session,status='completed'))
             return current
         except Exception:
+            # A failed display event cannot undo an already committed receipt.
+            if completed:raise
             # A publication failure after Popen is never interpreted as a safe
             # retry. A missing process record is likewise conservatively unknown.
-            started=process_started or bool(locals().get('journal') and getattr(journal,'process_started',False))
+            with self.lock:
+                started=process_started or bool(locals().get('journal') and getattr(journal,'process_started',False)) or child_id in self.proofs
+                if started:self.unresolved=True
             try:
                 with self.db.tx() as db:
                     raw=db.execute("SELECT data FROM records WHERE kind='managed-child' AND id=?",(key,)).fetchone()
                     value=json.loads(raw[0]);value['reason']='子任务未完成；不会自动重发'
-                    transition(db,value,'RECOVERY_REQUIRED' if started else 'FAILED')
+                    state='RECOVERY_REQUIRED' if started else 'FAILED'
+                    transition(db,value,state)
+                    raw=db.execute("SELECT data FROM records WHERE kind='activation' AND id=?",(child_id,)).fetchone()
+                    if raw:
+                        child_activation=json.loads(raw[0]);child_activation.update(state=state,reason=value['reason'],finished_at=time.time())
+                        db.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",(canonical(child_activation).decode(),child_id))
             except Exception:pass
             raise
         finally:
@@ -180,22 +191,20 @@ class OwnedChildren:
         # An active child at parent closure cannot count as a completed parent,
         # even if cancellation later succeeds.
         unresolved=self.unresolved
-        for key,_ in active:
-            try:
-                row=self.db.get('managed-child',key);activation=self.db.get('activation',row['child_activation']);process=activation.get('process')
-                with self.lock:proof=self.proofs.get(row['child_activation'])
-                fields=('host','boot_id','pid','start','pgid','sid')
-                if not proof or not isinstance(process,dict) or any(process.get(k)!=proof.get(k) for k in fields):unresolved=True;continue
-                if alive(proof) and group_alive(proof):stop(proof)
-            except Exception:unresolved=True
         end=time.monotonic()+timeout
-        for _,event in active:event.wait(max(0,end-time.monotonic()))
-        for key,_ in active:
-            try:
-                row=self.db.get('managed-child',key)
-                with self.lock:proof=self.proofs.get(row.get('child_activation'))
-                if proof and group_alive(proof):unresolved=True
-            except Exception:unresolved=True
+        # Only ChildJournal can publish these kernel-verified identities.
+        # Completed receipts release their proof; failed calls retain theirs
+        # after leaving active, even if SQLite process publication failed.
+        for attempt in range(2):
+            with self.lock:proofs=list(self.proofs.values())
+            for proof in proofs:
+                unresolved=True
+                try:
+                    actual=process_identity(proof.get('pid'))
+                    if actual and all(actual.get(k)==proof.get(k) for k in ('host','boot_id','pid','start','pgid','sid')) and alive(proof) and group_alive(proof):stop(proof)
+                except Exception:pass
+            if attempt==0:
+                for _,event in active:event.wait(max(0,end-time.monotonic()))
         if unresolved or not all(event.is_set() for _,event in active):
             with self.lock:self.unresolved=True
         return dict(status='UNRESOLVED' if self.unresolved else 'closed')

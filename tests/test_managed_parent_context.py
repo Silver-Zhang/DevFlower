@@ -18,6 +18,138 @@ from test_managed_child_bridge import RunnerTests
 from test_native_attach_private import FakeListener
 from test_native_probe_lock import RPC
 
+
+class OwnedChildFailureCloseTests(unittest.TestCase):
+ """Real Journal/SQLite and private owned Python children; no native model."""
+ def setUp(self):
+  fixture=RunnerTests('test_actual_runner_fixed_binding_and_idempotent_slot');fixture.setUp();self.addCleanup(fixture.doCleanups)
+  self.fixture=fixture
+  for name in ('tmp','db','journal','parent','rt','effective'):setattr(self,name,getattr(fixture,name))
+  self.root=Path(self.tmp.name).resolve();self.children=[];self.addCleanup(self.reap)
+ def reap(self):
+  for child in self.children:
+   if child.poll() is None:child.terminate()
+   try:child.wait(timeout=3)
+   except subprocess.TimeoutExpired:child.kill();child.wait(timeout=3)
+   if child.stdin and not child.stdin.closed:child.stdin.close()
+ def process(self):
+  from orchestration.common import clean_env
+  child=subprocess.Popen([sys.executable,'-B','-c','import sys;sys.stdin.buffer.read(1)'],cwd=self.root,start_new_session=True,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=clean_env())
+  self.children.append(child);return child
+ def adapter(self,mode):
+  outer=self;sid='00000000-0000-4000-8000-000000000002'
+  class Child:
+   def __init__(self,binding,limits):self.binding=binding
+   def start(self,task,cwd,artifacts,store,run):
+    outer.assertTrue(Path(artifacts).resolve().is_relative_to(outer.root));outer.assertEqual(Path(cwd).resolve(),outer.root)
+    if mode=='before':raise Blocked('SYNTHETIC failure before Popen')
+    child=outer.process();store.process_started=True
+    if mode=='no-proof':raise Blocked('SYNTHETIC no verified process publication')
+    op=store.intent(run,'PROCESS',dict(context={'provider':'codex'}));store.finish(op,'RUNNING',process=process_identity(child.pid))
+    req=store.intent(run,'AGENT_REQUEST',dict(requested_session=None));store.finish(req,'AGENT_SESSION',actual_session=sid)
+    if mode=='after-start':raise Blocked('SYNTHETIC failure after Popen')
+    child.stdin.write(b'x');child.stdin.flush();child.stdin.close();child.wait(timeout=3)
+    store.finish(op,'EXITED',exit=child.returncode,timeout=False,cancelled=False,overflow=False)
+    return dict(session_id=sid,report={'reply':1 if mode=='receipt' else 'SYNTHETIC child answer'},usage='unknown',requested_model=self.binding['model'],requested_effort=self.binding['effort'],process=dict(exit=0,timeout=False,cancelled=False,overflow=False))
+  return Child
+ def invoke(self,mode):
+  import sqlite3
+  from studio.managed_child_reservation import transition
+  manager=OwnedChildren(self.journal,self.effective,str(self.root),self.parent,time.monotonic()+20)
+  def publish(db,row,state):
+   if mode=='publish' and state=='COMPLETED':raise sqlite3.OperationalError('SYNTHETIC completion publication failed')
+   return transition(db,row,state)
+  def event(value):
+   if mode=='event' and value['event']=='item.completed':raise OSError('SYNTHETIC display event failed after commit')
+   return original_event(value)
+  original_event=self.journal.native_tool_event
+  with patch('studio.managed_children.LocalCodex',self.adapter(mode)),patch('studio.managed_child_reservation.transition',side_effect=publish),patch.object(self.journal,'native_tool_event',side_effect=event):
+   if mode=='success':manager.call(1,'inspect private synthetic fixture')
+   else:
+    with self.assertRaises((Blocked,sqlite3.OperationalError,OSError)):manager.call(1,'inspect private synthetic fixture')
+  self.assertEqual(manager.active,{})
+  return manager,self.db.list('managed-child')[0]
+ def test_after_started_failure_stays_unresolved_and_reaps_verified_process(self):
+  manager,row=self.invoke('after-start')
+  self.assertEqual(row['state'],'RECOVERY_REQUIRED');self.assertEqual(len(manager.proofs),1)
+  with patch('studio.managed_children.LocalCodex') as transport:
+   self.assertEqual(manager.call(1,'inspect private synthetic fixture')['state'],'RECOVERY_REQUIRED');transport.assert_not_called()
+  self.assertEqual(len(self.children),1);self.assertEqual(self.db.get('run','r')['calls'],2)
+  self.assertEqual(manager.close()['status'],'UNRESOLVED')
+  self.assertEqual(manager.close()['status'],'UNRESOLVED')
+  self.children[0].wait(timeout=3)
+  self.assertEqual(self.db.get('activation',row['child_activation'])['state'],'RECOVERY_REQUIRED')
+  self.assertEqual(self.db.get('run','r')['actual_calls'],1)
+ def test_bad_receipt_stays_unresolved_after_active_is_empty(self):
+  manager,row=self.invoke('receipt')
+  self.assertEqual(row['state'],'RECOVERY_REQUIRED')
+  self.assertEqual(manager.close()['status'],'UNRESOLVED');self.assertEqual(manager.close()['status'],'UNRESOLVED')
+  self.assertEqual(self.db.get('activation',row['child_activation'])['state'],'RECOVERY_REQUIRED')
+ def test_completion_publication_failure_stays_unresolved(self):
+  manager,row=self.invoke('publish')
+  self.assertEqual(row['state'],'RECOVERY_REQUIRED')
+  self.assertEqual(manager.close()['status'],'UNRESOLVED');self.assertEqual(manager.close()['status'],'UNRESOLVED')
+  self.assertEqual(self.db.get('activation',row['child_activation'])['state'],'RECOVERY_REQUIRED')
+ def test_success_and_pre_spawn_failure_have_known_outcomes(self):
+  manager,row=self.invoke('before')
+  self.assertEqual(self.children,[]);self.assertEqual(self.db.get('run','r').get('actual_calls',0),0)
+  self.assertEqual(row['state'],'FAILED');self.assertEqual(self.db.get('activation',row['child_activation'])['state'],'FAILED')
+  self.assertEqual(manager.close()['status'],'closed');self.assertEqual(manager.close()['status'],'closed')
+ def test_successful_receipt_closes_without_unknown(self):
+  manager,row=self.invoke('success')
+  self.assertEqual(row['state'],'COMPLETED');self.assertEqual(self.db.get('activation',row['child_activation'])['state'],'COMPLETED')
+  self.assertEqual(manager.close()['status'],'closed');self.assertEqual(manager.close()['status'],'closed')
+ def test_display_event_failure_does_not_rewrite_committed_receipt(self):
+  manager,row=self.invoke('event')
+  self.assertEqual(row['state'],'COMPLETED');activation=self.db.get('activation',row['child_activation'])
+  self.assertEqual(activation['state'],'COMPLETED');self.assertEqual(activation['output']['answer'],'SYNTHETIC child answer')
+  self.assertEqual(manager.close()['status'],'closed');self.assertEqual(manager.close()['status'],'closed')
+ def test_without_proof_or_with_changed_pid_identity_no_process_is_signalled(self):
+  manager,row=self.invoke('no-proof')
+  with patch('studio.managed_children.stop') as signal:
+   self.assertEqual(manager.close()['status'],'UNRESOLVED');signal.assert_not_called()
+  self.assertIsNone(self.children[0].poll())
+ def test_changed_kernel_identity_is_not_signalled(self):
+  manager,row=self.invoke('after-start');manager.proofs[row['child_activation']]['start']='0'
+  with patch('studio.managed_children.stop') as signal:
+   self.assertEqual(manager.close()['status'],'UNRESOLVED');signal.assert_not_called()
+  self.assertIsNone(self.children[0].poll())
+ def test_database_substitution_cannot_redirect_verified_process_cleanup(self):
+  manager,row=self.invoke('after-start');foreign=self.process()
+  self.db.change('activation',row['child_activation'],{'process':process_identity(foreign.pid)})
+  self.assertEqual(manager.close()['status'],'UNRESOLVED')
+  self.children[0].wait(timeout=3);self.assertIsNone(foreign.poll())
+ def test_proof_survives_process_record_publication_failure(self):
+  from studio.workbench_scheduler import Journal
+  original=Journal.finish
+  def fail(journal,key,status,**updates):
+   if journal is not self.journal and status=='RUNNING':raise OSError('SYNTHETIC process publication failure')
+   return original(journal,key,status,**updates)
+  with patch.object(Journal,'finish',fail):manager,row=self.invoke('after-start')
+  self.assertEqual(len(manager.proofs),1);self.assertNotIn('process',self.db.get('activation',row['child_activation']))
+  self.assertEqual(manager.close()['status'],'UNRESOLVED');self.children[0].wait(timeout=3)
+
+ def test_real_parent_adapter_receives_latched_unknown_from_failed_child(self):
+  from studio.native_codex_exec import protected_paths
+  chat=self.db.get('node-session','chat');chat['id']='chat';chat['binding'].update(conversation_format='text',session_id=None,executable='synthetic',project='w');self.db.put('node-session','chat',chat)
+  activation=self.db.get('activation','a');activation.pop('observed_session',None);self.db.put('activation','a',activation)
+  binding=dict(chat['binding'],native_interaction='ordinary',_metadata_guard=str(self.rt.storage));binding['native_protected']=protected_paths(self.rt,binding)
+  statuses=[];original=self.journal.finish
+  def finish(key,status,**updates):statuses.append(status);return original(key,status,**updates)
+  def execute(argv,cwd,home,**kwargs):
+   journal=kwargs['store'];op=journal.intent('r','PROCESS',dict(context={'provider':'codex'}));journal.finish(op,'RUNNING',process=process_identity(os.getpid()))
+   kwargs['on_stdout'](RAW)
+   with self.assertRaises(Blocked):journal._managed_context.call(1,'inspect controlled fixture')
+   self.assertEqual(journal._managed_context.owner.active,{})
+   return dict(exit=0,timeout=False,cancelled=False,overflow=False),RAW,b''
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.LocalCodex',self.adapter('after-start')),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+   with self.assertRaisesRegex(Blocked,'收尾未确认'):LocalCodex(binding,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('SYNTHETIC parent',str(self.root),self.root,store=self.journal,run='r')
+  self.assertNotIn('AGENT_COMPLETED',statuses);self.assertIn('AGENT_FAILED',statuses)
+  self.assertEqual(self.db.get('activation','a')['state'],'RECOVERY_REQUIRED')
+  self.assertEqual(self.db.list('managed-child')[0]['state'],'RECOVERY_REQUIRED')
+  self.assertEqual(self.db.get('run','r')['actual_calls'],2)
+  self.children[0].wait(timeout=3)
+
 SID='00000000-0000-4000-8000-000000000001'
 RAW=('\n'.join(json.dumps(x) for x in [dict(type='thread.started',thread_id=SID),dict(type='item.completed',item=dict(type='agent_message',text='synthetic')),dict(type='turn.completed',usage={})])+'\n').encode()
 
