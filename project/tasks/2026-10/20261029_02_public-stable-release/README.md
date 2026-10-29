@@ -6,30 +6,30 @@
 
 ## 2. 做法与证据
 
-当前已推送冻结11：708c5834e96d2161345f8b97c10d2571e9e0e0df，tree 57a66e65ea9da33446999c0d48428719e2b21e70，CF 1753a8a6989821a0edb3a4448b711a8e29488499113b7708bc37a1e9cc763236，333文件。PR24 develop→main 是唯一开放 Draft。
+当前已推送冻结12：22b4bb9698eef7019c957c5d0fc2a7f00b0c7101，tree 51efe627339d9794bc618c03a9317b4b411cbd7c，CF 817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3，333文件。PR24 develop→main 是唯一开放 Draft。完整原始 GitHub commit 读回包含本次 HEAD/tree，摘要与原件均留本地。
 
-同源22条命令全部exit0：1525 Python、6宿主隔离、67 JavaScript、265 Chromium/HTTP、16旧版smoke，FAIL/ERROR/SKIP均0；前端重建JS/CSS/许可证字节一致，6项云端CI全部SUCCESS，远端HEAD/tree读回一致。计数解析器的一次list/int比较失败另留原诊断；实际测试原输出不改。
+同源22条命令全部exit0：1525 Python、6宿主隔离、73 JavaScript、266 Chromium/HTTP、16旧版smoke，FAIL/ERROR/SKIP均0；前端重建JS/CSS/许可证字节一致，6项云端CI全部SUCCESS。命令、计数及必要证据哈希见verification.json，合成/真实HTTP与真实模型分别记录。
 
-实际Codex六类流程六项义务21调用：顺序与暂停恢复、双只读并发汇合、路由、提前成功、五轮上限、复杂流程。原五轮流程第3轮CLI exit0但timeout=true被拒；原生记录确实有回答，但最终结构流是否完整unknown。确认旧进程组结束后只进行一次fresh只读补证：真实10调用、五次false达到上限FAILED，满足负例判据；随后复杂3调用成功。原FAILED/complete=false保留，flows11-selected显式选择前4项与新2项，不重写原件。
+实际Codex六类流程六项义务21调用全部满足判据：顺序与暂停恢复、双只读并发汇合、路由、提前成功、五轮上限、复杂流程；五轮上限的FAILED为预期负例。受控父子3个真实原生会话及12项身份/进程/预算检查通过。Terra12来自本机真实目录并完成一次high调用；物理后端及实际生效effort仍unknown，不从模型名称推导。
 
-父子3个真实原生会话及12项身份/进程/预算断言通过。当前两UUID原生终端均通过ready、共享同一PTY、两个方向拒旧写者、关闭视图不杀进程、/exit退出0、原UUID恢复和自有停止。原第2UUID停trust、浏览器同名选择歧义保留，改唯一定位并显式完成W11首次原生信任后另建QA绑定；不是全局自动trust或盲更新哈希。Desktop API可读同一canonical原生记录，但notLoaded不能解释为桌面已接管live PTY。
+DeepSeek保存连接未变，assistant12-selected保留原DSML失败并明确选择同会话有界恢复证据。AI canvas12-r2真实7调用失败：两路汇合超过默认16000交接上限发生明确截断，后续有界循环正确未伪装成功。AI助手真实修复为紧凑输出与提示词；其提案工具不支持max_chars，不能声称已经改大连线限制，也没有手工改图冒充AI。首次修复运行预留2调用、实际仅1原生调用，另一分支被保护目录检查拒绝；确切原因unknown，原因猜测已纠正。确认所有旧运行终止、两次只读扫描通过后，仅一次有界fresh运行完成3调用：8实际激活、4设计未激活节点派生显示Skipped，刷新不增调用；原失败、恢复预算和拒绝记录均保留。
 
-DeepSeek连接原样保存。当前助手普通问答与简单图修复成功；原源码诊断收到raw DSML、原图片提案max_tokens真实FAILED。每义务只一次显式同会话恢复后，标准工具源码诊断及图片新图成功；新图正确使用result.accepted，由普通浏览器实际运行3调用完成，刷新不增调用。原09错误字段/合同拒绝/DSML失败、10遗漏相邻片段的独立反例全部保留。原生Codex初修10，Root补齐11相邻纯控制片段；独立9持久化+32边界范围检查ACCEPT/AS-PROTOCOL-01 CLOSED，不能视为整版批准。
-
-Root在09修复终局paused覆盖和残留节点假运行，独立范围UI-FINAL-PAUSE/ACTIVE CLOSED；MF-01在08独立关闭。外部发布工具R1/R2负面与R3限定93例、11派生122离线守卫检查保留，均不替代K/两个真实原生全源码审核/固定Gate。固定旧监督器曾被Root未加-B生成4个缓存，已仅将生成缓存完整隔离、核验83原文件不变并恢复原CF；前置拒绝0模型调用与恢复日志保留，不重新签发旧哈希。
+两个原生UUID浏览器均实际ready/exit0；native-terminals12-actual-r3证明同PTY观察、双向拒第二写者、关闭视图保留进程、正常退出0、同UUID恢复与自有停止。前两次终端harness因旧依赖pin/未登记当前工作区在0 CLI时拒绝，原件保留。仅W12明确QA Enter进入原生信任设置，认证/模型/中转未替换；旧operator仍拒陈旧配置，新generation按实际依赖重建。Desktop API可读同一canonical UUID记录，不等于桌面已接管live PTY或允许同时写入。当前启动入口实际Development端口39731，启动0模型调用，私有URL不入库。
 
 ## 3. 决策记录
 
-远端仅main、develop、project/devflower、project/codeweave；本地main、develop、project/devflower。旧PR19–23追加superseded说明后关闭，代码祖先保留于develop；不伪称逐个merged。历史bundle SHA676a288dd316d10c39c7b24bb395660100856cc062cf7013bb2a96852513bdc1，6065140字节，已验证。原worktree同提交detach且目录保留。
+冻结11历史仍为708c5834e96d2161345f8b97c10d2571e9e0e0df/tree57a66e65ea9da33446999c0d48428719e2b21e70/CF1753a8a6989821a0edb3a4448b711a8e29488499113b7708bc37a1e9cc763236。正式R1原始A=ACCEPT、B=BLOCKED；B-D01-TERRA-EVIDENCE与B-REMOTE-COMMIT-PROVENANCE两项补证在12准备，须新正式审核判断，不能改写R1。另UI-SKIPPED-LOOP-01/P2经12最小展示修复与独立定向复核scope CLOSED：派生跳过不造activation、轮次、会话、请求或回执；不是整版D06/D07、K、R2、Gate批准。
 
-本次只用Codex多角色进行编程与审核，不调用Claude模型；产品已有Claude支持/历史/中转配置保留。请求Sol/xhigh，DeepSeek助手medium；物理后端及实际生效effort unknown。原生实际开发与Root后续代码分开署名。已授权的正常合并/Stable/tag/分支整理仅在验收条件满足后执行。
+AS-PROTOCOL-01在11独立9持久化+32边界scope CLOSED；MF-01及终局paused/残留active问题原范围关闭保留，不套用为整版批准。source11最终native ACK IMPLEMENTED/exit0保持原身份。ACK12首次实际PARTIAL/exit0（310.013s）：71输入遗漏assistant12-selected/proof.json，原件未改未移动。新correction1输入78文件、14引用/9唯一文件原SHA闭合，同原UUID只读补件实际IMPLEMENTED/exit0（140.255s），两次源码CF均前后相同且无源码改动；最多2次、实际2次已结束，原PARTIAL保持。Gate12外部接口发现只提取定义而未执行verifier main，已最小修为实际只读调用，并与原聚合逐项一致；11隔离反例、后补新ACK路径18绑定+11回归及独立12路由检查通过。原工具副本、失败及部分输入保留；这些是外部工具预检，不是实际最终Gate，未据此签批准。固定旧监督器曾生成4缓存，已隔离并核验83原件恢复原CF；原拒绝与恢复日志不删、不重签旧哈希。
+
+远端仅main、develop、project/devflower、project/codeweave；本地main、develop、project/devflower。旧PR19–23已追加superseded说明并关闭，祖先保留于develop，不伪称逐个merged。历史bundle SHA676a288dd316d10c39c7b24bb395660100856cc062cf7013bb2a96852513bdc1（6065140字节）已验证，旧worktree同提交detach且目录保留。本次按用户授权只用Codex多角色审核，不调用Claude模型；已有Claude支持/原生历史/中转配置保留。
 
 ## 4. 结论与边界
 
-main仍e0a0f92fed7f94bfef3a01b1298f8465c008023d/tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039；正式Stable accepted-cfea19cac598未替换，未发布新tag。当前完整自验和实际流程义务通过，最终原生实施者只读回执已获IMPLEMENTED/exit0/同源不变；完整产品/K的正式R1双独立原生Codex审核已经实际启动，硬ACCEPT及固定旧Gate尚未取得。保持Draft，不merge，不把范围ACCEPT或绿色CI当Stable批准。
+main仍e0a0f92fed7f94bfef3a01b1298f8465c008023d/tree6c9e39e16bbbe7de95b894e0a58632b1a0f63039；正式Stable accepted-cfea19cac598未替换，未发布新tag。冻结12完整自验、当前真实流程、上述补证及ACK12 correction1均已取得。正式R2两个独立原生Codex已实际启动，各有不同真实进程的内核观察，当前RUNNING，原生会话及最终裁决待CLI回执；不能把运行中当ACCEPT。新送审包索引2332证据文件，加READ-FIRST/DEVELOPER共2334项，index SHA abf88ab16325b2e704d7d3db15e0007696682c1593e9d749184571ed1f9d1278，源码仍333文件/同CF12。完整产品/K独立最终判断、同候选双硬ACCEPT与固定旧Gate均待完成；保持Draft，不merge，不把范围ACCEPT、聚合complete或绿色CI当正式Stable批准。
 
-本发布新任务最多5轮完整双独立源码复审，旧Task16/UI预算与负面保持。只有必需合同/测试/审核/Gate通过后，才普通merge、main读回及集成回归、develop快进同提交并正常push，最后正式Stable/tag。用户本人审美验收与本地代理操作证据分开。
+本发布新任务最多5轮完整双独立源码审核；R1及旧Task16/UI预算、原始负面保持。只有当前候选必需合同/测试/审核/Gate通过后，才普通merge、main读回与集成回归、develop快进同提交并正常push，最后正式Stable/tag。用户本人审美验收与本地代理操作证据分开。
 
 ## 5. 过程记录
 
-原始日志、截图、原生会话和全部负面仅本机archives/devflower-public-stable-release-20261029。测试仅/home/workspace/claude_workspace/DevFlower测试/public-stable-release-20261029。入库仅五节README与必要机器摘要；各候选/运行/报告保持原身份。所有对外阶段结果后续追加真实回执，不以本说明替代执行。
+原始日志、截图、原生会话和全部负面仅本机archives/devflower-public-stable-release-20261029。测试仅/home/workspace/claude_workspace/DevFlower测试/public-stable-release-20261029。冻结11/R1与冻结12身份、历史失败、每次显式恢复及执行者分别保留；入库只留本五节README与必要机器摘要。本次为研发档案更新草稿，尚未commit/push；后续各交付阶段只追加真实回执，不以本文替代执行。

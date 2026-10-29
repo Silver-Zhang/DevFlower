@@ -1,15 +1,15 @@
 {
   "source": {
-    "head": "708c5834e96d2161345f8b97c10d2571e9e0e0df",
-    "git_tree": "57a66e65ea9da33446999c0d48428719e2b21e70",
-    "candidate_sha256": "1753a8a6989821a0edb3a4448b711a8e29488499113b7708bc37a1e9cc763236",
+    "head": "22b4bb9698eef7019c957c5d0fc2a7f00b0c7101",
+    "git_tree": "51efe627339d9794bc618c03a9317b4b411cbd7c",
+    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
     "files": 333
   },
   "regression": {
     "python": 1525,
     "host_isolation": 6,
-    "javascript": 67,
-    "chromium_http": 265,
+    "javascript": 73,
+    "chromium_http": 266,
     "legacy_smoke": 16,
     "fail": 0,
     "error": 0,
@@ -17,32 +17,370 @@
   },
   "commands": 22,
   "all_regression_exits_zero": true,
+  "generated_assets_equal": {
+    "tools/studio/static/workbench.css": true,
+    "tools/studio/static/workbench.js": true,
+    "tools/studio/workbench_ui/THIRD_PARTY_LICENSES.txt": true
+  },
   "ci_checks_success": 6,
+  "remote_source_readback": {
+    "head_and_tree_verified": true,
+    "remote": "origin/develop",
+    "pr": 24,
+    "base": "main",
+    "draft": true,
+    "raw_commit_evidence_present": true
+  },
+  "historical_sources": [
+    {
+      "label": "source11",
+      "source": {
+        "head": "708c5834e96d2161345f8b97c10d2571e9e0e0df",
+        "git_tree": "57a66e65ea9da33446999c0d48428719e2b21e70",
+        "candidate_sha256": "1753a8a6989821a0edb3a4448b711a8e29488499113b7708bc37a1e9cc763236",
+        "files": 333
+      },
+      "regression": {
+        "python": 1525,
+        "host_isolation": 6,
+        "javascript": 67,
+        "chromium_http": 265,
+        "legacy_smoke": 16,
+        "fail": 0,
+        "error": 0,
+        "skip": 0
+      },
+      "full_independent_verdict": {
+        "round": 1,
+        "A": "ACCEPT",
+        "B": "BLOCKED",
+        "required_open_at_that_round": [
+          "B-D01-TERRA-EVIDENCE",
+          "B-REMOTE-COMMIT-PROVENANCE",
+          "UI-SKIPPED-LOOP-01"
+        ]
+      },
+      "fixed_gate": "NOT_RUN; source11 not eligible; original verdicts unchanged"
+    }
+  ],
   "scoped_independent_checks": {
     "AS-PROTOCOL-01": "CLOSED only frozen11 scope 9 persisted +32 direct; not native full-source ACCEPT",
     "MF-01": "CLOSED scope frozen08 inherited unchanged",
     "UI-FINAL-PAUSE": "CLOSED scope frozen09 inherited unchanged",
     "UI-FINAL-ACTIVE": "CLOSED scope frozen09 inherited unchanged",
-    "external_release11_tests": 122
+    "external_release11_tests": 122,
+    "UI-SKIPPED-LOOP-01": "CLOSED only source12 scoped review; not full-source ACCEPT",
+    "external_gate12_interface": {
+      "original_defect": "wrapper extracted function definitions but did not call verifier main; original retained",
+      "fix": "pinned actual verifier main invoked read-only and joined against unchanged saved actual aggregate",
+      "isolated_main_entry_cases": 11,
+      "ack_path_binding_cases": 18,
+      "post_ack_main_entry_cases": 11,
+      "independent_route_cases": 12,
+      "route_count_source": "Root handoff; not rerun by record curator",
+      "actual_helper_no_writes_subprocess_network": true,
+      "not_actual_fixed_gate": true
+    }
   },
   "real_models": {
+    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
     "workflow_obligation_calls": 21,
+    "six_workflow_obligations_passed": true,
+    "loop_max5_expected_failed_run": true,
     "managed_calls": 3,
-    "ai_canvas_calls": 3,
-    "original_failed_flow_retained": true,
-    "original_assistant_failed_states_retained": 2,
-    "bounded_recoveries_per_failed_obligation": 1,
+    "managed_identity_process_budget_checks": 12,
+    "terra_actual_calls": 1,
+    "terra_requested_effort": "high",
+    "assistant_selected_recovery_passed": true,
+    "original_dsml_failure_preserved": true,
+    "ai_canvas_original_r2": {
+      "passed": false,
+      "actual_calls": 7,
+      "reason": "default16000 handoff truncation; bounded loop exhausted"
+    },
+    "ai_repair": "real assistant compact-output/prompt repair; proposal API max_chars unsupported; no manual graph rewrite",
+    "ai_canvas_first_repair_run": {
+      "passed": false,
+      "reserved_calls": 2,
+      "actual_native_invocations": 1,
+      "reason": "protected-directory guard refusal",
+      "root_cause": "unknown"
+    },
+    "ai_canvas_one_bounded_fresh_retry": {
+      "passed": true,
+      "actual_calls": 3,
+      "activated_nodes": 8,
+      "derived_unactivated_skipped": 4,
+      "refresh_calls_unchanged": true
+    },
+    "native_browser_two_uuid_ready": true,
     "two_native_uuid_restore_and_single_writer": true,
-    "desktop_live_pty_takeover_claimed": false
+    "native_normal_exit_zero_and_owned_stop": true,
+    "first_two_terminal_harness_attempts_zero_cli": true,
+    "qa_native_config_delta": "Only explicit W12 QA Enter trusted workspace; models/auth/relay unchanged",
+    "desktop_canonical_record_observed": true,
+    "desktop_live_pty_takeover_claimed": false,
+    "physical_backend": "unknown",
+    "effective_effort": "unknown",
+    "human_ux_acceptance": false
   },
-  "full_independent_verdict": "R1_NATIVE_A_B_RUNNING",
+  "public_entry": {
+    "channel": "Development",
+    "port": 39731,
+    "startup_model_calls": 0,
+    "stable_approved": false,
+    "private_url_in_records": false
+  },
+  "native_final_implementation": {
+    "candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+    "session_id": "01a18582-e292-76b1-afd8-20c5a58aff38",
+    "max_starts": 2,
+    "actual_starts": 2,
+    "read_only": true,
+    "source_unchanged": true,
+    "attempts": [
+      {
+        "path": "developer-release12-final-adapter",
+        "status": "PARTIAL",
+        "exit": 0,
+        "seconds": 310.013,
+        "reason": "assistant12-selected/proof.json absent from 71-file input; original proof and PARTIAL record unchanged"
+      },
+      {
+        "path": "developer-release12-final-adapter-correction1",
+        "status": "IMPLEMENTED",
+        "exit": 0,
+        "seconds": 140.255,
+        "new_input_files": 78,
+        "aggregate_references": 14,
+        "unique_reference_files": 9,
+        "same_original_uuid": true,
+        "no_source_changes": true
+      }
+    ],
+    "not_independent_review": true
+  },
+  "full_independent_verdict": "R2_NATIVE_A_B_RUNNING; no final verdict; source11 R1 A ACCEPT / B BLOCKED preserved",
   "fixed_gate": "NOT_YET_RUN",
   "unresolved_required_evidence": [
-    "product K independent final judgment",
-    "two full native Codex hard ACCEPT",
-    "fixed old Gate"
+    "source12 product K independent final judgment",
+    "source12 two full native Codex hard ACCEPT",
+    "fixed old Gate",
+    "conditional merge/main readback and integration regression",
+    "formal Stable/tag"
   ],
+  "main": {
+    "head": "e0a0f92fed7f94bfef3a01b1298f8465c008023d",
+    "git_tree": "6c9e39e16bbbe7de95b894e0a58632b1a0f63039"
+  },
   "merged": false,
   "stable_promoted": false,
-  "native_final_implementation": "IMPLEMENTED / original UUID / read-only / source before=after / exit0 / 231.653s"
+  "stable": "accepted-cfea19cac598",
+  "new_tag": false,
+  "evidence_root": "archives/devflower-public-stable-release-20261029 (local only)",
+  "evidence_refs": [
+    {
+      "path": "verification-12.json",
+      "sha256": "fb2b7ff854dc01762cd3a1a41ab6795001127356a5dec7b1c5687610f8bd1ddf"
+    },
+    {
+      "path": "real-acceptance-12.json",
+      "sha256": "a8b5a02eba3964c1a6808d9b941d5633b71da558aa0d20317b7816a086146ce9"
+    },
+    {
+      "path": "remote-source-readback-final12.json",
+      "sha256": "2a7fa5b7df40f464648f78dd4674d9d5882e333149827f63bf00814b765064d5"
+    },
+    {
+      "path": "remote-source-readback-final12-raw.json",
+      "sha256": "98b3ced9206b03a553d7624df4a89b98ffd03dc2dda4d6a7c7922f6c6942f2ab"
+    },
+    {
+      "path": "remote-ci-pr-final12.json",
+      "sha256": "5cb62cbc7db745e39ab7dcf5459bee34d7f5f0d3d30e31e051d30dbccfd92ab4"
+    },
+    {
+      "path": "r1-summary.json",
+      "sha256": "2bce39fa42f88368890e741f531e9b5c582e27748fefd8edb401521952bbf45f"
+    },
+    {
+      "path": "r1/A/independent-verdict.json",
+      "sha256": "ce792a7e3d395e7a2a676d7cc5c7d151c966f920ae7fa0f07ba45fa5470a783c"
+    },
+    {
+      "path": "r1/B/independent-verdict.json",
+      "sha256": "482dfbfbd781fb40361826683dc35d5711cd551a9f0b7019c1edfc238efedfab"
+    },
+    {
+      "path": "flows12/proof.json",
+      "sha256": "24e9905a17966bd80197d0f4a46da937db45186925d531255a20640f55985e57"
+    },
+    {
+      "path": "managed12/proof.json",
+      "sha256": "ca6da18b89b86ab9b41b6b064f52f458b5d4eccd788e94ee497350da6802ae48"
+    },
+    {
+      "path": "terra12/proof.json",
+      "sha256": "b9cd45355b2852eea8318204abfaaba5b86acf95c78c1d2bd4dde3ce9ba103cc"
+    },
+    {
+      "path": "assistant12/proof.json",
+      "sha256": "0151d2d02eb2d5f5955ac18d220f8b7e4aa128a52d77409950ee7c37e06a4c81"
+    },
+    {
+      "path": "assistant12-selected/proof.json",
+      "sha256": "9502ea10b304f76e3c54cbb75de222e97f27925d95db65f52bbf03c0f2a84ca8"
+    },
+    {
+      "path": "ai-canvas12-r2/proof.json",
+      "sha256": "2ed6133822f70efb5aacce67baa98ace86fab8c13c34e695469c0ae2f3625f59"
+    },
+    {
+      "path": "assistant12-handoff-fix1/proof.json",
+      "sha256": "332663eb7b833c5f8f40a2dc4d67d6b8075f26079e4d5d4ec6dd8325718bed43"
+    },
+    {
+      "path": "assistant12-handoff-fix1-recovery1/proof.json",
+      "sha256": "7d40bb256c2d721c4a1962b94f962add5870248778e75426216ae9181c5edcf4"
+    },
+    {
+      "path": "ai12-handoff-repair-diagnosis.json",
+      "sha256": "c99be4fcde6b8c82b4ad2d6f9a57ec2eba61dd93abfd0abf2f541a4df9f31984"
+    },
+    {
+      "path": "ai-canvas12-handoff-fixed/proof.json",
+      "sha256": "bd1a5e736a1c8dd2888b3b721755dccc88b62908aa0f8d854ea7bbc0a6579240"
+    },
+    {
+      "path": "private-guard12-root-correction.json",
+      "sha256": "b13ed223bc777c16907cb1557fdd60ea245ec9ae481c6b04b4a5445d25e0cbe4"
+    },
+    {
+      "path": "ai12-handoff-native-recovery-budget.json",
+      "sha256": "4e0db4b2b05ab9adf93d0bad12d064c8537419535ecf0922d64a0ddfca3836e8"
+    },
+    {
+      "path": "ai-canvas12-handoff-quiescent-retry1/proof.json",
+      "sha256": "dabe2328b91fce9f324b513a22e11b435b2663f7bd82b74aef745a37447a6b49"
+    },
+    {
+      "path": "native-browser12-onboarding/proof.json",
+      "sha256": "4d6e32f314535c8d6866b9ac67a9736ceeddd3a6987aa87dd120e4b3a031d1a4"
+    },
+    {
+      "path": "native-browser12-second-onboarding/proof.json",
+      "sha256": "31282b5da37650b8c82ef4584c4f31dbc932993320066d3a5c24769f3a9e892f"
+    },
+    {
+      "path": "native-terminals12-actual-r2/proof.json",
+      "sha256": "a11a1ff24493d3d8806c399b9c62ce54a94366a98fca24b734461474a9e987d5"
+    },
+    {
+      "path": "native-terminals12-actual-r3/proof.json",
+      "sha256": "8ec37c7fd9455002e945ec788bb299eb8644f4577020f67b6a13cd4280beeae3"
+    },
+    {
+      "path": "native12-qa-note.json",
+      "sha256": "e216cb1cb454c220c31b7e7c287980343cd4daa542c70d12adb9d55b987771a3"
+    },
+    {
+      "path": "native-desktop12-observation1.json",
+      "sha256": "eff760a6524d779a9645a308919a0eac4eb436386af4231141eb0fa9d901bf5a"
+    },
+    {
+      "path": "public-entry-actual12.json",
+      "sha256": "6a8756724c265226887f2d0616a2eb8b6535b3563966361e62706871b7b8b0ed"
+    },
+    {
+      "path": "developer-release12-final-adapter/session.json",
+      "sha256": "d626b50161cf2095665caf81659c4d5bda233a108f019b91dda4651b8bb5278f"
+    },
+    {
+      "path": "developer-release12-final-adapter/process.json",
+      "sha256": "94eb29f15181ce6c98ba42dd7f7c110e8bcacaf0e9e6fb23be09a4836cb1b6d4"
+    },
+    {
+      "path": "developer-release12-final-adapter/native-result.json",
+      "sha256": "fa7ed02bd7e7468ea976546ff0d5e3c7af7d1dba0ab7a7cab29e890d6fb57982"
+    },
+    {
+      "path": "developer-release12-final-adapter-correction1/session.json",
+      "sha256": "faa6f8dd3b3a1b872c23ae2bd16b6212f2b9d80d1cee5e3d2ddd79a69cbef580"
+    },
+    {
+      "path": "developer-release12-final-adapter-correction1/process.json",
+      "sha256": "2bbb4c28c40b24be66332e3ad73c96dc9987f795fe56b8b85d7dc85e3c8fc345"
+    },
+    {
+      "path": "developer-release12-final-adapter-correction1/native-result.json",
+      "sha256": "9a3ccd39f710a9594c5e12310a7b788dc03f38db098b1d2af050d74f67e4f678"
+    }
+  ],
+  "status_boundary": "Curated development record draft; not an audit verdict, Gate receipt, human UX approval or Stable authorization.",
+  "formal_review": {
+    "max_rounds": 5,
+    "started_rounds": 2,
+    "completed_rounds": 1,
+    "current_round": 2,
+    "current_candidate_sha256": "817c8f5c2faf358a62d75c1c30a90885c8353f7cd1d968f9dd6197677e89e4d3",
+    "status": "RUNNING",
+    "roles": [
+      "A",
+      "B"
+    ],
+    "native_kernel_process_observations": {
+      "A": {
+        "pid": 3342756,
+        "pgid": 3342756,
+        "start": "19622004",
+        "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295"
+      },
+      "B": {
+        "pid": 3342986,
+        "pgid": 3342986,
+        "start": "19622119",
+        "boot_id": "ac3f950e-169b-4c3e-861b-c42e14ee3295"
+      }
+    },
+    "native_session_ids": "awaiting final native CLI receipt; not inferred from process identity",
+    "verdict": null,
+    "packet": {
+      "path": "codex-final-audit-release12-r2",
+      "indexed_evidence_files": 2332,
+      "indexed_files_including_read_first_and_developer": 2334,
+      "evidence_index_sha256": "abf88ab16325b2e704d7d3db15e0007696682c1593e9d749184571ed1f9d1278",
+      "source_files": 333
+    },
+    "not_gate_or_stable_approval": true
+  },
+  "external_preparation_refs": [
+    {
+      "path": "finalization-input12/input-index.json",
+      "sha256": "00d0063f0ce78d354b96d459cde64adb7d5c6a82dfd3cab62abd07e89cbf9dbd"
+    },
+    {
+      "path": "finalization-input12-correction1/input-index.json",
+      "sha256": "40a6881e7d9c23ce0c83ba72f127e99b75c77558d3b41ffccf9dab18a15abd22"
+    },
+    {
+      "path": "finalization-input12-correction1/aggregate-reference-closure.json",
+      "sha256": "a2734b9949eb222c167dc67956be98a8141e56a98ee21eafa118eaf27c71aaa7"
+    },
+    {
+      "path": "codex-final-audit-release12-r2/evidence/evidence-index.json",
+      "sha256": "abf88ab16325b2e704d7d3db15e0007696682c1593e9d749184571ed1f9d1278"
+    },
+    {
+      "path": "independent-desktop-preference-check/curation12/gate-main-correction1.stdout.json",
+      "sha256": "8d1fb093605e54aeca3d5ab45b9539aa5a95d7ec43cb0fa4d2c40234bd9c86bc"
+    },
+    {
+      "path": "independent-desktop-preference-check/curation12/ack-correction1-paths-proof.json",
+      "sha256": "fbd0d970e00d2eaa2d4c19d71af8d44f9de12aa25979e4121594ea4216cc9d4d"
+    },
+    {
+      "path": "independent-desktop-preference-check/curation12/gate12-actual-readonly-correction1.json",
+      "sha256": "b86b1cee27f05b8d6b0faaa1c066ae12dbbfbcd840207f448962df4b543f251c"
+    }
+  ]
 }
