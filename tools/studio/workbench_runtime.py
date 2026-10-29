@@ -130,7 +130,7 @@ class WorkbenchRuntime(SessionRuntime):
         path=str(Path(local['config_root'])/'config.toml');expected=self.operator['dependencies'].get(path)
         from .preference_baseline import preference_only
         if expected and self.identity_cache.file(path)!=expected and not preference_only(self.preference_baseline,path):
-            return '本机 Codex 配置已变化：当前仅供查看，执行前需要重新核验固定配置。'
+            return '本机 Codex 配置已变化：新任务启动已阻止；已打开的原生终端仍可继续操作或关闭。请结束现有操作后重启工作台入口以加载当前配置；历史记录保留。'
         return None
 
     def release_identity(self):

@@ -236,7 +236,10 @@ def create_server(runtime,port=0):
             except Conflict as exc:self.respond(409,{'error':str(exc)})
             except (Invalid,Blocked,ValueError,KeyError,TypeError,OSError,RecursionError) as exc:
                 from .agent_sessions import safe_text
-                self.respond(400,{'error':safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境','category':type(exc).__name__,'node':getattr(exc,'node',None)})
+                message=safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境'
+                if isinstance(exc,Blocked) and str(exc)=='Approved native executable or configuration changed':
+                    message+='。本机工具或配置已变化；请结束现有操作后重启工作台入口，重新读取当前配置。历史记录保留，未自动重试。'
+                self.respond(400,{'error':message,'category':type(exc).__name__,'node':getattr(exc,'node',None)})
             finally:
                 if read_token is not None:READONLY_VIEW.reset(read_token)
     class Server(ThreadingHTTPServer):
