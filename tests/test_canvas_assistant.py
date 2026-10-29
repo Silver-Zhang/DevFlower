@@ -273,6 +273,20 @@ class AssistantToolEnvelopeTests(unittest.TestCase):
     def test_anthropic_envelope_after_source_tool_is_persisted_as_failed(self):self.failed_envelope('anthropic',True)
     def test_openai_envelope_after_source_tool_is_persisted_as_failed(self):self.failed_envelope('openai',True)
 
+    def test_adjacent_control_envelopes_fail_without_extra_requests(self):
+        for protocol in ('anthropic','openai'):
+            for source_first in (False,True):
+                for count in (2,3,12):
+                    for separator in ('',' \n\t'):
+                        with self.subTest(protocol=protocol,source_first=source_first,count=count,separator=separator):
+                            turn,conversation=self.scenario(protocol,' \n'+separator.join([self.envelope]*count)+'\n ',source_first=source_first)
+                            self.assertEqual(turn['state'],'FAILED')
+                            self.assertIn('不受支持的工具调用协议',turn['reason'])
+                            self.assertIsNone(turn['proposal']);self.assertIsNone(turn['reply'])
+                            self.assertIsNone(turn['receipt'])
+                            self.assertEqual([m['role'] for m in conversation['messages']],['user'])
+                            self.assertEqual(conversation['revision'],1)
+
     def test_plain_clarification_and_other_tags_remain_answers(self):
         for protocol in ('anthropic','openai'):
             for text in ('请先说明需要修复哪个节点。','<example>这是普通标签文本</example>'):
@@ -282,7 +296,7 @@ class AssistantToolEnvelopeTests(unittest.TestCase):
 
     def test_quoted_or_explained_envelopes_remain_answers(self):
         for protocol in ('anthropic','openai'):
-            for text in ('```text\n'+self.envelope+'\n```','这是待解释的协议示例：\n'+self.envelope,self.envelope+'\n以上是协议示例，请勿执行。'):
+            for text in ('```text\n'+self.envelope+'\n```','这是待解释的协议示例：\n'+self.envelope,self.envelope+'\n以上是协议示例，请勿执行。',self.envelope+'\n两段之间的普通解释。\n'+self.envelope):
                 with self.subTest(protocol=protocol,text=text):
                     turn,_=self.scenario(protocol,text)
                     self.assertEqual(turn['state'],'COMPLETED');self.assertEqual(turn['reply'],text)
