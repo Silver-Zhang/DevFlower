@@ -167,7 +167,7 @@ def validate_graph(document, *, depth=0):
         if k not in reachable:
             reachable.add(k); todo.extend(outgoing[k])
     if reachable != ids:
-        raise Invalid('存在未连接到开始节点的模块：' + ', '.join(sorted(ids - reachable)))
+        raise Invalid('存在未连接到开始节点的流程节点：' + ', '.join(sorted(ids - reachable)))
     for n in g['nodes']:
         if len(incoming[n['id']]) > 1 and n['kind'] not in ('merge', 'result'):
             raise Invalid('多路输入请先连接到显式汇合节点：' + n['id'])
