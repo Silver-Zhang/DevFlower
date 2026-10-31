@@ -66,7 +66,7 @@ export function edgeEvidence(events,edge,prefix,runId){
  return events.filter(e=>e.run===runId&&e.edge===edge.id&&e.source===prefix+edge.source&&e.node===prefix+edge.target&&['handoff-sent','handoff-received'].includes(e.kind)).at(-1);
 }
 export function preflight(graph,workspace,task){
- if(!workspace)return {message:'先打开一个工作空间，再开始运行。'};
+ if(!workspace)return {message:'先打开一个工作区，再开始运行。'};
  if(!graph?.nodes?.length)return {message:'画布还是空白。添加节点或选择一个示例。'};
  const walk=(g,p='')=>{for(const n of g.nodes){const path=p+n.id;
   if(n.kind==='agent')for(const [key,label] of [['profile','执行工具'],['model','模型'],['effort','推理强度'],['round_prompt','每轮提示词']])

@@ -155,7 +155,7 @@ class WorkbenchRuntime(SessionRuntime):
         if policy['protected_container'] and not partial:
             raise Blocked('文件夹已打开，但此位置包含系统或工作台保护数据；运行 Agent 请选择具体的项目代码目录。')
         if not (any(Path(path).is_relative_to(p) for p in self.operator['allowed_roots']) or selected_scope(self,path)):
-            raise Blocked('请先通过“打开文件夹”选择此项目，再确认本次任务的运行权限。')
+            raise Blocked('请先通过“打开工作区”选择此项目，再确认本次任务的运行权限。')
         if self.trust: self.trust.permits(path, self.operator_file)
         if partial:return native_workspace_view(self,path)
         try:
@@ -226,7 +226,7 @@ class WorkbenchRuntime(SessionRuntime):
                 with self.project_files(w['id']).library() as store:
                     for r in store.list('draft'): rows[w['id'] + ':' + r['id']] = r
             except (OSError, ValueError, Invalid, Blocked):
-                errors.append(dict(workspace=w['id'], error='项目记录不可读，请重新打开文件夹；本机旧缓存未冒充最新工作流'))
+                errors.append(dict(workspace=w['id'], error='项目记录不可读，请重新打开工作区；本机旧缓存未冒充最新工作流'))
         return list(rows.values()), errors
 
     def saved_runs(self):

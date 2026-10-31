@@ -201,7 +201,7 @@ class WorkbenchSessions:
                             if text.startswith('Role:') and 'Writable test artifacts:' in text:
                                 text='\n'.join(text.splitlines()[2:]).strip()
                             first=text
-            return safe_text(title or first or '新对话')[:90].replace('\n',' ')
+            return safe_text(title or first or '新会话')[:90].replace('\n',' ')
         except (Invalid,ValueError,OSError):return '对话记录暂不可读'
 
     def listing(self, workspace, view='active', query=''):
@@ -246,7 +246,7 @@ class WorkbenchSessions:
                     self.db.put('session-title',handle,{'id':handle,'title':title,'binding':title_binding})
             managed=next((o for o in reversed(operations) if not o.get('diagnostic') and self.matching_operation(workspace,internal,o) and o.get('user_prompt')),None)
             if managed and not meta.get('alias'):title=safe_text(managed['user_prompt'].splitlines()[0])[:70]
-            title=title or '新对话'
+            title=title or '新会话'
             running=next((o for o in operations if o['state'] not in ('COMPLETED','FAILED','CANCELLED') and self.matching_operation(workspace,internal,o)),None)
             busy=False
             if internal and internal['profile'].get('home'):
@@ -262,14 +262,14 @@ class WorkbenchSessions:
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
             named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),
-                display_state=running['state'] if running else 'BUSY' if busy else '运行未确认',busy=busy,
+                display_state=running['state'] if running else 'BUSY' if busy else '状态待确认',busy=busy,
                 node=latest['node'] if latest else related[0]['node'] if related else None,
                 choices={'resume':bool(row.get('resume')) and not busy and not meta.get('native_archived'),
                          'context_new':row['capabilities'].get('read',False),'fork':row['provider']=='codex' and bool(row.get('resume')) and not busy,
                          'view':True},native_archived=meta.get('native_archived',False))
             if latest and not busy and not running:
                 from orchestration.process import group_alive
-                named['display_state']='运行未确认' if latest['state'] in ('RUNNING','STARTING') and not group_alive(latest.get('process')) else latest['state']
+                named['display_state']='状态待确认' if latest['state'] in ('RUNNING','STARTING') and not group_alive(latest.get('process')) else latest['state']
             if latest:
                 workflow = self.db.get('run', latest['run'])
                 named.update(workflow=workflow.get('graph', {}).get('name', '未命名工作流'),
