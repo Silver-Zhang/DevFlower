@@ -147,7 +147,7 @@ class CanvasAssistant:
                 if turn and state in ('QUEUED','RUNNING'):
                     with self.lock:running=turn['id'] in self.active and turn['id'] not in self.finalizing and alive(turn.get('owner'))
                     if not running and (not alive(turn.get('owner')) or turn['owner']['pid']==os.getpid()):state='RECOVERY_REQUIRED'
-                result.append(dict(id=v['id'],title=v.get('title') or next((m['text'][:60] for m in v['messages'] if m['role']=='user'),'新对话'),collection=v.get('collection','active'),metadata_revision=v.get('metadata_revision',0),updated_at=v.get('updated_at'),message_count=len(v['messages']),state=state))
+                result.append(dict(id=v['id'],title=v.get('title') or next((m['text'][:60] for m in v['messages'] if m['role']=='user'),'新会话'),collection=v.get('collection','active'),metadata_revision=v.get('metadata_revision',0),updated_at=v.get('updated_at'),message_count=len(v['messages']),state=state))
         if hasattr(self.rt,'project_files') and project.get('path'):
             known={v['id'] for v in self.rt.flow.list('canvas-conversation') if v.get('workspace')==workspace}
             for saved in self.rt.project_files(workspace).archives('assistant'):
@@ -189,7 +189,7 @@ class CanvasAssistant:
                     return dict(saved,workspace=workspace,active_turn=None,turn=None,collection='reading-copy',saved_history=True)
                 raise Invalid('尚无此助手对话')
             result=json.loads(row[0])
-            if result['workspace']!=workspace:raise Blocked('助手对话不属于当前工作空间')
+            if result['workspace']!=workspace:raise Blocked('助手对话不属于当前工作区')
             turn=json.loads(db.execute("SELECT data FROM records WHERE kind='canvas-turn' AND id=?",(result['active_turn'],)).fetchone()[0]) if result.get('active_turn') else None
         if turn:
             with self.lock:

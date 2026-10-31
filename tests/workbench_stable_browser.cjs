@@ -19,7 +19,7 @@ function headers(key){return {Authorization:'Bearer '+access[key].token}}
   assert.equal(await page.locator('.workspace-environment').innerText(),'Stable');
   const r=await page.request.get(access.stable.url+'/api/status',{headers:headers('stable')});assert.equal(r.status(),200);
   const status=await r.json();assert.equal(status.label,'Stable · Agent 工作台');assert.equal(status.release.candidate_sha256,access.candidate);
-  await page.getByRole('button',{name:'打开文件夹',exact:true}).click();
+  await page.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).click();
   assert((await page.locator('.folder-dialog header small').innerText()).includes('Stable'));
   await page.reload();await page.locator('.brand').waitFor();assert.equal(await page.locator('.brand span').innerText(),'STABLE');
   await page.screenshot({path:out+'/synthetic-stable.png'});
