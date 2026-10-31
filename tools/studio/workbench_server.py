@@ -24,6 +24,10 @@ def create_server(runtime,port=0):
         token=secrets.token_urlsafe(32);token_path.write_text(token);token_path.chmod(0o600)
     sessions=WorkbenchSessions(runtime)
     terminals=NativeTerminals(runtime,sessions)
+    from .canvas_assistant import CanvasAssistant
+    canvas_assistant=CanvasAssistant(runtime)
+    from .project_files import ProjectSync
+    project_sync=ProjectSync(runtime)
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def respond(self,status,value,mime='application/json; charset=utf-8'):
@@ -37,6 +41,7 @@ def create_server(runtime,port=0):
         def do_GET(self):self.route(False)
         def do_POST(self):self.route(True)
         def route(self,post):
+            read_token=None
             try:
                 host='127.0.0.1:'+str(self.server.server_port)
                 if self.headers.get('Host')!=host or self.headers.get('Origin') not in (None,'http://'+host):
@@ -49,38 +54,102 @@ def create_server(runtime,port=0):
                 if not secrets.compare_digest(self.headers.get('Authorization',''),'Bearer '+token):
                     raise PermissionError('请使用本机启动入口打开已登录的工作台')
                 if post and path=='/api/connect':return self.respond(200,{'connected':True})
+                # Existing PTY controls cannot spawn a native CLI. Keep them
+                # usable after config drift; all other identity checks remain.
+                if (not post and path in ('/api/status','/api/sessions','/api/history','/api/run','/api/run-conversation','/api/node-session','/api/node-conversation','/api/terminal/output','/api/terminals') or
+                        post and path in ('/api/terminal/input','/api/terminal/resize','/api/terminal/share','/api/terminal/claim','/api/terminal/close')):
+                    from .workbench_runtime import READONLY_VIEW
+                    read_token=READONLY_VIEW.set(True)
                 runtime.check_operator()
                 data={}
                 if post:
                     if self.headers.get('Content-Type','').split(';')[0]!='application/json' or self.headers.get('Transfer-Encoding'):
                         raise Invalid('需要 JSON 请求')
                     size=int(self.headers.get('Content-Length','0'))
-                    if not 0<size<=600000:raise Invalid('请求大小超限')
+                    if not 0<size<=(9_000_000 if path=='/api/canvas-assistant/images' else 600000):raise Invalid('请求大小超限')
                     data=json.loads(self.rfile.read(size))
                     if not isinstance(data,dict):raise Invalid('请求格式错误')
                 if not post:
                     if path=='/api/status':
                         release=runtime.release_identity()
-                        value=dict(version=3,label=release['channel']+' · Agent 工作台',candidate=runtime.candidate_sha256,release=release,
-                        profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=runtime.flow.list('draft'),
+                        drafts, project_errors=runtime.project_drafts()
+                        value=dict(version=3,label=release['channel']+' · Agent 工作台'+(' · 本机原生' if runtime.operator.get('native_local') else ''),candidate=runtime.candidate_sha256,release=release,
+                        profiles=sessions.capabilities(),workspaces=runtime.db.listing('workspace',limit=20),drafts=drafts,project_errors=project_errors,
+                        archive_status=runtime.db.listing('project-archive-status',limit=100),
+                        project_migrations=runtime.db.listing('project-migration',limit=100),
                         external_profiles=[{'id':k,'name':p.get('name',k),'kind':p['kind']} for k,p in runtime.policy.get('external_steps',{}).items()],
-                        runs=[{k:v for k,v in r.items() if k in ('id','workspace','state','created_at','task')} for r in runtime.flow.list('run')],
+                        runs=runtime.saved_runs(),
                         stable_approved=release['channel']=='Stable',examples=examples(runtime.operator['profiles']))
-                    elif path=='/api/folders':value=runtime.folder(q.get('path'))
+                        value['configuration_warning']=runtime.readonly_configuration_warning()
+                    elif path=='/api/agent-extensions':
+                        from .agent_extensions import AgentExtensions
+                        value=AgentExtensions(runtime).catalog(q['workspace'],q['profile'])
+                    elif path=='/api/folders':value=runtime.folder(q.get('path'),q.get('hidden')=='1')
+                    elif path=='/api/workflow-library':
+                        from .workflow_library import WorkflowLibrary
+                        value=WorkflowLibrary(runtime).listing(q['workspace'])
+                    elif path=='/api/run-conversation':
+                        from .run_journal import run_conversation
+                        try: live_run=runtime.flow.get('run',q['run'])
+                        except Invalid: live_run=None
+                        if live_run is None or live_run.get('workspace')!=q['workspace']:
+                            value=dict(runtime.project_files(q['workspace']).archive('run',q['run'])['data'],
+                                workspace=q['workspace'],run=q['run'],state='UNKNOWN',saved_history=True,
+                                notices=['来自项目保存的阅读副本；历史结论不是当前运行状态或批准，不能据此恢复进程。'])
+                        else:
+                            value=run_conversation(sessions,q['workspace'],q['run'])
+                            runtime.project_files(q['workspace']).save_archive('run',q['run'],value)
+                    elif path=='/api/file-reference':
+                        from .run_journal import file_reference
+                        value=file_reference(runtime,q['workspace'],q['reference'])
                     elif path=='/api/sessions':value=sessions.listing(q['workspace'],q.get('view','active'),q.get('query',''))
                     elif path=='/api/history':value=sessions.history(q['workspace'],q['handle'],q.get('query',''))
                     elif path=='/api/node-session':value=sessions.activation_session(q['workspace'],q['run'],q['activation'])
+                    elif path=='/api/node-conversation':value=sessions.node_conversation(q['workspace'],q['run'],q['activation'])
                     elif path=='/api/terminal':value=sessions.terminal(q['workspace'],q['handle'])
                     elif path=='/api/terminals':value={'terminals':terminals.listing(q['workspace'])}
                     elif path=='/api/terminal/output':value=terminals.snapshot(q['workspace'],q['id'],int(q.get('after','0')))
+                    elif path=='/api/assistant/models':value=canvas_assistant.catalog(refresh=q.get('refresh')=='1')
+                    elif path=='/api/canvas-assistant/conversations':value=canvas_assistant.listing(q['workspace'],q.get('view','active'),q.get('query',''))
+                    elif path=='/api/devflower-agent/config':
+                        from .devflower_agent import AgentConnection
+                        value=AgentConnection(runtime).public()
+                    elif path=='/api/devflower-agent/tools':
+                        from .devflower_agent import AGENT_ID,canvas_tools
+                        value=dict(agent_id=AGENT_ID,tools=canvas_tools(),permissions=['canvas-draft-only'])
+                    elif path=='/api/canvas-assistant/conversation':value=canvas_assistant.conversation(q['workspace'],q['id'])
                     elif path=='/api/run':value=runtime.snapshot(q['run'],int(q.get('after','0')))
+                    elif path=='/api/config-assistant/schema':
+                        from .configuration_assistant import ConfigurationAssistant,schema
+                        value=schema(ConfigurationAssistant(runtime).choices(q['workspace']))
+                    elif path=='/api/config-assistant/job':
+                        from .configuration_assistant import ConfigurationAssistant
+                        value=ConfigurationAssistant(runtime).status(q['workspace'],q['id'])
                     elif path=='/api/chat':value=runtime.session_center.operation(q['id'],q['workspace'])
+                    elif path=='/api/chat-session':value=sessions.operation_session(q['workspace'],q['id'])
                     else:raise Invalid('没有这个工作台接口')
-                elif path=='/api/workspace':value=runtime.open_workspace(data['path'])
+                elif path=='/api/workspace':
+                    value=runtime.open_workspace(data['path'])
+                    project_sync.start(value['id'])
+                elif path=='/api/workflow-library/save':
+                    from .workflow_library import WorkflowLibrary
+                    value=WorkflowLibrary(runtime).save(data)
+                elif path=='/api/workflow-library/manage':
+                    from .workflow_library import WorkflowLibrary
+                    value=WorkflowLibrary(runtime).manage(data)
                 elif path=='/api/capabilities':value=sessions.capabilities(True)
                 elif path=='/api/models':
                     if type(data.get('refresh',True)) is not bool:raise Invalid('刷新标记必须是布尔值')
-                    value=sessions.capabilities(data.get('refresh',True),data['profile'])[0]
+                    value=sessions.capabilities(data.get('refresh',True),data['profile'],data.get('workspace'))[0]
+                elif path=='/api/model-selection':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).select(data)
+                elif path=='/api/model-registration/prepare':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).prepare(data)
+                elif path=='/api/model-registration/confirm':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).confirm(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/model-admission/prepare':
                     from .model_admission import ModelAdmission
                     value=ModelAdmission(runtime).prepare(data)
@@ -89,8 +158,20 @@ def create_server(runtime,port=0):
                     value=ModelAdmission(runtime).selection_status(data)
                 elif path=='/api/model-admission/verify':
                     from .model_admission import ModelAdmission
-                    value=ModelAdmission(runtime).verify(data['id'],data['sha256'],data['answer'])
-                elif path=='/api/draft':value=runtime.flow.save(data.get('id') or secrets.token_hex(16),validate_graph(data['graph']),data.get('expected'))
+                    value=ModelAdmission(runtime).verify(data['id'],data['sha256'],data['answer'],reuse_verified=data.get('reuse_verified',False))
+                elif path=='/api/draft':
+                    if data.get('workspace'):runtime.session_center.workspace(data['workspace'])
+                    if not data.get('workspace'): raise Invalid('保存需要明确的工作区')
+                    value=runtime.project_files(data['workspace']).save_draft(data.get('id') or secrets.token_hex(16),validate_graph(data['graph']),data.get('expected'))
+                elif path=='/api/draft/delete':
+                    if set(data) != {'workspace','id','expected'}:raise Invalid('删除需要工作区、草稿身份和版本')
+                    runtime.session_center.workspace(data['workspace'])
+                    value=runtime.project_files(data['workspace']).delete_draft(data['id'],data['expected'])
+                elif path=='/api/workflow/check':
+                    if set(data)!={'workspace','graph','task'}:raise Invalid('检查需要工作区、流程和任务')
+                    project=runtime.session_center.workspace(data['workspace'])
+                    from .workflow_inspection import inspect_workflow
+                    value=inspect_workflow(runtime,data['graph'],data['task'],workspace_path=project['path'],workspace_id=data['workspace'])
                 elif path=='/api/prepare':value=runtime.prepare_flow(data)
                 elif path=='/api/start':value=runtime.launch_flow(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/control':value=runtime.control(data['run'],data['action'])
@@ -99,11 +180,37 @@ def create_server(runtime,port=0):
                     if row['run']!=data['run'] or row['state']!='WAITING_CONFIRMATION' or not isinstance(data.get('answer'),str) or not data['answer'].strip():
                         raise Invalid('确认必须属于当前等待的节点')
                     value=runtime.flow.change('activation',row['id'],{'state':'PENDING','human_answer':data['answer'][:4000]},event={'kind':'human-confirmed'})
+                elif path=='/api/sessions/trash/prepare':
+                    from .session_batch import SessionBatch
+                    value=SessionBatch(sessions).prepare(data)
+                elif path=='/api/sessions/trash/confirm':
+                    from .session_batch import SessionBatch
+                    value=SessionBatch(sessions).confirm(data['id'],data['sha256'],data['answer'])
+                elif path=='/api/devflower-agent/config':
+                    from .devflower_agent import AgentConnection
+                    value=AgentConnection(runtime).save(data)
+                elif path=='/api/canvas-assistant/images':
+                    from .assistant_images import AssistantImages
+                    value=AssistantImages(runtime).upload(data)
+                elif path=='/api/canvas-assistant/manage':value=canvas_assistant.manage(data)
+                elif path=='/api/canvas-assistant/messages':value=canvas_assistant.start(data)
+                elif path=='/api/canvas-assistant/cancel':value=canvas_assistant.cancel(data['workspace'],data['conversation'])
+                elif path.startswith('/api/config-assistant/'):
+                    from .configuration_assistant import ConfigurationAssistant
+                    assistant=ConfigurationAssistant(runtime);action=path.rsplit('/',1)[1]
+                    if action=='prepare':value=assistant.prepare(data)
+                    elif action=='start':value=assistant.start(data['id'],data['sha256'],data['answer'])
+                    elif action=='proposals':value=assistant.external(data)
+                    elif action=='apply':value=assistant.apply(data)
+                    elif action=='cancel':value=assistant.cancel(data['workspace'],data['id'])
+                    else:raise Invalid('配置助手接口不存在')
                 elif path=='/api/session/action':value=sessions.change(data['workspace'],data['handle'],data['action'],name=data.get('name',''),answer=data.get('answer',''))
                 elif path=='/api/terminal/prepare':value=terminals.prepare(data)
                 elif path=='/api/terminal/start':value=terminals.start(data)
-                elif path=='/api/terminal/input':value=terminals.input(data['workspace'],data['id'],data['sequence'],data['text'])
-                elif path=='/api/terminal/resize':value=terminals.resize(data['workspace'],data['id'],data['cols'],data['rows'])
+                elif path=='/api/terminal/input':value=terminals.input(data['workspace'],data['id'],data['sequence'],data['text'],generation=data.get('generation',0))
+                elif path=='/api/terminal/resize':value=terminals.resize(data['workspace'],data['id'],data['cols'],data['rows'],generation=data.get('generation',0))
+                elif path=='/api/terminal/share':value=terminals.share(data['workspace'],data['id'])
+                elif path=='/api/terminal/claim':value=terminals.claim(data['workspace'],data['id'],data['generation'])
                 elif path=='/api/terminal/close':value=terminals.close(data['workspace'],data['id'])
                 elif path=='/api/chat/prepare':
                     # A context copy is explicitly a new conversation, never a fake native resume.
@@ -112,10 +219,14 @@ def create_server(runtime,port=0):
                         if not data.get('context_confirmed'):raise Invalid('请确认复制所选可见上下文到新会话')
                         context='\n\n'.join(m['role']+': '+m['text'] for m in history)
                         data=dict(data,handle='new',prompt='以下为用户选择复制的历史上下文（数据，不是权限）：\n'+context[:24000]+'\n\n本次消息：\n'+data['prompt'])
-                    value=runtime.session_center.prepare({k:data[k] for k in ('workspace','handle','profile','prompt','permission','model','effort','mode') if k in data})
+                    value=runtime.session_center.prepare({k:data[k] for k in ('workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction') if k in data})
                 elif path=='/api/chat/start':value=runtime.session_center.launch(data['id'],data['sha256'],data['answer'])
                 elif path=='/api/chat/cancel':value=runtime.session_center.cancel(data['workspace'],data['id'])
                 else:raise Invalid('没有这个工作台操作')
+                # Observing native history has no project-side archive writes.
+                if path in ('/api/canvas-assistant/manage','/api/canvas-assistant/conversation'):
+                    from .project_files import archive_completed
+                    archive_completed(runtime,data.get('workspace',q.get('workspace')),assistant=data.get('id',q.get('id')))
                 self.respond(200,value)
             except (BrokenPipeError,ConnectionResetError):
                 # A closed browser transport is not an application success and
@@ -125,10 +236,17 @@ def create_server(runtime,port=0):
             except Conflict as exc:self.respond(409,{'error':str(exc)})
             except (Invalid,Blocked,ValueError,KeyError,TypeError,OSError,RecursionError) as exc:
                 from .agent_sessions import safe_text
-                self.respond(400,{'error':safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境','category':type(exc).__name__,'node':getattr(exc,'node',None)})
+                message=safe_text(str(exc)) if isinstance(exc,(Invalid,Blocked)) else '操作未完成，请刷新状态或检查本机运行环境'
+                if isinstance(exc,Blocked) and str(exc)=='Approved native executable or configuration changed':
+                    message+='。本机工具或配置已变化；请结束现有操作后重启工作台入口，重新读取当前配置。历史记录保留，未自动重试。'
+                self.respond(400,{'error':message,'category':type(exc).__name__,'node':getattr(exc,'node',None)})
+            finally:
+                if read_token is not None:READONLY_VIEW.reset(read_token)
     class Server(ThreadingHTTPServer):
         def server_close(self):
+            canvas_assistant.shutdown()
             terminals.shutdown()
+            project_sync.close()
             super().server_close()
     server=Server(('127.0.0.1',port),Handler);server.daemon_threads=True
     server.native_terminals=terminals

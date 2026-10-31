@@ -41,11 +41,20 @@ class Storage:
         value = canonical(data).decode()
         for attempt in range(3):
             try:
-                with self.lock, self.db() as db, db:
-                    db.execute("INSERT OR REPLACE INTO objects "
-                               "SELECT ?,?,? WHERE NOT EXISTS "
-                               "(SELECT 1 FROM objects WHERE kind=? AND id=? AND data=?)",
-                               (kind, key, value, kind, key, value))
+                with self.lock, self.db() as db:
+                    # An autocommit SELECT is a separate committed snapshot;
+                    # close its cursor before starting any write transaction.
+                    # Exact equality linearizes this no-op at that read.
+                    cursor = db.execute('SELECT data FROM objects WHERE kind=? AND id=?', (kind, key))
+                    try: row = cursor.fetchone()
+                    finally: cursor.close()
+                    if row is not None and row[0] == value:
+                        return
+                    with db:
+                        db.execute("INSERT OR REPLACE INTO objects "
+                                   "SELECT ?,?,? WHERE NOT EXISTS "
+                                   "(SELECT 1 FROM objects WHERE kind=? AND id=? AND data=?)",
+                                   (kind, key, value, kind, key, value))
                 return
             except sqlite3.OperationalError as exc:
                 code = getattr(exc, 'sqlite_errorcode', None)
@@ -120,12 +129,29 @@ class Storage:
             if not row or row[0] != expected or row[2] or time.time() - row[3] > 3600:
                 raise Conflict("Authorization preview expired, changed or already used")
             data = json.loads(row[1])
+            if data.get("interaction") == "click":
+                raise Invalid("This action requires its structured click record")
             questions = data["human_questions"]
             if not isinstance(acknowledgements, list) or len(acknowledgements) != len(questions) or any(
                     not isinstance(x, str) or not x.strip() or len(x) > 4000 for x in acknowledgements):
                 raise Invalid("Every Human Gate needs an explicit human response")
             db.execute("UPDATE permits SET used=1 WHERE id=?", (key,))
             receipt = dict(actor="user", answers=acknowledgements, at=time.time(), preview_sha256=expected)
+            db.execute("INSERT INTO launches VALUES(?,NULL,'AUTHORIZED',?)", (key, canonical(receipt).decode()))
+        return data, receipt
+
+    def consume_click(self, key, expected, action):
+        """Consume a frozen direct-action permit without inventing a human answer."""
+        with self.lock, self.db() as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT hash,data,used,at FROM permits WHERE id=?', (key,)).fetchone()
+            if not row or row[0] != expected or row[2] or time.time() - row[3] > 3600:
+                raise Conflict('Authorization preview expired, changed or already used')
+            data = json.loads(row[1])
+            if data.get('interaction') != 'click' or data.get('click_action') != action:
+                raise Invalid('Action does not match the frozen authorization')
+            receipt = dict(actor='user', action=action, at=time.time(), preview_sha256=expected)
+            db.execute('UPDATE permits SET used=1 WHERE id=?', (key,))
             db.execute("INSERT INTO launches VALUES(?,NULL,'AUTHORIZED',?)", (key, canonical(receipt).decode()))
         return data, receipt
 

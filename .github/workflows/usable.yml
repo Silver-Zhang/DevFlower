@@ -2,16 +2,8 @@ name: Usable regression
 
 on:
   pull_request:
-    paths:
-      - 'tools/**'
-      - 'tests/**'
-      - 'docs/**'
-      - 'AGENTS.md'
-      - 'WORKFLOW.md'
-      - 'examples/**'
-      - '.github/workflows/usable.yml'
   push:
-    branches: ['main', 'flow/devflower-usable-v1', 'flow/template-governance-ci', 'flow/agent-workspace-vnext']
+    branches: ['main', 'develop']
   workflow_dispatch:
 
 permissions:
@@ -52,6 +44,16 @@ jobs:
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Install pinned native CLI test fixtures outside source
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/usable-evidence/native-cli-identity.json"
       - name: All Python contracts including Usable and orchestration
         shell: bash
         run: |
@@ -84,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --test tests/workbench_editor.test.mjs tests/workbench_projection.test.mjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
+          DEVFLOWER_UI_DEPS="$RUNNER_TEMP/workbench-ui" node --test tests/*.test.mjs tests/*.test.cjs 2>&1 | tee "$RUNNER_TEMP/usable-evidence/editor.log"
       - name: Real host isolation probes
         shell: bash
         run: |
@@ -102,54 +104,66 @@ jobs:
   chromium:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Create public browser evidence directory in the container
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-browser-evidence"
+          printf 'PUBLIC_BROWSER_EVIDENCE=%s\n' "$RUNNER_TEMP/public-browser-evidence" >> "$GITHUB_ENV"
       - name: Install pinned browser test driver outside the source tree
         shell: bash
         run: |
           set -euo pipefail
+          python3 --version
+          node --version
+          git --version
           npm install --prefix "$RUNNER_TEMP/pw" --ignore-scripts --no-audit --no-fund playwright@1.56.1
-          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
           echo "PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
           echo "PLAYWRIGHT_MODULE=$GITHUB_WORKSPACE/tests/browser_driver.cjs" >> "$GITHUB_ENV"
           echo "CHROMIUM=$(node -e "process.stdout.write(require('$RUNNER_TEMP/pw/node_modules/playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+          test -x "$(node -e "process.stdout.write(require('$RUNNER_TEMP/pw/node_modules/playwright').chromium.executablePath())")"
       - name: Real HTTP and Chromium regression (no models or user credentials)
         shell: bash
         run: |
           set -euo pipefail
           status=0
-          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser; do
-            if ! python3 "tests/$suite.py" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
-              status=1
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser design_system_browser; do
+            if python3 "tests/$suite.py" --chromium "$CHROMIUM" --node node --playwright-module "$PLAYWRIGHT_MODULE" --artifacts "$RUNNER_TEMP/$suite"; then
+              :
+            else
+              code=$?
+              if [ "$status" -eq 0 ]; then status=$code; fi
             fi
           done
           exit "$status"
+      - name: Collect public browser results and screenshots
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for suite in studio_races studio_identity_races workspace_browser usable_browser template_browser session_browser workbench_browser workbench_stable_browser project_files_browser design_system_browser; do
+            mkdir -p "$PUBLIC_BROWSER_EVIDENCE/$suite"
+            for file in "$RUNNER_TEMP/$suite/"*results.json "$RUNNER_TEMP/$suite/"*.png; do
+              if [[ -f "$file" && ! -L "$file" ]]; then
+                cp -- "$file" "$PUBLIC_BROWSER_EVIDENCE/$suite/"
+              fi
+            done
+          done
       - name: Preserve synthetic browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: usable-browser-evidence-${{ github.run_id }}
-          # Only results/screenshots, never generated auth/config or native records.
-          path: |
-            ${{ runner.temp }}/studio_races/*results.json
-            ${{ runner.temp }}/studio_races/*.png
-            ${{ runner.temp }}/studio_identity_races/*results.json
-            ${{ runner.temp }}/studio_identity_races/*.png
-            ${{ runner.temp }}/workspace_browser/*results.json
-            ${{ runner.temp }}/workspace_browser/*.png
-            ${{ runner.temp }}/usable_browser/*results.json
-            ${{ runner.temp }}/usable_browser/*.png
-            ${{ runner.temp }}/template_browser/*results.json
-            ${{ runner.temp }}/template_browser/*.png
-            ${{ runner.temp }}/session_browser/*results.json
-            ${{ runner.temp }}/session_browser/*.png
-            ${{ runner.temp }}/workbench_browser/*results.json
-            ${{ runner.temp }}/workbench_browser/*.png
-            ${{ runner.temp }}/workbench_stable_browser/*results.json
-            ${{ runner.temp }}/workbench_stable_browser/*.png
+          # This path is emitted from the container's actual RUNNER_TEMP.
+          path: ${{ env.PUBLIC_BROWSER_EVIDENCE }}/
           retention-days: 7
           if-no-files-found: error

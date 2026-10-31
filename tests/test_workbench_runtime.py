@@ -7,7 +7,7 @@ from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]/'tools'),str(Path(__file__).resolve().parent)]
-from orchestration.common import Blocked,canonical,digest,save,tree_hash
+from orchestration.common import Blocked,canonical,digest,save,tree_hash,workspace_hash
 from studio.graph import Invalid
 from studio.server import Conflict
 from studio.workbench_runtime import WorkbenchRuntime
@@ -23,7 +23,7 @@ def fixture(owner, admission=False):
     base=test_agent_sessions.CenterTests();base.setUp();owner.addCleanup(base.doCleanups)
     old=base.development_runtime();policy=base.root/'workbench-policy.json'
     save(policy,dict(version=1,models={},external_steps={}))
-    rt=WorkbenchRuntime(old.operator_file,old.operator_sha256,tree_hash(Path(__file__).resolve().parents[1]),policy,digest(policy.read_bytes()))
+    rt=WorkbenchRuntime(old.operator_file,old.operator_sha256,tree_hash(Path(__file__).resolve().parents[1]),policy,digest(policy.read_bytes()),assistant_settings=base.root/'assistant-settings')
     base.runtime=rt;base.project=rt.open_workspace(str(base.source))
     # Reuse the old filesystem-fixture builder without adding a production API.
     rt.sessions=rt.session_center.discover
@@ -35,10 +35,14 @@ def fixture(owner, admission=False):
         gate=ModelAdmission(rt)
         for name,profile in rt.operator['profiles'].items():
             for mode in ('Ask','Plan','Agent'):
-                selected=rt.node_binding(base.project['id'],dict(profile=name,mode=mode),admission=False)
-                scope=gate.scope(selected['binding'],selected['cwd']);key=gate.key(selected['binding'],selected['cwd'])
-                rt.db.put('model-admission',key,dict(state='VERIFIED',verified_at=time.time(),scope=scope,
-                    evidence='SYNTHETIC fixture certificate, not a real model result'))
+                # Legacy graph templates retain an explicit 300s scope, while
+                # ordinary chat now uses the profile timeout. Keep both exact
+                # fixture scopes distinct; neither represents real admission.
+                for timeout in {300,profile.get('timeout_seconds',1800)}:
+                    selected=rt.node_binding(base.project['id'],dict(profile=name,mode=mode,timeout=timeout),admission=False)
+                    scope=gate.scope(selected['binding'],selected['cwd']);key=gate.key(selected['binding'],selected['cwd'])
+                    rt.db.put('model-admission',key,dict(state='VERIFIED',verified_at=time.time(),scope=scope,
+                        evidence='SYNTHETIC fixture certificate, not a real model result'))
     return base,rt
 
 
@@ -254,9 +258,10 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.base,self.rt=fixture(self, admission=True);self.w=self.base.project['id'];self.graph=examples(self.rt.operator['profiles'])[0]
     def request(self):return dict(workspace=self.w,graph=copy.deepcopy(self.graph),task='Synthetic transport boundary')
-    def test_folder_is_browsable_but_outside_roots_and_links_are_refused(self):
+    def test_folder_is_browsable_outside_roots_but_execution_is_refused(self):
         result=self.rt.folder(str(self.base.source));self.assertEqual(result['path'],str(self.base.source))
-        with self.assertRaises(Blocked):self.rt.folder('/etc')
+        outside=self.rt.folder('/etc');self.assertTrue(outside['openable']);self.assertFalse(outside['execution_allowed'])
+        with self.assertRaises(Blocked):self.rt.validate_source('/etc')
         link=self.base.source/'escape';link.symlink_to('/etc',target_is_directory=True)
         self.assertNotIn('escape',[x['name'] for x in self.rt.folder(str(self.base.source))['folders']])
     def test_ask_and_plan_cannot_select_write_permission(self):
@@ -341,7 +346,7 @@ class RuntimeTests(unittest.TestCase):
         self.rt.policy['external_steps']['fixed']=dict(kind='verify',argv=[executable],executable_sha256=sha,dependencies={executable:sha})
         self.rt.flow.put('run','r',dict(workspace=self.w,graph_sha256='g',authorization={},task='frozen task'))
         self.rt.flow.put('activation','a',dict(id='a',run='r'))
-        base=dict(run='r',activation='a',candidate_sha256=tree_hash(self.base.source),graph_sha256='g',
+        base=dict(run='r',activation='a',candidate_sha256=workspace_hash(self.base.source),graph_sha256='g',
                   authorization_sha256=digest(canonical({})),acceptance_sha256=digest(b'frozen task'),
                   tests=2,failures=1,errors=0,skipped=0,verdict='ACCEPT',verified=True)
         for changed in ({},{'failures':0,'candidate_sha256':'0'*64},{'failures':0,'tests':0},{'failures':0,'skipped':1}):
@@ -356,7 +361,7 @@ class RuntimeTests(unittest.TestCase):
         self.rt.policy['external_steps']['fixed']=dict(kind='delivery',argv=[executable],executable_sha256=sha,dependencies={executable:sha})
         self.rt.flow.put('run','r',dict(workspace=self.w,graph_sha256='g',authorization={},task='frozen task'))
         self.rt.flow.put('activation','a',dict(id='a',run='r'))
-        receipt=dict(run='r',activation='a',candidate_sha256=tree_hash(self.base.source),graph_sha256='g',
+        receipt=dict(run='r',activation='a',candidate_sha256=workspace_hash(self.base.source),graph_sha256='g',
                      authorization_sha256=digest(canonical({})),acceptance_sha256=digest(b'frozen task'),
                      verdict='ACCEPT',remote_verified=False,delivery_state='COMPLETED')
         with patch('studio.workbench_runtime.execute',return_value=({'exit':0,'timeout':False,'cancelled':False,'overflow':False},canonical(receipt),b'')):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the isolated Agent workbench, optionally using an external Stable approval."""
+"""Launch the Agent workbench with its explicit native or legacy operator profile."""
 import argparse
 import sys
 sys.dont_write_bytecode=True

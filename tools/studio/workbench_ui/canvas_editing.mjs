@@ -104,3 +104,21 @@ export function inspectorPlacement(rect, bounds, width = 370) {
   if (rect.left - width - gap >= bounds.left) return {pinned: false, x: rect.left - width - gap, y: top};
   return {pinned: true, x: bounds.right - width, y: bounds.top};
 }
+
+
+// Find genuinely empty screen space rather than covering a neighbouring node.
+// Narrow editors may use the space below the graph; the camera never moves.
+export function unobscuredInspectorPlacement(rect,bounds,occupied,viewportBottom,width=360){
+ const gap=12,intersects=(a,b)=>a.x<b.right+gap&&a.x+width>b.left-gap&&a.y<b.bottom+gap&&a.y+a.height>b.top-gap;
+ const visible=occupied.filter(r=>r.right>bounds.left&&r.left<bounds.right&&r.bottom>bounds.top&&r.top<bounds.bottom);
+ const fit=c=>c.height>=180&&c.x>=bounds.left+gap&&c.x+width<=bounds.right-gap&&!visible.some(r=>intersects(c,r));
+ const sideY=Math.max(bounds.top+gap,Math.min(rect.top,viewportBottom-300));
+ const bottom=Math.max(bounds.top,...visible.map(r=>r.bottom))+gap;
+ const top=Math.min(bounds.bottom,...visible.map(r=>r.top))-gap;
+ const x=Math.max(bounds.left+gap,Math.min(rect.left,bounds.right-width-gap));
+ const candidates=[{x:rect.right+gap,y:sideY,height:Math.min(420,viewportBottom-sideY)},
+  {x:rect.left-width-gap,y:sideY,height:Math.min(420,viewportBottom-sideY)},
+  {x,y:bottom,height:Math.min(420,viewportBottom-bottom)},
+  {x,y:bounds.top+gap,height:Math.min(420,top-bounds.top-gap)}];
+ const chosen=candidates.find(fit);return chosen?{pinned:false,...chosen}: {pinned:true};
+}

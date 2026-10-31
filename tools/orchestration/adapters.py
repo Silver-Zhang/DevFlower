@@ -75,6 +75,17 @@ class CLI:
         self.kind, self.binding, self.limits = kind, binding, limits
 
     def start(self, prompt, cwd, artifacts, output_schema=None, store=None, run=None, session=None):
+        if self.binding.get('execution_backend') == 'native-local':
+            if self.kind == 'codex':
+                from studio.local_codex_adapter import LocalCodex
+                return LocalCodex(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
+            if self.kind == 'claude':
+                from studio.local_claude_adapter import LocalClaude
+                return LocalClaude(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
+            raise Blocked('该 Provider 尚未支持本机原生会话')
+        if self.kind == 'copilot':
+            from studio.copilot_adapter import CopilotAdapter
+            return CopilotAdapter(self.binding,self.limits).start(prompt,cwd,artifacts,output_schema,store,run,session)
         b = self.binding
         if not Path(b['executable']).is_file() or not os.access(b['executable'], os.X_OK):
             raise Blocked('CLI executable unavailable before spawn')
@@ -91,8 +102,9 @@ class CLI:
         scratch = Path(artifacts) / ('scratch-' + b['role'])
         scratch.mkdir(exist_ok=True)
         read_only = b['role'] != 'implementer' or b.get('admission_probe', False)
-        prompt = (f"Role: {b.get('responsibility', b['role'])}. Background (task data): {b.get('background', '')}\n"
-                  f"Writable test artifacts: {scratch}. Source is {'read-only' if read_only else 'writable'}.\n" + prompt)
+        if b.get('conversation_format') != 'text':
+            prompt = (f"Role: {b.get('responsibility', b['role'])}. Background (task data): {b.get('background', '')}\n"
+                      f"Writable test artifacts: {scratch}. Source is {'read-only' if read_only else 'writable'}.\n" + prompt)
         if self.kind == 'codex':
             external = b.get('external_sandbox', False)
             if external and b.get('isolation') != 'bwrap':
@@ -102,7 +114,11 @@ class CLI:
                 argv += ['resume', session]
             argv += ['--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-c',
                      'sandbox_mode="danger-full-access"' if external else 'sandbox_mode="workspace-write"',
-                     '-c', 'approval_policy="never"', '-c', 'features.multi_agent=false']
+                     '-c', 'approval_policy="never"']
+            if b.get('no_tools'):
+                for feature in ('shell_tool','unified_exec','code_mode_host','apps','browser_use','computer_use','view_image','workspace_dependencies'):
+                    argv+=['-c','features.'+feature+'=false']
+                argv+=['-c','mcp_servers={}']
             if output_schema:
                 argv += ['--output-schema', str(output_schema)]
             if b['model'] != 'unknown':
@@ -111,7 +127,8 @@ class CLI:
                 argv += ['-c', 'model_reasoning_effort=' + json.dumps(b['effort'])]
             argv += ['-']
         else:
-            tools = b.get('tools', ['Read', 'Glob', 'Grep'])
+            tools = list(b.get('tools', ['Read', 'Glob', 'Grep']))
+            if b.get('subagents')=='readonly':tools.append('Agent')
             dynamic = bool(set(tools) - {'Read', 'Glob', 'Grep'})
             if dynamic and b.get('isolation') != 'bwrap':
                 raise Blocked('dynamic tools require mandatory outer bwrap')
@@ -135,9 +152,14 @@ class CLI:
                 argv += ['--model', b['model']]
             if b['effort'] != 'unknown':
                 argv += ['--effort', b['effort']]
+        from .native_features import native_args,skill_mounts
+        extension_args,extension_env=native_args(dict(b,provider=self.kind));argv=argv[:-1]+extension_args+argv[-1:] if self.kind=='codex' else argv+extension_args
+        env.update(extension_env)
+        mounts,masks=skill_mounts(dict(b,provider=self.kind),cwd,artifacts)
         request_op = store.intent(run, 'AGENT_REQUEST', {'kind': self.kind, 'project': b['project'],
             'role': b['role'], 'requested_session': requested_session,
-            'requested_model': b['model'], 'requested_effort': b['effort']}) if store else None
+            'requested_model': b['model'], 'requested_effort': b['effort'],
+            'skills':[{k:v[k] for k in ('id','sha256')} for v in b.get('skills',[])], 'subagents':b.get('subagents','disabled')}) if store else None
         if store and callable(getattr(store, 'visible_request', None)):
             # Application-owned visible request, never system instructions or hidden reasoning.
             store.visible_request(prompt)
@@ -175,7 +197,7 @@ class CLI:
                     timeout=step_timeout, cap=self.limits['max_log_bytes'],
                     input_text=prompt, store=store, run=run, env_extra=env, backend=b.get('isolation', 'landlock'), readonly_files=b.get('readonly_files', []),
                     context={'agent_role': b['role'], 'provider': self.kind, 'transport': transport_evidence['mode']},
-                    on_stdout=observe, readonly_paths=[str(Path(cwd)/'.git')])
+                    on_stdout=observe, readonly_paths=[str(Path(cwd)/'.git')],readonly_dirs=mounts,hidden_paths=masks)
         except Blocked as exc:
             category = 'authentication' if AUTH_FAILURE.search(str(exc).encode()) else 'configuration'
             if store:
@@ -213,7 +235,7 @@ class CLI:
                         cwd=str(cwd), home=b['home'], provider=self.kind,
                         permission_mode=('external-bwrap/tool-allowlist' if dynamic else 'plan/read-tools') if self.kind == 'claude' else
                             'external-bwrap/never' if b.get('external_sandbox') else 'workspace-write/never',
-                        adapter_version=VERSION)
+                        skills=[{k:v[k] for k in ('id','sha256')} for v in b.get('skills',[])],subagents=b.get('subagents','disabled'),adapter_version=VERSION)
         if envelope['resolved_model'] != 'unknown' and b['model'] != 'unknown':
             # Aliases cannot be compared with a resolved provider ID. Retain both.
             if b['model'].startswith(('gpt-', 'claude-')) and b['model'] != envelope['resolved_model']:
@@ -233,7 +255,7 @@ class CLI:
                 sid = obj.get('session_id')
                 report = obj.get('structured_output')
                 if report is None:
-                    report = json.loads(obj['result'])
+                    report = self.conversation_report(obj['result']) if self.binding.get('conversation_format') == 'text' else json.loads(obj['result'])
                 models = list(obj.get('modelUsage', {}))
                 resolved = models[0] if len(models) == 1 else 'unknown'
                 usage = {'total_cost_usd': obj.get('total_cost_usd', 'unknown'),
@@ -249,7 +271,7 @@ class CLI:
                 sid = starts[0].get('thread_id')
                 texts = [e['item']['text'] for e in events if e.get('type') == 'item.completed'
                          and e.get('item', {}).get('type') == 'agent_message']
-                report = json.loads(texts[-1])
+                report = self.conversation_report(texts[-1]) if self.binding.get('conversation_format') == 'text' else json.loads(texts[-1])
                 resolved = starts[0].get('model', 'unknown')
                 usage = {'usage': ends[0].get('usage', {}), 'total_cost_usd': 'unknown', 'semantics': 'turn'}
             if not isinstance(sid, str):
@@ -262,6 +284,20 @@ class CLI:
             raise Blocked('invalid CLI structured output') from None
         return {'session_id': sid, 'resolved_model': resolved, 'resolved_effort': 'unknown',
                 'report': report, 'usage': usage, 'process': process}
+
+    @staticmethod
+    def conversation_report(text):
+        if not isinstance(text, str) or not text.strip():
+            raise Blocked('missing visible native conversation answer')
+        # Compatibility with already-produced reply-only envelopes. Ordinary
+        # native text needs no JSON Schema tool and remains a native message.
+        try:
+            value = json.loads(text)
+            if isinstance(value, dict) and set(value) == {'reply'} and isinstance(value['reply'], str):
+                return value
+        except ValueError:
+            pass
+        return {'reply': text}
 
     def resume(self, session, **kwargs):
         if not session:

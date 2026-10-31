@@ -118,18 +118,23 @@ class AdmissionTests(unittest.TestCase):
  def test_launch_rechecks_certificate_after_preview(self):
   from studio.workbench_examples import examples
   # Seed the second provider only through the same synthetic native boundary.
-  self.verify()
+  self.verify(self.permit(timeout=300))
   p=self.rt.operator['profiles']['default-claude']
   with patch('studio.model_catalog.proxy_models',return_value=[dict(id=p['model'],efforts=[],source='proxy /v1/models')]):
-   self.verify(self.permit(profile='default-claude',model=p['model'],effort=p['effort']))
+   self.verify(self.permit(profile='default-claude',model=p['model'],effort=p['effort'],timeout=300))
   permit=self.rt.prepare_flow(dict(workspace=self.w,graph=examples(self.rt.operator['profiles'])[0],task='Synthetic no spawn after revoked admission'))
-  selected=self.selected();self.gate.invalidate(selected['binding'],selected['cwd'])
+  selected=self.selected(dict(self.node,timeout=300));self.gate.invalidate(selected['binding'],selected['cwd'])
   with patch.object(self.rt,'spawn') as spawn,self.assertRaises(Blocked):self.rt.launch_flow(permit['id'],permit['sha256'],'Synthetic authorized run')
   spawn.assert_not_called();self.assertEqual(self.rt.flow.list('run'),[])
  def test_actual_session_call_failure_revokes_certificate(self):
   self.verify();center=self.rt.session_center
   permit=center.prepare(dict(workspace=self.w,handle='new',profile=self.name,prompt='Synthetic failure',permission='read',model=self.p['model'],effort=self.p['effort'],mode='Ask'))
-  with patch.object(center,'_spawn'):
+  # This test drives the inner call synchronously. Represent its local test
+  # driver with an inspectable PID instead of an uninspectable MagicMock PID.
+  # Real post-Popen publication faults are covered by test_supervisor_spawn.
+  from types import SimpleNamespace
+  import os
+  with patch.object(center,'_spawn',return_value=SimpleNamespace(pid=os.getpid())):
    op=center.launch(permit['id'],permit['sha256'],'Synthetic authorized call')
   with patch('studio.session_center.CLI.start',side_effect=Blocked('Synthetic real-call boundary failure')):center.execute(op['id'])
   self.assertEqual(center.operation(op['id'],self.w)['state'],'FAILED')
@@ -173,5 +178,67 @@ class AdmissionTests(unittest.TestCase):
    self.verify(side_effect=revoked)
   status=self.gate.status(selected['binding'],selected['cwd'])
   self.assertFalse(status['execution_allowed']);self.assertEqual(self.rt.db.get('model-admission',status['key'])['state'],'FAILED')
+
+ def automatic(self,permit):
+  return self.gate.verify(permit['id'],permit['sha256'],'Normal composite confirmation; no manual retry',reuse_verified=True)
+ def test_automatic_failed_or_operator_revoked_scope_has_no_native_probe(self):
+  s=self.selected()
+  for reason in ('native-call-failed','operator-revoked'):
+   with self.subTest(reason=reason):
+    self.gate.invalidate(s['binding'],s['cwd'],reason);before=self.rt.db.get('model-admission',self.gate.key(s['binding'],s['cwd']))
+    permit=self.permit()
+    with patch.object(WorkbenchSessions,'rpc') as metadata,patch('studio.model_admission.CLI.start') as cli:
+     with self.assertRaisesRegex(Blocked,'自动检查不会重试'):self.automatic(permit)
+    cli.assert_not_called();metadata.assert_not_called()
+    self.assertEqual(self.rt.db.get('model-admission',before['key']),before)
+    self.assertEqual(self.rt.db.listing('session-operation'),[])
+ def test_revocation_between_status_prepare_and_verify_is_not_retry_intent(self):
+  s=self.selected()
+  self.assertEqual(self.gate.selection_status(self.request())['status'],'unverified')
+  self.gate.invalidate(s['binding'],s['cwd'],'revoke-after-status')
+  before_prepare=self.permit()
+  self.gate.invalidate(s['binding'],s['cwd'],'revoke-after-prepare')
+  with patch.object(WorkbenchSessions,'rpc') as metadata,patch('studio.model_admission.CLI.start') as cli:
+   with self.assertRaises(Blocked):self.automatic(before_prepare)
+  cli.assert_not_called();metadata.assert_not_called()
+  self.assertEqual(self.rt.db.listing('session-operation'),[])
+ def test_revoke_before_starting_cas_wins_for_missing_and_expired_proofs(self):
+  original=self.gate._publish
+  for timeout,previous in ((301,'missing'),(302,'expired')):
+   with self.subTest(previous=previous):
+    s=self.selected(dict(self.node,timeout=timeout));key=self.gate.key(s['binding'],s['cwd'])
+    if previous=='expired':self.rt.db.put('model-admission',key,dict(id='e'*32,state='VERIFIED',verified_at=time.time()-TTL,scope=self.gate.scope(s['binding'],s['cwd'])))
+    permit=self.permit(timeout=timeout)
+    def publish(event,**kw):
+     if event['state']=='STARTING':self.gate.invalidate(s['binding'],s['cwd'],'concurrent-operator-revoked')
+     return original(event,**kw)
+    with patch.object(self.gate,'_publish',publish),patch.object(WorkbenchSessions,'rpc') as metadata,patch('studio.model_admission.CLI.start') as cli:
+     with self.assertRaisesRegex(Blocked,'未发起原生调用'):self.automatic(permit)
+    cli.assert_not_called();metadata.assert_not_called()
+    self.assertEqual(self.rt.db.get('model-admission',key)['reason'],'concurrent-operator-revoked')
+  self.assertEqual(self.rt.db.listing('session-operation'),[])
+ def test_first_check_expired_check_and_valid_reuse_remain_distinct(self):
+  with patch.object(WorkbenchSessions,'rpc',self.metadata),patch('studio.model_admission.CLI.start',autospec=True,side_effect=self.response) as cli:
+   self.assertTrue(self.automatic(self.permit())['execution_allowed']);self.assertEqual(cli.call_count,1)
+   self.assertTrue(self.automatic(self.permit())['execution_allowed']);self.assertEqual(cli.call_count,1)
+   s=self.selected();key=self.gate.key(s['binding'],s['cwd']);proof=self.rt.db.get('model-admission',key)
+   self.rt.db.put('model-admission',key,dict(proof,verified_at=time.time()-TTL))
+   self.assertTrue(self.automatic(self.permit())['execution_allowed']);self.assertEqual(cli.call_count,2)
+   # A genuine manual revalidation must probe even while the proof is valid.
+   permit=self.permit();self.assertTrue(self.gate.verify(permit['id'],permit['sha256'],'Explicit user manual revalidation')['execution_allowed']);self.assertEqual(cli.call_count,3)
+ def test_explicit_manual_retry_probes_only_exact_failed_configuration(self):
+  s=self.selected();other=self.selected(dict(self.node,timeout=301))
+  for selected in (s,other):self.gate.invalidate(selected['binding'],selected['cwd'],'operator-revoked')
+  with patch.object(WorkbenchSessions,'rpc',self.metadata),patch('studio.model_admission.CLI.start',autospec=True,side_effect=self.response) as cli:
+   permit=self.permit();self.assertTrue(self.gate.verify(permit['id'],permit['sha256'],'User clicked retry connection; disclosed readonly nonce cost',reuse_verified=False)['execution_allowed'])
+  self.assertEqual(cli.call_count,1);self.assertTrue(cli.call_args.args[0].binding['admission_probe'])
+  self.assertFalse(self.gate.status(other['binding'],other['cwd'])['execution_allowed'])
+ def test_unknown_inflight_check_is_not_automatically_replayed(self):
+  s=self.selected();key=self.gate.key(s['binding'],s['cwd'])
+  self.rt.db.put('model-admission',key,dict(id='a'*32,state='STARTING',scope=self.gate.scope(s['binding'],s['cwd'])))
+  self.assertEqual(self.gate.status(s['binding'],s['cwd'])['status'],'unknown')
+  with patch.object(WorkbenchSessions,'rpc') as metadata,patch('studio.model_admission.CLI.start') as cli:
+   with self.assertRaises(Blocked):self.automatic(self.permit())
+  cli.assert_not_called();metadata.assert_not_called()
 
 if __name__=='__main__':unittest.main()

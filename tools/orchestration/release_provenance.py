@@ -168,8 +168,9 @@ class ReleaseProvenance:
         require_keys(owner['native_bindings'], ('reviewer', 'implementer'))
         require_keys(owner['invocations'], ('reviewer', 'implementer'))
         if (review['invocation'] != owner['invocations']['reviewer'] or
-                gate['implementation_invocation'] != owner['invocations']['implementer'] or review['provider'] != 'claude'):
-            raise Blocked('Release requires owner-bound Codex implementation and independent Claude review')
+                gate['implementation_invocation'] != owner['invocations']['implementer'] or
+                review['provider'] not in ('codex', 'claude')):
+            raise Blocked('Release requires owner-bound Codex implementation and supported independent review')
         identity = owner['identity']
         require_keys(identity, ('run_id', 'round', 'candidate_sha256', 'acceptance_sha256'))
         if (not isinstance(identity['run_id'], str) or not identity['run_id'].strip() or
@@ -200,7 +201,7 @@ class ReleaseProvenance:
         report = self.read(review['report']); native = self.read(review['native_result'])
         implementation = self.read(gate['implementation'])
         native_result(native); native_result(implementation)
-        self.invocation(review['invocation'], review['native_result'], native, owner, 'reviewer', 'claude')
+        self.invocation(review['invocation'], review['native_result'], native, owner, 'reviewer', review['provider'])
         self.invocation(gate['implementation_invocation'], gate['implementation'], implementation, owner, 'implementer', 'codex')
         if not isinstance(gate['verification'], list): raise Blocked('Invalid Gate verification evidence')
         for verification in gate['verification']:

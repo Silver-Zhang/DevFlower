@@ -153,3 +153,47 @@ class NativeTerminalProtocolTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class NativeTerminalOuterIsolationTests(unittest.TestCase):
+    def test_native_codex_uses_probed_external_mode_and_claude_retains_read_tools(self):
+        from devflower_native_terminal import native_cli_argv
+        common=dict(executable='/SYNTHETIC/native',model='opaque-model',effort='high')
+        args=native_cli_argv(dict(common,provider='codex'),'SYNTHETIC-UUID')
+        self.assertEqual(args[args.index('--sandbox')+1],'danger-full-access')
+        self.assertEqual(args[args.index('--ask-for-approval')+1],'never')
+        args=native_cli_argv(dict(common,provider='claude'),'SYNTHETIC-UUID')
+        self.assertEqual(args[args.index('--permission-mode')+1],'plan')
+        self.assertEqual(args[args.index('--tools')+1],'Read,Glob,Grep')
+
+    def test_outer_wrapper_actually_denies_source_authority_and_credential_writes(self):
+        from devflower_native_terminal import wrap_native_cli
+        from orchestration.common import clean_env
+        import tempfile,subprocess,json,sys
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);source=root/'source';home=root/'native';scratch=root/'scratch'
+            for p in [source,home,scratch]:p.mkdir()
+            (source/'README.md').write_text('SYNTHETIC readable source\n')
+            authority=root/'private-authority';authority.write_text('SYNTHETIC AUTHORITY')
+            credential=root/'private-credential';credential.write_text('SYNTHETIC CREDENTIAL')
+            binding=dict(read_paths=[],readonly_files=[(str(credential),'.codex/auth.json')])
+            checks=[source/'unexpected-source-write',authority,home/'.codex/auth.json']
+            script='''import pathlib,json,sys
+source,home,scratch=map(pathlib.Path,sys.argv[1:4]);targets=list(map(pathlib.Path,sys.argv[4:]));denied=[]
+for p in targets:
+ try:p.write_text('UNEXPECTED')
+ except OSError:denied.append(True)
+ else:denied.append(False)
+(scratch/'allowed-private-scratch').write_text('ok')
+print(json.dumps(dict(read=(source/'README.md').read_text(),denied=denied,scratch=True)))
+'''
+            argv=wrap_native_cli(binding,str(source),home,str(scratch),[sys.executable,'-B','-c',script,str(source),str(home),str(scratch),*[str(p) for p in checks]])
+            env=clean_env(home);env['TMPDIR']=str(scratch)
+            result=subprocess.run(argv,capture_output=True,text=True,env=env,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            proof=json.loads(result.stdout);self.assertEqual(proof['read'],'SYNTHETIC readable source\n');self.assertEqual(proof['denied'],[True,True,True]);self.assertTrue(proof['scratch'])
+            self.assertFalse(checks[0].exists());self.assertEqual(authority.read_text(),'SYNTHETIC AUTHORITY');self.assertEqual(credential.read_text(),'SYNTHETIC CREDENTIAL')
+
+    def test_unknown_native_provider_is_never_a_shell_fallback(self):
+        from devflower_native_terminal import native_cli_argv
+        from orchestration.common import Blocked
+        with self.assertRaises(Blocked):native_cli_argv(dict(provider='unsupported'),'SYNTHETIC')

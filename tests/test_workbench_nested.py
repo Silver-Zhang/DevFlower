@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from orchestration.common import digest
+from orchestration.common import canonical, digest
 from studio.workbench_examples import examples
 from studio.workbench_graph import validate_graph
 from studio.workbench_scheduler import Scheduler
@@ -119,22 +119,28 @@ class NestedRoundTests(unittest.TestCase):
                     model=node['model'],effort=node['effort'],home=str(root/'native'/node['id']),session_id=None))
             rt=SimpleNamespace(flow=store,db=store,storage=root/'storage',check_operator=lambda:None,
                 node_binding=binding,source_lock=lambda cwd:root/'source.lock',recheck_session=lambda chat:None,
-                attachments=lambda cwd,paths:[],native_snapshot=lambda workspace,binding:{})
+                attachments=lambda cwd,paths:[],native_snapshot=lambda workspace,binding:{'native_path':str(Path(binding['home'])/'synthetic-history.jsonl')})
             store.put('run','native',dict(id='native',workspace='test',state='QUEUED',task='nested session reuse',
-                graph=validate_graph(graph),created_at=time.time(),paused=False,cancel_requested=False))
+                task_sha256=digest(b'nested session reuse'),candidate_sha256='0'*64,
+                graph_sha256=digest(canonical(graph)),graph=validate_graph(graph),created_at=time.time(),paused=False,cancel_requested=False))
             calls=[];summaries=[]
             def native_cli(provider,binding,options):
                 def start(prompt,cwd,artifacts,schema,journal,run):
                     activation=store.get('activation',journal.key)
                     node=activation['node'];sid='session-'+node.replace('/','-')
                     calls.append(dict(node=node,path=activation['iteration_path'],session=binding['session_id'],prompt=prompt))
+                    self.assertIn('nested session reuse', prompt)
+                    # A bounded native-history double for the new per-activation
+                    # byte range. No genuine Provider execution is claimed here.
+                    transcript=Path(binding['home'])/'synthetic-history.jsonl';transcript.parent.mkdir(parents=True,exist_ok=True)
+                    with transcript.open('a') as stream:stream.write(json.dumps({'synthetic_turn':activation['id']})+'\n')
                     if node.endswith('/summary'):summaries.append(activation['id'])
                     journal.input_sent(None,len(prompt.encode()),digest(prompt.encode()))
                     return dict(session_id=sid,report=dict(reply=node,summary=node,accepted=True,
                         result_json=json.dumps(dict(score=len(summaries),inner_round=activation['iteration'])),
                         artifacts=[],evidence=[],issues=[],next=''))
                 return SimpleNamespace(start=start)
-            with patch('studio.workbench_scheduler.CLI',side_effect=native_cli), patch('studio.model_admission.ModelAdmission.require'):
+            with patch('studio.workbench_scheduler.CLI',side_effect=native_cli), patch('studio.model_admission.ModelAdmission.require',return_value=dict(key='0'*64,verification_id='synthetic-nested-certificate')):
                 Scheduler(rt,'native').run_graph()
             result=store.get('run','native')
             self.assertEqual(result['state'],'COMPLETED',result.get('reason'))
@@ -147,6 +153,8 @@ class NestedRoundTests(unittest.TestCase):
                 self.assertEqual(len({a['id'] for a in turns}),4)
                 self.assertEqual([a['initialization_included'] for a in turns],[True,False,False,False])
                 self.assertTrue(chat['initialized'])
+                self.assertTrue(all(a['native_history_end']>a['native_history_offset'] for a in turns))
+                self.assertEqual([a['native_history_offset'] for a in turns][1:],[a['native_history_end'] for a in turns][:-1])
                 self.assertTrue(all(a['receipt']['session_id']==chat['binding']['session_id'] for a in turns))
                 sent=sorted((c for c in calls if c['node']==chat['node']),key=lambda c:c['path'])
                 self.assertEqual([c['session'] for c in sent],[None]+[chat['binding']['session_id']]*3)

@@ -30,6 +30,7 @@ def main():
         _,row=structured_session(base,rt,label)
         rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic '+label))
         session_rows[label]=dict(handle=row['handle'],session_id=row['session_id'])
+    rt.flow.event('dialog-A-run','fixture-history',node='loop/analyze',reason='')  # Synthetic UI-only history event, not a real control action.
     # Native Codex final text already supplies this answer: no second result body.
     _,row=structured_session(base,rt,'dialog-native','codex',native_answers=True)
     rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic dialog-native'))
@@ -52,15 +53,29 @@ def main():
     original_rpc=WorkbenchSessions.rpc
     def metadata(manager,binding,cwd,method,params):
         if method=='cli/probe':return dict(available=True,machine_output=True,version='synthetic metadata fixture',resume=True)
-        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])])])
+        if method=='model/list':return dict(data=[dict(model=binding['model'],supportedReasoningEfforts=[dict(reasoningEffort=binding['effort'])]),dict(model='synthetic-configurable-model',supportedReasoningEfforts=[dict(reasoningEffort='high'),dict(reasoningEffort='low')])])
         if method=='account/read':return dict(account={'type':'synthetic fixture'})
         if method=='claude/auth-status':return dict(logged_in=True,auth_method='synthetic fixture',service_verified=False)
         return original_rpc(manager,binding,cwd,method,params)
     metadata_patch=patch.object(WorkbenchSessions,'rpc',metadata);metadata_patch.start();owner.addCleanup(metadata_patch.stop)
-    server,token=create_server(rt);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    # Built-in assistant browser scenarios are synthetic; never use a real
+    # signed-in Copilot account as an unlabelled catalog/model fixture.
+    from test_canvas_assistant import SyntheticBackend
+    from studio.canvas_assistant import CanvasAssistant
+    from studio.devflower_agent import AGENT_ID
+    rt.flow.put('canvas-conversation','c'*32,dict(id='c'*32,agent_id=AGENT_ID,workspace=workspace,revision=1,title='Synthetic 请求状态待确认',updated_at=0,active_turn='d'*32,messages=[dict(role='user',text='此前请求，没有伪造回答',turn='d'*32)]))
+    rt.flow.put('canvas-turn','d'*32,dict(id='d'*32,conversation='c'*32,workspace=workspace,state='RUNNING',owner=None,created_at=0,reason=None,proposal=None,receipt=None))
+    def synthetic_assistant(runtime):
+        assistant=CanvasAssistant(runtime);assistant.backend=SyntheticBackend;return assistant
+    assistant_patch=patch('studio.canvas_assistant.CanvasAssistant',synthetic_assistant);assistant_patch.start();owner.addCleanup(assistant_patch.stop)
+    server,token=create_server(rt)
+    # Drain real in-flight history requests before deleting the fixture DBs.
+    # Browser disconnect does not itself end the server's request thread.
+    server.daemon_threads=False
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     access=out/'access.json';access.write_text(json.dumps(dict(url='http://127.0.0.1:'+str(server.server_port),token=token,workspace=workspace,path=str(base.source),sessions=session_rows,lost_run=lost)))
     access.chmod(0o600)
-    try:return subprocess.run([a.node,str(Path(__file__).with_suffix('.cjs')),str(out)],timeout=180,env=dict(os.environ,CHROMIUM=a.chromium,PLAYWRIGHT_MODULE=a.playwright_module)).returncode
+    try:return subprocess.run([a.node,str(Path(__file__).with_suffix('.cjs')),str(out)],timeout=900,env=dict(os.environ,CHROMIUM=a.chromium,PLAYWRIGHT_MODULE=a.playwright_module,WORKBENCH_TEST_PYTHON=sys.executable)).returncode
     finally:server.shutdown();server.server_close();thread.join();owner.doCleanups()
 
 

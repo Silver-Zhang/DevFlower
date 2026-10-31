@@ -24,7 +24,7 @@ All objects below are closed schemas except existing native result and process e
 | --- | --- |
 | Release record (`version: 2`, **no kind**) | `root`, `git_commit`, `git_tree`, `candidate_sha256`, `files`, `provenance` |
 | `provenance` (unversioned) | `contract`, `review`, `gate`, `owner`, `commit`, each a Ref |
-| `release-review` | `identity`, `provider: "claude"`, `report` Ref, `native_result` Ref, `invocation` Ref |
+| `release-review` | `identity`, `provider: "claude"` or `"codex"`, `report` Ref, `native_result` Ref, `invocation` Ref |
 | `release-gate` | `identity`, `verdict: "ACCEPT"`, `process`, `review` Ref, `report_sha256`, `supervisor` Ref, `implementation` Ref, `verification` array, `implementation_invocation` Ref |
 | `release-owner` | `identity`, `root`, `git_commit`, `git_tree`, `scope: ["install","start"]`, `required_contracts`, `verification_ids`, `reviewer_session_id`, `implementation_session_id`, `contract` Ref, `review` Ref, `gate` Ref, `commit` Ref, `supervisor` Ref, `user_grant` Ref, `native_bindings`, `invocations` |
 
@@ -69,7 +69,7 @@ The owner additionally supplies two closed maps:
 - `native_bindings: {"reviewer": Binding, "implementer": Binding}`: the separately approved exact invocation requests, including returned session IDs and executable Refs.
 - `invocations: {"reviewer": Ref, "implementer": Ref}`: immutable observation files. review.invocation equals owner.invocations.reviewer; Gate.implementation_invocation equals owner.invocations.implementer.
 
-This release protocol requires **Codex/provider codex with role implementer**, and a **distinct Claude/provider claude with role reviewer**. Both attestation Bindings must equal their owner-authorized Binding, the observed process/result must match the unchanged native envelope, and model/effort/session must match exactly. review.provider must be claude and match the actual reviewer invocation. Required roles cannot be swapped even if all outer hashes are re-pinned.
+This release protocol requires **Codex/provider codex with role implementer**, and a **distinct reviewer** using provider `claude` or `codex` as explicitly authorized by the owner. Both attestation Bindings must equal their owner-authorized Binding, the observed process/result must match the unchanged native envelope, and model/effort/session must match exactly. review.provider must match the actual owner-authorized reviewer invocation. Required roles cannot be swapped even if all outer hashes are re-pinned. This consumer compatibility does not change the default Claude executor or independently establish that a Codex review was performed.
 
 Model names are opaque strings. There is no family/prefix classification, model-name allowlist or catalog/cache inference: an explicitly approved alias with any spelling is accepted when the observed request and original native receipt agree. Resolved model/effort remain separately reported; they are not inferred from the alias. If an original result already contains provider/role/requested_provider/requested_role/model/effort/executable/executable_sha256 or source identity claims, including in optional binding/identity objects, contradictions are refused. A string executable claim must equal the canonical Ref path; a Ref claim must equal the complete Ref.
 
