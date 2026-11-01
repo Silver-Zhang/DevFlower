@@ -66,6 +66,12 @@ function check(value,message){if(!value)throw new Error(message);checks++;}
   check(!(await page.locator('#session-messages').innerText()).includes('VISIBLE'),'Late history response leaked across workspace switch');
   check((await page.locator('#workspace-info').innerText()).includes('只读'),'Nonrepository workspace must open read only');
   check(await page.locator('#session-new').isDisabled(),'Read-only folder cannot run native sessions');
+  // Subsequent persistence/reopen checks target source, not the unrelated
+  // read-only workspace just used for the late-history isolation check.
+  await page.locator('.workspace-menu').evaluate(e=>e.open=true);
+  await page.locator('#recent').selectOption({label:access.source});
+  await page.waitForFunction(p=>document.querySelector('#workspace-info').textContent.includes(p),access.source);
+  await page.waitForFunction(()=>document.querySelectorAll('.session-card').length===2);
   await page.keyboard.press('Escape');
   await page.locator('#template-library summary').click();await page.locator('#template').selectOption('A');await page.locator('#new-draft').click();
   await page.waitForSelector('#canvas [data-node="developer"]');
@@ -85,7 +91,12 @@ function check(value,message){if(!value)throw new Error(message);checks++;}
   const plan=await compiled.json();
   check(plan.runtime_gates.includes('freeze')&&plan.runtime_gates.includes('independent-review'),'Provider changes cannot remove trusted gates');
   check(plan.document.nodes.find(n=>n.type==='developer').config.provider==='claude'&&plan.document.nodes.find(n=>n.type==='reviewer').config.provider==='codex','Actual saved node providers must match UI choices');
-  await page.keyboard.press('Escape');const saved=page.waitForResponse(r=>r.url().endsWith('/api/draft'));await page.locator('#save').click();await saved;
+  await page.keyboard.press('Escape');const saved=page.waitForResponse(r=>r.url().endsWith('/api/draft'));await page.locator('#save').click();const savedResponse=await saved;
+  check(savedResponse.status()===200,'Edited workflow save must succeed');const savedDraft=await savedResponse.json();
+  const status=await page.request.get(access.url+'/api/status?workspace='+encodeURIComponent(savedDraft.workspace),{headers:{Authorization:'Bearer '+access.token}});
+  check(status.status()===200,'Saved workspace status must be available');const data=await status.json();
+  check(data.workspaces.some(w=>w.id===savedDraft.workspace&&w.path===access.source),'Draft must belong to the source workspace');
+  check(data.drafts.some(d=>d.id===savedDraft.id&&d.document.name==='Issue9 swapped providers'),'Saved draft must exist in its own workspace');
   await page.screenshot({path:path.join(output,'synthetic-provider-canvas.png')});
   await page.close();page=await browser.newPage();await page.goto(access.url+'/#token='+access.token);
   await page.waitForSelector('#studio[data-ready="true"]');
@@ -93,6 +104,7 @@ function check(value,message){if(!value)throw new Error(message);checks++;}
   check((await page.locator('#recent').innerText()).includes(access.source),'Recent workspaces must persist after browser close');
   await page.locator('#recent').selectOption({label:access.source});
   await page.waitForFunction(()=>document.querySelectorAll('.session-card').length===2);
+  await page.waitForFunction(id=>Array.from(document.querySelector('#drafts').options).some(o=>o.value===id),savedDraft.id);
   check((await page.locator('#drafts').textContent()).includes('Issue9 swapped providers'),'Edited workflow must persist independently of browser session');
   await page.locator('[data-go="sessions"]').first().click();
   check(!(await page.locator('#sessions').innerText()).includes('DevFlower 已隐藏'),'Unhide must persist after browser close');
