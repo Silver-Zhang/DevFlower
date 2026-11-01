@@ -52,12 +52,18 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
         for key,default,lo,hi,label in [('calls',32,1,100,'调用次数'),('seconds',3600,10,14400,'运行时间')]:
             value=budget.get(key,default)
             if type(value) is not int or not lo<=value<=hi:add('error',f'{label}需要在 {lo}–{hi} 范围内。',field='budget')
+    node_labels={}
     def walk(g,prefix='',depth=0):
         if not isinstance(g,dict) or not isinstance(g.get('nodes'),list) or not isinstance(g.get('edges'),list):
             add('error','流程节点或连线格式无效。',node=prefix.rstrip('/') or None,field='graph');return
         if depth>2 or len(g['nodes'])>64 or len(g['edges'])>128:
             add('error','节点、连线或嵌套层级超出上限。',node=prefix.rstrip('/') or None,field='graph');return
         nodes=[n for n in g['nodes'] if isinstance(n,dict) and isinstance(n.get('id'),str)]
+        def display_name(n):return n.get('name') if isinstance(n.get('name'),str) and n['name'] else '未命名节点'
+        for index,n in enumerate(nodes,1):
+            label=display_name(n)
+            if sum(display_name(x)==label for x in nodes)>1:label+=f'（节点 {index}）'
+            node_labels[prefix+n['id']]=label
         ids={n.get('id') for n in nodes if isinstance(n.get('id'),str)}
         incoming={n:0 for n in ids};outgoing={n:0 for n in ids};forward={n:[] for n in ids};reverse={n:[] for n in ids}
         by_id={n['id']:n for n in nodes}
@@ -133,11 +139,13 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
         starts=[n['id'] for n in nodes if n.get('kind')=='start'];results=[n['id'] for n in nodes if n.get('kind')=='result']
         from_start=reachable(starts,forward);to_result=reachable(results,reverse)
         for n in nodes:
-            ident=n.get('id');path=prefix+str(ident or '?');kind=n.get('kind');name=n.get('name') or '未命名节点'
-            if starts and ident not in from_start:add('error',f'「{name}」无法从开始节点到达，请连接到流程。',node=path,field='edge')
-            if results and ident not in to_result:add('error',f'「{name}」无法到达结果节点，请连接到结果。',node=path,field='edge')
-            if kind!='start' and incoming.get(ident,0)==0:add('error',f'「{name}」没有输入连线，请连接上游节点。',node=path,field='edge')
-            if kind!='result' and outgoing.get(ident,0)==0:add('error',f'「{name}」没有输出连线，请连接下一节点。',node=path,field='edge')
+            ident=n.get('id');path=prefix+str(ident or '?');kind=n.get('kind');name=node_labels[path]
+            connections=[]
+            if kind!='start' and incoming.get(ident,0)==0:connections.append('缺少输入连线，请连接上游节点')
+            elif starts and ident not in from_start:connections.append('无法从开始节点到达，请检查上游路径')
+            if kind!='result' and outgoing.get(ident,0)==0:connections.append('缺少输出连线，请连接下一节点')
+            elif results and ident not in to_result:connections.append('无法到达结果节点，请检查下游路径')
+            if connections:add('error',f'「{name}」连接不完整：'+'；'.join(connections)+'。',node=path,field='edge')
             if incoming.get(ident,0)>1 and kind not in ('merge','result'):add('error',f'「{name}」收到多路输入，请先添加汇合节点。',node=path,field='edge')
             from .data_contracts import normalize
             for contract in ('input_contract','output_contract'):
@@ -342,6 +350,17 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
     if isinstance(budget,dict) and type(budget.get('calls',32)) is int and estimate>budget.get('calls',32):
         add('warning',f'所有分支及循环的上限合计可能需要 {estimate} 次模型调用，超过当前预算；未选分支或提前结束可能少于此数。',field='budget')
     try:validate_graph(graph)
-    except (Invalid,ValueError,TypeError,KeyError,AttributeError,RecursionError) as exc:add('error','流程结构需要修正：'+str(exc),field='graph')
+    except (Invalid,ValueError,TypeError,KeyError,AttributeError,RecursionError) as exc:
+        message=str(exc)
+        # These connectivity findings already carry exact locate identities above.
+        if not message.startswith(('存在未连接到开始节点的流程节点：','多路输入请先连接到显式汇合节点：')):
+            raw_ids={path.split('/')[-1] for path in node_labels}
+            referenced=set()
+            def readable(match):
+                ident=match.group(0);matches=[(path,label) for path,label in node_labels.items() if path.split('/')[-1]==ident]
+                referenced.update(path for path,_ in matches)
+                return '「'+' / '.join(dict.fromkeys(label for _,label in matches))+'」'
+            if raw_ids:message=re.sub(r'(?<![A-Za-z0-9_-])(?:'+'|'.join(re.escape(x) for x in sorted(raw_ids,key=len,reverse=True))+r')(?![A-Za-z0-9_-])',readable,message)
+            add('error','流程结构需要修正：'+message,node=next(iter(referenced)) if len(referenced)==1 else None,field='graph')
     add('warning','静态检查不会调用模型或证明连接成功；实际结果以任务回执为准。',field='model')
     return result()

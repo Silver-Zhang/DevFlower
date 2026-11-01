@@ -8,7 +8,7 @@ import os
 import re
 from contextlib import nullcontext
 from .provider_transport import claude_transport
-from .common import Blocked, canonical, clean_env, digest
+from .common import Blocked, canonical, clean_env, cli_probe_env, digest
 from .privacy import credentials, redact
 from .process import execute
 
@@ -48,7 +48,7 @@ def probe(executable, kind):
     def call(args):
         try:
             p = subprocess.run([executable, *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               timeout=15, env=dict(clean_env(), HOME=str(Path.home())))
+                               timeout=15, env=dict(cli_probe_env(), HOME=str(Path.home())))
             return p.returncode, p.stdout.decode(errors='replace')
         except (OSError, subprocess.TimeoutExpired):
             return -1, ''

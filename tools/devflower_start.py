@@ -19,7 +19,7 @@ import tomllib
 import webbrowser
 
 sys.dont_write_bytecode = True
-from orchestration.common import Blocked, canonical, clean_env, digest, manifest
+from orchestration.common import Blocked, canonical, clean_env, cli_probe_env, digest, manifest
 from orchestration.store import alive, process_identity
 from studio.session_sources import clean_path, opened
 
@@ -107,7 +107,7 @@ def write_new(path, value):
 
 def probe(argv, home):
     """Only metadata/help and a /bin/true isolation probe; discard native stderr."""
-    env = clean_env(str(home))
+    env = cli_probe_env(str(home))
     env['PATH'] = os.environ.get('PATH', env['PATH'])
     env['CODEX_HOME'] = str(home/'.codex')
     try:

@@ -51,6 +51,7 @@ export function NodeConversation({api,workspace,activation,run,names,onSession})
   <article className="message user"><span className="message-role">本次任务</span><Markdown remarkPlugins={[remarkGfm]} skipHtml>{value.task}</Markdown>{task&&task!==value.task&&<details><summary>给此 Agent 的指令</summary><Markdown skipHtml>{task}</Markdown></details>}</article>
   <InputCards sections={value.request_sections} names={names} actual={value.actual_request_recorded}/>
   <ToolActivity items={value.activity}/>
+  {value.activity_history_status==='unavailable'&&<small className="hint">本轮工具历史范围无法核验；未读取其他回合补齐。</small>}
   <ConversationMessages messages={value.messages.filter(m=>m.role==='assistant'&&m.text.trim()!=='No response requested.')} answer={value.saved_answer}/>
   {value.summaries.length>0&&<details className="reasoning-summary"><summary>Provider 公开推理摘要</summary>{value.summaries.map((s,i)=><Markdown key={i} skipHtml>{s.text}</Markdown>)}</details>}
   {['STARTING','RUNNING'].includes(value.state)&&<div className="live-status" role="status"><i/>{value.connection_check?'正在检查 Agent 连接':value.process_alive?'Agent 原生进程运行中':'正在准备 Agent'} · {value.activity.length?'工具活动随原生记录更新':'等待 Provider 提供可见输出'}</div>}

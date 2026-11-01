@@ -77,6 +77,18 @@ class WorkbenchSessions:
                 binding.get('project',workspace)==workspace and isinstance(sid,str) and UUID.fullmatch(sid) and item.get('observed_session')==sid)
         journal=journal_tools(item.get('native_tool_activity',[]),secret,state) if scoped else []
         value['activity']=journal
+        def scoped_history(session):
+            offset=item.get('native_history_offset');end=item.get('native_history_end')
+            if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
+                raise Invalid('此历史运行没有记录可核验的本轮原生范围')
+            _,native=self.rt.session_center.resolve(workspace,session['handle'])
+            if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
+                raise Blocked('原生历史路径与本轮绑定不一致')
+            history=self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
+            current=self.db.get('activation',activation)
+            if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
+                raise Invalid('本轮记录正在提交，下一次读取核验')
+            return history
         try:
             if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not getattr(self.rt,'readonly_configuration_warning',lambda:None)():
                 from .native_local import codex_history
@@ -85,18 +97,18 @@ class WorkbenchSessions:
                 session=self.activation_session(workspace,run,activation)
                 messages=codex_history(dict(binding,_metadata_guard=str(self.rt.storage)),chat['cwd'],binding['session_id'],turn_id=turn)
                 value.update(session=session,history_status='available',messages=redact(messages,secret))
+                # Native RPC text omits tools rejected by the CLI before RPC.
+                # Reuse the scheduler's actual append boundaries, never the full
+                # session or another turn as an approximate activity fallback.
+                value['activity_history_status']='unavailable'
+                if scoped:
+                    try:
+                        history=scoped_history(session)
+                        value.update(activity=merge_activity(history.get('activity',[]),journal),summaries=history.get('summaries',[]),activity_history_status='available')
+                    except (Invalid,Blocked,ValueError,OSError):pass
             else:
-                offset=item.get('native_history_offset');end=item.get('native_history_end')
-                if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
-                    raise Invalid('此历史运行没有记录可核验的本轮原生范围')
                 session = self.activation_session(workspace,run,activation)
-                _,native=self.rt.session_center.resolve(workspace,session['handle'])
-                if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
-                    raise Blocked('原生历史路径与本轮绑定不一致')
-                history = self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
-                current=self.db.get('activation',activation)
-                if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
-                    raise Invalid('本轮记录正在提交，下一次读取核验')
+                history=scoped_history(session)
                 value.update(session=session,history_status='available',messages=history.get('messages',[]),
                              activity=merge_activity(history.get('activity',[]),journal),summaries=history.get('summaries',[]))
         except (Invalid,Blocked,ValueError,OSError):
