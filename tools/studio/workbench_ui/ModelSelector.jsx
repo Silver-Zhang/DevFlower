@@ -25,7 +25,7 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
    {!selected&&<option value={model||''}>{model||'请选择模型'}（目录尚未确认）</option>}
    {models.map(m=><option key={m.id} value={m.id} >{m.name||m.id}</option>)}
   </select></label>
-  <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending} value={effort||''} onChange={e=>choose({model,effort:e.target.value})}>{!efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{efforts.map(x=><option key={x}>{x}</option>)}</select></label>
+  <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending} value={effort||''} onChange={e=>choose({model,effort:e.target.value})}>{!efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{efforts.map(x=><option key={x}>{x}</option>)}</select><small className="hint">低更省 token；高强度更慢，按任务选择。</small></label>
   <button type="button" className="refresh-models" aria-busy={pending} disabled={pending||disabled} onClick={()=>load(true)}>刷新模型</button>
   {pending&&<small role="status" aria-label="模型读取状态">正在读取模型目录…</small>}
   {(error||current?.error)&&<p role="alert">{error||current.error}</p>}
