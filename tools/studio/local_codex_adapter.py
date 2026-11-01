@@ -65,6 +65,9 @@ class LocalCodex:
         return self._start_unshared(prompt,cwd,artifacts,output_schema,store,run,session)
 
     def _start_narrow(self,prompt,cwd,artifacts,output_schema,store,run,session):
+        missing=[k for k in ('provider','executable','model','effort') if not isinstance(self.b.get(k),str) or not self.b.get(k)]
+        if missing:
+            raise Blocked('内部执行绑定缺少必需字段：'+'、'.join(missing)+'；未启动进程、未读取认证')
         from .native_codex_image import NativeImage
         with NativeImage(self.b['executable']) as image:
             return self._start_narrow_pinned(prompt,cwd,artifacts,output_schema,store,run,session,image)
