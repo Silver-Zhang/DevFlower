@@ -1,5 +1,5 @@
 import React,{useState} from 'react';
-import {FolderOpen,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2,Trash2,Sparkles,X} from 'lucide-react';
+import {FolderOpen,FolderTree,MessageSquare,Workflow,Plus,ChevronRight,Blocks,MousePointer2,Trash2,Sparkles,X} from 'lucide-react';
 
 // DevFlower workspace navigation around the existing runtime.
 // Licensed Sim interaction hooks are separately attributed under vendor/sim.
@@ -27,11 +27,11 @@ export function WorkspaceNavigation({migration,workspace,drafts,legacy=[],curren
  </>;
 }
 
-export function StudioTools({panels,onClose,kinds,disabled,onAdd,onLibrary,palette,library,inspecting,onTools,assistantOpen,onAssistant,assistant}) {
+export function StudioTools({panels,onClose,kinds,disabled,onAdd,onLibrary,palette,library,inspecting,onTools,assistantOpen,onAssistant,assistant,files,filesOpen,onFiles}) {
  const [query,setQuery]=useState('');
  return <aside className="studio-tools" aria-label="工作流工具">
-  <nav className="studio-tools-tabs" aria-label="工作台侧栏"><button aria-label="查看节点工具库" className={!assistantOpen&&!library?'active':''} aria-pressed={!assistantOpen&&!library} onClick={onTools}><Blocks size={14}/>工具</button><button className={library?'active':''} aria-pressed={Boolean(library)} onClick={onLibrary}>示例模板</button><button className={assistantOpen?'active':''} aria-pressed={Boolean(assistantOpen)} onClick={onAssistant}><Sparkles size={14}/>AI 助手</button><button className="tools-close" title="收起工作台侧栏" aria-label="收起工作台侧栏" onClick={onClose}><X size={15}/></button></nav>
-  {panels}
+  <nav className="studio-tools-tabs" aria-label="工作台侧栏"><button aria-label="查看节点工具库" className={!assistantOpen&&!library&&!filesOpen?'active':''} aria-pressed={!assistantOpen&&!library&&!filesOpen} onClick={onTools}><Blocks size={14}/>工具</button><button className={library?'active':''} aria-pressed={Boolean(library)} onClick={onLibrary}>示例模板</button><button className={filesOpen?'active':''} aria-pressed={Boolean(filesOpen)} onClick={onFiles}><FolderTree size={14}/>文件</button><button className={assistantOpen?'active':''} aria-pressed={Boolean(assistantOpen)} onClick={onAssistant}><Sparkles size={14}/>AI 助手</button><button className="tools-close" title="收起工作台侧栏" aria-label="收起工作台侧栏" onClick={onClose}><X size={15}/></button></nav>
+  {panels}{files}
   {assistant&&<div className="assistant-pane" hidden={!assistantOpen}>{assistant}</div>}
   {!assistantOpen&&!palette&&!library&&!inspecting&&<>
    <div className="studio-tools-heading"><strong>添加节点</strong><small>选择节点，然后在画布连接</small></div>
