@@ -248,7 +248,10 @@ class WorkbenchSessions:
             try:meta=self.db.get('session-meta',handle)
             except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')
             if meta['workspace']!=workspace:raise Blocked('会话元数据不属于当前工作区')
-            if meta.get('collection','active')!=view:continue
+            hidden=bool(meta.get('hidden'))
+            if view=='hidden':
+                if not hidden:continue
+            elif hidden or meta.get('collection','active')!=view:continue
             internal=None
             try:internal=self.rt.db.get('session-handle',handle)
             except Invalid:pass
@@ -290,7 +293,7 @@ class WorkbenchSessions:
                     busy=self.busy(probe,row['session_id'])
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
-            named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),
+            named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),hidden=hidden,
                 display_state=running['state'] if running else 'BUSY' if busy else latest_operation['state'] if latest_operation else '状态待确认',busy=busy,
                 node=latest['node'] if latest else related[0]['node'] if related else None,
                 choices={'resume':bool(row.get('resume')) and not busy and not meta.get('native_archived'),
@@ -539,7 +542,11 @@ class WorkbenchSessions:
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')
         if meta['workspace']!=workspace:raise Blocked('会话不属于当前工作区')
-        if meta.get('native_archived') and action=='restore':
+        if action in ('hide','unhide'):
+            # DevFlower-only metadata; the native session, children, source and
+            # worktree are never touched. Hidden rows keep their other collection.
+            meta['hidden']=action=='hide'
+        elif meta.get('native_archived') and action=='restore':
             binding=meta['binding']
             if self.busy(binding,meta['snapshot']['session_id']):raise Blocked('会话占用状态未确认，无法恢复')
             self.rpc(binding,meta['cwd'],'thread/unarchive',{'threadId':meta['snapshot']['session_id']})
@@ -585,7 +592,7 @@ class WorkbenchSessions:
             else:raise Invalid('永久删除未启用；原生会话和源码不会被删除')
         meta['updated_at']=time.time();self.db.put('session-meta',handle,meta)
         return dict(handle=handle,collection=meta['collection'],alias=meta.get('alias'),native_archived=meta.get('native_archived',False),
-                    native_modified=native_modified,permanently_deleted=False)
+                    hidden=meta.get('hidden',False),native_modified=native_modified,permanently_deleted=False)
 
     def rpc(self,binding,cwd,method,params):
         from .native_local import configured
