@@ -34,7 +34,7 @@ def native(root, provider, cwd, sid=SID):
                    dict(type='user', sessionId=sid, cwd=str(cwd), timestamp='2026-10-20T01:00:00Z',
                         version='2.1.303', message={'content': PRIVATE})]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(''.join(json.dumps(r)+'\n' for r in records))
+    path.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
     return path
 
 
@@ -61,6 +61,28 @@ def fixture(base):
     return dict(a=a,b=b,home=home,roots=[codex,nested,external],paths=paths,other=other,cfg=cfg)
 
 
+class NativeFixtureTests(unittest.TestCase):
+    def test_native_fixture_preserves_unicode_cwd_for_adversarial_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);cwd=base/'中文工作区';cwd.mkdir()
+            path=native(base/'unicode-source','claude',cwd)
+            original=path.read_text();self.assertIn(str(cwd),original)
+            modified=original.replace(str(cwd),'relative/project')
+            self.assertNotEqual(modified,original)
+            self.assertEqual(json.loads(modified.splitlines()[1])['cwd'],'relative/project')
+    def test_short_fd_path_reaches_same_long_unicode_parent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder)/('长目录'*20);parent.mkdir()
+            fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
+            try:
+                alias='/proc/self/fd/'+str(fd)+'/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl'
+                self.assertGreater(len(os.fsencode(str(parent/'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl'))),108)
+                self.assertLess(len(os.fsencode(alias)),108)
+                before=parent.stat();via=os.stat('/proc/self/fd/'+str(fd))
+                self.assertEqual((before.st_dev,before.st_ino),(via.st_dev,via.st_ino))
+            finally:os.close(fd)
+
+
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.base=Path(self.tmp.name)
@@ -78,6 +100,7 @@ class WorkspaceTests(unittest.TestCase):
     def config(self,edit):
         cfg=json.loads(self.f['cfg'].read_text());edit(cfg);self.f['cfg'].write_text(json.dumps(cfg))
         return App(self.base/'other-studio',project_roots=[self.f['a'],self.f['b']],session_profiles=self.f['cfg'])
+
 
     def test_three_profiles_same_project_and_duplicate_ids_are_preserved(self):
         rows=self.snapshot()['sessions']
@@ -110,6 +133,37 @@ class WorkspaceTests(unittest.TestCase):
             self.assertIn('HOME=',row['resume_command'])
             self.assertIn('CODEX_HOME=' if row['provider']=='codex' else 'CLAUDE_CONFIG_DIR=',row['resume_command'])
             self.assertIn(SID,row['resume_command']);self.assertNotIn('--last',row['resume_command'])
+
+    def test_default_claude_resume_command_uses_native_home_preferences(self):
+        from studio.workspace_sessions import WorkspaceSessions
+        home = self.f['home']
+        native(home/'.claude', 'claude', self.f['a'])
+        sessions = WorkspaceSessions(self.base/'studio', [self.f['a']],
+                                     environ={'HOME': str(home)}, persist=False)
+        workspace = next(iter(sessions.roots))
+        profile = next(p for p in sessions.profiles if p['provider'] == 'claude' and p['origin'] == 'default')
+        from studio.session_sources import scan
+        rows, _ = scan(str(home/'.claude/projects'), 'claude', sessions.limits)
+        command = sessions._row(rows[0], profile, workspace)['resume_command']
+        self.assertIn('HOME=', command)
+        self.assertNotIn('CLAUDE_CONFIG_DIR=', command)
+        self.assertIn('-u CLAUDE_CONFIG_DIR', command)
+        self.assertIn(SID, command)
+
+    def test_default_claude_explicit_config_root_remains_in_resume_command(self):
+        from studio.workspace_sessions import WorkspaceSessions
+        from studio.session_sources import scan
+        home = self.f['home']
+        root = self.base/'explicit-claude'
+        native(root, 'claude', self.f['a'])
+        sessions = WorkspaceSessions(self.base/'studio', [self.f['a']],
+                                     environ={'HOME': str(home), 'CLAUDE_CONFIG_DIR': str(root)}, persist=False)
+        workspace = next(iter(sessions.roots))
+        profile = next(p for p in sessions.profiles if p['provider'] == 'claude' and p['origin'] == 'default')
+        rows, _ = scan(str(root/'projects'), 'claude', sessions.limits)
+        command = sessions._row(rows[0], profile, workspace)['resume_command']
+        self.assertIn('CLAUDE_CONFIG_DIR='+str(root), command)
+        self.assertNotIn('-u CLAUDE_CONFIG_DIR', command)
 
     def test_wrong_registered_origin_is_explicit_and_has_no_command(self):
         path=self.f['paths'][2]
@@ -164,7 +218,7 @@ class WorkspaceTests(unittest.TestCase):
         finally:path.chmod(0o700)
 
     def test_missing_and_unsupported_are_distinct(self):
-        _,missing=scan(self.base/'missing','claude');_,unsupported=scan(self.base,'copilot')
+        _,missing=scan(self.base/'missing','claude');_,unsupported=scan(self.base,'unknown-provider')
         self.assertEqual(missing['status'],'not_found');self.assertEqual(unsupported['status'],'unsupported')
 
     def test_config_folder_is_not_a_session_library(self):
@@ -201,13 +255,15 @@ class WorkspaceTests(unittest.TestCase):
         fifo=path.with_name(OTHER+'.jsonl')
         sockpath=path.with_name('bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.jsonl')
         os.mkfifo(fifo)
-        sock=socket.socket(socket.AF_UNIX)
+        parentfd=os.open(sockpath.parent,os.O_RDONLY|os.O_DIRECTORY)
+        sock=None
         real_open=os.open
         def guarded_open(name,*args,**kwargs):
             self.assertNotIn(os.fspath(name),[fifo.name,sockpath.name,str(fifo),str(sockpath)])
             return real_open(name,*args,**kwargs)
         try:
-            sock.bind(str(sockpath))
+            sock=socket.socket(socket.AF_UNIX)
+            sock.bind('/proc/self/fd/'+str(parentfd)+'/'+sockpath.name)
             with patch('studio.session_sources.os.open',side_effect=guarded_open):
                 data=self.snapshot()
                 self.assertEqual(len(data['sessions']),3)
@@ -218,7 +274,8 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertEqual(data['coverage'][2]['status'],'partial')
                 self.assertEqual(data['coverage'][2]['rejected'].get('special_file'),2)
         finally:
-            sock.close()
+            if sock is not None:sock.close()
+            os.close(parentfd)
 
     def test_surrogate_cwd_rejects_only_bad_file_over_real_http(self):
         path=self.f['paths'][2]

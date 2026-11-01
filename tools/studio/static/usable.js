@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const text = (tag, value, cls) => { const e = document.createElement(tag); e.textContent = value; if(cls)e.className=cls; return e; };
-const state = {workspace:null, document:null, identity:crypto.randomUUID(), version:0, saved:null, selected:null,
+const state = {workspace:null, document:null, identity:crypto.randomUUID(), version:0, saveRequest:0, saved:null, selected:null,
   mode:'design', snapshot:null, runSelected:null, profiles:[], verificationProfiles:[], owned:[], drafts:[], run:null, runEpoch:0, workspaceEpoch:0, preview:null, history:[], historyIndex:0, loadEpoch:0, statusEpoch:0, runRequest:0, pollPending:null};
 const fragment = new URLSearchParams(location.hash.slice(1));
 if(fragment.has('token')) { sessionStorage.setItem('devflower-stable-token',fragment.get('token')); history.replaceState(null,'',location.pathname); }
@@ -56,6 +56,8 @@ function loadDocument(document,saved=null) {
   // Migration applies to an editable copy only, never to a stored run snapshot.
   const migrated=document.version===1;
   document=structuredClone(document);if(migrated)document.version=2;
+  const task=saved?.task||{};
+  for(const [id,key] of [['task-title','title'],['task-body','body'],['task-scope','scope'],['task-acceptance','acceptance'],['issue-url','issue_url']])$(id).value=key==='scope'?(task.scope||[]).join('\n'):task[key]||'';
   state.document=document;state.identity=crypto.randomUUID();state.version=0;state.saved=saved;state.selected=null;
   state.history=[structuredClone(document)];state.historyIndex=0;state.loadEpoch++;invalidatePreview();$('graph-status').textContent='尚未校验当前编辑版本';$('workflow-name').value=document.name;$('max-rounds').value=document.max_rounds;
   $('save-state').textContent=migrated?'旧草稿已转为节点式，保存将创建新版本':saved?'已加载保存版本':'新草稿未保存';draw();canvas.fit();
@@ -67,7 +69,7 @@ async function newDraft(kind) {
   if(identity!==state.identity||version!==state.version||request!==state.loadEpoch)return; loadDocument(document);$('template-library').open=false;
 }
 async function status() {
-  const epoch=++state.statusEpoch,value=await api('/api/status');if(epoch!==state.statusEpoch)return;state.profiles=value.profiles;state.verificationProfiles=value.verification_profiles||[];state.drafts=value.drafts;
+  const epoch=++state.statusEpoch,workspace=state.workspace?.id,value=await api('/api/status'+(workspace?'?workspace='+encodeURIComponent(workspace):''));if(epoch!==state.statusEpoch||workspace!==state.workspace?.id)return;state.profiles=value.profiles;state.verificationProfiles=value.verification_profiles||[];state.drafts=value.drafts;
   state.sessionOnly=value.execution_context==='development-sessions';
   $('trust').textContent=state.sessionOnly?'Development 会话候选 · 无 Controller/Stable 权限':'Stable '+value.stable.slice(0,16);
   $('canvas-run').disabled=state.sessionOnly;$('prepare').disabled=state.sessionOnly;
@@ -77,21 +79,24 @@ async function status() {
   state.workspaces=value.workspaces;
 }
 function setWorkspace(workspace) {
-  state.workspace=workspace;state.snapshot=null;state.runSelected=null;state.workspaceEpoch++;state.owned=[];invalidatePreview();state.run=null;state.runEpoch++;
+  const previous=state.workspace?.id;state.workspace=workspace;if(previous!==workspace.id&&state.document)loadDocument(state.document);state.snapshot=null;state.runSelected=null;state.workspaceEpoch++;state.owned=[];invalidatePreview();state.run=null;state.runEpoch++;
   $('workspace-path').value=workspace.path;$('workspace-info').textContent=`${workspace.path} · ${workspace.environment||'local'} · ${workspace.execution_allowed===false?'只读 · '+workspace.execution_reason:workspace.branch+' · '+workspace.head}`;
   $('sessions').replaceChildren();$('preview').replaceChildren();$('monitor').replaceChildren();if(state.mode==='run')canvas.render({nodes:[],edges:[]});$('run-title').textContent='未选择运行';sessionStorage.setItem('devflower-workspace',workspace.id);status().catch(e=>notice(e.message));sessions().catch(e=>notice(e.message));
 }
 async function saveDraft() {
-  const identity=state.identity, version=state.version, document=structuredClone(state.document), saved=state.saved?{...state.saved}:null;
-  const result=await api('/api/draft',{document,id:saved?.id||null,expected:saved?.revision||null});
-  if(identity===state.identity) {
+  if(!state.workspace)throw new Error('保存前请先打开工作区');
+  const identity=state.identity, version=state.version, workspace=state.workspace.id, workspaceEpoch=state.workspaceEpoch, request=++state.saveRequest, document=structuredClone(state.document), task=taskInput(), saved=state.saved?{...state.saved}:null;
+  const result=await api('/api/draft',{workspace,document,id:saved?.id||null,expected:saved?.revision||null,task});
+  if(identity===state.identity&&workspace===state.workspace?.id&&workspaceEpoch===state.workspaceEpoch) {
     // A concurrent response must not replace a newer confirmed revision.
     const stillExpected=state.saved?.revision===(saved?.revision);
-    if(stillExpected||!state.saved&&!saved){
+    // Overlapping creations have distinct IDs. Only the newest request may
+    // choose this draft's first identity; confirmed revisions still use CAS.
+    if((saved||request===state.saveRequest)&&(stillExpected||!state.saved&&!saved)){
       state.saved={id:result.id,revision:result.revision};
       state.drafts=[result,...state.drafts.filter(d=>d.id!==result.id)];
       options($('drafts'),[['','已保存流程'],...state.drafts.map(d=>[d.id,d.document.name])],result.id);
-      $('save-state').textContent=version===state.version?'该快照已保存':'请求发出时的快照已保存；当前仍有未保存改动';
+      $('save-state').textContent=version===state.version&&JSON.stringify(task)===JSON.stringify(taskInput())?'该快照已保存':'请求发出时的快照已保存；当前仍有未保存改动';
     }
   }
   await status();
@@ -443,7 +448,7 @@ async function poll() {
 act('open-workspace',async()=>{const epoch=++state.workspaceEpoch;const w=await api('/api/workspace',{path:$('workspace-path').value});if(epoch===state.workspaceEpoch)setWorkspace(w);});
 $('recent').addEventListener('change',()=>{const w=state.workspaces.find(w=>w.id===$('recent').value);if(w)setWorkspace(w);});
 act('new-blank',()=>newDraft('blank'));act('new-draft',()=>newDraft());act('save',saveDraft);
-$('drafts').addEventListener('change',()=>{const d=state.drafts.find(d=>d.id===$('drafts').value);if(d)loadDocument(d.document,{id:d.id,revision:d.revision});});
+$('drafts').addEventListener('change',()=>{const d=state.drafts.find(d=>d.id===$('drafts').value);if(d&&d.workspace===state.workspace?.id)loadDocument(d.document,{id:d.id,revision:d.revision,task:d.task});});
 $('workflow-name').addEventListener('input',()=>{state.document.name=$('workflow-name').value;changed();});
 $('max-rounds').addEventListener('change',()=>{state.document.max_rounds=Number($('max-rounds').value);changed();});
 act('add-node',()=>addNode($('add-kind').value));
@@ -454,8 +459,9 @@ act('compile',async()=>{const identity=state.identity,version=state.version;
   catch(e){if(identity===state.identity&&version===state.version){$('graph-status').textContent='不能执行：'+e.message;throw e;}}
 });
 act('refresh-sessions',sessions);act('refresh-runs',status);
-act('import-issue',async()=>{const epoch=state.workspaceEpoch,url=$('issue-url').value,v=await api('/api/issue',{url});if(epoch!==state.workspaceEpoch||url!==$('issue-url').value)return;$('task-title').value=v.title;$('task-body').value=v.body;$('task-acceptance').value=v.body;invalidatePreview();notice('已导入真实 Issue，请核对允许路径与验收文本。');});
-for(const id of ['task-title','task-body','task-scope','task-acceptance','issue-url','delivery'])$(id).addEventListener('input',()=>invalidatePreview());
+act('import-issue',async()=>{const epoch=state.workspaceEpoch,url=$('issue-url').value,v=await api('/api/issue',{url});if(epoch!==state.workspaceEpoch||url!==$('issue-url').value)return;$('task-title').value=v.title;$('task-body').value=v.body;$('task-acceptance').value=v.body;changed(false);notice('已导入真实 Issue，请核对允许路径与验收文本。');});
+for(const id of ['task-title','task-body','task-scope','task-acceptance','issue-url'])$(id).addEventListener('input',()=>changed(false));
+$('delivery').addEventListener('input',()=>invalidatePreview());
 act('prepare',prepare);$('runs').addEventListener('change',()=>selectRun($('runs').value));
 act('resume',async()=>{if(!state.run)throw new Error('选择运行');await api('/api/resume',{run_id:state.run});await poll();});
 act('cancel',async()=>{if(!state.run)throw new Error('选择运行');await api('/api/cancel',{run_id:state.run});await poll();});

@@ -1,4 +1,7 @@
 """Editable executable v3 examples populated from actual approved native profiles."""
+from .node_defaults import profile_timeout
+
+
 def examples(profiles):
     names=list(profiles);first=next((k for k in names if profiles[k]['provider']=='codex'),names[0])
     second=next((k for k in names if profiles[k]['provider']=='claude'),names[-1])
@@ -6,9 +9,9 @@ def examples(profiles):
     def agent(key,name,profile,x,y):
         p=profiles[profile]
         return node(key,'agent',name,x,y,provider=p['provider'],profile=profile,model=p['model'],effort=p['effort'],
-            role='通用 Agent',responsibility=name,mode='Ask',session='new',subagents='disabled',timeout=300,
+            role='通用 Agent',responsibility=name,mode='Ask',session='new',subagents='disabled',timeout=profile_timeout(p),task_context=True,
             initial_prompt='理解本次工作流的目标和已授权边界。',round_prompt='完成当前任务，参考上游提供的结果。',
-            handoff_prompt='提供主要回答、简短摘要、证据、未解决问题及后续建议；不要虚构工具执行。')
+            handoff_prompt='提供简明回答。摘要只写要点，产物、依据和未解决问题仅在适用时填写；避免重复长文，不虚构工具执行。')
     def edges(pairs):return [dict(id='edge'+str(i),source=s,target=t,transfer='result') for i,(s,t) in enumerate(pairs)]
     def graph(name,nodes,pairs):return dict(version=3,name=name,nodes=nodes,edges=edges(pairs),budget={'calls':24,'seconds':3600})
     sequential=graph('两 Agent 顺序分析',[node('start','start','任务输入',50,180),agent('analyze','分析任务',first,320,180),
@@ -35,4 +38,16 @@ def examples(profiles):
         *[('route',k) for k in ('code','research','writing','default')],*[ (k,'result') for k in ('code','research','writing','default')]])
     for edge in routing['edges']:
         if edge['source']=='route':edge['route']=edge['target']
-    return [sequential,parallel,loop,routing]
+    single=graph('单 Agent 快速任务',[node('start','start','任务输入',50,180),agent('agent','处理任务',first,350,180),node('result','result','结果',650,180)],[('start','agent'),('agent','result')])
+    complex_graph=graph('综合协作：并行、审核与有界修订',[
+        node('start','start','任务输入',40,220),agent('feasibility','方案分析',first,280,80),agent('risks','风险检查',second,280,360),
+        node('merge','merge','汇合两路意见',550,220),agent('judge','独立判断是否完整',first,820,220),
+        node('check','condition','是否满足标准',1090,220,test={'field':'result.accepted','op':'equals','value':True}),
+        node('revise','loop','修订与复审（最多两轮）',1370,380,body=body,max_rounds=2,until={'field':'result.accepted','op':'equals','value':True}),
+        node('result','result','本轮结果',1690,220)],
+        [('start','feasibility'),('start','risks'),('feasibility','merge'),('risks','merge'),('merge','judge'),('judge','check'),('check','result'),('check','revise'),('revise','result')])
+    complex_graph['nodes'][4]['handoff_prompt']='检查两路意见是否回答了用户任务并有可检查的标准。完整时 accepted=true，否则 accepted=false 并列出需修正的问题；不为结束流程而改判。'
+    for e in complex_graph['edges']:
+        if e['source']=='check':e['when']='true' if e['target']=='result' else 'false'
+    complex_graph['budget']={'calls':16,'seconds':1800}
+    return [sequential,parallel,loop,routing,single,complex_graph]

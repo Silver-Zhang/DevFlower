@@ -18,11 +18,11 @@ from orchestration.privacy import redact
 
 
 def capabilities(provider):
-    supported = provider in ('codex', 'claude')
+    supported = provider in ('codex', 'claude','copilot')
     return dict(supported=supported, discover=supported, read=supported,
                 create=supported, resume=supported, hide=supported, unhide=supported,
                 native_archive=False, native_delete=False, models=supported,
-                effort=supported, subagents=False, parallel_dag=False)
+                effort=supported and provider!='copilot', terminal=supported and provider!='copilot', context_only=provider=='copilot', subagents=False, parallel_dag=False)
 
 
 def session_identity(provider, native_id, storage_profile, cwd, workspace):
@@ -48,6 +48,12 @@ def safe_text(value):
 
 def _visible(obj, provider):
     if not isinstance(obj, dict):
+        return None
+    if provider=='copilot':
+        role={'user.message':'user','assistant.message':'assistant'}.get(obj.get('type'))
+        data=obj.get('data',{})
+        if role and isinstance(data,dict) and isinstance(data.get('content'),str):
+            return dict(role=role,text=safe_text(data['content']))
         return None
     if provider == 'codex':
         if obj.get('type') != 'response_item':
@@ -88,18 +94,23 @@ def _visible(obj, provider):
     return dict(role=role, text=text) if text else None
 
 
-def conversation(provider, path, limit=100, query='', *, expected_sha256=None, secrets=()):
-    if provider not in ('codex', 'claude'):
+def conversation(provider, path, limit=100, query='', *, expected_sha256=None, secrets=(), start_offset=0, end_offset=None, include_metadata=False):
+    if provider not in ('codex', 'claude','copilot'):
         raise Invalid('Provider history is unsupported')
     if type(limit) is not int or not 1 <= limit <= 500 or not isinstance(query, str) or len(query) > 500:
         raise Invalid('History limit must be 1–500 and search at most 500 characters')
     rows = []
     content_hash = hashlib.sha256()
+    if type(start_offset) is not int or start_offset<0 or end_offset is not None and (type(end_offset) is not int or end_offset<start_offset):
+        raise Invalid('原生回合记录范围无效')
     try:
         with opened(Path(path)) as fd:
             before = os.fstat(fd)
             if before.st_size > LIMITS['file_bytes']:
                 raise Refused('oversized')
+            if start_offset>before.st_size or end_offset is not None and end_offset>before.st_size:
+                raise Refused('changed_native_turn_range')
+            position=0
             with io.BufferedReader(SnapshotReader(fd, before.st_size)) as stream:
                 while True:
                     line = stream.readline(LIMITS['line_bytes'] + 1)
@@ -108,11 +119,16 @@ def conversation(provider, path, limit=100, query='', *, expected_sha256=None, s
                     if len(line) > LIMITS['line_bytes'] or not line.endswith(b'\n'):
                         raise Refused('partial_or_oversized_line')
                     content_hash.update(line)
+                    position+=len(line)
+                    if position<=start_offset or end_offset is not None and position-len(line)>=end_offset:continue
+                    if position-len(line)<start_offset or end_offset is not None and position>end_offset:
+                        raise Refused('non_boundary_native_turn_range')
                     obj = json.loads(line)
                     row = _visible(obj, provider)
                     if row:
                         row = redact(row, secrets)
                     if row and (not query or query.casefold() in row['text'].casefold()):
+                        if include_metadata:row=dict(row,native_offset=position-len(line),native_end=position,native_at=obj.get('timestamp'))
                         rows.append(row)
                         if len(rows) > limit:
                             rows.pop(0)
@@ -132,7 +148,7 @@ def nested_profiles(workspace, *, depth=4, entries=1200):
     if root == Path.home() or root == Path('/'):
         return [], dict(status='not_scanned', reason='broad_home_or_root')
     result, count, partial = [], 0, False
-    excluded = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache'}
+    excluded = {'.git', '.devflower', 'node_modules', '.venv', 'venv', '__pycache__', '.cache'}
 
     def walk(folder, level):
         nonlocal count, partial

@@ -4,19 +4,126 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 import time
 from orchestration.common import Blocked, canonical, digest
 from orchestration.process import execute
-from orchestration.store import lease
+from orchestration.store import lease, process_identity
 from .agent_sessions import _visible, safe_text
 from .graph import Invalid
+from .server import Conflict
 from .session_sources import opened
+
+
+def _list_text(value):
+    return safe_text(re.sub(r'https?://\S+', '[链接已隐藏]', value, flags=re.I))
+
+
+def _list_projection(row):
+    result = dict(row)
+    for key in ('title', 'workflow', 'node_name', 'task_summary', 'note'):
+        if isinstance(result.get(key), str):result[key] = _list_text(result[key])
+    return result
 
 
 class WorkbenchSessions:
     def __init__(self, runtime): self.rt=runtime;self.db=runtime.flow
+
+    def operation_session(self, workspace, operation):
+        op=self.rt.session_center.operation(operation,workspace)
+        matches=[]
+        for session in self.listing(workspace)['sessions']:
+            if session.get('saved_history'):continue
+            internal=self.rt.db.get('session-handle',session['handle'])
+            if self.matching_operation(workspace,internal,op):matches.append(session)
+        if len(matches)>1:raise Blocked('原生会话身份不唯一，未自动打开')
+        return dict(session=matches[0] if matches else None)
+
+    def node_conversation(self, workspace, run, activation):
+        """Read a scoped native conversation; never start/resume an Agent."""
+        from orchestration.process import group_alive
+        from orchestration.privacy import credentials, redact
+        flow = self.db.get('run', run); item = self.db.get('activation', activation)
+        if flow['workspace'] != workspace or item['run'] != run or item.get('kind') != 'agent':
+            raise Blocked('对话不属于当前工作区、运行或Agent节点')
+        if not item.get('chat_key'):
+            extra=[src for p in self.rt.operator['profiles'].values() for src,_ in p.get('readonly_files',[])]
+            secret=credentials(self.rt.native,extra)
+            return dict(workspace=workspace,run=run,activation=activation,node=item['node'],
+                iteration_path=item.get('iteration_path',[]),state='UNKNOWN' if self.rt.snapshot(run)['state']=='RECOVERY_REQUIRED' else item['state'],
+                task=safe_text(redact(flow['task'],secret)),process_alive=False,connection_check=False,
+                request_sections=[],messages=[],activity=[],summaries=[],session=None,history_status='waiting')
+        chat = self.db.get('node-session', item['chat_key']); binding = chat['binding']
+        secret = credentials(binding['home'], [x[0] for x in binding.get('readonly_files', [])])
+        snapshot = self.rt.snapshot(run)
+        state = item['state'];alive=bool(group_alive(item.get('process')))
+        if snapshot['state'] == 'RECOVERY_REQUIRED' or state == 'RUNNING' and not alive:
+            state = 'UNKNOWN'
+        value = dict(workspace=workspace, run=run, activation=activation, node=item['node'],
+            iteration_path=item.get('iteration_path', []), state=state,
+            process_alive=alive, task=safe_text(redact(flow['task'],secret)),
+            connection_check=bool(item.get('connection_check')),
+            request_sections=redact(item.get('request_sections', []), secret),
+            actual_request_recorded=bool(item.get('actual_request')),
+            messages=[],activity=[],summaries=[],session=None,history_status='waiting')
+        from .tool_activity import journal_tools,merge_activity
+        sid=binding.get('session_id')
+        from .session_sources import UUID
+        scoped=(item.get('id')==activation==digest(canonical([run,item['node'],item.get('iteration_path',[])])) and
+                chat.get('id')==item['chat_key']==digest(canonical([run,item['node']])) and
+                chat.get('run')==run and chat.get('node')==item['node'] and chat.get('workspace')==workspace and
+                binding.get('project',workspace)==workspace and isinstance(sid,str) and UUID.fullmatch(sid) and item.get('observed_session')==sid)
+        journal=journal_tools(item.get('native_tool_activity',[]),secret,state) if scoped else []
+        value['activity']=journal
+        def scoped_history(session):
+            offset=item.get('native_history_offset');end=item.get('native_history_end')
+            if type(offset) is not int or offset<0 or state not in ('STARTING','RUNNING') and type(end) is not int:
+                raise Invalid('此历史运行没有记录可核验的本轮原生范围')
+            _,native=self.rt.session_center.resolve(workspace,session['handle'])
+            if item.get('native_history_path') and native['native']['path']!=item['native_history_path']:
+                raise Blocked('原生历史路径与本轮绑定不一致')
+            history=self.history(workspace,session['handle'],start_offset=offset,end_offset=end,include_turns=False)
+            current=self.db.get('activation',activation)
+            if any(current.get(k)!=item.get(k) for k in ('state','native_history_offset','native_history_end')):
+                raise Invalid('本轮记录正在提交，下一次读取核验')
+            return history
+        try:
+            if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and not getattr(self.rt,'readonly_configuration_warning',lambda:None)():
+                from .native_local import codex_history
+                turn=item.get('native_turn_id') or item.get('receipt',{}).get('native_turn_id')
+                if not turn:raise Invalid('原生回合身份尚未返回')
+                session=self.activation_session(workspace,run,activation)
+                messages=codex_history(dict(binding,_metadata_guard=str(self.rt.storage)),chat['cwd'],binding['session_id'],turn_id=turn)
+                value.update(session=session,history_status='available',messages=redact(messages,secret))
+                # Native RPC text omits tools rejected by the CLI before RPC.
+                # Reuse the scheduler's actual append boundaries, never the full
+                # session or another turn as an approximate activity fallback.
+                value['activity_history_status']='unavailable'
+                if scoped:
+                    try:
+                        history=scoped_history(session)
+                        value.update(activity=merge_activity(history.get('activity',[]),journal),summaries=history.get('summaries',[]),activity_history_status='available')
+                    except (Invalid,Blocked,ValueError,OSError):pass
+            else:
+                session = self.activation_session(workspace,run,activation)
+                history=scoped_history(session)
+                value.update(session=session,history_status='available',messages=history.get('messages',[]),
+                             activity=merge_activity(history.get('activity',[]),journal),summaries=history.get('summaries',[]))
+        except (Invalid,Blocked,ValueError,OSError):
+            # Growing/unflushed native records may not yet have a stable readable
+            # snapshot. Absence is not evidence of model thinking or success.
+            value['history_status'] = 'waiting' if state in ('STARTING','RUNNING') else 'unavailable'
+        if state != 'UNKNOWN':
+            output=item.get('output',{}); receipt=output.get('receipt',{}); proc=receipt.get('process',{})
+            if (state=='COMPLETED' and receipt.get('session_id')==binding.get('session_id') and
+                ('receipt' not in item or item['receipt']==receipt) and
+                receipt.get('requested_model')==binding['model'] and receipt.get('requested_effort')==binding['effort'] and
+                proc.get('exit')==0 and all(proc.get(k) is False for k in ('timeout','cancelled','overflow')) and
+                isinstance(output.get('answer'),str)):
+                value['saved_answer']=safe_text(redact(output['answer'],secret))
+        return value
 
     def activation_session(self, workspace, run, activation):
         flow = self.db.get('run', run); item = self.db.get('activation', activation)
@@ -24,6 +131,7 @@ class WorkbenchSessions:
             raise Blocked('节点会话不属于当前工作区和运行')
         chat = self.db.get('node-session', item['chat_key'])
         for row in self.listing(workspace)['sessions']:
+            if row.get('saved_history'):continue
             internal = self.rt.db.get('session-handle', row['handle'])
             if chat['id'] in self.matching_chats(workspace, internal):
                 return row
@@ -41,7 +149,7 @@ class WorkbenchSessions:
             c['binding'].get('project',workspace)==workspace}
 
     def matching_operation(self,workspace,row,operation):
-        if not row or not row['profile'].get('home') or row.get('ambiguous'):return False
+        if not row or not row['profile'].get('home') or row.get('ambiguous') or not row.get('authorized_read',True):return False
         try:stored=self.rt.db.get('session-operation',operation['id'])
         except Invalid:return False
         p,native=row['profile'],row['native'];binding=stored['binding']
@@ -117,7 +225,7 @@ class WorkbenchSessions:
                             if text.startswith('Role:') and 'Writable test artifacts:' in text:
                                 text='\n'.join(text.splitlines()[2:]).strip()
                             first=text
-            return safe_text(title or first or '新对话')[:90].replace('\n',' ')
+            return _list_text(title or first or '新会话')[:90].replace('\n',' ')
         except (Invalid,ValueError,OSError):return '对话记录暂不可读'
 
     def listing(self, workspace, view='active', query=''):
@@ -148,7 +256,7 @@ class WorkbenchSessions:
             actual=[a for a,_ in self.related_activations(workspace,internal)] if internal else []
             # Old caches may have been derived from another HOME's same UUID.
             # Invalidate derived data once; explicit user aliases stay separate.
-            title_binding=digest(canonical(['exact-native-v2',workspace,row['profile_id'],
+            title_binding=digest(canonical(['exact-native-v4-private-list-projection',workspace,row['profile_id'],
                 internal['profile'].get('home') if internal else None,row['provider'],row['cwd'],row['session_id']]))
             title=meta.get('alias')
             if not title:
@@ -159,28 +267,38 @@ class WorkbenchSessions:
                     title=None
                 if not title or title.startswith(('## 本次运行初始化','# AGENTS.md instructions','Role:')):
                     title=next((c.get('name') for c in related if c.get('name')),None) or next((a.get('name') for a in actual if a.get('name')),None) or self.title(row)
+                    title=_list_text(title)
                     self.db.put('session-title',handle,{'id':handle,'title':title,'binding':title_binding})
-            title=title or '新对话'
+            managed=next((o for o in reversed(operations) if not o.get('diagnostic') and self.matching_operation(workspace,internal,o) and o.get('user_prompt')),None)
+            if managed and not meta.get('alias'):title=safe_text(managed['user_prompt'].splitlines()[0])[:70]
+            title=title or '新会话'
             running=next((o for o in operations if o['state'] not in ('COMPLETED','FAILED','CANCELLED') and self.matching_operation(workspace,internal,o)),None)
             busy=False
             if internal and internal['profile'].get('home'):
                 try:
-                    busy=self.busy({'home':internal['profile']['home']},row['session_id'])
+                    probe={'home':internal['profile']['home']}
+                    from .native_local import configured,bind
+                    cfg=configured(self.rt,row['provider'])
+                    if cfg and cfg['home']==probe['home']:
+                        from .native_local import preferred_profile
+                        _,profile=preferred_profile(self.rt,row['provider'])
+                        probe=bind(self.rt,profile,workspace)
+                    busy=self.busy(probe,row['session_id'])
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
             named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),
-                display_state=running['state'] if running else 'BUSY' if busy else '运行未确认',busy=busy,
+                display_state=running['state'] if running else 'BUSY' if busy else '状态待确认',busy=busy,
                 node=latest['node'] if latest else related[0]['node'] if related else None,
                 choices={'resume':bool(row.get('resume')) and not busy and not meta.get('native_archived'),
                          'context_new':row['capabilities'].get('read',False),'fork':row['provider']=='codex' and bool(row.get('resume')) and not busy,
                          'view':True},native_archived=meta.get('native_archived',False))
             if latest and not busy and not running:
                 from orchestration.process import group_alive
-                named['display_state']='运行未确认' if latest['state'] in ('RUNNING','STARTING') and not group_alive(latest.get('process')) else latest['state']
+                named['display_state']='状态待确认' if latest['state'] in ('RUNNING','STARTING') and not group_alive(latest.get('process')) else latest['state']
             if latest:
                 workflow = self.db.get('run', latest['run'])
                 named.update(workflow=workflow.get('graph', {}).get('name', '未命名工作流'),
-                             workflow_id=latest['run'], node_name=latest.get('name', latest['node']))
+                             workflow_id=latest['run'], workflow_group_id=('draft:'+workflow['draft_id']) if workflow.get('draft_id') else 'run:'+latest['run'], node_name=latest.get('name', latest['node']),task_summary=_list_text(workflow.get('task') if isinstance(workflow.get('task'),str) else '')[:80])
             # Show the session's actual bound request configuration, never the
             # default profile selected for a different/new conversation.
             bound = related[0]['binding'] if related else next((c['binding'] for c in
@@ -188,6 +306,13 @@ class WorkbenchSessions:
                 if internal and c['binding'].get('home') == internal['profile'].get('home') and
                 c['binding'].get('provider') == row['provider'] and
                 c['binding'].get('session_id') == row['session_id']), None)
+            if bound is None and internal:
+                from .native_local import configured,bind
+                cfg=configured(self.rt,row['provider'])
+                if cfg and internal['profile']['home']==cfg['home']:
+                    from .native_local import preferred_profile
+                    name,profile=preferred_profile(self.rt,row['provider'])
+                    bound=dict(bind(self.rt,profile,workspace),runtime_profile=name)
             if bound:
                 exact = next((name for name, profile in self.rt.operator['profiles'].items() if
                     all(bound.get(k) == profile.get(k) for k in
@@ -195,26 +320,93 @@ class WorkbenchSessions:
                     (name==bound.get('runtime_profile') or (bound.get('model'),bound.get('effort'))==(profile['model'],profile['effort']))), None)
                 named['execution'] = dict(profile=exact, provider=bound['provider'],
                                           model=bound['model'], effort=bound['effort'])
+                if bound.get('shared_conversation'):named['execution']['shared_conversation']=True
+                if bound.get('execution_backend')=='native-local':named['execution']['backend']='native-local'
+                if bound.get('execution_backend')=='native-local':named['choices']['fork']=False
+                named['choices']['shared_conversation']=bool(bound.get('execution_backend')=='native-local'
+                    and row['provider']=='codex' and row.get('native_source') in ('cli','vscode','appServer'))
+                from .codex_narrow_read import uses_narrow_read
+                if uses_narrow_read(bound):
+                    named['choices']['shared_conversation']=False
+                    named['note']='受限读取工具会话；其他客户端的工具恢复尚未验证，不切换为共享纯对话。'
             if not query or query.casefold() in (title+' '+row['provider']).casefold():result.append(named)
-        return dict(sessions=result,coverage=listing['discovery']['coverage'],operations=operations)
+        if hasattr(self.rt,'project_files'):
+            # Never adopt a copied UUID/HOME as a writer. Saved copies use a
+            # separate read-only handle namespace and are explicitly labelled.
+            for item in self.rt.project_files(workspace).archives('session'):
+                row=item['data']['session']
+                key,meta,_=self.saved_metadata(workspace,'saved:'+item['key'],archive=item)
+                collection=(meta or {}).get('collection',row.get('collection','active'))
+                if row['handle'] in native_keys or collection!=view:continue
+                if query and query.casefold() not in (row.get('title','')+' '+row['provider']).casefold():continue
+                result.append(dict(row,handle='saved:'+item['key'],identity='saved:'+item['key'],collection=collection,
+                    title=(meta or {}).get('alias',row.get('title','保存的会话')),
+                    workspace_id=workspace,saved_history=True,display_state='UNKNOWN',busy=False,
+                    choices=dict(view=True,resume=False,context_new=False,fork=False),
+                    note='项目内保存的对话阅读副本；不恢复原生进程，不授予执行权限'))
+        return dict(sessions=[_list_projection(row) for row in result],coverage=listing['discovery']['coverage'],operations=operations)
+
+    def saved_metadata(self,workspace,handle,*,archive=None):
+        self.rt.session_center.workspace(workspace)
+        if not isinstance(handle,str) or not handle.startswith('saved:'):raise Invalid('不是保存的阅读副本')
+        archive=archive or self.rt.project_files(workspace).archive('session',handle[6:])
+        key=digest(canonical([workspace,handle]))
+        try:meta=self.db.get('project-session-meta',key)
+        except Invalid:meta=None
+        if meta and meta.get('workspace')!=workspace:raise Blocked('阅读副本归属不匹配')
+        return key,meta,archive
 
     def busy(self,binding,sid):
-        if self.rt.session_center._busy(binding['home']):return True
-        # External native terminals need not honour our lock; check their actual HOME/explicit session.
+        if binding.get('execution_backend')=='native-local':
+            from .native_local import own_busy
+            return own_busy(self.rt,binding,sid)
+        return self.rt.session_center._busy(binding['home']) or self.native_process_busy(binding['home'],sid)
+
+    def native_process_busy(self,home,sid):
+        """Inspect actual native writers, including version-named/renamed CLIs."""
+        profiles=getattr(getattr(self,'rt',None),'operator',{}).get('profiles',{})
+        programs={str(value) for p in profiles.values() if p.get('provider') in ('codex','claude','copilot')
+                  for value in (p.get('executable'),) if value}
+        programs|={str(Path(p).resolve()) for p in programs}
+        names={Path(p).name for p in programs}
         for p in Path('/proc').glob('[0-9]*'):
-            comm=''
+            comm='';possible=False
             try:
                 comm=(p/'comm').read_text().strip()
-                if not any(x in comm for x in ('codex','claude')):continue
+                possible=any(x in comm for x in ('codex','claude','copilot')) or comm in names
+                if not possible:
+                    try:possible=str((p/'exe').resolve(strict=True)) in programs
+                    except OSError:pass
                 argv=(p/'cmdline').read_bytes().split(b'\0')
+                explicit=bool(sid and sid.encode() in argv)
+                possible=possible or explicit or any(a.decode(errors='replace') in programs for a in argv)
+                if not possible:continue
+                identity=process_identity(int(p.name))
+                if identity and identity.get('state')=='Z':continue
+                if identity is None and not p.exists():continue
                 env=dict(x.split(b'=',1) for x in (p/'environ').read_bytes().split(b'\0') if b'=' in x)
-                if sid.encode() in argv or env.get(b'HOME')==binding['home'].encode():return True
+                if explicit or env.get(b'HOME')==str(home).encode():return True
             except (OSError,ValueError):
-                if 'comm' in locals() and any(x in comm for x in ('codex','claude')):return True
-                continue
+                if possible:
+                    # A disappearing PID is harmless; an opaque live native
+                    # writer cannot be declared safe for a second writer.
+                    try:
+                        identity=process_identity(int(p.name))
+                        if identity and identity.get('state')=='Z':continue
+                        if identity is None and not p.exists():continue
+                    except (OSError,ValueError):pass
+                    return True
         return False
 
-    def history(self,workspace,handle,query=''):
+    def history(self,workspace,handle,query='',*,start_offset=0,end_offset=None,include_turns=True):
+        if handle.startswith('saved:'):
+            self.rt.session_center.workspace(workspace)
+            v=self.rt.project_files(workspace).archive('session',handle[6:])['data']
+            messages=[m for m in v['messages'] if not query or query.casefold() in m.get('text','').casefold()]
+            return dict(workspace_id=workspace,handle=handle,messages=messages,
+                conversation_turns=v.get('conversation_turns',[]),activity=v.get('activity',[]),summaries=v.get('summaries',[]),
+                execution_results=v.get('execution_results',[]),
+                saved_history=True,history_status='project-reading-copy',notice='保存的阅读副本；不是原生恢复或当前执行回执')
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta={}
         if meta.get('native_archived'):
@@ -238,9 +430,9 @@ class WorkbenchSessions:
             if len(records)!=1:raise Blocked('原生归档记录不能唯一核验；请先恢复后查看')
             row=dict(profile=dict(binding,config_root=str(Path(binding['home'])/'.codex')),native=records[0])
             secret=credentials(binding['home'],[x[0] for x in binding.get('readonly_files',[])],read_file=credential_bytes)
-            result=dict(workspace_id=workspace,handle=handle,messages=conversation('codex',records[0]['path'],200,query,expected_sha256=records[0]['sha256'],secrets=secret))
+            result=dict(workspace_id=workspace,handle=handle,messages=conversation('codex',records[0]['path'],200,query,expected_sha256=records[0]['sha256'],secrets=secret,start_offset=start_offset,end_offset=end_offset,include_metadata=True))
         else:
-            result=self.rt.session_center.history(workspace,handle,query,200)
+            result=self.rt.session_center.history(workspace,handle,query,200,start_offset=start_offset,end_offset=end_offset,include_metadata=True)
             _,row=self.rt.session_center.resolve(workspace,handle)
         messages=[]
         for m in result['messages']:
@@ -276,11 +468,12 @@ class WorkbenchSessions:
         activity=[];summaries=[];activity_omitted=False
         with opened(row['native']['path']) as fd:
             with os.fdopen(os.dup(fd),'rb') as stream:
-                total=0
+                stream.seek(start_offset);total=start_offset
                 while True:
+                    if end_offset is not None and total>=end_offset:break
                     raw=stream.readline(1048577);total+=len(raw)
                     if not raw:break
-                    if len(raw)>1048576 or total>16*1024*1024:raise Invalid('工具活动超过读取预算')
+                    if len(raw)>1048576 or total>16*1024*1024 or end_offset is not None and total>end_offset:raise Invalid('工具活动超过本轮读取预算')
                     obj=json.loads(raw);items=[]
                     if row['profile']['provider']=='claude' and obj.get('type') in ('user','assistant') and not obj.get('isMeta') and not obj.get('isSidechain'):
                         content=obj.get('message',{}).get('content',[])
@@ -314,10 +507,30 @@ class WorkbenchSessions:
         activity=group_tools(activity)
         if activity_omitted and activity:activity[0]['history_truncated']=True
         # No thinking/reasoning payloads or full protocol envelopes cross this boundary.
-        return dict(result,messages=messages,execution_results=execution_results,groups=groups,activity=activity,summaries=summaries)
+        from .conversation_projection import conversation_turns
+        turns=conversation_turns(self,workspace,row,related,messages,secrets,original_messages=result['messages']) if include_turns else []
+        messages=[{k:m[k] for k in ('role','text')} for m in messages]
+        return dict(result,messages=messages,execution_results=execution_results,groups=groups,activity=activity,summaries=summaries,conversation_turns=turns)
 
     def change(self,workspace,handle,action,*,name='',answer=''):
         self.rt.check_operator()
+        if isinstance(handle,str) and handle.startswith('saved:'):
+            key,meta,archive=self.saved_metadata(workspace,handle)
+            prior_sha256=digest(canonical(meta))
+            meta=dict(meta or dict(id=handle,workspace=workspace,collection=archive['data']['session'].get('collection','active')))
+            if action=='rename':
+                if not isinstance(name,str) or not 1<=len(name.strip())<=160:raise Invalid('会话名称需要 1–160 个字符')
+                meta['alias']=safe_text(name.strip())
+            elif action in ('archive','trash','restore'):
+                if action!='restore' and not answer.strip():raise Invalid('请确认将阅读副本移入可恢复列表')
+                meta['collection']={'archive':'archived','trash':'trash','restore':'active'}[action]
+            else:raise Blocked('保存的阅读副本仅支持本机分类、别名和恢复，不提供原生操作')
+            meta['updated_at']=time.time()
+            with self.db.tx() as db:
+                raw=db.execute("SELECT data FROM records WHERE kind='project-session-meta' AND id=?",(key,)).fetchone()
+                if digest(canonical(json.loads(raw[0]) if raw else None))!=prior_sha256:raise Conflict('阅读副本分类已变化，请刷新后重试')
+                db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',('project-session-meta',key,canonical(meta).decode()))
+            return dict(handle=handle,collection=meta['collection'],alias=meta.get('alias'),native_modified=False,permanently_deleted=False)
         native_modified=False
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')
@@ -371,6 +584,30 @@ class WorkbenchSessions:
                     native_modified=native_modified,permanently_deleted=False)
 
     def rpc(self,binding,cwd,method,params):
+        from .native_local import configured
+        cfg=configured(self.rt,binding['provider'])
+        local=bool(cfg and (binding.get('execution_backend')=='native-local' or
+            binding.get('home')==cfg['home'] or Path(binding['home']).is_relative_to(self.rt.rpc_home)))
+        if local and method in ('cli/probe','claude/auth-status'):
+            from .workbench_rpc import request
+            from orchestration.common import clean_env
+            env=clean_env(cfg['home']);env['TMPDIR']='/tmp'
+            from .native_local import native_environment
+            env.update(native_environment(dict(binding,**cfg)))
+            reply=request(binding['executable'],method,params,env=env)
+            if 'error' in reply:raise Blocked('原生能力探测未完成')
+            return reply['result']
+        if local and binding['provider']=='codex' and method in ('model/list','account/read','thread/read','thread/list'):
+            from .native_codex_rpc import metadata
+            return metadata(dict(binding,**cfg,_metadata_guard=str(self.rt.storage)),cwd,method,params)
+        if local:raise Blocked('此本机原生生命周期操作尚未独立验证；可通过原生客户端管理')
+        if binding['provider']=='copilot':
+            if method not in ('cli/probe','copilot/models','copilot/auth-status'):raise Blocked('Copilot 尚未支持此原生元数据操作')
+            from .copilot_adapter import invoke
+            home=Path(binding['home']);artifacts=self.rt.storage/'metadata-artifacts';artifacts.mkdir(exist_ok=True)
+            with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')):
+                result,_=invoke(binding,cwd,artifacts,dict(mode='metadata'),timeout=30)
+            return dict(logged_in=result['authenticated'],auth_method='operator-pinned GitHub CLI token',service_verified=False) if method=='copilot/auth-status' else result
         helper=Path(__file__).with_name('workbench_rpc.py')
         home=Path(binding['home']);artifacts=self.rt.storage/'metadata-artifacts';artifacts.mkdir(exist_ok=True)
         mutation=method in ('thread/archive','thread/unarchive','thread/name/set','thread/fork')
@@ -385,6 +622,8 @@ class WorkbenchSessions:
                 value=dict(id=operation,home=str(home),cwd=cwd,method=method,params=params,state='PENDING',at=time.time())
                 db.execute('INSERT INTO records VALUES(?,?,?)',('native-mutation',operation,canonical(value).decode()))
         try:
+            if local:
+                raise Blocked('此本机原生生命周期操作尚未独立验证；可通过原生客户端管理')
             with lease(home.parent/(digest(str(home.resolve()).encode())+'.session.lock')):
                 result,out,_=execute([sys.executable,'-B',str(helper)],cwd,home,
                     read=[str(helper),cwd,*binding['read_paths']],write=[],timeout=30,cap=2_000_000,
@@ -401,28 +640,29 @@ class WorkbenchSessions:
 
     def terminal(self,workspace,handle):
         project,row=self.rt.session_center.resolve(workspace,handle)
+        if row['profile']['provider']=='copilot':raise Blocked('Copilot 已支持工作流创建/恢复；原生交互终端尚未验证，未开放')
         binding,reason=self.rt.session_center._binding(row,project)
         if not binding or self.busy(binding,row['native']['session_id']):raise Blocked(reason or '原生会话正被占用')
         command=[sys.executable,str(Path(__file__).parents[1]/'devflower_native_terminal.py')]
-        for key,value in dict(operator=str(self.rt.operator_file),operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=str(self.rt.policy_file),policy_sha256=self.rt.policy_sha,workspace=workspace,handle=handle).items():command+=['--'+key.replace('_','-'),value]
+        for key,value in dict(operator=str(self.rt.operator_file),operator_sha256=self.rt.operator_sha256,candidate_sha256=self.rt.candidate_sha256,policy=str(self.rt.policy_file),policy_sha256=self.rt.policy_sha,assistant_settings=str(self.rt.assistant_settings),workspace=workspace,handle=handle).items():command+=['--'+key.replace('_','-'),value]
         return dict(command=shlex.join(command),cwd=row['native']['cwd'],mode='只读原生终端；启动前重新核验原环境和占用，退出后释放同一 HOME 锁',attached=False)
 
     _catalog_locks={}
 
-    def capabilities(self,refresh=False,selected=None):
-        if not refresh:return self._capabilities(False,selected)
+    def capabilities(self,refresh=False,selected=None,workspace=None):
+        if not refresh:return self._capabilities(False,selected,workspace)
         if selected is None:
-            rows=[self.capabilities(True,name)[0] for name in self.rt.operator['profiles']]
-            return rows+[dict(id='copilot',provider='copilot',available=False,reason='认证、原生会话与隔离能力尚未验证')]
+            rows=[self.capabilities(True,name,workspace)[0] for name in self.rt.operator['profiles']]
+            return rows+([] if any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()) else [dict(id='copilot',provider='copilot',available=False,reason='请登记 Copilot 原生执行配置后启用')])
         if selected not in self.rt.operator['profiles']:raise Invalid('请选择已登记的 Provider 配置')
         import threading
         lock=self._catalog_locks.setdefault((str(self.rt.storage),selected),threading.Lock())
         if not lock.acquire(blocking=False):
-            return [dict(self._capabilities(False,selected)[0],refresh_pending=True)]
-        try:return self._capabilities(True,selected)
+            return [dict(self._capabilities(False,selected,workspace)[0],refresh_pending=True)]
+        try:return self._capabilities(True,selected,workspace)
         finally:lock.release()
 
-    def _capabilities(self,refresh=False,selected=None):
+    def _capabilities(self,refresh=False,selected=None,workspace=None):
         from .model_catalog import ModelCatalog
         result=[]
         for name,profile in self.rt.operator['profiles'].items():
@@ -435,12 +675,17 @@ class WorkbenchSessions:
             else:
                 try:cli=self.db.get('cli-probe',name)
                 except Invalid:cli={'available':Path(profile['executable']).is_file(),'status':'registered; native capability refresh not yet performed'}
-            catalog=ModelCatalog(self).get(name,profile,refresh)
+            catalog=ModelCatalog(self).get(name,profile,refresh,workspace)
+            from .agent_extensions import capabilities as extension_capabilities
+            extensions=extension_capabilities(profile)
+            local=bool(self.rt.operator.get('native_local',{}).get(profile['provider']))
+            if local:extensions=dict(extensions,skills=extensions['skills'] if profile['provider']=='codex' else False,subagents=False)
             result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
-                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan','Agent'],skills=[],subagents=False,
-                model=profile['model'],effort=profile['effort'],resolved_effort='unknown'))
+                execution_backend='native-local' if local else 'isolated',
+                inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and (not local or profile['provider']=='codex'),subagents=extensions['subagents'] and not local,extensions=extensions,
+                model=profile['model'],effort=profile['effort'],timeout_seconds=profile.get('timeout_seconds',1800),resolved_effort='unknown'))
         if selected is not None and not result:raise Invalid('请选择已登记的 Provider 配置')
-        if selected is None:
+        if selected is None and not any(p['provider']=='copilot' for p in self.rt.operator['profiles'].values()):
             result.append(dict(id='copilot',provider='copilot',available=False,installed=bool(__import__('shutil').which('copilot')),
                 reason='认证、模型发现与隔离执行尚未验证，不能作为可执行节点'))
         return result

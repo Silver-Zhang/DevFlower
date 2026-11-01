@@ -8,7 +8,7 @@ async function test(name,fn){
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  try{await fn(page,context);assert.deepEqual(errors,[]);results.push({name,passed:true})}
  catch(e){results.push({name,passed:false,error:String(e)});await page.screenshot({path:out+'/'+name+'-failure.png'})}
- finally{await context.close()}
+ finally{await page.unrouteAll({behavior:'ignoreErrors'});await context.close()}
 }
 async function open(page,key){const x=access[key];await page.goto(x.url+'/#'+x.token);await page.locator('.brand').waitFor()}
 function headers(key){return {Authorization:'Bearer '+access[key].token}}
@@ -19,7 +19,7 @@ function headers(key){return {Authorization:'Bearer '+access[key].token}}
   assert.equal(await page.locator('.workspace-environment').innerText(),'Stable');
   const r=await page.request.get(access.stable.url+'/api/status',{headers:headers('stable')});assert.equal(r.status(),200);
   const status=await r.json();assert.equal(status.label,'Stable · Agent 工作台');assert.equal(status.release.candidate_sha256,access.candidate);
-  await page.getByRole('button',{name:'打开文件夹',exact:true}).click();
+  await page.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).click();
   assert((await page.locator('.folder-dialog header small').innerText()).includes('Stable'));
   await page.reload();await page.locator('.brand').waitFor();assert.equal(await page.locator('.brand span').innerText(),'STABLE');
   await page.screenshot({path:out+'/synthetic-stable.png'});
@@ -40,7 +40,7 @@ function headers(key){return {Authorization:'Bearer '+access[key].token}}
    await page.route('**/api/status',async route=>{const r=await route.fetch();const status=await r.json();
     await route.fulfill({response:r,json:{...status,stable_approved:true,label:'Stable',release}})});
    await open(page,'development');assert.equal(await page.locator('.brand span').innerText(),'DEVELOPMENT');
-   await page.unroute('**/api/status');
+   await page.unrouteAll({behavior:'wait'});
   }
  });
  await test('approval-tamper-refuses-queries-starts-and-refresh',async page=>{

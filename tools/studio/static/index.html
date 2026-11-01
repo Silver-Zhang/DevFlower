@@ -1,6 +1,6 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DevFlower Studio</title><link rel="stylesheet" href="/style.css"></head>
-<body>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DevFlower Studio</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"></head>
+<body class="legacy-studio">
 <header class="top"><div class="brand"><span class="logo">DF</span><strong>DevFlower <span>Studio</span></strong><small>LOCAL · V0.1</small></div><div id="connection" class="chip">连接中</div></header>
 <div class="layout">
 <aside class="sidebar"><div class="eyebrow">业务工作区</div><select id="project-workspace" aria-label="业务工作区"><option>读取登记…</option></select><button id="open-sessions" class="nav">Agent 会话（只读）</button><div class="eyebrow">WORKFLOWS</div><button id="new" class="nav active">＋ 新建 B 模式流程</button><div class="section-heading">已保存的工作流 <button id="refresh-designs" title="刷新工作流">↻</button></div><div id="workflows" class="items empty">尚未保存</div><div class="section-heading">真实运行记录 <button id="refresh-runs" title="刷新运行记录">↻</button></div><div id="runs" class="items empty">未连接控制目录</div><div class="sidebar-note"><b>原工作流仍然保留</b><p>A / B / C 是参与模式。本版画布只编译 B 双 Agent 流程，C 的人类决策不由画布代签。</p><a href="https://github.com/Silver-Zhang/DevFlower" target="_blank" rel="noreferrer">DevFlower ↗</a></div></aside>

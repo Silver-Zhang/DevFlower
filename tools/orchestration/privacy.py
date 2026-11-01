@@ -9,12 +9,12 @@ from pathlib import Path
 from .common import Blocked
 
 
-def credentials(home, extra_files=(), *, read_file=None):
+def credentials(home, extra_files=(), *, read_file=None, include_short=False):
     found = set()
     def walk(value, key=''):
         sensitive = any(x in key.lower().replace('-', '_') for x in
                         ('token', 'api_key', 'apikey', 'secret', 'authorization', 'password', 'passwd', 'cookie'))
-        if isinstance(value, str) and sensitive and len(value) >= 8:
+        if isinstance(value, str) and sensitive and bool(value) and (include_short or len(value) >= 8):
             found.add(value)
         elif isinstance(value, dict):
             for k, v in value.items():

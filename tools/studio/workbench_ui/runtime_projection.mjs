@@ -14,6 +14,10 @@ export function duration(start,end){
  const seconds=Math.max(0,Math.floor((Number.isFinite(end)?end:Date.now()/1000)-start));
  return seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
 }
+export function stateDuration(start,end,state){
+ if(Number.isFinite(end))return duration(start,end);
+ return ['PENDING','QUEUED','STARTING','RUNNING','PAUSED','WAITING_CONFIRMATION','WAITING_INPUT','BUSY'].includes(state)?duration(start):'耗时未知';
+}
 export function latestActivation(nodes,path){
  return nodes.filter(a=>a.node===path).sort((a,b)=>{
   const x=a.iteration_path||[a.iteration||0],y=b.iteration_path||[b.iteration||0];
@@ -26,20 +30,43 @@ export function projectRun(snapshot,connection,runId){
  const graph=snapshot?.run?.id===runId?snapshot.run.graph:null;
  const walk=(g,p='')=>(g?.nodes||[]).flatMap(n=>[{...n,path:p+n.id},...(n.body?walk(n.body,p+n.id+'/'):[])]);
  const nodes=walk(graph),activations=(snapshot?.nodes||[]).filter(a=>!a.run||a.run===runId);
- const latest=nodes.map(n=>({node:n,activation:latestActivation(activations,n.path)}));
- const active=trusted?latest.filter(x=>['RUNNING','STARTING'].includes(x.activation?.state)):[];
- const waiting=trusted?latest.filter(x=>x.activation?.state==='WAITING_CONFIRMATION'||
+ const ended=['COMPLETED','PASSED','FAILED','CANCELLED','SKIPPED'].includes(snapshot?.state);
+ const latest=nodes.map(n=>{
+  const a=latestActivation(activations,n.path);
+  // Preserve the stored evidence. A finished run cannot prove a stale
+  // activation is still executing, or that it reached a successful end.
+  const stale=ended&&a&&!['COMPLETED','PASSED','FAILED','CANCELLED','SKIPPED','RECOVERY_REQUIRED','UNKNOWN'].includes(a.state);
+  // An unentered loop has no child activations. Its persisted skip can explain
+  // the design nodes without inventing execution IDs, rounds or receipts.
+  const parent=!a&&trusted?nodes.filter(p=>p.kind==='loop'&&n.path.startsWith(p.path+'/'))
+   .sort((x,y)=>y.path.length-x.path.length)
+   .map(p=>({node:p,activation:latestActivation(activations,p.path)}))
+   .find(p=>p.activation?.state==='SKIPPED'&&p.activation.run===runId&&typeof p.activation.id==='string'&&p.activation.id):null;
+  const presentation=parent?{state:'SKIPPED',reason:'未执行：所属循环已跳过。',
+   derived_from_parent:{node:parent.node.path,activation_id:parent.activation.id}}:null;
+  return {node:n,activation:stale?{...a,recorded_state:a.state,state:'UNKNOWN',reason:'本次运行已结束，节点记录尚未确认终态。'}:a,presentation};
+ });
+ const active=trusted&&!ended?latest.filter(x=>['RUNNING','STARTING'].includes(x.activation?.state)):[];
+ const waiting=trusted&&!ended?latest.filter(x=>x.activation?.state==='WAITING_CONFIRMATION'||
   !['COMPLETED','FAILED','SKIPPED','CANCELLED','RECOVERY_REQUIRED'].includes(x.activation?.state)&&x.activation?.waiting?.length):[];
  const done=trusted?latest.filter(x=>['COMPLETED','SKIPPED','CANCELLED'].includes(x.activation?.state)).length:0;
- return {trusted,graph,latest,active,waiting,done,total:nodes.length,
-  state:trusted?(snapshot.run.paused?'PAUSED':snapshot.state):'UNKNOWN',
+ const activated=trusted?latest.filter(x=>x.activation).length:0;
+ const settled=trusted?latest.filter(x=>['COMPLETED','PASSED','FAILED','SKIPPED','CANCELLED'].includes(x.activation?.state)).length:0;
+ return {trusted,graph,latest,active,waiting,done,total:nodes.length,activated,settled,
+  unactivated:trusted?nodes.length-activated:0,inheritedSkipped:trusted?latest.filter(x=>x.presentation).length:0,
+  state:trusted?(!ended&&snapshot.run.paused?'PAUSED':snapshot.state):'UNKNOWN',
   reason:trusted?(snapshot.run.reason||latest.find(x=>['FAILED','RECOVERY_REQUIRED'].includes(x.activation?.state))?.activation.reason||''):'连接或运行身份尚未核验。正在读取同一运行，不会重复启动 Agent。'};
+}
+export function visibleNodeState(projection,path){
+ if(!projection.trusted)return {state:'UNKNOWN'};
+ const item=projection.latest.find(x=>x.node.path===path);
+ return item?.activation||item?.presentation||{state:'PENDING'};
 }
 export function edgeEvidence(events,edge,prefix,runId){
  return events.filter(e=>e.run===runId&&e.edge===edge.id&&e.source===prefix+edge.source&&e.node===prefix+edge.target&&['handoff-sent','handoff-received'].includes(e.kind)).at(-1);
 }
 export function preflight(graph,workspace,task){
- if(!workspace)return {message:'先打开一个工作空间，再开始运行。'};
+ if(!workspace)return {message:'先打开一个工作区，再开始运行。'};
  if(!graph?.nodes?.length)return {message:'画布还是空白。添加节点或选择一个示例。'};
  const walk=(g,p='')=>{for(const n of g.nodes){const path=p+n.id;
   if(n.kind==='agent')for(const [key,label] of [['profile','执行工具'],['model','模型'],['effort','推理强度'],['round_prompt','每轮提示词']])

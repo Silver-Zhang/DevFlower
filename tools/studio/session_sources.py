@@ -70,7 +70,10 @@ def clean_path(value):
         raise Refused('invalid_path')
     if any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in value) or '..' in Path(value).parts:
         raise Refused('invalid_path')
-    return os.path.normpath(value)
+    # Linux treats //path as /path, while pathlib and normpath preserve the
+    # double-leading spelling. Collapse it before scope/protected comparisons
+    # so an alias cannot bypass a root deny or a system/HOME prohibition.
+    return '/' + os.path.normpath(value).lstrip('/')
 
 
 @contextmanager
@@ -110,11 +113,11 @@ def timestamp(value):
     return None
 
 
-def read_session(fd, provider, filename, limits, initial_stat=None):
+def read_session(fd, provider, filename, limits, initial_stat=None, expected_session=None):
     st = initial_stat if initial_stat is not None else os.fstat(fd)
     if st.st_size > limits['file_bytes']:
         raise Refused('oversized')
-    sid = cwd = version = created = updated = None
+    sid = cwd = version = created = updated = native_source = None
     cwds = []
     seen = 0; changed_cwd = False; sha = hashlib.sha256()
     # The caller owns fd. Buffered read-ahead is bounded at the raw IO layer.
@@ -136,9 +139,15 @@ def read_session(fd, provider, filename, limits, initial_stat=None):
                 raise Refused('corrupt_jsonl') from None
             if not isinstance(obj, dict):
                 raise Refused('invalid_metadata')
-            meta = obj.get('payload') if provider == 'codex' and obj.get('type') in ('session_meta', 'turn_context') else obj if provider == 'claude' else None
+            meta = obj.get('payload') if provider == 'codex' and obj.get('type') in ('session_meta', 'turn_context') else obj if provider=='claude' else None
+            if provider=='copilot' and obj.get('type')=='session.start':
+                data=obj.get('data',{});context=data.get('context',{})
+                meta=dict(sessionId=data.get('sessionId'),cwd=context.get('cwd'),version=data.get('copilotVersion'))
             if isinstance(meta, dict):
-                identity = meta.get('id') if provider == 'codex' and obj.get('type') == 'session_meta' else meta.get('sessionId') if provider == 'claude' else None
+                if provider=='codex' and obj.get('type')=='session_meta':
+                    source=meta.get('source')
+                    native_source=source if source in ('cli','vscode','appServer','exec') else None
+                identity = meta.get('id') if provider == 'codex' and obj.get('type') == 'session_meta' else meta.get('sessionId') if provider in ('claude','copilot') else None
                 if identity is not None:
                     if not isinstance(identity, str) or not UUID.fullmatch(identity) or sid and identity != sid:
                         raise Refused('identity_conflict')
@@ -164,9 +173,10 @@ def read_session(fd, provider, filename, limits, initial_stat=None):
     if not sid or not cwd:
         raise Refused('unsupported_format')
     codex_name = re.fullmatch(r'rollout-\d{4}-\d\d-\d\dT[0-9-]+-('+UUID.pattern+r')(?:_'+UUID.pattern+r')?\.jsonl', filename)
+    if provider=='copilot' and (filename!='events.jsonl' or sid!=expected_session):raise Refused('identity_conflict')
     if provider == 'claude' and filename != sid+'.jsonl' or provider == 'codex' and (not codex_name or codex_name[1] != sid):
         raise Refused('identity_conflict')
-    return dict(session_id=sid, cwd=cwd, cwds=cwds, cwd_changed=changed_cwd, version=version,
+    return dict(session_id=sid, cwd=cwd, cwds=cwds, cwd_changed=changed_cwd, version=version, native_source=native_source,
                 created=created, updated=updated, sha256=sha.hexdigest())
 
 
@@ -175,7 +185,7 @@ def scan(root, provider, limits=None, session_ids=None, *, include_paths=False):
     coverage = dict(status='complete', entries=0, files=0, bytes=0, accepted=0, rejected={},
                     limits=limits)
     rows = []
-    if provider not in ('codex', 'claude'):
+    if provider not in ('codex', 'claude','copilot'):
         coverage['status'] = 'unsupported'
         return rows, coverage
 
@@ -214,7 +224,7 @@ def scan(root, provider, limits=None, session_ids=None, *, include_paths=False):
                             reject('byte_budget'); continue
                         coverage['files'] += 1
                         # Provider-specific main-session layout; no subagent transcripts.
-                        shape = (provider == 'claude' and len(rel) == 2 and UUID.fullmatch(ent.name[:-6])) or (
+                        shape = (provider=='copilot' and len(rel)==2 and UUID.fullmatch(rel[0]) and ent.name=='events.jsonl') or (provider == 'claude' and len(rel) == 2 and UUID.fullmatch(ent.name[:-6])) or (
                             provider == 'codex' and len(rel) == 4 and all(re.fullmatch(r'\d+', x) for x in rel[:3]) and ent.name.startswith('rollout-'))
                         if not shape:
                             reject('unsupported_layout'); continue
@@ -225,7 +235,7 @@ def scan(root, provider, limits=None, session_ids=None, *, include_paths=False):
                             if coverage['bytes']+actual.st_size > limits['bytes']:
                                 raise Refused('byte_budget')
                             coverage['bytes'] += actual.st_size
-                            row = read_session(child, provider, ent.name, limits, initial_stat=actual)
+                            row = read_session(child, provider, ent.name, limits, initial_stat=actual,expected_session=rel[0] if provider=='copilot' else None)
                             row['file_key'] = hashlib.sha256('/'.join(rel).encode()).hexdigest()
                             if include_paths:
                                 # Internal locator only. Never include this in an HTTP projection.

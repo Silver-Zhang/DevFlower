@@ -56,6 +56,11 @@ def clean_env(home=None):
     return env
 
 
+def cli_probe_env(home=None):
+    """Process-local updater opt-outs for CLI metadata, not a filesystem sandbox."""
+    return dict(clean_env(home),DISABLE_AUTOUPDATER='1',DISABLE_UPDATES='1')
+
+
 def git(root, *args, env=None, data=None):
     result = subprocess.run(['git', '-C', str(root), *args], input=data,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -128,8 +133,68 @@ def tree_hash(root, excludes=()):
     return digest(canonical(manifest(root, excludes)))
 
 
+def has_git_metadata(root):
+    """An empty native-sandbox mount point is not a Git repository marker.
+
+    Every nonempty directory, file or link still requires real Git validation.
+    This exception grants no delivery permission and never removes user data.
+    """
+    marker = Path(root) / '.git'
+    try:
+        before = os.lstat(marker)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(before.st_mode):
+        return True
+    stamp = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_nlink, s.st_mtime_ns, s.st_ctime_ns)
+    try:
+        fd = os.open(marker, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            opened = os.fstat(fd)
+            empty = not os.listdir(fd)
+            if (stamp(before) != stamp(opened) or stamp(opened) != stamp(os.fstat(fd)) or
+                    stamp(opened) != stamp(os.lstat(marker))):
+                raise Blocked('Git 元数据在检查期间变化；未启动任务。')
+            return not empty
+        finally:
+            os.close(fd)
+    except OSError:
+        raise Blocked('无法核验 Git 元数据；未启动任务。') from None
+
+
+def workspace_metadata(root, *, check_git=False):
+    """Reserved local project data, never source or Agent input.
+
+    This is deliberately NOT an exclusion in manifest/tree_hash: whole-program
+    review and release fingerprints must still include every candidate file.
+    """
+    path = Path(root) / '.devflower'
+    if not os.path.lexists(path): return None
+    if path.is_symlink() or not path.is_dir(): raise Blocked('项目 .devflower 必须是普通目录')
+    marker = path / 'project.json'
+    fd = os.open(marker, os.O_PATH | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_nlink != 1 or s.st_size > 4096:
+            raise Blocked('项目元数据标识无效')
+        with open('/proc/self/fd/' + str(fd), 'rb') as stream: value = json.loads(stream.read(4097))
+    finally: os.close(fd)
+    if value != dict(version=1, kind='devflower-project', authority=False):
+        raise Blocked('未识别的 .devflower 不会从源码身份中排除')
+    # Reserved data cannot hide tracked executable source from the source hash.
+    if check_git and has_git_metadata(root) and git(root, 'ls-files', '--', '.devflower'):
+        raise Blocked('.devflower 是本地记录保留区，不能包含已跟踪的源码')
+    return str(path)
+
+
+def workspace_hash(root):
+    return tree_hash(root, excludes=('.devflower',) if workspace_metadata(root) else ())
+
+
 def snapshot(source, dest, excludes=(), baseline=None):
     source, dest = Path(source), Path(dest)
+    if workspace_metadata(source) and included('.devflower', excludes):
+        raise Blocked('源码快照须明确排除 .devflower 项目记录；不能将对话历史当源码发送')
     entries = manifest(source, excludes)
     dest.mkdir(parents=True, exist_ok=False)
     for entry in entries:

@@ -41,7 +41,7 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=()):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
@@ -49,11 +49,11 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
         parent_scratch = '/tmp'
     with tempfile.TemporaryDirectory(prefix='dfp-', dir=parent_scratch) as scratch:
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths)
+                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths, readonly_dirs, hidden_paths, on_stderr)
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=()):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
     home = Path(home)
@@ -62,8 +62,12 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     env.update(env_extra or {})
     env['TMPDIR'] = scratch
     parent = os.getpid()
-    if readonly_files and backend != 'bwrap':
+    if (readonly_files or readonly_dirs or hidden_paths) and (backend != 'bwrap' or not isolate):
         raise Blocked('read-only credential overlays require bwrap')
+    from .common import workspace_metadata
+    metadata = workspace_metadata(cwd, check_git=True)
+    if metadata and backend != 'native-local' and (backend != 'bwrap' or not isolate):
+        raise Blocked('项目记录隔离需要强制的外层执行保护')
     overlays = []
     for source, relative in readonly_files:
         from .common import relative as safe_relative
@@ -75,6 +79,20 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
             raise Blocked('credential overlay escapes dedicated HOME')
         dest.parent.mkdir(parents=True, exist_ok=True)
         overlays.append((source, dest))
+    directory_overlays=[]
+    for source,relative in readonly_dirs:
+        if relative not in ('.agents/skills','.codex/skills','.claude/skills'):raise Blocked('unsupported native directory overlay')
+        source=Path(source);dest=home/relative
+        from studio.session_sources import opened
+        with opened(source,directory=True):pass
+        if not dest.resolve().is_relative_to(home.resolve()) or dest.is_symlink():raise Blocked('native directory overlay escapes HOME')
+        dest.mkdir(parents=True,exist_ok=True)
+        with opened(dest,directory=True):pass
+        directory_overlays.append((str(source),str(dest)))
+    for path in hidden_paths:
+        if str(Path(path).relative_to(cwd)) not in ('.agents/skills','.codex/skills','.claude/skills'):raise Blocked('unsupported hidden native path')
+        from studio.session_sources import opened
+        with opened(path,directory=True):pass
     if backend == 'bwrap':
         wrapped = ['/usr/bin/bwrap', '--die-with-parent', '--unshare-user', '--unshare-pid',
                    '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev',
@@ -93,8 +111,18 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 wrapped += ['--ro-bind', str(Path(p).resolve()), str(p)]
         for source, dest in overlays:
             wrapped += ['--ro-bind', str(source), str(dest)]
+        for source,dest in directory_overlays:
+            wrapped += ['--ro-bind',source,dest]
+        for path in hidden_paths:
+            wrapped += ['--tmpfs',path,'--remount-ro',path]
+        if metadata:
+            # An empty read-only mount hides conversations and prevents writes,
+            # including from a workspace-write Agent. The real DB stays hosted.
+            wrapped += ['--tmpfs', metadata, '--remount-ro', metadata]
         command = [str(Path(argv[0]).resolve()) if Path(argv[0]).is_absolute() else argv[0], *argv[1:]]
         argv = wrapped + ['--remount-ro', '/', '--remount-ro', '/tmp', '--chdir', str(cwd), '--', *command]
+    elif backend == 'native-local' and not isolate:
+        pass  # Explicit host-approved native client; no added HOME/container.
     elif backend != 'landlock':
         raise Blocked('unknown isolation backend')
 
@@ -109,9 +137,26 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True, close_fds=True, preexec_fn=setup)
-    record = process_identity(proc.pid)
-    if store:
-        store.finish(op, 'RUNNING', process=record)
+    try:
+        # Record the physical spawn before any fallible journal publication.
+        # This optional in-memory flag never grants execution authority.
+        if store is not None and hasattr(store, 'process_started'):
+            store.process_started = True
+        record = process_identity(proc.pid)
+        if store:
+            store.finish(op, 'RUNNING', process=record)
+    except BaseException:
+        # Popen owns this unreaped child and its newly created session. Its
+        # PID cannot be reused before wait(), even if no record was published.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=3)
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                pipe.close()
+        raise
     # Input is bounded and nonblocking too: no prompt-vs-output pipe deadlock.
     pending = memoryview(input_text.encode())
     sent_bytes = 0
@@ -168,6 +213,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 buffers[name].extend(chunk)
                 if name == 'stdout' and on_stdout is not None:
                     on_stdout(chunk)
+                if name == 'stderr' and on_stderr is not None:
+                    on_stderr(chunk)
             if overflow:
                 break
         if proc.poll() is None:
@@ -184,6 +231,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     except BaseException:
         stop(record)
         proc.wait(timeout=3)
+        if store:
+            store.finish(op,'EXITED',exit=proc.returncode,process=record,timeout=timed_out,overflow=overflow,cancelled=cancelled,duration=round(time.monotonic()-start,3))
         raise
     finally:
         selector.close()

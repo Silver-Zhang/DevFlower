@@ -63,11 +63,11 @@ class VisibleHistoryTests(unittest.TestCase):
             self.assertNotEqual(original, session_identity(*changed))
 
     def test_capabilities_do_not_promise_unsafe_native_operations(self):
-        for provider in ('codex', 'claude'):
+        for provider in ('codex', 'claude','copilot'):
             c = capabilities(provider)
             self.assertTrue(all(c[k] for k in ('discover', 'read', 'create', 'resume', 'hide', 'unhide')))
             self.assertFalse(c['native_archive']);self.assertFalse(c['native_delete']);self.assertFalse(c['subagents'])
-        self.assertFalse(capabilities('copilot')['supported'])
+        self.assertFalse(capabilities('unconfigured-provider')['supported'])
 
     def test_visible_text_search_and_hidden_blocks_for_both_providers(self):
         with tempfile.TemporaryDirectory() as folder:

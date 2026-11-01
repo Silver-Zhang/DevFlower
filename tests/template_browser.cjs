@@ -16,6 +16,14 @@ async function preset(p,kind){
  await p.locator('#template-library summary').click();await p.selectOption('#template',kind);
  await p.click('#new-draft');await p.waitForFunction(k=>document.querySelector('#workflow-name').value.startsWith(k+' 起始模板'),kind);
 }
+async function openWorkspace(p){
+ await p.locator('.workspace-menu summary').click();await p.fill('#workspace-path',access.source);
+ const opened=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/workspace'&&r.request().method()==='POST');
+ const listed=p.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/status'&&u.searchParams.get('workspace')===access.workspace});
+ await p.click('#open-workspace');assert.equal((await opened).status(),200);assert.equal((await listed).status(),200);
+ await p.waitForFunction(source=>document.querySelector('#workspace-info').textContent.includes(source),access.source);
+ await p.locator('.workspace-menu summary').click();
+}
 async function compile(p){
  await p.keyboard.press('Escape');await p.click('#flow-options');
  const response=p.waitForResponse(r=>r.url().endsWith('/api/compile'));await p.click('#compile');return await response;
@@ -34,6 +42,7 @@ async function connect(p,source,target){
  await test('immediate blank entry without ABC chooser or authority',async p=>{
   assert.equal(await p.locator('#canvas .node').count(),0);
   assert.equal(await p.locator('#template-library').evaluate(e=>e.open),false);
+  await openWorkspace(p);
   await p.getByRole('button',{name:'创建任务入口',exact:true}).click();
   await p.waitForFunction(()=>document.querySelectorAll('#canvas .node').length===1);
   await p.keyboard.press('Escape');const request=p.waitForRequest(r=>r.url().endsWith('/api/draft'));await p.click('#save');
@@ -61,13 +70,15 @@ async function connect(p,source,target){
   assert.equal(plan.document.template,'A');assert.equal(plan.result_gates.length,1);
  });
  await test('legacy edit migrates a copy and preserves immutable prior revision',async(p,context)=>{
+  await openWorkspace(p);
+  await p.waitForFunction(id=>Array.from(document.querySelector('#drafts').options).some(o=>o.value===id),access.legacy.id);
   await p.selectOption('#drafts',access.legacy.id);
   assert((await p.textContent('#save-state')).includes('旧草稿'));
   const request=p.waitForRequest(r=>r.url().endsWith('/api/draft'));await p.click('#save');
   const body=(await request).postDataJSON();assert.equal(body.document.version,2);assert.equal(body.id,access.legacy.id);assert.equal(body.expected,access.legacy.revision);
   await p.waitForFunction(()=>document.querySelector('#save-state').textContent==='该快照已保存');
-  const status=await (await context.request.get(access.url+'api/status',{headers:{Authorization:'Bearer '+access.token}})).json();
-  const value=status.drafts.find(x=>x.id===access.legacy.id);assert.notEqual(value.revision,access.legacy.revision);
+  const response=await context.request.get(access.url+'api/status?workspace='+encodeURIComponent(access.workspace),{headers:{Authorization:'Bearer '+access.token}});assert.equal(response.status(),200);
+  const status=await response.json(),value=status.drafts.find(x=>x.id===access.legacy.id);assert(value,'The migrated draft must be listed in its fixture workspace');assert.notEqual(value.revision,access.legacy.revision);
  });
  await test('blank and preset workflows retain mandatory review/verification gates',async p=>{
   await preset(p,'A');await remove(p,'reviewer');const r=await compile(p);assert.equal(r.status(),400);
