@@ -69,6 +69,18 @@ class DurableRecoveryTests(unittest.TestCase):
     self.assertIsNotNone(recovery_notice(self.rt,'run'))
     self.assertEqual(self.flow.get('native-step','p')['status'],'RUNNING')
     self.assertNotIn('observed_alive',self.flow.get('native-step','p')['data'])
+ def test_terminated_run_never_leaves_a_dead_process_step_running(self):
+  from studio.workbench_scheduler import Scheduler
+  self.flow.change('run','run',{'state':'QUEUED','graph':{'nodes':[],'edges':[]},'task':'synthetic task'})
+  self.rt.check_operator=lambda:None
+  def locked(*a,**kw):raise OSError('database is locked')
+  with patch('studio.workbench_scheduler.group_alive',return_value=False),patch('studio.workbench_failures.group_alive',return_value=False):
+   scheduler=Scheduler(self.rt,'run');scheduler.graph=locked;scheduler.run_graph()
+  self.assertEqual(self.flow.get('run','run')['state'],'FAILED')
+  step=self.flow.get('native-step','p')
+  self.assertEqual(step['status'],'RECOVERY_REQUIRED');self.assertEqual(step['data']['outcome'],'unknown')
+  self.assertFalse(step['data']['observed_alive'])
+
  def test_cleanup_of_owned_groups_precedes_failed_database_write(self):
   identity=process_identity(os.getpid());self.flow.change('activation','a',{'process':identity})
   lock=sqlite3.connect(self.flow.path);lock.execute('BEGIN IMMEDIATE');original=self.flow.change
