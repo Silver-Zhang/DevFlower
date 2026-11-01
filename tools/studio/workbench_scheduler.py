@@ -155,6 +155,12 @@ class Scheduler:
                 if node['run']==self.run and node['state'] not in DONE and not group_alive(node.get('process')):
                     self.db.change('activation',node['id'],{'state':'CANCELLED' if state=='CANCELLED' else 'SKIPPED',
                                    'reason':'本次运行已终止，未继续执行'},event={'kind':'node-cancelled' if state=='CANCELLED' else 'node-skipped'})
+            # A terminated run must not leave a PROCESS step claiming RUNNING
+            # after its process is gone; keep the outcome unknown, never replay.
+            try:
+                from .workbench_failures import reconcile_native_steps
+                reconcile_native_steps(self.rt,self.run)
+            except Exception: pass  # A still-locked database keeps the step for the next reconcile.
         except Exception as exc:
             from .workbench_failures import abort_unexpected
             abort_unexpected(self.rt,self.run,exc)
