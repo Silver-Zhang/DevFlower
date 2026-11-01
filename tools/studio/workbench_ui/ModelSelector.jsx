@@ -12,8 +12,11 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
   if(v===version.current&&!refresh&&(!result.attempted_at||result.stale))result=await api('/api/models',{profile:profile.id,refresh:true,workspace:workspace?.id});
   if(v!==version.current)return;setCatalog(result);onCatalog?.(result);
  }catch(e){if(v===version.current)setError(e.message)}finally{if(v===version.current)setPending(false)}}
- useEffect(()=>{setCatalog(profile);load(false);return()=>{version.current++}},[profile?.id,workspace?.id]);
+ useEffect(()=>{setCatalog(profile);if(profile?.id)load(false);return()=>{version.current++}},[profile?.id,workspace?.id]);
  const current=catalog?.id===profile?.id?catalog:profile;
+ // A draft can carry a node whose execution tool is missing or not configured;
+ // show the repair path instead of querying a profile that does not exist.
+ if(!profile?.id)return <section className="model-picker" aria-label="模型发现"><p className="hint">尚未配置执行工具：请先在「执行工具」中选择可用工具，再选择模型与推理强度。</p></section>;
  const models=current?.models||[],selected=models.find(m=>m.id===model);
  const reasoning=m=>m?.selectable_efforts?.length?m.selectable_efforts:m?.native_efforts?.length?m.native_efforts:m?.efforts?.length?m.efforts:[profile?.effort].filter(Boolean);
  const efforts=reasoning(selected);
