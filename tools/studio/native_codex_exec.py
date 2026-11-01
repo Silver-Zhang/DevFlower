@@ -89,8 +89,29 @@ def protected_paths(runtime,binding):
 # a lower operating-system descriptor limit still fails closed and releases FDs.
 _PROTECTED_FD_LIMIT=32768
 
+def raise_fd_soft_limit():
+    """A large protected tree pins one descriptor per entry; 1024 is not enough.
+
+    Raise this process's soft limit up to the hard limit so the scan can keep
+    failing closed on its own budget instead of dying with EMFILE mid-tree.
+    Returns the soft limit now in force, or None when it cannot be raised.
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+        target=65536 if hard==resource.RLIM_INFINITY else min(65536,hard)
+        if soft>=target:return soft
+        resource.setrlimit(resource.RLIMIT_NOFILE,(target,hard))
+        return target
+    except (OSError,ValueError):
+        return None
+
 def check_protected_hardlinks(paths):
     """Count names inside deny roots using metadata only, with two bounded scans."""
+    raise_fd_soft_limit()
     if not isinstance(paths,(list,tuple)) or not paths or len(paths)>512:
         raise Blocked('受保护目录范围无效；未启动任务。')
     roots=[]
