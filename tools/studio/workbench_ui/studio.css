@@ -114,3 +114,7 @@ body{margin:0;background:var(--studio-bg);color:var(--studio-text);font-family:I
 .workbench .chat-composer .catalog-meta{font-size:10px;padding:6px 0;line-height:1.6}
 .workbench .chat-composer>div>span{flex:1 1 160px;font-size:10px;color:var(--studio-muted);line-height:1.5;padding-bottom:8px}
 .workbench .chat-composer select{font-size:11px;min-height:30px}
+
+/* Narrow canvas toolbar: keep more of the workflow name visible */
+@media(max-width:1370px){.workbench .canvas-toolbar>select{max-width:160px}}
+@media(max-width:759px){.workbench .canvas-toolbar>select{width:auto;max-width:150px}}
