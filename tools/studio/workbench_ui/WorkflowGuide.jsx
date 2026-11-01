@@ -16,6 +16,7 @@ export function WorkflowIssues({result,stale,onLocate,onAssistant,onClose}) {
  if(!result)return null;
  const errors=result.error_count ?? result.issues.filter(i=>i.severity==='error').length;
  const warnings=result.warning_count ?? (result.issues.length-errors);
+ if(stale)return <section className="workflow-issues stale" aria-label="工作流检查结果" role="region"><header><strong><ListChecks size={15}/>上次检查（已过期）</strong><button onClick={onClose} aria-label="关闭检查结果"><X size={15}/></button></header><p role="status">草稿或任务已变化，请重新检查。</p><button disabled onClick={onAssistant}><Sparkles size={14}/>发给 DevFlower 助手</button></section>;
  return <section className="workflow-issues" aria-label="工作流检查结果" role="region"><header><strong><ListChecks size={15}/>检查结果 · {errors} 个错误 · {warnings} 条提醒</strong><button onClick={onClose} aria-label="关闭检查结果"><X size={15}/></button></header>
  {result.truncated&&<p role="status">共发现 {result.total} 条，显示 {result.issues.length} 条，遗漏 {result.omitted_count} 条。请分批修复已列问题后重新检查。</p>}
  {stale&&<p role="status">草稿或任务已变化，请重新检查。</p>}

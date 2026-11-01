@@ -61,7 +61,25 @@ def run_conversation(manager,workspace,run):
             add(a['id']+':tool:'+str(i),'tool',item.get('started_at'),a.get('name',a['node']),tool=item,**common)
         for i,summary in enumerate(value['summaries']):
             add(a['id']+':summary:'+str(i),'summary',None,a.get('name',a['node']),text=text(summary.get('text')),**common)
-        if value['history_status']=='unavailable':notices.append(text(a.get('name',a['node']))+'：部分原生工具/对话历史不可读；已保存回答单独保留')
+        if value['history_status']=='unavailable' or value.get('activity_history_status')=='unavailable':notices.append(text(a.get('name',a['node']))+'：部分原生工具/对话历史不可读；已保存回答单独保留')
+    # Only top-level terminal nodes are the run's final results. Loop-body
+    # result activations remain intermediate evidence, not final deliveries.
+    for terminal in flow['graph'].get('nodes',[]):
+        if terminal.get('kind')!='result':continue
+        rows=[a for a in snapshot['nodes'] if a.get('kind')=='result' and a.get('node')==terminal['id'] and not a.get('iteration_path')]
+        for a in rows or [dict(id='unactivated:'+terminal['id'],node=terminal['id'],state='PENDING')]:
+            state=a.get('state');content=None
+            if state=='COMPLETED':
+                output=a.get('output')
+                if isinstance(output,dict):
+                    visible={k:output[k] for k in ('answer','result','artifacts','evidence','issues','summary') if k in output}
+                    content=public_data(visible,secrets)
+                message='' if content and any(v not in (None,'',[],{}) for v in content.values()) else '本次流程的终止节点未配置结果输出，最终回答见对应 Agent 的对话。'
+            elif state=='SKIPPED':message='此结果分支未执行。'
+            elif state in ('FAILED','CANCELLED','RECOVERY_REQUIRED','UNKNOWN') or snapshot['state'] in ('FAILED','CANCELLED','RECOVERY_REQUIRED','UNKNOWN','COMPLETED'):
+                message='此终止节点没有已完成的结果输出。'
+            else:message='等待终止节点完成并输出结果。'
+            add(a['id']+':result','result',a.get('finished_at'),terminal.get('name','结果'),node=terminal['id'],state=state,text=message,content=content)
     cursor=0;more=True
     for _ in range(5):
         batch=rt.flow.events(run,cursor)

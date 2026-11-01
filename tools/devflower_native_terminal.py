@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 sys.dont_write_bytecode=True
-from orchestration.common import Blocked,clean_env,digest,workspace_metadata
+from orchestration.common import Blocked,clean_env,cli_probe_env,digest,workspace_metadata
 from orchestration.store import lease, process_identity
 from orchestration.sandbox import runtime_paths
 from orchestration.provider_transport import claude_transport
@@ -21,6 +21,16 @@ from studio.workbench_sessions import WorkbenchSessions
 from studio.workbench_scheduler import source_lease
 
 
+
+
+def require_claude_terminal_tools(binding,scratch):
+    try:
+        (Path(scratch)/'tmp').mkdir(mode=0o700,exist_ok=True)
+        check=subprocess.run([binding['executable'],'--help'],cwd=scratch,env=cli_probe_env(scratch),stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
+        helptext=check.stdout.decode('utf-8','replace')
+        if check.returncode or any(option not in helptext for option in ('--strict-mcp-config','--mcp-config','--tools','--permission-mode','--settings')):
+            raise Blocked('本机 Claude CLI 不支持所需的终端工具限制；未启动终端。')
+    except subprocess.TimeoutExpired:raise Blocked('本机 Claude CLI 工具能力检查超时；未启动终端。') from None
 
 def bind_parent_lifetime(parent, expected_start=None):
     """Watch the server process, not its short-lived HTTP request thread.
@@ -159,13 +169,7 @@ def main():
             from studio.native_local import require_safe_resume
             require_safe_resume(binding,runtime=rt,cwd=cwd,native_sha=current['native']['sha256'])
             if direct:
-                try:
-                    (Path(scratch)/'tmp').mkdir(mode=0o700,exist_ok=True)
-                    check=subprocess.run([binding['executable'],'--help'],cwd=scratch,env=clean_env(scratch),stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
-                    helptext=check.stdout.decode('utf-8','replace')
-                    if check.returncode or any(option not in helptext for option in ('--strict-mcp-config','--mcp-config','--tools','--permission-mode','--settings')):
-                        raise Blocked('本机 Claude CLI 不支持所需的终端工具限制；未启动终端。')
-                except subprocess.TimeoutExpired:raise Blocked('本机 Claude CLI 工具能力检查超时；未启动终端。') from None
+                require_claude_terminal_tools(binding,scratch)
         if native_local and binding['provider']=='codex':
             from studio.native_codex_exec_probe import require_exec_capability
             require_exec_capability(binding['executable'],scratch)

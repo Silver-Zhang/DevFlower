@@ -11,7 +11,7 @@ class BoundedInspectionTests(unittest.TestCase):
   self.rt=SimpleNamespace(operator={'profiles':{}},policy={})
  def test_bounded_list_counts_every_finding_and_invalid_input(self):
   def graph(n):return dict(version=3,name='repro',nodes=[dict(id=f'bad{i}',name=f'bad{i}',kind='agent') for i in range(n)],edges=[])
-  for n,total,errors,warnings,omitted in [(1,9,8,1,0),(36,255,253,2,0),(64,451,449,2,195)]:
+  for n,total,errors,warnings,omitted in [(1,8,7,1,0),(36,219,217,2,0),(64,387,385,2,131)]:
    result=inspect_workflow(self.rt,graph(n),'task')
    self.assertEqual((result['total'],result['error_count'],result['warning_count'],result['omitted_count'],result['truncated']),(total,errors,warnings,omitted,omitted>0))
    self.assertEqual(len(result['issues']),min(total,256))
@@ -39,7 +39,7 @@ class WorkflowInspectionTests(unittest.TestCase):
   try:
    request=Request('http://127.0.0.1:'+str(server.server_port)+'/api/workflow/check',data=json.dumps(dict(workspace=self.w,graph=graph,task='task')).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
    with urlopen(request) as response:result=json.load(response)
-   self.assertEqual((len(result['issues']),result['total'],result['error_count'],result['warning_count'],result['omitted_count'],result['truncated']),(256,451,449,2,195,True))
+   self.assertEqual((len(result['issues']),result['total'],result['error_count'],result['warning_count'],result['omitted_count'],result['truncated']),(256,387,385,2,131,True))
   finally:server.shutdown();server.server_close();thread.join()
  def test_good_graph_never_claims_execution_success(self):
   graph=examples(self.rt.operator['profiles'])[0]

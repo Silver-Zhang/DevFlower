@@ -56,6 +56,11 @@ def clean_env(home=None):
     return env
 
 
+def cli_probe_env(home=None):
+    """Process-local updater opt-outs for CLI metadata, not a filesystem sandbox."""
+    return dict(clean_env(home),DISABLE_AUTOUPDATER='1',DISABLE_UPDATES='1')
+
+
 def git(root, *args, env=None, data=None):
     result = subprocess.run(['git', '-C', str(root), *args], input=data,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -70,6 +70,8 @@ def main():
         _,row=structured_session(base,rt,label)
         rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic '+label))
         session_rows[label]=dict(handle=row['handle'],session_id=row['session_id'])
+        terminal=next(n for n in rt.flow.get('run',label+'-run')['graph']['nodes'] if n['kind']=='result')
+        rt.flow.put('activation',label+'-result',dict(id=label+'-result',run=label+'-run',node=terminal['id'],name=terminal['name'],kind='result',state='COMPLETED',iteration_path=[],finished_at=20,output=dict(answer='SYNTHETIC '+label+' final answer 2',result={'fixture':'terminal payload','answer':'SYNTHETIC NESTED ANSWER','metrics':{'count':77},'artifacts':['nested-report.md']},artifacts=['synthetic-report.md'])))
     if os.environ.get('TEST_FILTER')=='issue49-delegated-origin':
         rt.flow.change('activation','dialog-A-turn-1',dict(parent_activation='synthetic-parent',request_sections=[dict(title='每轮任务',text='SYNTHETIC CHILD ONLY')]))
     if os.environ.get('TEST_FILTER')=='issue58-session-context':

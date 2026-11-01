@@ -14,5 +14,18 @@ export function nodeGroups(entries){
   if(!groups.has(key))groups.set(key,{id:key,name:e.node?e.name:'任务与流程',entries:[]});
   groups.get(key).entries.push(e);
  }
- return [...groups.values()];
+ return [...groups.values()].map(group=>{
+  const rounds=new Map(),entries=[];
+  for(const e of group.entries){
+   if(!e.activation||!['input','assistant','visible','tool','summary'].includes(e.kind)){entries.push(e);continue;}
+   if(!rounds.has(e.activation)){
+    const round={...e,id:'activation:'+e.activation,kind:'activation',at:null,members:[]};
+    rounds.set(e.activation,round);entries.push(round);
+   }
+   const round=rounds.get(e.activation);round.members.push(e);
+   if(e.kind==='assistant'&&e.at!=null)round.at=e.at;
+   else if(round.at==null&&e.at!=null)round.at=e.at;
+  }
+  return {...group,entries};
+ });
 }

@@ -7,7 +7,7 @@ import re
 import stat
 import subprocess
 import tempfile
-from orchestration.common import Blocked, canonical, clean_env, digest
+from orchestration.common import Blocked, canonical, clean_env, cli_probe_env, digest
 from .graph import Invalid
 from .session_sources import opened
 
@@ -18,7 +18,7 @@ def _probe(executable,provider,mtime,size):
     try:
         with tempfile.TemporaryDirectory(prefix='df-cap-') as home:
             args=['features','list'] if provider=='codex' else ['--help']
-            r=subprocess.run([executable,*args],env=clean_env(home),capture_output=True,timeout=12)
+            r=subprocess.run([executable,*args],env=cli_probe_env(home),capture_output=True,timeout=12)
         text=r.stdout.decode(errors='replace')
         supported=r.returncode==0 and (bool(re.search(r'^multi_agent\s+stable\s+',text,re.M)) if provider=='codex' else '--agents ' in text)
         return dict(skills=supported,subagents=supported,source='当前原生 CLI '+('features list' if provider=='codex' else '--help'),reason=None if supported else '原生接口未确认，未启用扩展')
@@ -35,7 +35,7 @@ def capabilities(profile):
 def _managed_help(executable,mtime,size):
     try:
         with tempfile.TemporaryDirectory(prefix='df-managed-help-') as home:
-            r=subprocess.run([executable,'exec','--help'],env=clean_env(home),capture_output=True,timeout=12)
+            r=subprocess.run([executable,'exec','--help'],env=cli_probe_env(home),capture_output=True,timeout=12)
         text=r.stdout.decode('utf-8','replace')
         return r.returncode==0 and all(flag in text for flag in ('--ignore-user-config','--ignore-rules','--strict-config','--json'))
     except (OSError,subprocess.TimeoutExpired):return False

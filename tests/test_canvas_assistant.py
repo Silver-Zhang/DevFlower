@@ -419,8 +419,12 @@ class InspectionHandoffTests(unittest.TestCase):
         result=self.run_turn(self.data(graph=graph,intent='chat',inspection=attachment,message='请分批修复并重查'))
         self.assertEqual(result['turn']['state'],'COMPLETED')
         received=SyntheticBackend.calls[-1]['conversation'][-1]['inspection']
-        self.assertEqual((received['total'],received['error_count'],received['warning_count'],received['omitted_count'],received['truncated']),(451,449,2,195,True))
+        keys=('total','error_count','warning_count','omitted_count','truncated')
+        self.assertEqual(tuple(received[k] for k in keys),(387,385,2,131,True))
+        self.assertEqual(tuple(received[k] for k in keys),tuple(checked[k] for k in keys))
         self.assertEqual(len(received['issues']),256)
+        self.assertEqual(received['total'],received['error_count']+received['warning_count'])
+        self.assertEqual(received['omitted_count'],received['total']-len(received['issues']))
 
     def test_invalid_checked_graph_can_be_explained_and_proposal_uses_cas(self):
         from studio.workflow_inspection import inspect_workflow
