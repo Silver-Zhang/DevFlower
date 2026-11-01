@@ -1,5 +1,21 @@
 """Real CLI adapters: explicit project/role sessions; no newest-session guessing."""
 from __future__ import annotations
+# A failed native round must say what the user can do next, in their language,
+# while keeping the raw CLI text as detail. Never implies an automatic retry.
+FAILURE_HINTS = {
+    'authentication': '认证未通过：请在原生客户端核对登录、连接和访问权限，然后明确提交新任务。',
+    'timeout': '本次调用超时：请检查连接或调整预算后明确提交新任务。',
+    'output-budget': '输出超过预算：请缩小任务后明确提交新任务。',
+    'cancelled': '本次调用已取消：所属进程已停止。',
+    'process-failure': '原生 CLI 未正常结束：请查看详情后决定是否重新提交；工作台没有自动重发。',
+    'configuration': '原生 CLI 配置不完整：请核对执行工具、工作区和权限配置。',
+}
+
+
+def failure_message(category, exit_code, detail=''):
+    text = 'CLI ' + str(category) + '; exit=' + str(exit_code) + (': ' + detail if detail else '')
+    hint = FAILURE_HINTS.get(category)
+    return text + ('；' + hint if hint else '')
 import json
 from pathlib import Path
 import subprocess
@@ -213,7 +229,7 @@ class CLI:
             if store:
                 store.finish(request_op, 'AGENT_FAILED', error_category=category, process=result, transport=transport_evidence,
                              **({'visible_error': detail} if detail else {}))
-            raise Blocked('CLI ' + category + '; exit=' + str(result['exit']) + (': ' + detail if detail else ''))
+            raise Blocked(failure_message(category, result['exit'], detail))
         try:
             envelope = self.collect(result, out)
         except Blocked:
@@ -223,7 +239,7 @@ class CLI:
             if store:
                 store.finish(request_op, 'AGENT_FAILED', error_category=category, process=result, transport=transport_evidence)
             if category == 'authentication':
-                raise Blocked('CLI authentication; exit=' + str(result['exit'])) from None
+                raise Blocked(failure_message('authentication', result['exit'], '')) from None
             raise
         if requested_session and envelope['session_id'] != requested_session:
             raise Blocked('actual session does not match explicit binding')
