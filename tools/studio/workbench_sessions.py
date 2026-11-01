@@ -272,7 +272,11 @@ class WorkbenchSessions:
             managed=next((o for o in reversed(operations) if not o.get('diagnostic') and self.matching_operation(workspace,internal,o) and o.get('user_prompt')),None)
             if managed and not meta.get('alias'):title=safe_text(managed['user_prompt'].splitlines()[0])[:70]
             title=title or '新会话'
-            running=next((o for o in operations if o['state'] not in ('COMPLETED','FAILED','CANCELLED') and self.matching_operation(workspace,internal,o)),None)
+            matched=[o for o in operations if self.matching_operation(workspace,internal,o)]
+            running=next((o for o in matched if o['state'] not in ('COMPLETED','FAILED','CANCELLED')),None)
+            # Direct chats have no activation history; their completed operation is
+            # still the authoritative state for the sidebar row.
+            latest_operation=matched[0] if matched else None
             busy=False
             if internal and internal['profile'].get('home'):
                 try:
@@ -287,7 +291,7 @@ class WorkbenchSessions:
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
             named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),
-                display_state=running['state'] if running else 'BUSY' if busy else '状态待确认',busy=busy,
+                display_state=running['state'] if running else 'BUSY' if busy else latest_operation['state'] if latest_operation else '状态待确认',busy=busy,
                 node=latest['node'] if latest else related[0]['node'] if related else None,
                 choices={'resume':bool(row.get('resume')) and not busy and not meta.get('native_archived'),
                          'context_new':row['capabilities'].get('read',False),'fork':row['provider']=='codex' and bool(row.get('resume')) and not busy,
