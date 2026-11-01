@@ -22,11 +22,16 @@ class ImageIntegrationTests(unittest.TestCase):
     record_synthetic_evidence=narrow_fixture.NarrowCodexTests.record_synthetic_evidence
     run_read=narrow_fixture.NarrowCodexTests.run_read
 
-    def test_real_npm_shim_is_rejected_before_probe_credentials_or_spawn(self):
-        shim=Path('/home/silver/.local/lib/node_modules/@openai/codex/bin/codex.js')
-        # Read-only inspection of the installed launcher, never execute it.
-        self.assertTrue(shim.is_file())
-        own=Path(self.tmp.name)/'launcher.js';shutil.copy2(shim,own)
+    def test_npm_style_js_shim_is_rejected_before_probe_credentials_or_spawn(self):
+        # Own npm-style package entry: no global npm installation or Node is
+        # required. Its downstream target deliberately does not exist; neither
+        # this launcher nor a probe/helper may execute to identify its format.
+        package=Path(self.tmp.name)/'node_modules/@openai/codex'
+        own=package/'bin/codex.js';own.parent.mkdir(parents=True)
+        (package/'package.json').write_text(json.dumps(dict(name='@openai/codex',type='module',bin={'codex':'bin/codex.js'})))
+        own.write_text('#!/usr/bin/env node\nimport {spawnSync} from "node:child_process";\n'
+                       'spawnSync(new URL("../vendor/codex", import.meta.url), process.argv.slice(2), {stdio:"inherit"});\n')
+        own.chmod(0o755)
         with patch('studio.codex_narrow_probe._probe',side_effect=AssertionError('no probe')),patch('studio.local_codex_adapter.credentials',side_effect=AssertionError('no credentials')),patch('subprocess.Popen',side_effect=AssertionError('no spawn')):
             with self.assertRaisesRegex(Blocked,'启动器'):self.run_read('allowed.txt',executable=str(own))
             with self.assertRaisesRegex(Blocked,'启动器'):

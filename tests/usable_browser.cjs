@@ -344,7 +344,7 @@ async function dragFirstNode(){
      const arrived=async i=>{for(let n=0;n<400&&!replies[i];n++)await wait(20);assert(replies[i],'Save request did not reach the server')};
      await page.click('#save');await arrived(0);
      await page.fill('#workflow-name','newest pending snapshot');await page.click('#save');await arrived(1);
-     const refreshed=page.waitForResponse(r=>r.url().endsWith('/api/status'));releases[0]();await refreshed;
+     const refreshed=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/status'&&u.searchParams.get('workspace')===replies[0].workspace});releases[0]();await refreshed;
      assert(await page.textContent('#save-state')!=='该快照已保存','The older snapshot cannot claim all changes saved');assert(await page.inputValue('#drafts')==='','An older pending creation must not claim the current identity');
      releases[1]();await page.waitForFunction(()=>document.querySelector('#save-state').textContent==='该快照已保存');
      assert(await page.inputValue('#drafts')===replies[1].id,'The latest save must own the current draft identity');
