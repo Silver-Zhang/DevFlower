@@ -99,7 +99,7 @@ def handler(runtime, token):
                                      execution_context='development-sessions' if session_only else 'stable', profiles=runtime.profiles(),
                                      verification_profiles=[{"id": key, "cases": [c["id"] for c in cases]}
                                          for key, cases in runtime.operator.get("verification_profiles", {}).items()],
-                                     workspaces=runtime.db.listing("workspace"), drafts=runtime.db.listing("draft"), runs=runs)
+                                     workspaces=runtime.db.listing("workspace"), drafts=(runtime.db.listing("draft",filters={"workspace":query["workspace"][0]}) if query.get("workspace") and runtime.db.get("workspace",query["workspace"][0]) else []), runs=runs)
                     elif path == "/api/template":
                         value = template(query.get("kind", ["blank"])[0])
                     elif path == "/api/node":
@@ -138,8 +138,10 @@ def handler(runtime, token):
                         value = runtime.session_center.cancel(data['workspace'], data['id'])
                     elif path in ('/api/session/archive', '/api/session/delete', '/api/session/unarchive'):
                         raise Blocked('Native archive/delete is unsupported; original files and sub-sessions are never modified. Use DevFlower hide/unhide.')
-                    elif path == "/api/draft" and set(data) == {"document", "id", "expected"}:
-                        value = runtime.db.save_draft(data["document"], data["id"], data["expected"])
+                    elif path == "/api/draft" and set(data) in ({"document", "id", "expected", "workspace"},{"document", "id", "expected", "task", "workspace"}):
+                        if not isinstance(data["workspace"],str) or not data["workspace"].strip():
+                            raise Invalid("保存任务卡需要明确的已登记工作区；不接受null或空值")
+                        value = runtime.db.save_draft(data["document"], data["id"], data["expected"],task=data.get("task"),workspace=data["workspace"])
                     elif path == "/api/migrate-workflow" and set(data) == {"document"}:
                         value = upgrade_draft(data["document"])
                     elif path == "/api/compile" and set(data) == {"document"}:

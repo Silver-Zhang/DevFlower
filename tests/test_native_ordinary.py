@@ -95,16 +95,16 @@ class OrdinaryNativeTests(unittest.TestCase):
    with patch('studio.native_codex_exec_probe._run_command',return_value=SimpleNamespace(returncode=0,stdout=b'[true,true,false,true,true,true]')):
     from studio.native_codex_exec_probe import require_sandbox_capability
     with self.assertRaises(Blocked):require_sandbox_capability('/bin/true',folder,True)
- def test_explicit_native_terminal_does_not_claim_readonly(self):
+ def test_native_terminal_refuses_unverified_read_scope_and_keeps_claude_isolated(self):
   from devflower_native_terminal import native_cli_argv
   with tempfile.TemporaryDirectory() as folder:
    b=self.binding(folder,execution_backend='native-local',native_interactive=True)
-   argv=native_cli_argv(b,SID);self.assertEqual(argv[2:4],['resume',SID]);self.assertNotIn('--sandbox',argv);self.assertNotIn('--ask-for-approval',argv);self.assertIn('default_permissions="devflower"',argv);self.assertIn(folder+'/authority',str(argv))
-   with self.assertRaises(Blocked):native_cli_argv(dict(b,native_protected=[]),SID)
-   legacy=native_cli_argv(dict(b,native_interactive=False),SID);self.assertIn('read-only',legacy);self.assertIn('never',legacy)
+   # User's #57 contract supersedes the former host-wide terminal permission.
+   for interactive in (True,False):
+    with self.assertRaisesRegex(Blocked,'读取边界'):native_cli_argv(dict(b,native_interactive=interactive),SID)
    claude=dict(b,provider='claude');interactive=native_cli_argv(claude,SID);self.assertIn('--strict-mcp-config',interactive);self.assertIn('--mcp-config',interactive);self.assertEqual(interactive[interactive.index('--tools')+1],'');self.assertIn('plan',interactive)
    legacy_claude=native_cli_argv(dict(claude,native_interactive=False),SID);self.assertIn('plan',legacy_claude);self.assertIn('--strict-mcp-config',legacy_claude)
- def test_click_opens_native_terminal_scope_but_legacy_stays_refused(self):
+ def test_click_cannot_grant_unverified_native_terminal_scope(self):
   from studio.native_terminals import NativeTerminals
   with tempfile.TemporaryDirectory() as folder:
    b=self.binding(folder,execution_backend='native-local',runtime_profile='profile')
@@ -113,9 +113,8 @@ class OrdinaryNativeTests(unittest.TestCase):
    selected=dict(binding=b,cwd=folder,native_sha256='a'*64)
    rt=SimpleNamespace(session_center=center,node_binding=lambda *a,**kw:selected,db=SimpleNamespace(prepare=lambda value:value),candidate_sha256='candidate',operator_sha256='operator',policy_sha='policy')
    manager=NativeTerminals(rt,SimpleNamespace(busy=lambda *a:False));self.addCleanup(manager.shutdown)
-   permit=manager.prepare(dict(workspace='test',handle='handle',interaction='click'))
-   self.assertEqual(permit['session_id'],SID);self.assertIn('权限由 CLI 管理',permit['human_questions'][0])
-   with self.assertRaisesRegex(Blocked,'终端尚无法隔离'):manager.prepare(dict(workspace='test',handle='handle'))
+   for data in [dict(workspace='test',handle='handle',interaction='click'),dict(workspace='test',handle='handle')]:
+    with self.assertRaisesRegex(Blocked,'读取边界'):manager.prepare(data)
  def test_native_tool_free_only_allows_asking_tool(self):
   from studio.native_codex_exec import exec_args,provider_overrides
   with tempfile.TemporaryDirectory() as folder:

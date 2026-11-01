@@ -162,6 +162,7 @@ class SessionCenter:
                 binding, note = self._binding(internal, project, owned) if readable else (None,
                     'Transcript contains cwd outside the approved workspace mapping; metadata only')
                 rows.append(dict(handle=key, identity=key, provider=p['provider'], session_id=record['session_id'],
+                    native_source=record.get('native_source'),
                     profile_id=p['id'], storage_root=display(p['config_root']), cwd=public['cwd'],
                     association=public['association'], cwd_verified=public['cwd_verified'], hidden=hidden,
                     workspace_id=workspace, updated=record['updated'], status='unconfirmed',
@@ -199,7 +200,12 @@ class SessionCenter:
                        ('executable','read_paths','write_paths','readonly_files')):
                     return None,'此历史会话的工具或路径权限已变化；历史保留，请使用当前配置新建会话'
             binding=bind(self.runtime,profile,project['id'])
-            if previous:binding.update({k:previous[k] for k in ('model','effort')})
+            if previous:
+                binding.update({k:previous[k] for k in ('model','effort')})
+                if previous.get('shared_conversation'):binding.update(shared_conversation=True,no_tools=True,tools=[])
+                from .codex_narrow_read import TOOLS
+                if previous.get('tools')==[t['name'] for t in TOOLS] and previous.get('execution_mode') in ('Ask','Plan'):
+                    binding.update(role='reviewer',execution_mode=previous['execution_mode'],tools=[t['name'] for t in TOOLS])
             binding.update(runtime_profile=name,session_id=native['session_id'])
             if p['provider']=='claude':
                 from .managed_claude import require_managed
@@ -292,8 +298,10 @@ class SessionCenter:
 
     def prepare(self, request):
         self.runtime.check_operator()
-        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
+        if not {'workspace','handle','profile','prompt','permission'}<=set(request) or set(request)-{'workspace','handle','profile','prompt','permission','model','effort','mode','auto_verify','interaction','shared_conversation'} or (set(request)-{'workspace','handle','profile','prompt','permission'} and not hasattr(self.runtime,'node_binding')):
             raise Invalid('Expected workspace, session handle or new, approved profile, prompt and permission')
+        if 'shared_conversation' in request and type(request['shared_conversation']) is not bool:
+            raise Invalid('共享原生对话选项必须是布尔值')
         direct = request.get('interaction') == 'click'
         profile=self.runtime.operator['profiles'].get(request['profile'])
         ordinary=bool(direct and hasattr(self.runtime,'policy') and profile and profile['provider']=='codex' and self.runtime.operator.get('native_local',{}).get('codex'))
@@ -309,7 +317,9 @@ class SessionCenter:
         if hasattr(self.runtime,'node_binding'):
             profile=self.runtime.operator['profiles'].get(request['profile'])
             if not profile:raise Invalid('请选择已登记的执行配置')
-            selected=self.runtime.node_binding(project['id'],dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission']),admission=not (automatic or direct),direct=direct)
+            node=dict(profile=request['profile'],provider=profile['provider'],session=request['handle'],model=request.get('model',profile['model']),effort=request.get('effort',profile['effort']),mode=request.get('mode','Agent' if request['permission']=='workspace-write' else 'Ask'),permission=request['permission'])
+            if 'shared_conversation' in request:node['shared_conversation']=request['shared_conversation']
+            selected=self.runtime.node_binding(project['id'],node,admission=not (automatic or direct),direct=direct)
         handle, native_sha, cwd = request['handle'], None, project['path']
         if handle == 'new':
             p = self.runtime.operator['profiles'].get(request['profile'])
@@ -338,8 +348,10 @@ class SessionCenter:
             raise Blocked('Frozen Controller sources can only be continued with read permission')
         if binding['provider']=='copilot' and request['permission']=='workspace-write':raise Blocked('Copilot 当前仅支持只读 Ask/Plan')
         binding = dict(binding, role='implementer' if request['permission'] == 'workspace-write' else 'reviewer',
-                       tools=[] if binding['provider']=='copilot' else ['native'] if binding['provider'] == 'codex' else
+                       tools=[] if binding['provider']=='copilot' or binding.get('shared_conversation') else ['native'] if binding['provider'] == 'codex' else
                        ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'] if request['permission'] == 'workspace-write' else ['Read', 'Glob', 'Grep'])
+        from .codex_narrow_read import uses_narrow_read,TOOLS
+        if uses_narrow_read(binding):binding['tools']=[t['name'] for t in TOOLS]
         prompt=request['prompt']
         if 'mode' in request and not hasattr(self.runtime, 'policy'):
             mode=request['mode'];prompt=prompt+'\n\n工作方式：'+mode+'。'+('只读制定计划，不执行修改。' if mode=='Plan' else '只读回答，不执行修改。' if mode=='Ask' else '仅在已授权工作区和工具范围内执行。')

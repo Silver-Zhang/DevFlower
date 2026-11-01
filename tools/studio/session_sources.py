@@ -70,7 +70,10 @@ def clean_path(value):
         raise Refused('invalid_path')
     if any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in value) or '..' in Path(value).parts:
         raise Refused('invalid_path')
-    return os.path.normpath(value)
+    # Linux treats //path as /path, while pathlib and normpath preserve the
+    # double-leading spelling. Collapse it before scope/protected comparisons
+    # so an alias cannot bypass a root deny or a system/HOME prohibition.
+    return '/' + os.path.normpath(value).lstrip('/')
 
 
 @contextmanager
@@ -114,7 +117,7 @@ def read_session(fd, provider, filename, limits, initial_stat=None, expected_ses
     st = initial_stat if initial_stat is not None else os.fstat(fd)
     if st.st_size > limits['file_bytes']:
         raise Refused('oversized')
-    sid = cwd = version = created = updated = None
+    sid = cwd = version = created = updated = native_source = None
     cwds = []
     seen = 0; changed_cwd = False; sha = hashlib.sha256()
     # The caller owns fd. Buffered read-ahead is bounded at the raw IO layer.
@@ -141,6 +144,9 @@ def read_session(fd, provider, filename, limits, initial_stat=None, expected_ses
                 data=obj.get('data',{});context=data.get('context',{})
                 meta=dict(sessionId=data.get('sessionId'),cwd=context.get('cwd'),version=data.get('copilotVersion'))
             if isinstance(meta, dict):
+                if provider=='codex' and obj.get('type')=='session_meta':
+                    source=meta.get('source')
+                    native_source=source if source in ('cli','vscode','appServer','exec') else None
                 identity = meta.get('id') if provider == 'codex' and obj.get('type') == 'session_meta' else meta.get('sessionId') if provider in ('claude','copilot') else None
                 if identity is not None:
                     if not isinstance(identity, str) or not UUID.fullmatch(identity) or sid and identity != sid:
@@ -170,7 +176,7 @@ def read_session(fd, provider, filename, limits, initial_stat=None, expected_ses
     if provider=='copilot' and (filename!='events.jsonl' or sid!=expected_session):raise Refused('identity_conflict')
     if provider == 'claude' and filename != sid+'.jsonl' or provider == 'codex' and (not codex_name or codex_name[1] != sid):
         raise Refused('identity_conflict')
-    return dict(session_id=sid, cwd=cwd, cwds=cwds, cwd_changed=changed_cwd, version=version,
+    return dict(session_id=sid, cwd=cwd, cwds=cwds, cwd_changed=changed_cwd, version=version, native_source=native_source,
                 created=created, updated=updated, sha256=sha.hexdigest())
 
 

@@ -43,6 +43,17 @@ def quiet_start(args, root, bwrap):
             raise SystemExit(start.main(args))
 
 
+def quiet_start_with_receipt_barrier(args,root,bwrap,ready,release):
+    """Hold the real launcher's state lock between receipt and intent cleanup."""
+    original=start.write_new
+    def write(path,value):
+        original(path,value)
+        if Path(path).name=='service.json':
+            ready.set()
+            if not release.wait(15):raise RuntimeError('synthetic launch barrier timed out')
+    with patch.object(start,'write_new',side_effect=write):quiet_start(args,root,bwrap)
+
+
 class PublicStartTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='devflower-public-start-')
@@ -123,7 +134,10 @@ class PublicStartTests(unittest.TestCase):
         deadline = time.monotonic()+15
         receipt = self.state/'runtime/service.json'
         while time.monotonic() < deadline:
-            if receipt.is_file():
+            # The launcher publishes the receipt just before removing its
+            # owned start intent while holding the startup lock.  Tests that
+            # inspect state directly must wait for that initialization to end.
+            if receipt.is_file() and not (self.state/'runtime/start-intent.json').exists():
                 self.receipt = json.loads(receipt.read_text())
                 self.token = (self.state/'runtime/workbench-capability').read_text().strip()
                 return process
@@ -394,6 +408,41 @@ class PublicStartTests(unittest.TestCase):
         start.write_new(reservation/'result.json',{'source':'SYNTHETIC; no child or model executed'})
         self.assertEqual(start.inspect_state(self.state),record)
         start.verify(self.state,record,self.before_source)
+
+    def test_check_refuses_during_actual_launcher_initialization_then_recovers(self):
+        ctx=multiprocessing.get_context('spawn');ready=ctx.Event();release=ctx.Event()
+        process=ctx.Process(target=quiet_start_with_receipt_barrier,args=(['--state-dir',str(self.state),'--no-browser'],self.root,self.bin/'bwrap',ready,release));process.start()
+        try:
+            self.assertTrue(ready.wait(15),'synthetic launcher did not reach receipt barrier')
+            self.assertTrue((self.state/'runtime/start-intent.json').exists())
+            code,out,err=self.call('--check');self.assertEqual(code,1);self.assertIn('另一个启动正在核验',err);self.assertNotIn('CHECK OK',out)
+            release.set();deadline=time.monotonic()+10
+            while (self.state/'runtime/start-intent.json').exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertFalse((self.state/'runtime/start-intent.json').exists())
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline:
+                code,out,err=self.call('--check')
+                if code==0:break
+                time.sleep(.05)
+            self.assertEqual(code,0,err);self.assertIn('CHECK OK',out);self.assertTrue(process.is_alive())
+        finally:
+            release.set()
+            if process.is_alive():os.kill(process.pid,signal.SIGINT);process.join(5)
+            if process.is_alive():process.terminate();process.join(5)
+            process.close()
+
+    def test_check_fails_closed_if_runtime_entry_disappears(self):
+        self.initialize_with_bind_failure();target=self.state/'runtime/installation.json';original=Path.lstat
+        def lstat(path):
+            if path==target:raise FileNotFoundError('SYNTHETIC disappearing runtime entry')
+            return original(path)
+        with patch.object(Path,'lstat',lstat):code,out,err=self.call('--check')
+        self.assertEqual(code,1);self.assertNotIn('CHECK OK',out);self.assertNotIn('Traceback',err)
+        self.assertTrue(target.is_file())
+
+    def test_check_still_rejects_runtime_symlink(self):
+        self.initialize_with_bind_failure();target=self.base/'synthetic-external';target.write_text('SYNTHETIC UNCHANGED');link=self.state/'runtime/managed-child-artifacts';link.symlink_to(target)
+        code,out,err=self.call('--check');self.assertEqual(code,1);self.assertNotIn('CHECK OK',out);self.assertIn('运行状态必须归当前用户所有',err);self.assertEqual(target.read_text(),'SYNTHETIC UNCHANGED')
 
     def test_runtime_metadata_guard_reuses_healthy_service(self):
         process=self.running()

@@ -106,6 +106,12 @@ class CanvasAssistantTests(unittest.TestCase):
     def test_send_requires_explicit_context_consent(self):
         with self.assertRaises(Invalid):self.ai.start(self.data(allow_context=False))
         self.assertEqual(SyntheticBackend.calls,[])
+    def test_changed_connection_is_rejected_before_sending(self):
+        self.ai.backend=self.ai.default_backend
+        with patch('studio.devflower_agent.AgentConnection.read',return_value={'fingerprint':'new-connection'}):
+            with self.assertRaisesRegex(Conflict,'连接已变化'):
+                self.ai.start(self.data(connection_fingerprint='old-connection'))
+        self.assertEqual(SyntheticBackend.calls,[])
     def test_unsupported_endpoint_or_authorization_rejected(self):
         for field in ('endpoint','api_key','authorization','command'):
             with self.subTest(field=field),self.assertRaises(Invalid):self.ai.start(self.data(**{field:'unsafe'}))

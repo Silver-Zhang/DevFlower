@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from orchestration.common import Blocked
 from studio import native_capability_cache as cache
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 
 SID='00000000-0000-4000-8000-000000000001'
 RAW=('\n'.join(json.dumps(x) for x in [dict(type='thread.started',thread_id=SID),dict(type='item.completed',item=dict(type='agent_message',text='synthetic')),dict(type='turn.completed',usage={})])+'\n').encode()
@@ -165,7 +165,7 @@ class LocalCodexCacheTests(CapabilityCacheTests):
         def invoke():
             try:LocalCodex(binding,dict(step_timeout_seconds=10,max_log_bytes=100000)).start('synthetic',str(self.root),self.art,store=Store(),run='fixture')
             except Exception as exc:errors.append(exc)
-        with patch('studio.local_codex_adapter.CodexRPC',RecordingRPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as exec_probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True) as write_probe,patch('studio.native_codex_exec.check_protected_hardlinks') as scan,patch('studio.model_registration.direct_environment_identity',return_value='fixture') as env,patch('orchestration.process.execute',side_effect=send):
+        with patch('studio.local_codex_adapter.CodexRPC',RecordingRPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as exec_probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True) as write_probe,patch('studio.native_codex_exec.check_protected_hardlinks_isolated') as scan,patch('studio.model_registration.direct_environment_identity',return_value='fixture') as env,patch('orchestration.process.execute',side_effect=send):
             threads=[threading.Thread(target=invoke) for _ in range(2)]
             for t in threads:t.start()
             for t in threads:t.join(8)
@@ -177,7 +177,7 @@ class LocalCodexCacheTests(CapabilityCacheTests):
         binding=dict(executable=str(self.exe),home=str(self.root),config_root=str(self.root),provider='codex',model='m',effort='high',role='reviewer',session_id=None,project='test',conversation_format='text',readonly_files=[],native_interaction='ordinary',native_protected=[str(self.root)],_metadata_guard=str(self.root))
         def send(*args,**kw):kw['on_stdout'](RAW);return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
         client=LocalCodex(binding,dict(step_timeout_seconds=10,max_log_bytes=100000))
-        with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.model_registration.direct_environment_identity',side_effect=['same','same','before','after']),patch('orchestration.process.execute',side_effect=send) as transport:
+        with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.model_registration.direct_environment_identity',side_effect=['same','same','before','after']),patch('orchestration.process.execute',side_effect=send) as transport:
             client.start('one',str(self.root),self.art)
             with self.assertRaisesRegex(Blocked,'预检期间变化'):client.start('two',str(self.root),self.art)
             self.assertEqual(probe.call_count,1);self.assertEqual(transport.call_count,1)
@@ -185,6 +185,6 @@ class LocalCodexCacheTests(CapabilityCacheTests):
         binding=dict(executable=str(self.exe),home=str(self.root),config_root=str(self.root),provider='codex',model='m',effort='high',role='reviewer',session_id=None,project='test',conversation_format='text',readonly_files=[],native_interaction='ordinary',native_protected=[str(self.art)],_metadata_guard=str(self.root))
         def send(*args,**kw):kw['on_stdout'](RAW);return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
         client=LocalCodex(binding,dict(step_timeout_seconds=10,max_log_bytes=100000))
-        with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('orchestration.process.execute',side_effect=send):
+        with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',return_value=True) as probe,patch('studio.native_codex_exec_probe.require_native_write_capability',return_value=True),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('orchestration.process.execute',side_effect=send):
             client.start('one',str(self.root),self.art);client.start('two',str(self.root),self.art)
             self.assertEqual(probe.call_count,2)

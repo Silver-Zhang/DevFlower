@@ -150,7 +150,7 @@ class ExecConfigTests(unittest.TestCase):
   center=SimpleNamespace(resolve=lambda *a:({'id':'workspace'},{'native':{'session_id':SID}}),_binding=lambda *a:(binding,None))
   runtime=SimpleNamespace(session_center=center,node_binding=lambda *a,**kw: (_ for _ in ()).throw(AssertionError('must not prepare model')))
   manager=NativeTerminals(runtime,SimpleNamespace());self.addCleanup(manager.shutdown)
-  with self.assertRaisesRegex(Blocked,'终端尚无法隔离'):manager.prepare(dict(workspace='workspace',handle='selected'))
+  with self.assertRaisesRegex(Blocked,'读取边界'):manager.prepare(dict(workspace='workspace',handle='selected'))
  def test_model_tool_boundary_rejects_exit_zero_with_failed_or_invisible_tool(self):
   import time
   from urllib.request import Request,urlopen

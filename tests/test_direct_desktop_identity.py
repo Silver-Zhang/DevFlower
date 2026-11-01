@@ -78,7 +78,7 @@ class DesktopIdentityTests(unittest.TestCase):
   self.config.write_bytes(RAW+b'\n[desktop]\nunknown=true\n');pin=digest(self.config.read_bytes());operator['dependencies'][str(self.config)]=pin;typed=original(operator)
   self.config.write_bytes(RAW+b'\n[desktop]\nunknown=1\n');self.assertFalse(preference_only(typed,str(self.config)))
  def test_terminal_versions_retain_session_identity_and_old_hash(self):
-  from devflower_native_terminal import native_cli_argv
+  from native_protocol_mechanics import native_cli_argv
   self.config.write_bytes(RAW);v1=dict(self.b);v1.pop('direct_environment_version');v1.pop('direct_environment_scope');v2=dict(self.b);v3=dict(self.b,direct_environment_version=3)
   hashes=[direct_environment_identity(x) for x in (v1,v2,v3)];sid=[session_key(x) for x in (v1,v2,v3)]
   self.desktop(VALUES[0]);self.assertNotEqual(direct_environment_identity(v1),hashes[0]);self.assertNotEqual(direct_environment_identity(v2),hashes[1]);self.assertEqual(direct_environment_identity(v3),hashes[2]);self.assertEqual([session_key(x) for x in (v1,v2,v3)],sid)

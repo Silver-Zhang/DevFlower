@@ -45,7 +45,8 @@ def predicate(value, test):
             raise Invalid('包含比较需要文本')
         return expected in actual
     # bool is a subclass of int in Python; JSON types remain distinct here.
-    equal = type(actual) is type(expected) and actual == expected
+    numeric = type(actual) in (int,float) and type(expected) in (int,float)
+    equal = (numeric or type(actual) is type(expected)) and actual == expected
     return equal if op == 'equals' else not equal
 
 

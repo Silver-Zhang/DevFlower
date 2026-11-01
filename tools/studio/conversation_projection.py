@@ -21,8 +21,10 @@ def conversation_turns(manager, workspace, row, related, messages, secrets, *, o
         state=a['state']
         if state=='COMPLETED' and not answer or state not in ('COMPLETED','FAILED','CANCELLED','SKIPPED') and run['state']=='RECOVERY_REQUIRED':state='UNKNOWN'
         parts=redact(a.get('request_sections',[]),secrets)
-        turns.append(dict(id=a['id'],kind='workflow',created_at=a.get('started_at',0),
-            user_text=text(run['run'].get('task')),name=text(a.get('name')),node=a['node'],run=a['run'],
+        delegated=bool(a.get('parent_activation'))
+        user_text=next((p.get('text','') for p in parts if p.get('title','').startswith('每轮')), '') if delegated else run['run'].get('task')
+        turns.append(dict(id=a['id'],delegated=delegated,kind='workflow',created_at=a.get('started_at',0),
+            user_text=text(user_text),name=text(a.get('name')),node=a['node'],run=a['run'],
             iteration_path=a.get('iteration_path',[]),state=state,run_state=run['state'],
             request_sections=parts,actual_request_recorded=bool(a.get('actual_request')),answer=answer['text'] if answer else None,
             answer_source=origin(answer['text']) if answer else None))

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from orchestration.common import Blocked,canonical,digest
 from studio.agent_extensions import AgentExtensions,skill_files
 from studio.native_skill_pack import native_skill_pack
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 from studio.graph import Invalid
 
 SID='00000000-0000-4000-8000-000000000001'
@@ -118,7 +118,7 @@ class NativeSkillTests(unittest.TestCase):
    (root/'references/a.txt').chmod(0o600);(root/'references/a.txt').write_text('changed');kw['on_stdout'](RAW)
    return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
   with ExitStack() as s:
-   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
+   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks_isolated'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
    with self.assertRaises(Blocked):LocalCodex(b,dict(step_timeout_seconds=5,max_log_bytes=100000)).start('task',str(self.work),self.art)
   self.assertEqual(len(sent),1);self.assert_retained(roots[0])
  def test_actual_prompt_receipt_and_explicit_arguments_use_one_synthetic_send(self):
@@ -140,6 +140,6 @@ class NativeSkillTests(unittest.TestCase):
    self.assertIn('fixture reference',Path(observed['prompt'].split('资源根: ')[1].split('\n')[0],'references/a.txt').read_text());kw['on_stdout'](RAW)
    return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
   with ExitStack() as s:
-   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
+   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks_isolated'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
    result=LocalCodex(b,dict(step_timeout_seconds=5,max_log_bytes=100000)).start('user task',str(self.work),self.art,store=Store(),run='r')
   self.assertEqual(observed['count'],1);self.assertEqual(observed['prompt'],observed['visible']);self.assertEqual(observed['sent_sha'],digest(observed['visible'].encode()));self.assertEqual(observed['sent_size'],len(observed['visible'].encode()));self.assertIn('skills.include_instructions=false',observed['argv']);self.assertIn('skills.bundled.enabled=false',observed['argv']);self.assertEqual(result['skills'][0]['sha256'],b['skills'][0]['sha256']);self.assertEqual(events,['AGENT_REQUEST']);self.assertFalse(Path(result['skills'][0]['root']).exists());self.assertEqual(result['skill_cleanup']['status'],'retained_empty');self.assert_retained(Path(result['skill_cleanup']['path']))

@@ -4,6 +4,7 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 import time
@@ -14,6 +15,17 @@ from .agent_sessions import _visible, safe_text
 from .graph import Invalid
 from .server import Conflict
 from .session_sources import opened
+
+
+def _list_text(value):
+    return safe_text(re.sub(r'https?://\S+', '[链接已隐藏]', value, flags=re.I))
+
+
+def _list_projection(row):
+    result = dict(row)
+    for key in ('title', 'workflow', 'node_name', 'task_summary', 'note'):
+        if isinstance(result.get(key), str):result[key] = _list_text(result[key])
+    return result
 
 
 class WorkbenchSessions:
@@ -201,7 +213,7 @@ class WorkbenchSessions:
                             if text.startswith('Role:') and 'Writable test artifacts:' in text:
                                 text='\n'.join(text.splitlines()[2:]).strip()
                             first=text
-            return safe_text(title or first or '新会话')[:90].replace('\n',' ')
+            return _list_text(title or first or '新会话')[:90].replace('\n',' ')
         except (Invalid,ValueError,OSError):return '对话记录暂不可读'
 
     def listing(self, workspace, view='active', query=''):
@@ -232,7 +244,7 @@ class WorkbenchSessions:
             actual=[a for a,_ in self.related_activations(workspace,internal)] if internal else []
             # Old caches may have been derived from another HOME's same UUID.
             # Invalidate derived data once; explicit user aliases stay separate.
-            title_binding=digest(canonical(['exact-native-v2',workspace,row['profile_id'],
+            title_binding=digest(canonical(['exact-native-v4-private-list-projection',workspace,row['profile_id'],
                 internal['profile'].get('home') if internal else None,row['provider'],row['cwd'],row['session_id']]))
             title=meta.get('alias')
             if not title:
@@ -243,6 +255,7 @@ class WorkbenchSessions:
                     title=None
                 if not title or title.startswith(('## 本次运行初始化','# AGENTS.md instructions','Role:')):
                     title=next((c.get('name') for c in related if c.get('name')),None) or next((a.get('name') for a in actual if a.get('name')),None) or self.title(row)
+                    title=_list_text(title)
                     self.db.put('session-title',handle,{'id':handle,'title':title,'binding':title_binding})
             managed=next((o for o in reversed(operations) if not o.get('diagnostic') and self.matching_operation(workspace,internal,o) and o.get('user_prompt')),None)
             if managed and not meta.get('alias'):title=safe_text(managed['user_prompt'].splitlines()[0])[:70]
@@ -273,7 +286,7 @@ class WorkbenchSessions:
             if latest:
                 workflow = self.db.get('run', latest['run'])
                 named.update(workflow=workflow.get('graph', {}).get('name', '未命名工作流'),
-                             workflow_id=latest['run'], workflow_group_id=('draft:'+workflow['draft_id']) if workflow.get('draft_id') else 'run:'+latest['run'], node_name=latest.get('name', latest['node']))
+                             workflow_id=latest['run'], workflow_group_id=('draft:'+workflow['draft_id']) if workflow.get('draft_id') else 'run:'+latest['run'], node_name=latest.get('name', latest['node']),task_summary=_list_text(workflow.get('task') if isinstance(workflow.get('task'),str) else '')[:80])
             # Show the session's actual bound request configuration, never the
             # default profile selected for a different/new conversation.
             bound = related[0]['binding'] if related else next((c['binding'] for c in
@@ -295,8 +308,15 @@ class WorkbenchSessions:
                     (name==bound.get('runtime_profile') or (bound.get('model'),bound.get('effort'))==(profile['model'],profile['effort']))), None)
                 named['execution'] = dict(profile=exact, provider=bound['provider'],
                                           model=bound['model'], effort=bound['effort'])
+                if bound.get('shared_conversation'):named['execution']['shared_conversation']=True
                 if bound.get('execution_backend')=='native-local':named['execution']['backend']='native-local'
                 if bound.get('execution_backend')=='native-local':named['choices']['fork']=False
+                named['choices']['shared_conversation']=bool(bound.get('execution_backend')=='native-local'
+                    and row['provider']=='codex' and row.get('native_source') in ('cli','vscode','appServer'))
+                from .codex_narrow_read import uses_narrow_read
+                if uses_narrow_read(bound):
+                    named['choices']['shared_conversation']=False
+                    named['note']='受限读取工具会话；其他客户端的工具恢复尚未验证，不切换为共享纯对话。'
             if not query or query.casefold() in (title+' '+row['provider']).casefold():result.append(named)
         if hasattr(self.rt,'project_files'):
             # Never adopt a copied UUID/HOME as a writer. Saved copies use a
@@ -312,7 +332,7 @@ class WorkbenchSessions:
                     workspace_id=workspace,saved_history=True,display_state='UNKNOWN',busy=False,
                     choices=dict(view=True,resume=False,context_new=False,fork=False),
                     note='项目内保存的对话阅读副本；不恢复原生进程，不授予执行权限'))
-        return dict(sessions=result,coverage=listing['discovery']['coverage'],operations=operations)
+        return dict(sessions=[_list_projection(row) for row in result],coverage=listing['discovery']['coverage'],operations=operations)
 
     def saved_metadata(self,workspace,handle,*,archive=None):
         self.rt.session_center.workspace(workspace)
