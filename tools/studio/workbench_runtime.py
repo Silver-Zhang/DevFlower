@@ -230,7 +230,8 @@ class WorkbenchRuntime(SessionRuntime):
         return list(rows.values()), errors
 
     def saved_runs(self):
-        current = self.flow.list('run'); known = {(r['workspace'],r['id']) for r in current}
+        from .workbench_failures import recovery_notice
+        current = [dict(r, state='RECOVERY_REQUIRED') if recovery_notice(self,r['id']) else r for r in self.flow.list('run')]; known = {(r['workspace'],r['id']) for r in current}
         result = [dict({k: v for k, v in r.items() if k in ('id','workspace','state','created_at','task','draft_id')},workflow_name=r.get('graph',{}).get('name','工作流')) for r in current]
         for w in self.db.listing('workspace', limit=None):
             if not w.get('project_storage'): continue
@@ -288,6 +289,8 @@ class WorkbenchRuntime(SessionRuntime):
         return workspace_hash(path)
 
     def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=3, managed_workflow=False):
+        if 'shared_conversation' in node and type(node['shared_conversation']) is not bool:
+            raise Invalid('共享原生对话选项必须是布尔值')
         project = self.session_center.workspace(workspace)
         profile = self.operator['profiles'].get(node.get('profile'))
         if not profile or node.get('provider', profile['provider']) != profile['provider']: raise Invalid('请选择已探测的执行工具与配置')
@@ -335,6 +338,8 @@ class WorkbenchRuntime(SessionRuntime):
             if (binding['provider'], binding['model'], binding['effort']) != (profile['provider'], model, effort):
                 raise Blocked('恢复必须保持原工具、模型和强度；如需改变，请上下文新建')
             binding = dict(binding, session_id=row['native']['session_id']);native_sha=row['native']['sha256'];cwd=row['native']['cwd']
+            if binding.get('shared_conversation') and node.get('shared_conversation') is False:
+                raise Blocked('此原生会话已使用共享纯对话；请保持共享选项和 Ask/Plan，或新建另一条会话')
         else:
             binding = dict(profile, home=str(self.native / secrets.token_hex(16)), session_id=None,
                            isolation='bwrap', external_sandbox=profile['provider'] == 'codex', project=workspace,
@@ -354,7 +359,7 @@ class WorkbenchRuntime(SessionRuntime):
         tools = node.get('tools', allowed)
         if not isinstance(tools, list) or any(t not in allowed for t in tools): raise Invalid('所选工具超出工作方式允许的权限')
         if profile['provider']=='codex' and 'tools' in node:
-            raise Invalid('Codex当前由原生工具集和强制工作区隔离控制，不能承诺逐工具过滤')
+            raise Invalid('Codex工具由工作方式的固定权限边界控制，不能从工作流自定义工具清单')
         binding.update(model=model, effort=effort, role='implementer' if write else 'reviewer',
             responsibility=node.get('responsibility') or node.get('role', '通用 Agent'), tools=['native'] if profile['provider'] == 'codex' else tools,
             timeout_seconds=node.get('timeout', profile.get('timeout_seconds', 1800)), execution_mode=node.get('mode','Ask'),
@@ -369,6 +374,18 @@ class WorkbenchRuntime(SessionRuntime):
         if node.get('subagents','disabled')!='disabled':
             AgentExtensions(self).bind(workspace,node,binding,managed_workflow=bool(direct and managed_workflow))
         else:AgentExtensions(self).bind(workspace,node,binding)
+        if node.get('shared_conversation',binding.get('shared_conversation',False)):
+            if (not direct or binding.get('execution_backend')!='native-local' or profile['provider']!='codex'
+                    or write or node.get('mode','Ask') not in ('Ask','Plan')
+                    or binding.get('skills') or binding.get('subagents','disabled')!='disabled'):
+                raise Blocked('共享原生对话目前仅支持本机 Codex Ask/Plan，不启用工具、Skill 或子 Agent')
+            binding.update(shared_conversation=True,no_tools=True,tools=[])
+            if binding.get('session_id'):
+                from .native_codex_rpc import metadata
+                prior=metadata(dict(binding,_metadata_guard=str(self.storage)),cwd,'thread/read',dict(threadId=binding['session_id'],includeTurns=True))['thread'].get('turns',[])
+                binding['expected_native_turn_id']=prior[-1]['id'] if prior else None
+        from .codex_narrow_read import uses_narrow_read,TOOLS
+        if uses_narrow_read(binding):binding['tools']=[tool['name'] for tool in TOOLS]
         if binding.get('execution_backend')=='native-local' and binding.get('skills') and not direct:
             raise Blocked('本机 Codex Skill 包仅支持普通直接操作；旧受控任务不自动迁移')
         if binding.get('execution_backend')=='native-local' and (binding.get('subagents') not in (None,'disabled') and not (direct and managed_workflow and binding.get('provider')=='codex' and not write) or binding.get('skills') and binding.get('provider')!='codex'):
@@ -597,17 +614,29 @@ class WorkbenchRuntime(SessionRuntime):
 
     def snapshot(self, run, after=0):
         row=self.flow.get('run',run);nodes=[n for n in self.flow.list('activation') if n['run']==run]
+        from .workbench_failures import recovery_notice
+        recovery=recovery_notice(self,run)
+        if recovery:
+            row=dict(row,state='RECOVERY_REQUIRED',reason=recovery['reason'])
+            nodes=[dict(n,state='RECOVERY_REQUIRED',reason=recovery['reason']) if n['state'] not in END and n['state']!='SKIPPED' else n for n in nodes]
         state=row['state']
         if state not in END and time.time()-row['created_at']>5 and not alive(row.get('worker')):
             state='RECOVERY_REQUIRED'
         return dict(run={k:v for k,v in row.items() if k not in ('authorization',)},state=state,nodes=nodes,
-                    events=self.flow.events(run,after),worker_alive=alive(row.get('worker')))
+                    events=self.flow.events(run,after),worker_alive=alive(row.get('worker')),recovery_pending=bool(recovery))
 
     def control(self, run, action):
+        from .workbench_failures import recovery_notice,reconcile_interrupted
+        if action=='reconcile':
+            reconcile_interrupted(self,run)
+            return self.snapshot(run)
+        if recovery_notice(self,run):
+            raise Blocked('此运行有未核对的异常记录；先核对并记录未知结局，禁止自动重发或恢复')
         row=self.flow.get('run',run)
         if row['state'] in ('COMPLETED','FAILED','CANCELLED'):
             raise Conflict('已结束的运行只供查看，不能改写或重复启动')
-        if action=='pause': self.flow.change('run',run,{'paused':True})
+        if action=='pause':
+            self.flow.change('run',run,{'paused':True},states={row['state']},event={'kind':'control-pause'})
         elif action=='stop':
             self.flow.change('run',run,{'cancel_requested':True})
             if not alive(row.get('worker')):
@@ -640,7 +669,8 @@ class WorkbenchRuntime(SessionRuntime):
                 self.spawn(run)
             self.flow.change('run',run,{'paused':False})
         else: raise Invalid('不支持的运行操作')
-        self.flow.event(run,'control-'+action);return self.snapshot(run)
+        if action!='pause':self.flow.event(run,'control-'+action)
+        return self.snapshot(run)
 
     def external_step(self, run, key, node, inputs):
         """Fixed external adapter, never a model-supplied command or a Stable approval."""

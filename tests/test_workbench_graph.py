@@ -57,6 +57,14 @@ class GraphContractTests(unittest.TestCase):
         self.assertFalse(predicate({'result':{'accepted':1}},dict(field='result.accepted',op='equals',value=True)))
         with self.assertRaises(Invalid):predicate({'result':{'score':True}},dict(field='result.score',op='greater',value=0))
 
+    def test_condition_numeric_equality_uses_json_number_semantics(self):
+        for actual,expected in [(1.0,1),(-2.0,-2),(0,0.0),(1e8,100000000)]:
+            with self.subTest(actual=actual,expected=expected):
+                self.assertTrue(predicate({'result':{'score':actual}},dict(field='result.score',op='equals',value=expected)))
+                self.assertFalse(predicate({'result':{'score':actual}},dict(field='result.score',op='not_equals',value=expected)))
+        for actual,expected in [(True,1),(1,'1'),(None,0),(2,1.0)]:
+            self.assertFalse(predicate({'result':{'score':actual}},dict(field='result.score',op='equals',value=expected)))
+
     def test_prompt_lifecycle_new_activation_includes_init_resume_does_not(self):
         n={'initial_prompt':'INIT-MARK','round_prompt':'ROUND-MARK','handoff_prompt':'OUTPUT-MARK'}
         first=request_text(n,[{'source':'A','content':'upstream-data'}],first=True)
@@ -148,6 +156,16 @@ class SchedulingTests(unittest.TestCase):
         g['edges'] += [{'id':'a_result','source':'branchA','target':'result'},{'id':'b_result','source':'branchB','target':'result'}]
         r=self.run_graph(g);self.assertEqual(r['state'],'COMPLETED')
         a=next(x for x in self.db.list('activation') if x['node']=='branchA');self.assertEqual(a['state'],'SKIPPED')
+
+    def test_float_upstream_selects_equal_integer_branch(self):
+        g=examples(PROFILES)[1];source=next(n for n in examples(PROFILES)[0]['nodes'] if n['id']=='analyze')
+        g['nodes']=[n for n in g['nodes'] if n['id'] not in ('merge','summary')]
+        g['nodes'].extend([source,{'id':'choose','kind':'condition','name':'choose','test':{'field':'result.score','op':'equals','value':1}}])
+        g['edges']=[{'id':'start_source','source':'start','target':'analyze'},{'id':'source_choose','source':'analyze','target':'choose'},{'id':'yes','source':'choose','target':'branchA','when':'true'},{'id':'no','source':'choose','target':'branchB','when':'false'},{'id':'a_result','source':'branchA','target':'result'},{'id':'b_result','source':'branchB','target':'result'}]
+        result=self.run_graph(g,lambda n,i,inputs:{'answer':'synthetic','result':{'score':1.0}})
+        self.assertEqual(result['state'],'COMPLETED')
+        states={a['node']:a['state'] for a in self.db.list('activation')}
+        self.assertEqual(states['branchA'],'COMPLETED');self.assertEqual(states['branchB'],'SKIPPED')
 
 
 

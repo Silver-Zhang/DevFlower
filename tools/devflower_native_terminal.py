@@ -48,6 +48,12 @@ def bind_parent_lifetime(parent, expected_start=None):
 
 
 def native_cli_argv(binding,sid):
+    if binding.get('provider')=='codex' and binding.get('execution_backend')=='native-local':
+        raise Blocked('Codex 原生终端读取边界尚未验证，未启动 CLI；请使用共享纯对话或只读查看历史。')
+    return _native_cli_argv(binding,sid)
+
+
+def _native_cli_argv(binding,sid):
     if binding['provider']=='codex':
         if binding.get('execution_backend')=='native-local':
             if not binding.get('native_interactive'):
@@ -82,6 +88,7 @@ def native_cli_argv(binding,sid):
                 '--settings','{"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}',
                 '--strict-mcp-config','--mcp-config','{"mcpServers":{}}']
     raise Blocked('此 Provider 尚不支持原生终端')
+
 
 
 def wrap_native_cli(binding,cwd,home,scratch,argv,readonly_dirs=(),hidden_paths=()):

@@ -205,7 +205,7 @@ class CanvasAssistant:
 
     def start(self,data):
         required={'workspace','conversation','request_id','expected','message','graph','model','allow_context'}
-        if set(data)-{'intent','images','inspection'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
+        if set(data)-{'intent','images','inspection','connection_fingerprint'}!=required or data['allow_context'] is not True:raise Invalid('请确认将聊天内容和当前画布发送给助手；不发送工作区文件')
         from .assistant_images import AssistantImages
         images=AssistantImages(self.rt).resolve(data['workspace'],data.get('images',[]))
         image_meta=[v['meta'] for v in images]
@@ -243,6 +243,7 @@ class CanvasAssistant:
         if self.backend is self.default_backend:
             from .devflower_agent import AgentConnection
             connection_sha=AgentConnection(self.rt).read()['fingerprint']
+            if 'connection_fingerprint' in data and data['connection_fingerprint']!=connection_sha:raise Conflict('助手模型连接已变化，未发送；请刷新助手模型后重试')
         key=data['conversation'] or secrets.token_hex(16);turn_id=data['request_id']
         if not isinstance(key,str) or len(key)!=32 or any(c not in '0123456789abcdef' for c in key):raise Invalid('助手对话身份无效')
         clean=self._redact(data['message']);g=self._redact(base['base_graph'])

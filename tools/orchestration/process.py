@@ -41,7 +41,7 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=()):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
@@ -49,11 +49,11 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
         parent_scratch = '/tmp'
     with tempfile.TemporaryDirectory(prefix='dfp-', dir=parent_scratch) as scratch:
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths, readonly_dirs, hidden_paths)
+                        input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths, readonly_dirs, hidden_paths, on_stderr)
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=()):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
     home = Path(home)
@@ -213,6 +213,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 buffers[name].extend(chunk)
                 if name == 'stdout' and on_stdout is not None:
                     on_stdout(chunk)
+                if name == 'stderr' and on_stderr is not None:
+                    on_stderr(chunk)
             if overflow:
                 break
         if proc.poll() is None:
@@ -229,6 +231,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     except BaseException:
         stop(record)
         proc.wait(timeout=3)
+        if store:
+            store.finish(op,'EXITED',exit=proc.returncode,process=record,timeout=timed_out,overflow=overflow,cancelled=cancelled,duration=round(time.monotonic()-start,3))
         raise
     finally:
         selector.close()

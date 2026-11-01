@@ -120,7 +120,7 @@ class NativeWorkspaceViewTests(unittest.TestCase):
   from unittest.mock import patch
   import subprocess
   import test_native_local
-  from studio.native_terminals import NativeTerminals
+  from native_protocol_mechanics import NativeTerminals
   fixture=test_native_local.NativeLocalTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
   rt=fixture.rt;root=fixture.base.root;w=rt.open_workspace(str(root));binding=dict(fixture.binding,runtime_profile='default-codex')
   sid='00000000-0000-4000-8000-000000000001';row={'native':{'session_id':sid,'cwd':str(root),'sha256':'a'*64}}
@@ -129,11 +129,13 @@ class NativeWorkspaceViewTests(unittest.TestCase):
   with patch.object(rt.session_center,'resolve',return_value=(w,row)),patch.object(rt.session_center,'_binding',return_value=(binding,None)),patch.object(rt,'node_binding',return_value=selected),patch('studio.model_registration.ModelRegistration.require_direct'):
    permit=manager.prepare(dict(workspace=w['id'],handle='synthetic',interaction='click'))
    (rt.storage/'late-state').write_text('synthetic')
-   real=subprocess.Popen
-   def spawn(argv,**kw):return real([sys.executable,'-B','-c','import time;time.sleep(2)'],**kw)
+   real=subprocess.Popen;terminal_calls=[]
+   def spawn(argv,**kw):
+    if argv[:3]==[sys.executable,'-B','-I']:return real(argv,**kw)
+    terminal_calls.append(argv);return real([sys.executable,'-B','-c','import time;time.sleep(2)'],**kw)
    with patch('studio.native_terminals.subprocess.Popen',side_effect=spawn) as call:
     request=dict(id=permit['id'],sha256=permit['sha256'],answer={'action':'open-terminal'},cols=80,rows=24)
     first=manager.start(request);second=manager.start(request)
-   self.assertEqual(first['id'],second['id']);self.assertEqual(call.call_count,1)
+   self.assertEqual(first['id'],second['id']);self.assertEqual(len(terminal_calls),1)
    saved=rt.flow.get('terminal',first['id']);self.assertEqual(saved['source_view']['kind'],'native-workspace-view-v1')
    manager.close(w['id'],first['id'])

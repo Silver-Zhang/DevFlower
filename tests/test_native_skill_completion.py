@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 from orchestration.common import Blocked
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 from studio.native_skill_pack import NativeSkillPack
 import test_native_skill_pack as fixtures
 
@@ -33,7 +33,7 @@ class SkillCompletionTests(unittest.TestCase):
    s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC))
    s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability',side_effect=preflight))
    s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'))
-   s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks'))
+   s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks_isolated'))
    s.enter_context(patch('orchestration.process.execute',side_effect=send))
    result=None;error=None
    try:result=LocalCodex(b,dict(step_timeout_seconds=5,max_log_bytes=100000)).start('task',str(self.work),self.art,store=Store(),run='r')
@@ -139,7 +139,7 @@ class SkillCompletionTests(unittest.TestCase):
    sent.append(True);kw['on_stdout'](fixtures.RAW);(self.source/'references/a.txt').write_text('changed')
    return dict(exit=0,timeout=False,overflow=False,cancelled=False),fixtures.RAW,b''
   with ExitStack() as s:
-   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
+   s.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC));s.enter_context(patch('studio.native_codex_exec_probe.require_exec_capability'));s.enter_context(patch('studio.native_codex_exec_probe.require_native_write_capability'));s.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks_isolated'));s.enter_context(patch('orchestration.process.execute',side_effect=execute))
    with self.assertRaisesRegex(Blocked,'调用已经发生'):LocalCodex(b,dict(step_timeout_seconds=5,max_log_bytes=100000)).start('task',str(self.work),self.art,store=journal,run='r')
   step=flow.list('native-step')[0];activation=flow.get('activation','a')
   self.assertEqual(step['status'],'AGENT_FAILED');self.assertEqual(step['data']['process']['exit'],0);self.assertEqual(step['data']['native_session'],fixtures.SID)

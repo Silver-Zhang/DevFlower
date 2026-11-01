@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from orchestration.common import Blocked
 from studio.model_registration import ModelRegistration, direct_environment_identity, profile_identity
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 from studio.native_local import key as session_key
 from studio.server import Conflict
 
@@ -50,7 +50,7 @@ class DirectPreferenceIdentityTests(unittest.TestCase):
    stack.enter_context(patch('studio.local_codex_adapter.CodexRPC',RPC))
    for name in ('require_exec_capability','require_sandbox_capability','require_native_write_capability'):
     stack.enter_context(patch('studio.native_codex_exec_probe.'+name))
-   stack.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks'))
+   stack.enter_context(patch('studio.native_codex_exec.check_protected_hardlinks_isolated'))
    stack.enter_context(patch('orchestration.process.execute',side_effect=execute))
    result=LocalCodex(b or self.b,dict(step_timeout_seconds=10,max_log_bytes=100000)).start('synthetic task',str(self.root),self.artifacts)
   return result,calls,sent
@@ -98,7 +98,7 @@ class DirectPreferenceIdentityTests(unittest.TestCase):
   self.config.write_bytes(RAW.replace(b'"nested"',b'"different"'))
   with self.assertRaises(Conflict):self.check()
  def test_terminal_rebinding_versions_keep_session_identity(self):
-  from devflower_native_terminal import native_cli_argv
+  from native_protocol_mechanics import native_cli_argv
   before=session_key(self.b);raw=profile_identity(self.b);v2=direct_environment_identity(self.b)
   self.mutate_preferences();self.assertEqual(session_key(self.b),before)
   self.assertEqual(direct_environment_identity(self.b),v2)

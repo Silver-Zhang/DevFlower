@@ -20,7 +20,7 @@ def hold_guard(folder,ready,release):
 
 class MetadataCoordinationTests(unittest.TestCase):
     def test_two_clients_probe_lifecycle_blocks_other_scan(self):
-        from studio.local_codex_adapter import LocalCodex
+        from native_protocol_mechanics import LocalCodex
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);art=root/'artifacts';art.mkdir();started=threading.Event();release=threading.Event();scan_b=threading.Event();errors=[]
             binding=dict(executable='synthetic',home=folder,config_root=folder,provider='codex',model='fixture',effort='high',role='reviewer',session_id=None,project='fixture',conversation_format='text',readonly_files=[],native_interaction='ordinary',native_protected=[folder],_metadata_guard=folder)
@@ -44,7 +44,7 @@ class MetadataCoordinationTests(unittest.TestCase):
             def run():
                 try:LocalCodex(binding,dict(step_timeout_seconds=8,max_log_bytes=100000)).start('synthetic',folder,art)
                 except Exception as exc:errors.append(exc)
-            with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',side_effect=probe),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks',side_effect=scan),patch('orchestration.process.execute',side_effect=send):
+            with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability',side_effect=probe),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated',side_effect=scan),patch('orchestration.process.execute',side_effect=send):
                 a=threading.Thread(target=run,name='probe-a');b=threading.Thread(target=run,name='probe-b');a.start()
                 try:
                     self.assertTrue(started.wait(2));b.start()
@@ -185,7 +185,7 @@ class MetadataCoordinationTests(unittest.TestCase):
             self.assertTrue(all(x[:4]==('synthetic','/synthetic/home','/synthetic/config','/synthetic/cwd') and 0<x[4]<=30 for x in opened))
 
     def test_execution_config_probe_and_preflight_are_coordinated_separately(self):
-        from studio.local_codex_adapter import LocalCodex
+        from native_protocol_mechanics import LocalCodex
         with tempfile.TemporaryDirectory() as folder:
             sid='00000000-0000-4000-8000-000000000001';events=[]
             binding=dict(executable='synthetic',home=folder,config_root=folder,provider='codex',model='fixture',effort='high',role='reviewer',session_id=sid,project='fixture',conversation_format='text',readonly_files=[],native_interaction='ordinary',native_protected=[folder],_metadata_guard=folder)
@@ -202,7 +202,7 @@ class MetadataCoordinationTests(unittest.TestCase):
             def execute(*args,**kwargs):
                 events.append('execute');kwargs['on_stdout'](raw)
                 return dict(exit=0,timeout=False,overflow=False,cancelled=False),raw,b''
-            with patch('studio.native_codex_rpc.metadata_guard',gate),patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec.check_protected_hardlinks',side_effect=lambda x:events.append('scan')),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('orchestration.process.execute',side_effect=execute):
+            with patch('studio.native_codex_rpc.metadata_guard',gate),patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec.check_protected_hardlinks_isolated',side_effect=lambda x:events.append('scan')),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('orchestration.process.execute',side_effect=execute):
                 LocalCodex(binding,dict(step_timeout_seconds=10,max_log_bytes=100000)).start('synthetic',folder,folder)
             self.assertEqual(events,['lock','config/read','unlock','lock','unlock','lock','scan','unlock','execute'])
 

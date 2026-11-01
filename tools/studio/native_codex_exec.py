@@ -233,6 +233,31 @@ def check_protected_hardlinks(paths):
     finally:
         while held:os.close(held.pop())
 
+def check_protected_hardlinks_isolated(paths):
+    """Own descriptor budget; never change the server or shared CLI limits."""
+    import subprocess
+    import sys
+    program = """import json,resource,sys
+sys.path.insert(0,sys.argv[1])
+from orchestration.common import Blocked
+from studio.native_codex_exec import check_protected_hardlinks
+soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+wanted=65536 if hard==resource.RLIM_INFINITY else min(65536,hard)
+try:
+ resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,wanted),hard))
+ check_protected_hardlinks(json.loads(sys.argv[2]))
+except (Blocked,OSError,ValueError) as exc:
+ print(str(exc));sys.exit(1)
+"""
+    try:
+        result=subprocess.run([sys.executable,'-B','-I','-c',program,str(Path(__file__).resolve().parents[1]),json.dumps(paths)],
+            env={'PATH':'/usr/bin:/bin'},stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=32)
+    except (OSError,subprocess.TimeoutExpired):
+        raise Blocked('受保护目录核验进程未正常结束；未启动任务。') from None
+    if result.returncode:
+        raise Blocked(result.stdout.decode('utf-8','replace')[:2000] or '受保护目录核验失败；未启动任务。')
+
+
 def permission_profile_args(paths,write,*,select_default=True):
     if not isinstance(paths,(list,tuple)) or len(paths)>512 or type(write) is not bool:raise Blocked('原生权限保护路径无效')
     clean=[]

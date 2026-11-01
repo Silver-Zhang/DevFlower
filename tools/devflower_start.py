@@ -350,11 +350,18 @@ def main(argv=None):
         exists = state.exists()
         if args.check:
             if exists:
-                record = inspect_state(state)
-                previous = verify(state, record, candidate)
-                if previous != op or json.loads(read(state/'config/policy.json', confidential=True)) != policy:
-                    raise Blocked('本次模型/配置选择与已有状态不同。'+GUIDANCE)
-                service(state, record, candidate, args)
+                # Synchronize with the exclusive startup transaction without
+                # creating or changing state; a busy launcher is not ready.
+                with directory(state) as state_fd:
+                    try: fcntl.flock(state_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    except BlockingIOError: raise Blocked('另一个启动正在核验此状态，请稍后重试。'+GUIDANCE) from None
+                    try:
+                        record = inspect_state(state)
+                        previous = verify(state, record, candidate)
+                        if previous != op or json.loads(read(state/'config/policy.json', confidential=True)) != policy:
+                            raise Blocked('本次模型/配置选择与已有状态不同。'+GUIDANCE)
+                        service(state, record, candidate, args)
+                    finally: fcntl.flock(state_fd, fcntl.LOCK_UN)
             for notice in notices: print(notice)
             print('CHECK OK：依赖/完整源码/配置已检查；未创建状态、启动服务或调用模型。')
             return 0

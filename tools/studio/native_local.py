@@ -52,7 +52,7 @@ def native_environment(binding):
     # CLAUDE_CONFIG_DIR=~/.claude is NOT equivalent to leaving it unset:
     # Claude then moves ~/.claude.json into that directory, losing native
     # onboarding/account preferences. Canonical local mode uses native defaults.
-    return {'CODEX_HOME':binding['config_root']} if binding['provider']=='codex' else {}
+    return {'CODEX_HOME':binding['config_root']} if binding['provider']=='codex' else {'DISABLE_AUTOUPDATER':'1','DISABLE_UPDATES':'1'} if binding['provider']=='claude' else {}
 
 
 def key(binding, sid=None):

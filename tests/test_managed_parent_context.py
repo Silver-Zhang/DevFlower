@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from orchestration.common import Blocked
 from orchestration.store import process_identity
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 from studio.managed_children import OwnedChildren
 from test_managed_child_bridge import RunnerTests
 from test_native_attach_private import FakeListener
@@ -142,7 +142,7 @@ class OwnedChildFailureCloseTests(unittest.TestCase):
    with self.assertRaises(Blocked):journal._managed_context.call(1,'inspect controlled fixture')
    self.assertEqual(journal._managed_context.owner.active,{})
    return dict(exit=0,timeout=False,cancelled=False,overflow=False),RAW,b''
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.LocalCodex',self.adapter('after-start')),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.LocalCodex',self.adapter('after-start')),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
    with self.assertRaisesRegex(Blocked,'收尾未确认'):LocalCodex(binding,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('SYNTHETIC parent',str(self.root),self.root,store=self.journal,run='r')
   self.assertNotIn('AGENT_COMPLETED',statuses);self.assertIn('AGENT_FAILED',statuses)
   self.assertEqual(self.db.get('activation','a')['state'],'RECOVERY_REQUIRED')
@@ -223,7 +223,7 @@ class ParentContextTests(RunnerTests):
    raise AssertionError('wrong session accepted')
   original=self.journal.finish
   def finish(key,status,**updates):statuses.append(status);return original(key,status,**updates)
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
    with self.assertRaises(Blocked):LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
   self.assertNotIn('AGENT_SESSION',statuses);self.assertEqual(self.db.get('node-session','chat')['binding']['session_id'],SID);self.assertEqual(self.db.list('managed-child'),[])
  def test_effort_error_is_visible_without_sensitive_detail_on_actual_failure_path(self):
@@ -238,7 +238,7 @@ class ParentContextTests(RunnerTests):
   b['native_protected']=protected_paths(self.rt,b);calls=[]
   def execute(*args,**kwargs):
    calls.append(1);return dict(exit=1,timeout=False,overflow=False,cancelled=False),json.dumps({'type':'error','message':'unsupported model_reasoning_effort '+secret}).encode()+b'\n',b''
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute):
    with self.assertRaises(Blocked) as error:LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
   self.assertIn('推理强度',str(error.exception));self.assertNotIn(secret,str(error.exception));self.assertEqual(calls,[1])
  def test_mcp_timeouts_use_remaining_parent_budget(self):
@@ -276,7 +276,7 @@ class ParentContextTests(RunnerTests):
    return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
   orig=self.journal.finish
   def finish(key,status,**updates):events.append(status);return orig(key,status,**updates)
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.OwnedChildren',Owner),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.OwnedChildren',Owner),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
    result=LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
   self.assertEqual(result['session_id'],SID);self.assertEqual(result['subagents'],'readonly');self.assertLess(events.index('child-close'),events.index('AGENT_COMPLETED'))
   args=sent[0];self.assertEqual(sum('mcp_servers.devflower_managed.command=' in x for x in args),1)
@@ -326,7 +326,7 @@ class ParentContextTests(RunnerTests):
    return dict(exit=0,timeout=False,overflow=False,cancelled=False),RAW,b''
   orig=self.journal.finish
   def finish(key,status,**updates):statuses.append(status);return orig(key,status,**updates)
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.OwnedChildren',Owner),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('studio.managed_children.OwnedChildren',Owner),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
    with self.assertRaisesRegex(Blocked,'收尾未确认'):LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
   self.assertNotIn('AGENT_COMPLETED',statuses);self.assertIn('AGENT_FAILED',statuses);self.assertEqual(self.db.get('activation','a')['state'],'RECOVERY_REQUIRED')
 
@@ -367,7 +367,7 @@ class ParentContextTests(RunnerTests):
   def execute(argv,cwd,home,**kw):paths.append(kw['store']._managed_context.path);raise OSError('synthetic failure')
   orig=self.journal.finish
   def finish(key,status,**updates):statuses.append(status);return orig(key,status,**updates)
-  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
+  with patch('studio.local_codex_adapter.CodexRPC',RPC),patch('studio.native_codex_exec_probe.require_exec_capability'),patch('studio.native_codex_exec_probe.require_native_write_capability'),patch('studio.native_codex_exec.check_protected_hardlinks_isolated'),patch('studio.managed_children.socket.socket',FakeListener),patch('orchestration.process.execute',side_effect=execute),patch.object(self.journal,'finish',side_effect=finish):
    with self.assertRaisesRegex(Blocked,'synthetic failure'):LocalCodex(b,dict(step_timeout_seconds=20,max_log_bytes=100000)).start('synthetic',str(Path(self.tmp.name)),Path(self.tmp.name),store=self.journal,run='r')
   self.assertEqual(paths[0].read_bytes(),b'');self.assertIn('AGENT_FAILED',statuses);self.assertNotIn('AGENT_COMPLETED',statuses)
 

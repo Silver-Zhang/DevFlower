@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from orchestration.common import Blocked
-from studio.local_codex_adapter import LocalCodex
+from native_protocol_mechanics import LocalCodex
 from studio.local_claude_adapter import LocalClaude
 from studio.native_codex_rpc import CodexRPC,metadata
 
@@ -103,8 +103,15 @@ class NativeLocalProtocolTests(unittest.TestCase):
 
     def test_protocol_output_budget_stops_and_reaps_only_its_child(self):
         exe=self.home/'protocol-stub'
-        exe.write_text('#!'+sys.executable+'\nimport sys,json\nfor line in sys.stdin:\n r=json.loads(line)\n if r.get("method")=="initialize":\n  print(json.dumps({"id":r["id"],"result":{}}),flush=True)\n elif "id" in r:\n  print("x"*1000,flush=True)\n')
-        exe.chmod(0o700)
+        from test_native_codex_image import compile_static
+        compile_static(exe,'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main(void){char *line=NULL;size_t size=0;
+while(getline(&line,&size,stdin)>0){
+ if(strstr(line,"initialize")){puts("{\\\"id\\\":1,\\\"result\\\":{}}");fflush(stdout);}
+ else if(strstr(line,"id")){for(int i=0;i<1000;i++)putchar('x');putchar('\\n');fflush(stdout);}}
+free(line);return 0;}''')
         with self.assertRaisesRegex(Blocked,'输出超过'):
             with CodexRPC(str(exe),self.home,self.home,self.home,5,cap=128) as rpc:
                 rpc.request('thread/read',{'threadId':SID})

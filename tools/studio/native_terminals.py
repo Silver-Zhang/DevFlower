@@ -45,14 +45,22 @@ class NativeTerminals:
         self.entries, self.lock = {}, threading.RLock()
         atexit.register(self.shutdown)
 
-    def prepare(self, data):
+    def prepare(self,data):
+        if not isinstance(data,dict) or not {'workspace','handle'}<=set(data) or set(data)-{'workspace','handle','auto_verify','interaction'} or type(data.get('auto_verify',False)) is not bool:
+            raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
+        # Resolve identity before the policy check; never grant a wider terminal.
+        project,row=self.rt.session_center.resolve(data['workspace'],data['handle'])
+        binding,reason=self.rt.session_center._binding(row,project)
+        if binding and binding.get('provider')=='codex' and binding.get('execution_backend')=='native-local':
+            raise Blocked('Codex 原生终端尚未验证工作区与显式授权路径的读取边界，暂不能打开；可只读查看历史或使用共享纯对话。')
+        return self._prepare_supported(data)
+
+    def _prepare_supported(self, data):
         if not {'workspace','handle'} <= set(data) or set(data)-{'workspace','handle','auto_verify','interaction'} or type(data.get('auto_verify',False)) is not bool: raise Invalid('终端只能选择已授权的会话，不能提交命令或路径')
         project, row = self.rt.session_center.resolve(data['workspace'], data['handle'])
         binding, reason = self.rt.session_center._binding(row, project)
         if not binding or binding['provider'] not in ('codex', 'claude'):
             raise Blocked(reason or '该 Provider 尚未支持原生终端')
-        if binding.get('execution_backend')=='native-local' and binding['provider']=='codex' and data.get('interaction')!='click':
-            raise Blocked('本机 Codex 终端尚无法隔离原生配置中的未授权工具，暂不能打开；会话历史仍可只读查看。')
         if self.sessions.busy(binding, row['native']['session_id']): raise Blocked('此会话已有写入者，请先停止原回合或连接已有终端')
         direct=data.get('interaction')=='click'
         view=None

@@ -98,8 +98,18 @@ class Storage:
             db.execute('UPDATE objects SET data=? WHERE kind=? AND id=?', (canonical(data).decode(), kind, key))
         return data
 
-    def save_draft(self, document, identity=None, expected=None):
+    def save_draft(self, document, identity=None, expected=None, task=None, workspace=None):
         document = draft(document)
+        if workspace is not None:
+            if not isinstance(workspace,str) or not workspace:raise Invalid("保存草稿需要明确工作区")
+            self.get("workspace",workspace)
+        if task is not None:
+            if not isinstance(task,dict) or set(task)!={'title','body','scope','acceptance','issue_url'}:
+                raise Invalid('任务卡字段无效；运行授权不属于草稿')
+            for key,limit in [('title',120),('body',20000),('acceptance',20000),('issue_url',2048)]:
+                if not isinstance(task[key],str) or len(task[key])>limit:raise Invalid('任务卡内容过长或格式无效')
+            if not isinstance(task['scope'],list) or len(task['scope'])>64 or any(not isinstance(p,str) or len(p)>4096 for p in task['scope']):
+                raise Invalid('任务范围格式无效')
         if identity is not None and (not isinstance(identity, str) or len(identity) != 32 or any(c not in "0123456789abcdef" for c in identity)):
             raise Invalid("Invalid draft identity")
         identity = identity or secrets.token_hex(16)
@@ -109,7 +119,15 @@ class Storage:
             row = db.execute("SELECT data FROM objects WHERE kind='draft' AND id=?", (identity,)).fetchone()
             if (json.loads(row[0])["revision"] if row else None) != expected:
                 raise Conflict("Draft changed; reload its current revision")
+            if row and json.loads(row[0]).get("workspace") != workspace:
+                raise Conflict("草稿属于其他工作区或未分配；请在当前工作区新建副本")
+            if task is None and row:task=json.loads(row[0]).get('task')
+            if task is not None:revision=digest(dict(document=document,task=task))
             value = dict(id=identity, revision=revision, document=document)
+            if workspace is not None:
+                value['workspace']=workspace
+                value['revision']=revision=digest(dict(document=document,task=task,workspace=workspace))
+            if task is not None:value['task']=json.loads(json.dumps(task))
             db.execute("INSERT OR IGNORE INTO revisions VALUES(?,?,?,?)",
                        (identity, revision, canonical(value).decode(), time.time()))
             db.execute("INSERT OR REPLACE INTO objects VALUES('draft',?,?)", (identity, canonical(value).decode()))

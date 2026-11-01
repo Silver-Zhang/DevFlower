@@ -10,9 +10,49 @@ from studio.workbench_examples import examples
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--chromium',required=True);p.add_argument('--artifacts',required=True);p.add_argument('--node',default='node');p.add_argument('--playwright-module',default='playwright');a=p.parse_args()
+    if not os.environ.get('WORKBENCH_BROWSER_WORKER'):
+        # These cases require purpose-built records and a fresh service. Do not
+        # let aliases/model choices from earlier browser cases become fixtures.
+        isolated=['issue49-delegated-origin','issue58-session-context','issue64-shared-codex-pure-chat-choice']
+        requested=set(filter(None,os.environ.get('TEST_CASES','').split(',')))
+        selected=lambda name:(not requested or name in requested) and (not os.environ.get('TEST_FILTER') or os.environ['TEST_FILTER'] in name)
+        isolated=[name for name in isolated if selected(name)]
+        out=Path(a.artifacts).resolve();root=Path(__file__).resolve().parents[1]
+        if out.is_relative_to(root) or root.is_relative_to(out):p.error('Artifacts must stay outside source')
+        out.mkdir(parents=True,mode=0o700)
+        inventory_command=[a.node,str(Path(__file__).with_suffix('.cjs')),str(out)]
+        inventory=json.loads(subprocess.check_output(inventory_command,env=dict(os.environ,TEST_LIST_ONLY='1',PLAYWRIGHT_MODULE=a.playwright_module),timeout=30))['cases']
+        if len(inventory)!=len(set(inventory)):raise RuntimeError('Repeated case names in browser inventory')
+        if requested-set(inventory):raise RuntimeError('Unknown requested browser cases')
+        expected={name for name in inventory if selected(name)}
+        (out/'expected-cases.json').write_text(json.dumps(sorted(expected),indent=2)+'\n')
+        jobs=[]
+        if (requested and requested-set(isolated)) or (not requested and os.environ.get('TEST_FILTER') not in isolated):
+            jobs.append((out/'shared',dict(TEST_EXCLUDE_CASES=','.join(isolated))))
+        jobs.extend((out/('isolated-'+name),dict(TEST_FILTER=name,TEST_CASES=name,TEST_EXCLUDE_CASES='')) for name in isolated)
+        results=[];exits=[];commands=[]
+        for destination,changes in jobs:
+            command=[sys.executable,'-B',str(Path(__file__).resolve()),'--chromium',a.chromium,'--node',a.node,'--playwright-module',a.playwright_module,'--artifacts',str(destination)]
+            code=subprocess.run(command,env=dict(os.environ,WORKBENCH_BROWSER_WORKER='1',**changes),timeout=900).returncode
+            result_path=destination/'workbench-results.json'
+            if not result_path.exists():raise RuntimeError(f'Browser worker exited {code} without results: {destination}')
+            value=json.loads(result_path.read_text())
+            if not value['complete']:raise RuntimeError('Browser worker did not finish')
+            results.extend(dict(row,artifacts=str(destination)) for row in value['results']);exits.append(code);commands.append(dict(command=command,exit=code))
+        names=[row['name'] for row in results]
+        if not results or len(set(names))!=len(names):raise RuntimeError('Missing or repeated browser cases')
+        if set(names)!=expected:raise RuntimeError('Browser case inventory mismatch: missing='+str(sorted(expected-set(names)))+' unknown='+str(sorted(set(names)-expected)))
+        summary=dict(evidence_type='ordinary Chromium/real HTTP, isolated synthetic native records',tests=len(results),failures=sum(not row['passed'] for row in results),skipped=0,current_case=None,complete=True,results=results,workers=commands,inventory_verified=True,expected_case_count=len(expected))
+        (out/'workbench-results.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n')
+        print(json.dumps(dict(tests=summary['tests'],failures=summary['failures'],skipped=0,workers=len(jobs))),flush=True)
+        return int(any(exits) or summary['failures']>0)
     root=Path(__file__).resolve().parents[1];out=Path(a.artifacts).resolve()
     if out.is_relative_to(root) or root.is_relative_to(out):p.error('Artifacts must stay outside source')
     out.mkdir(parents=True,mode=0o700);owner=unittest.TestCase();base,rt=fixture(owner, admission=True);workspace=base.project['id']
+    # Synthetic backend still needs an explicit, isolated connection identity
+    # so UI send tests exercise the same precondition as real connections.
+    from studio.devflower_agent import AgentConnection
+    AgentConnection(rt).save(dict(expected=None,protocol='openai',base_url='http://127.0.0.1:1',model='auto',effort='medium',api_key=''))
     for label in ('A','B'):
         graph=examples(rt.operator['profiles'])[0];graph['name']='运行 '+label
         graph['budget']={'calls':10 if label=='A' else 12,'seconds':600 if label=='A' else 900}
@@ -30,6 +70,12 @@ def main():
         _,row=structured_session(base,rt,label)
         rt.flow.put('session-meta',row['handle'],dict(id=row['handle'],workspace=workspace,collection='active',alias='Synthetic '+label))
         session_rows[label]=dict(handle=row['handle'],session_id=row['session_id'])
+    if os.environ.get('TEST_FILTER')=='issue49-delegated-origin':
+        rt.flow.change('activation','dialog-A-turn-1',dict(parent_activation='synthetic-parent',request_sections=[dict(title='每轮任务',text='SYNTHETIC CHILD ONLY')]))
+    if os.environ.get('TEST_FILTER')=='issue58-session-context':
+        for label in ('dialog-A','dialog-B'):
+            rt.flow.put('session-meta',session_rows[label]['handle'],dict(id=session_rows[label]['handle'],workspace=workspace,collection='active',alias='处理任务'))
+            rt.flow.change('run',label+'-run',dict(task='SYNTHETIC '+label+' https://private.example.invalid/PRIVATE'))
     rt.flow.event('dialog-A-run','fixture-history',node='loop/analyze',reason='')  # Synthetic UI-only history event, not a real control action.
     # Native Codex final text already supplies this answer: no second result body.
     _,row=structured_session(base,rt,'dialog-native','codex',native_answers=True)

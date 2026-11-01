@@ -25,7 +25,7 @@ class WorkspaceCoordinationTests(unittest.TestCase):
    start.set()
    try:results.append(native_workspace_hash(self.rt,self.view))
    except Exception as exc:errors.append(exc)
-  with patch('studio.native_codex_exec.check_protected_hardlinks',side_effect=scan):
+  with patch('studio.native_codex_exec.check_protected_hardlinks_isolated',side_effect=scan):
    worker=threading.Thread(target=run)
    try:
     with metadata_guard(self.storage):
@@ -62,6 +62,6 @@ class WorkspaceCoordinationTests(unittest.TestCase):
        if change=='symlink':(storage/'unexpected').symlink_to('/synthetic/target')
        else:storage.rename(root/'moved');storage.mkdir()
      yield from real(top,*args,**kwargs)
-    with patch('studio.native_codex_exec.os.fwalk',side_effect=walk):
+    with patch('studio.native_codex_exec.check_protected_hardlinks_isolated',side_effect=check_protected_hardlinks),patch('studio.native_codex_exec.os.fwalk',side_effect=walk):
      with self.assertRaises(Blocked):native_workspace_hash(rt,view)
     self.assertGreaterEqual(count,2)

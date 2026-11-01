@@ -30,6 +30,15 @@ def _stderr_diagnostic(raw,secrets):
     return '；'.join(rows[-3:])[:1600]
 
 
+def writer_conflict_observer():
+    conflict_tail=bytearray()
+    def observe_stderr(chunk):
+        conflict_tail.extend(chunk);del conflict_tail[:-8192]
+        if b'thread-store conflict' in conflict_tail and b'already has an active writer' in conflict_tail:
+            raise Blocked('原生会话已由另一写入者占用；本次竞争进程已停止，未自动重发。')
+    return observe_stderr
+
+
 class LocalCodex:
     def __init__(self,binding,limits):self.b,self.limits=binding,limits
 
@@ -42,6 +51,51 @@ class LocalCodex:
                 b.get('execution_mode') in ('Ask','Plan') and not b.get('no_tools') and not b.get('admission_probe'))
 
     def start(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
+        executable=self.b.get('executable')
+        if not isinstance(executable,(str,Path)) or not str(executable).strip():
+            raise Blocked('原生 CLI 绑定不完整，无法核验读取边界；未启动程序。')
+        if self.b.get('shared_conversation') is True:
+            return self._start_shared(prompt,cwd,artifacts,output_schema,store,run,session)
+        # #57: never reuse the host-wide native read-only tool path. Ask/Plan
+        # uses only the pinned, capability-checked client readers below.
+        if (self.b.get('execution_backend')=='native-local' and
+                self.b.get('role')!='implementer' and not self.b.get('no_tools') and
+                not self.b.get('admission_probe')):
+            return self._start_narrow(prompt,cwd,artifacts,output_schema,store,run,session)
+        return self._start_unshared(prompt,cwd,artifacts,output_schema,store,run,session)
+
+    def _start_narrow(self,prompt,cwd,artifacts,output_schema,store,run,session):
+        from .native_codex_image import NativeImage
+        with NativeImage(self.b['executable']) as image:
+            return self._start_narrow_pinned(prompt,cwd,artifacts,output_schema,store,run,session,image)
+
+    def _start_narrow_pinned(self,prompt,cwd,artifacts,output_schema,store,run,session,image):
+        from .codex_narrow_read import NarrowReadScope
+        from .model_registration import direct_environment_identity
+        b=self.b;started=time.monotonic()
+        if (b.get('provider')!='codex' or b.get('role')!='reviewer' or
+                b.get('execution_mode') not in ('Ask','Plan') or b.get('skills') or
+                b.get('subagents','disabled')!='disabled'):
+            raise Blocked('窄读取边界仅支持无扩展的 Codex Ask/Plan；未启动任务')
+        budget=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
+        environment=direct_environment_identity(b)
+        fields=('provider','home','config_root','executable','role','execution_mode','read_paths','readonly_files','skills','subagents','admission_policy','direct_environment_sha256')
+        authorization=lambda:digest(canonical({k:b.get(k) for k in fields}))
+        authorized=authorization()
+        from .codex_narrow_probe import require_narrow_capability
+        proof=require_narrow_capability(b['executable'],artifacts,budget,lambda:bool(store and store.get(run)['data'].get('cancel_requested')),model=b['model'],effort=b['effort'],authorization_sha256=digest(canonical([authorized,environment,str(cwd)])),image=image)
+        def check():
+            if store and store.get(run)['data'].get('cancel_requested'):raise Blocked('本次读取已取消')
+            if direct_environment_identity(b)!=environment or authorization()!=authorized:raise Blocked('读取配置已变化；未自动重发')
+            if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
+        with NarrowReadScope(b,cwd,check=check) as scope:
+            scope.binary_sha256=proof['binary_sha256']
+            remaining=budget-(time.monotonic()-started)
+            if remaining<=0:raise Blocked('窄读取兼容性核验已用尽本次预算；业务请求未发送')
+            return LocalCodex(b,dict(self.limits,step_timeout_seconds=remaining))._start_shared(prompt,cwd,artifacts,output_schema,store,run,session,_read_scope=scope,_executable_image=image)
+
+    def _start_unshared(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
+        """Protocol mechanics; callers must enforce the public read policy first."""
         version=self.b.get('direct_environment_version',1)
         if type(version) is not int or version not in (1,2,3):
             raise Blocked('不支持的原生环境指纹版本')
@@ -149,6 +203,136 @@ class LocalCodex:
             process=process,raw_report_sha256=digest(canonical(report)),provider='codex',home=b['home'],cwd=cwd,
             transport={'mode':'native-local'},adapter_version='native-local/1',usage={})
 
+    def _start_shared(self,prompt,cwd,artifacts,output_schema,store,run,session,*,_read_scope=None,_executable_image=None):
+        from .native_codex_image import NativeImage
+        expected=getattr(_read_scope,'binary_sha256',None)
+        with NativeImage(self.b['executable'],expected_sha256=expected) if _executable_image is None else nullcontext(_executable_image) as image:
+            image.validate()
+            if expected and image.sha256!=expected:raise Blocked('原生CLI与本轮兼容性核验不匹配')
+            return self._start_shared_pinned(prompt,cwd,artifacts,output_schema,store,run,session,_read_scope=_read_scope,image=image)
+
+    def _start_shared_pinned(self,prompt,cwd,artifacts,output_schema,store,run,session,*,_read_scope,image):
+        """A canonical app-server thread with process-local conversation config."""
+        from .shared_codex_config import shared_conversation_config
+        from .native_codex_exec import provider_overrides
+        from .model_registration import direct_environment_identity
+        from .session_sources import opened
+        import os
+        b=self.b;cwd=str(cwd);sid=session or b.get('session_id');started=time.monotonic()
+        timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
+        cancelled=lambda:bool(store and store.get(run)['data'].get('cancel_requested'))
+        environment=direct_environment_identity(b)
+        if b.get('direct_environment_sha256') and b['direct_environment_sha256']!=environment:
+            raise Blocked('原生模型配置已变化；未发送共享会话消息')
+        secret=credentials(b['home'],[x[0] for x in b.get('readonly_files',[])])
+        with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(timeout,30),cancelled,executable_image=image) as probe:
+            config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
+        sqlite_home=config.get('sqlite_home') if isinstance(config,dict) else None
+        if sqlite_home and str(Path(sqlite_home).resolve())!=str(Path(b['config_root']).resolve()):
+            raise Blocked('自定义原生 SQLite 存储尚未验证；不会创建另一套会话数据库')
+        provider=provider_overrides(config)
+        request=store.intent(run,'AGENT_REQUEST',dict(kind='codex',project=b['project'],role=b['role'],
+            requested_session=sid,requested_model=b['model'],requested_effort=b['effort'])) if store else None
+        if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
+        rpc=None;op=None;error=None;answer='';turn=None;complete=False
+        try:
+            with shared_conversation_config(b,cwd,artifacts,read_scope=_read_scope,executable_image=image) as pinned:
+                remaining=timeout-(time.monotonic()-started)
+                if remaining<=0 or cancelled():raise Blocked('共享会话已取消或等待预算已耗尽')
+                if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
+                with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,remaining,cancelled,
+                              cap=self.limits['max_log_bytes'],shared_config=pinned,provider_args=provider) as rpc:
+                    op=store.intent(run,'PROCESS',dict(backend='native-local',provider='codex',cwd=cwd,
+                        context={'provider':'codex','transport':'native-shared-conversation'})) if store else None
+                    if store:
+                        if hasattr(store,'process_started'):store.process_started=True
+                        store.finish(op,'RUNNING',process=rpc.identity)
+                    from .codex_narrow_read import TOOLS,PROFILE
+                    common=dict(model=b['model'],cwd=cwd,approvalPolicy='never')
+                    common.update(permissions=PROFILE) if _read_scope is not None else common.update(sandbox='read-only')
+                    fresh=dict(common,ephemeral=False,threadSource='devflower')
+                    if _read_scope is not None:fresh['dynamicTools']=TOOLS
+                    value=rpc.request('thread/resume',dict(common,threadId=sid,excludeTurns=True)) if sid else rpc.request('thread/start',fresh)
+                    thread=value['thread'];actual=thread['id']
+                    if sid and sid!=actual:raise Blocked('原生恢复返回了不同会话；未发送消息')
+                    sid=actual
+                    if _read_scope is not None and (session or b.get('session_id')) and not thread.get('path'):
+                        raise Blocked('原生会话缺少可核验的工具元数据路径；未发送任务')
+                    # Dynamic host tools are persistent metadata; do not inherit
+                    # one merely because a caller asks to resume its thread.
+                    if (session or b.get('session_id')) and thread.get('path'):
+                        with opened(thread['path']) as fd:
+                            raw=os.read(fd,1048577)
+                        first=raw.split(b'\n',1)[0]
+                        if len(first)>1048576:raise Blocked('原生会话元数据超限')
+                        meta=json.loads(first).get('payload',{})
+                        if _read_scope is not None:
+                            if meta.get('dynamic_tools')!=TOOLS:raise Blocked('此原生会话未绑定完全相同的窄读取工具；未发送任务')
+                        elif meta.get('dynamic_tools'):raise Blocked('此原生会话含外部工具；共享只读模式暂不接管')
+                        if meta.get('source') not in ('cli','vscode','appServer'):
+                            raise Blocked('此会话的原生来源不进入交互列表；保留原记录，不创建替代会话')
+                    elif thread.get('source') not in ('cli','vscode','appServer'):
+                        raise Blocked('原生服务未返回交互式会话来源；未发送消息')
+                    if 'expected_native_turn_id' in b:
+                        turns=rpc.request('thread/read',dict(threadId=sid,includeTurns=True))['thread'].get('turns',[])
+                        if (turns[-1]['id'] if turns else None)!=b['expected_native_turn_id']:
+                            raise Blocked('原生会话已在另一端继续；请刷新后确认本轮消息')
+                    if not session and not b.get('session_id'):
+                        rpc.request('thread/name/set',dict(threadId=sid,name='DevFlower · '+str(b.get('responsibility','Agent'))[:65]))
+                    if direct_environment_identity(b)!=environment:
+                        raise Blocked('原生配置在启动期间变化；未发送消息')
+                    params=dict(threadId=sid,input=[dict(type='text',text=prompt)],model=b['model'],effort=b['effort'])
+                    if _read_scope is not None:params['permissions']=PROFILE
+                    if output_schema:params['outputSchema']=json.loads(Path(output_schema).read_text())
+                    turn=rpc.request('turn/start',params)['turn']['id']
+                    if store:
+                        store.finish(request,'AGENT_SESSION',actual_session=sid,native_turn_id=turn)
+                        if callable(getattr(store,'input_sent',None)):store.input_sent(op,len(prompt.encode()),digest(prompt.encode()))
+                    from .codex_narrow_read import NarrowToolRequests
+                    tool_requests=NarrowToolRequests(_read_scope,sid,turn) if _read_scope is not None else None
+                    while True:
+                        event=rpc.next_event()
+                        if not event:continue
+                        name,p=event.get('method'),event.get('params',{})
+                        if event.get('id') is not None and name:
+                            if _read_scope is None:raise Blocked('共享纯对话收到工具或授权请求；已停止且未自动重发')
+                            ident,result=tool_requests.handle(event)
+                            result=redact(result,secret)
+                            rpc.respond_tool(ident,result);continue
+                        if p.get('threadId') not in (None,sid):raise Blocked('原生事件跨越当前共享会话')
+                        if p.get('turnId') not in (None,turn):continue
+                        if name=='item/completed':
+                            item=p.get('item',{})
+                            if item.get('type')=='agentMessage':
+                                if item.get('phase')=='final_answer' or not answer:answer=item.get('text','')
+                            elif _read_scope is not None and item.get('type')=='dynamicToolCall':
+                                if item.get('tool') not in {x['name'] for x in TOOLS}:raise Blocked('原生服务出现未知工具活动；已停止')
+                            elif item.get('type') not in ('userMessage','reasoning','contextCompaction'):
+                                raise Blocked('共享纯对话出现工具活动；结果未批准且未重发')
+                        if name=='turn/completed' and p['turn']['id']==turn:
+                            if p['turn']['status']!='completed':raise Blocked('共享原生回合未完成')
+                            complete=True;break
+                    rpc.request('thread/unsubscribe',dict(threadId=sid))
+        except BaseException as exc:error=exc
+        process=dict(exit=rpc.process.returncode if rpc else None,timeout=bool(error and '预算' in str(error)),
+            overflow=bool(rpc and rpc.overflow),cancelled=cancelled(),duration=round(time.monotonic()-started,3),
+            process=rpc.identity if rpc else None,backend='native-local')
+        if store and op:store.finish(op,'EXITED',**process)
+        if error or not complete or process['exit']!=0:
+            if store:store.finish(request,'AGENT_FAILED',error_category='native-shared-conversation',process=process)
+            if error and not isinstance(error,Exception):raise error
+            raise Blocked(redact(str(error) if error else '共享原生服务未正常退出',secret)) from None
+        if b.get('conversation_format')=='text':report=dict(reply=answer)
+        else:
+            try:report=json.loads(answer)
+            except ValueError:raise Blocked('共享原生回答不符合结构化合同') from None
+        report=redact(report,secret)
+        if store:store.finish(request,'AGENT_COMPLETED',actual_session=sid,native_turn_id=turn,transport={'mode':'native-shared-conversation'})
+        return dict(report=report,session_id=sid,native_turn_id=turn,requested_model=b['model'],requested_effort=b['effort'],
+            resolved_model='unknown',resolved_effort='unknown',permission_mode='native-workspace-explicit-read' if _read_scope is not None else 'native-read-only',process=process,
+            raw_report_sha256=digest(canonical(report)),provider='codex',home=b['home'],cwd=cwd,
+            transport={'mode':'native-narrow-read' if _read_scope is not None else 'native-shared-conversation','workspace_tools':'bounded-read-list' if _read_scope is not None else 'disabled','interactive_requests':'bounded-client-tools' if _read_scope is not None else 'unsupported-stop'},adapter_version='native-shared-conversation/1',usage={})
+
     def _start_new(self,prompt,cwd,artifacts,output_schema,store,run,session=None,managed_pack=None):
         # A new thread has no earlier turn to race. Existing threads remain on
         # the guarded RPC path: exec cannot atomically compare the prior turn.
@@ -209,11 +393,12 @@ class LocalCodex:
         if direct_environment_identity(b)!=environment:raise Blocked('原生模型配置在预检期间变化；未发送请求')
         if store and callable(getattr(store,'check_before_spawn',None)):store.check_before_spawn()
         if ordinary:
-            from .native_codex_exec import check_protected_hardlinks
+            from .native_codex_exec import check_protected_hardlinks_isolated
             with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext():
-                check_protected_hardlinks(b.get('native_protected',[]))
+                check_protected_hardlinks_isolated(b.get('native_protected',[]))
         remaining()
         argv=exec_args(b,provider_args,schema=output_schema)
+        observe_stderr=writer_conflict_observer()
         child_managed=False
         if getattr(store,'_managed_child_token',None) is not None:
             from .managed_children import CHILD_TOKEN
@@ -286,7 +471,7 @@ class LocalCodex:
                 argv[index:index]=managed_mcp_args(managed_context)
             process,out,err=execute(argv,cwd,b['home'],timeout=remaining(),cap=self.limits['max_log_bytes'],
                 input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
-                env_extra=native_environment(b),context={'provider':'codex','transport':'native-exec'},on_stdout=observe)
+                env_extra=native_environment(b),context={'provider':'codex','transport':'native-exec'},on_stdout=observe,on_stderr=observe_stderr)
             if process['exit']!=0 or any(process.get(k) for k in ('timeout','cancelled','overflow')):
                 messages=[]
                 for message in native_errors('codex',out):
@@ -300,7 +485,13 @@ class LocalCodex:
                 stderr=err.rpartition(b'\n')[0] if process.get('overflow') and not err.endswith(b'\n') else err
                 diagnostic=_stderr_diagnostic(stderr,secrets_found)
                 details='；'.join(x for x in (detail,diagnostic) if x)
-                raise Blocked('原生 Codex 回合未完成（退出码 '+str(process['exit'])+'）；没有自动重发'+((': '+details) if details else ''))
+                reason='原生 Codex 回合未完成（退出码 '+str(process['exit'])+'）；工作台没有自动重发。'
+                if process.get('timeout'):reason+='本次调用超时，请检查连接或调整预算后明确提交新任务。'
+                elif process.get('cancelled'):reason+='本次调用已取消，所属进程已停止。'
+                elif process.get('overflow'):reason+='输出超过预算，请缩小任务后明确提交新任务。'
+                elif re.search(r'(?i)(unauthori[sz]ed|authentication|missing bearer|invalid.?api.?key|\b401\b|\b403\b)',details):reason+='认证未通过，请在原生客户端核对登录、连接和访问权限。'
+                elif re.search(r'(?i)(connect|network|routing|timed out)',details):reason+='连接未完成，请检查网络和中转站。原生 CLI 可能在本回合内重连。'
+                raise Blocked(reason+(('详情：'+details) if details else ''))
             if managed_pack is not None:
                 try:managed_pack.verify()
                 except Exception as exc:
