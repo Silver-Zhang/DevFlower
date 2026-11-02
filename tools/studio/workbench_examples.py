@@ -1,10 +1,36 @@
 """Editable executable v3 examples populated from actual approved native profiles."""
+import os
+
 from .node_defaults import profile_timeout
 
 
+def executable_static(profile):
+    """Cheap format check; does not execute or copy the CLI."""
+    try:
+        from .native_codex_image import static_elf
+        from .session_sources import opened
+        path = profile.get('executable')
+        if not isinstance(path, str) or not path:
+            return False
+        with opened(path) as fd:
+            if not os.fstat(fd).st_mode & 0o111:
+                return False
+            static_elf(fd)
+        return True
+    except Exception:
+        return False
+
+
 def examples(profiles):
-    names=list(profiles);first=next((k for k in names if profiles[k]['provider']=='codex'),names[0])
-    second=next((k for k in names if profiles[k]['provider']=='claude'),names[-1])
+    names=list(profiles)
+    static_codex=[k for k in names if profiles[k]['provider']=='codex' and executable_static(profiles[k])]
+    claude=[k for k in names if profiles[k]['provider']=='claude']
+    fallback_codex=next((k for k in names if profiles[k]['provider']=='codex'),None)
+    # Templates must start on a tool this host can actually launch: a JS/npm
+    # Codex launcher fails closed at run time, so prefer a static Codex binary
+    # and otherwise an available Claude profile.
+    first=(static_codex[0] if static_codex else claude[0] if claude else fallback_codex or names[0])
+    second=next((k for k in claude if k!=first),None) or next((k for k in names if k!=first),first)
     def node(key,kind,name,x,y,**data):return dict(id=key,kind=kind,name=name,position={'x':x,'y':y},**data)
     def agent(key,name,profile,x,y):
         p=profiles[profile]

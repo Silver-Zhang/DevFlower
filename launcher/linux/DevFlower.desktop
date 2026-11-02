@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=DevFlower
+Comment=Open the private local DevFlower Development workbench
+Exec=python3 -B @REPO@/tools/devflower_launch.py
+Icon=@REPO@/launcher/assets/devflower.svg
+Terminal=true
+Categories=Development;
+StartupNotify=false

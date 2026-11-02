@@ -19,6 +19,9 @@ export function CanvasAssistant({api,workspace,graph,task,onApply,onRequestRun,d
  const settingsOpener=useRef(null);
  const storage='devflower-agent:'+workspace.id;
  const [conversation,setConversation]=useState(()=>localStorage.getItem(storage)||id()),[value,setValue]=useState(null),[drafts,setDrafts]=useState(()=>{try{return JSON.parse(localStorage.getItem(storage+':drafts')||'{}')}catch{return {}}});
+ const known=useRef(new Set((()=>{try{return JSON.parse(localStorage.getItem(storage+':known')||'[]')}catch{return []}})()));
+ const remember=key=>{known.current.add(key);try{localStorage.setItem(storage+':known',JSON.stringify([...known.current].slice(-50)))}catch{}};
+ const forget=key=>{known.current.delete(key);try{localStorage.setItem(storage+':known',JSON.stringify([...known.current]))}catch{}};
  const [catalog,setCatalog]=useState(null),[model,setModel]=useState(''),[automatic,setAutomatic]=useState(()=>localStorage.getItem(storage+':auto-apply')==='yes'),[intent,setIntent]=useState(editable?'auto':'chat');
  const [view,setView]=useState('chat'),[collection,setCollection]=useState('active'),[query,setQuery]=useState(''),[sessions,setSessions]=useState([]),[management,setManagement]=useState(null),[title,setTitle]=useState('');
  const [reloadVersion,setReloadVersion]=useState(0);
@@ -27,7 +30,7 @@ export function CanvasAssistant({api,workspace,graph,task,onApply,onRequestRun,d
  const imageInput=useRef(null),[imageDrafts,setImageDrafts]=useState({});const images=imageDrafts[conversation]||[];
  const message=drafts[conversation]||'',running=live(value?.turn),unresolved=uncertain||value?.turn?.state==='RECOVERY_REQUIRED',readonly=value?.collection&&value.collection!=='active';
  function setMessage(v){const key=owner.current;setDrafts(old=>({...old,[key]:v}));if(!v.trim())setDiagnosticDrafts(old=>{const next={...old};delete next[key];return next})}
- function switchTo(key,existing=false){setReadingHistory(existing);epoch.current++;readVersion.current++;if(key===owner.current)setReloadVersion(v=>v+1);setConversation(key);setValue(null);setError('');setNotice('');setImported(null);setUncertain(false);setView('chat')}
+ function switchTo(key,existing=false){setReadingHistory(existing);if(existing)remember(key);epoch.current++;readVersion.current++;if(key===owner.current)setReloadVersion(v=>v+1);setConversation(key);setValue(null);setError('');setNotice('');setImported(null);setUncertain(false);setView('chat')}
  const diagnosticSeen=useRef(null),autoTurns=useRef(new Set()),autoHandled=useRef(new Set());
  const [diagnosticDrafts,setDiagnosticDrafts]=useState(()=>{try{return JSON.parse(localStorage.getItem(storage+':diagnostic-drafts')||'{}')}catch{return {}}});
  useEffect(()=>{localStorage.setItem(storage+':diagnostic-drafts',JSON.stringify(diagnosticDrafts))},[diagnosticDrafts,storage]);
@@ -43,6 +46,12 @@ export function CanvasAssistant({api,workspace,graph,task,onApply,onRequestRun,d
    if(configured?.configured){
     setCatalog(old=>({models:[{id:configured.model,name:configured.model},...(old&&configured.fingerprint&&old.connection_fingerprint===configured.fingerprint?old.models.filter(m=>m.id!==configured.model):[])],default_model:configured.model,source:'已保存的助手连接',connection_fingerprint:configured.fingerprint,connection_origin:connectionOrigin(configured.base_url),catalog_pending:true}));
     setModel(configured.model);
+   }else{
+    // Without a saved connection there is nothing to query; explain and stop
+    // instead of calling a catalog endpoint that this proxy may not provide.
+    setCatalog({models:[],source:'未配置助手连接',catalog_error:'尚未保存助手模型连接；打开右上角「助手模型设置」保存后即可使用。'});
+    setModel('');
+    return;
    }
    let v;try{v=await api('/api/assistant/models'+(force?'?refresh=1':''))}
    catch(e){if(!configured?.configured)throw e;v={models:[{id:configured.model,name:configured.model+' · 连接默认'}],default_model:configured.model,source:'当前助手连接的明确配置',catalog_error:e.message}}
@@ -50,22 +59,35 @@ export function CanvasAssistant({api,workspace,graph,task,onApply,onRequestRun,d
    const selected=v.default_model||configured?.model;
    if(selected&&!v.models.some(m=>m.id===selected))v={...v,models:[...v.models,{id:selected,name:selected+' · 连接默认（目录未列出）'}]};
    setCatalog({...v,connection_fingerprint:configured?.fingerprint,connection_origin:connectionOrigin(configured?.configured?configured.base_url:'')});setModel(old=>!adoptDefault&&v.models.some(m=>m.id===old)?old:selected||v.models[0]?.id||'');
-  }catch(e){if(ticket===modelVersion.current)setError(e.message)}finally{if(ticket===modelVersion.current)setLoading(false)}
+  }catch(e){
+   if(ticket===modelVersion.current){
+    // A proxy without /v1/models is a known limitation, not a panel crash:
+    // keep the explanation in the catalog note and disable sending.
+    setCatalog(old=>({...(old||{}),models:old?.models||[],source:'模型目录不可用',catalog_error:e.message}));
+    setModel(old=>old||'');
+   }
+  }finally{if(ticket===modelVersion.current)setLoading(false)}
  }
  useEffect(()=>{if(!editable)setIntent('chat')},[editable]);
  useEffect(()=>{refresh();return()=>{modelVersion.current++}},[workspace.id]);
  async function chooseModel(next){if(next===model)return;modelVersion.current++;setLoading(false);await perform(async()=>{const current=await api('/api/devflower-agent/config');if(!current.configured)throw Error('请先保存助手连接，之后无需重复配置。');const saved=await api('/api/devflower-agent/config',{expected:current.fingerprint,protocol:current.protocol,base_url:current.base_url,model:next,effort:current.effort,api_key:''});setCatalog(old=>old&&({...old,connection_fingerprint:saved.fingerprint,connection_origin:connectionOrigin(saved.base_url)}));setModel(next);setNotice('助手模型已保存，下次打开自动使用。')})}
- async function read(key){const ticket=++readVersion.current;const v=await api('/api/canvas-assistant/conversation?workspace='+workspace.id+'&id='+key);if(key!==owner.current||ticket!==readVersion.current)return;setValue(old=>JSON.stringify(old)===JSON.stringify(v)?old:v);setUncertain(false);setReadingHistory(false);return v}
+ async function read(key){
+  // A freshly generated id has no server history; asking for it guarantees a 400.
+  if(!known.current.has(key))return null;
+  const ticket=++readVersion.current;
+  try{const v=await api('/api/canvas-assistant/conversation?workspace='+workspace.id+'&id='+key);if(key!==owner.current||ticket!==readVersion.current)return;setValue(old=>JSON.stringify(old)===JSON.stringify(v)?old:v);setUncertain(false);setReadingHistory(false);remember(key);return v}
+  catch(e){if(String(e.message||'').includes('找不到此项目保存的历史')){forget(key);if(key===owner.current)setValue(null);setReadingHistory(false);return null}throw e}
+ }
  useEffect(()=>{let active=true;read(conversation).catch(e=>{if(active&&readingHistory){setError(e.message);setReadingHistory(false)}});return()=>{active=false;readVersion.current++}},[conversation,reloadVersion]);
  useEffect(()=>{if(!visible)return;read(conversation).catch(()=>{})},[visible]);
  useEffect(()=>{if(!running)return;let active=true,reading=false;const timer=setInterval(async()=>{if(!active||reading)return;reading=true;try{await read(conversation);if(active)setError(old=>old===CONNECTION_LOST?'':old)}catch(e){if(active)setError(CONNECTION_LOST)}finally{reading=false}},visible?1200:3000);return()=>{active=false;clearInterval(timer);readVersion.current++}},[conversation,running,visible]);
  const reading=useReadingScroll(conversation,JSON.stringify([value?.messages?.length,value?.turn?.visible_text,value?.turn?.visible_summary,value?.turn?.state]),!value?.messages?.length&&!value?.turn?.visible_text&&!value?.turn?.visible_summary);
- async function loadList(){const ticket=++listVersion.current;try{const v=await api('/api/canvas-assistant/conversations?workspace='+workspace.id+'&view='+collection+'&query='+encodeURIComponent(query));if(ticket===listVersion.current)setSessions(v.conversations)}catch(e){if(ticket===listVersion.current)setError(e.message)}}
+ async function loadList(){const ticket=++listVersion.current;try{const v=await api('/api/canvas-assistant/conversations?workspace='+workspace.id+'&view='+collection+'&query='+encodeURIComponent(query));if(ticket===listVersion.current){v.conversations.forEach(row=>remember(row.id));setSessions(v.conversations)}}catch(e){if(ticket===listVersion.current)setError(e.message)}}
  useEffect(()=>{if(view!=='history')return;const timer=setTimeout(loadList,150);return()=>{clearTimeout(timer);listVersion.current++}},[view,collection,query]);
  async function manage(row,operation){await api('/api/canvas-assistant/manage',{workspace:workspace.id,id:row.id,operation,expected:row.metadata_revision,...(operation==='rename'?{title}:{})});setManagement(null);await loadList();if(row.id===conversation){if(operation==='rename')await read(conversation);else{const keepHistory=view==='history';switchTo(id());if(keepHistory)setView('history')}}}
  async function apply(proposal){const ticket=epoch.current,base=latest.current.graph;const v=await api('/api/config-assistant/apply',{workspace:workspace.id,id:proposal.id,graph:base,answer:{action:'apply-proposal'}});if(ticket!==epoch.current)return false;if(JSON.stringify(base)!==JSON.stringify(latest.current.graph))throw Error('画布已被你修改，建议已保留，没有覆盖当前编辑。');onApply(v.graph);setNotice('画布已更新，可撤销。');return true}
  useEffect(()=>{const t=value?.turn;if(busy||pending.current||!editable||t?.state!=='COMPLETED'||!t.proposal||!autoTurns.current.has(t.id)||autoHandled.current.has(t.id))return;autoHandled.current.add(t.id);perform(()=>apply(t.proposal));},[value?.turn?.id,value?.turn?.state,busy,editable]);
- async function send(){const key=conversation,ticket=epoch.current,check=diagnosticDrafts[key];if(check&&check!==true&&!inspectionCurrent(check,workspace.id,latest.current.graph,latest.current.task))throw Error('检查结果已过期，请重新检查后再发送。');const data={workspace:workspace.id,conversation:key,request_id:id(),expected:value?.revision??null,message:message.trim()||'请根据所选流程图创建可编辑工作流，说明无法辨认或需要确认的部分。',images:images.map(v=>v.id),graph:latest.current.graph,model,allow_context:true,intent,...(catalog?.connection_fingerprint?{connection_fingerprint:catalog.connection_fingerprint}:{}),...(check&&check!==true?{inspection:{workspace:check.workspace,graph:JSON.parse(check.doc),task:check.task,issues:check.issues}}:{})};if(automatic&&intent==='workflow'&&!diagnosticDrafts[key])autoTurns.current.add(data.request_id);try{const v=await api('/api/canvas-assistant/messages',data);if(ticket===epoch.current){setDiagnosticDrafts(old=>{const next={...old};delete next[key];return next});setValue(v);setMessage('');setImageDrafts(old=>({...old,[key]:[]}));setImported(null)}}catch(e){if(ticket===epoch.current&&sendFailureIsAmbiguous(e.responseStatus)){setUncertain(true);read(key).catch(()=>{});}throw e}}
+ async function send(){const key=conversation,ticket=epoch.current,check=diagnosticDrafts[key];if(check&&check!==true&&!inspectionCurrent(check,workspace.id,latest.current.graph,latest.current.task))throw Error('检查结果已过期，请重新检查后再发送。');const data={workspace:workspace.id,conversation:key,request_id:id(),expected:value?.revision??null,message:message.trim()||'请根据所选流程图创建可编辑工作流，说明无法辨认或需要确认的部分。',images:images.map(v=>v.id),graph:latest.current.graph,model,allow_context:true,intent,...(catalog?.connection_fingerprint?{connection_fingerprint:catalog.connection_fingerprint}:{}),...(check&&check!==true?{inspection:{workspace:check.workspace,graph:JSON.parse(check.doc),task:check.task,issues:check.issues}}:{})};if(automatic&&intent==='workflow'&&!diagnosticDrafts[key])autoTurns.current.add(data.request_id);try{const v=await api('/api/canvas-assistant/messages',data);if(ticket===epoch.current){remember(key);setDiagnosticDrafts(old=>{const next={...old};delete next[key];return next});setValue(v);setMessage('');setImageDrafts(old=>({...old,[key]:[]}));setImported(null)}}catch(e){if(ticket===epoch.current&&sendFailureIsAmbiguous(e.responseStatus)){setUncertain(true);read(key).catch(()=>{});}throw e}}
  async function importPlan(file){if(!file)return;if(file.size>150000)throw Error('提案文件过大');const plan=JSON.parse(await file.text());setImported(await api('/api/config-assistant/proposals',{workspace:workspace.id,graph:latest.current.graph,plan}))}
  async function uploadImages(files){const key=owner.current;for(const file of Array.from(files||[])){if(file.size>2*1024*1024)throw Error('每张图片需小于 2MB');const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(Error('图片读取失败'));r.readAsDataURL(file)});const meta=await api('/api/canvas-assistant/images',{workspace:workspace.id,name:file.name,data:data.split(',')[1]});setImageDrafts(old=>({...old,[key]:[...(old[key]||[]).filter(v=>v.id!==meta.id),{...meta,preview:data}].slice(-3)}))}}
  const connectionReady=!!(catalog?.connection_fingerprint&&catalog?.connection_origin);

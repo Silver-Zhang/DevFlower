@@ -1,3 +1,5 @@
+.workbench .canvas-toolbar .narrow-files{display:none}
+@media(max-width:1179px){.workbench .canvas-toolbar .narrow-files{display:inline-flex}}
 .project-files{display:flex;flex-direction:column;min-height:0;gap:8px;padding:8px;overflow:hidden}
 .project-files>header{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .project-files>header strong{font-size:12px}
