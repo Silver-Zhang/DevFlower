@@ -32,8 +32,7 @@ def start_module():
     try:
         import devflower_start
     except ImportError as exc:
-        raise RuntimeError('无法加载 devflower_start.py：'+str(exc)+
-                           '；当前平台需要 POSIX 文件锁支持') from None
+        raise RuntimeError('无法加载 devflower_start.py：'+str(exc)) from None
     return devflower_start
 
 
@@ -76,6 +75,13 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         start = start_module()
+        # Resolve the platform before touching the state directory: state
+        # pinning is POSIX/Linux-only, and an unsupported host must get this
+        # message instead of an internal path error.
+        if start.platform_mode() == 'unsupported':
+            print('启动失败：当前平台未支持（Linux 完整功能；macOS 只读浏览）；'
+                  'Windows 未适配，未启动服务。', file=sys.stderr, flush=True)
+            return 1
         state = state_path(args, start)
         url = running_url(state, start)
         if url:

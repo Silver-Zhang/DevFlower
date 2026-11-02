@@ -12,9 +12,10 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT/'tools'), str(ROOT/'tests'), str(ROOT)]
@@ -92,6 +93,18 @@ class RunningStateTests(unittest.TestCase):
         self.assertIsNone(launch.running_url(self.state, start))
 
 
+class UnsupportedPlatformTests(unittest.TestCase):
+    def test_launcher_refuses_windows_before_touching_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)/'state'
+            err = io.StringIO()
+            with patch.object(start.os, 'name', 'nt'), redirect_stderr(err):
+                code = launch.main(['--print-url', '--state-dir', str(state)])
+            self.assertEqual(code, 1)
+            self.assertIn('Windows 未适配', err.getvalue())
+            self.assertFalse(state.exists())
+
+
 class ParserTests(unittest.TestCase):
     def test_defaults_and_flags(self):
         args = launch.parser().parse_args([])
@@ -113,12 +126,17 @@ class EntryFileTests(unittest.TestCase):
             'launcher/macos/DevFlower.command': 'DevFlower.command',
             'launcher/macos/install.command': 'install.command',
             'launcher/windows/DevFlower.cmd': 'DevFlower.cmd',
-            'launcher/windows/install.ps1': 'install.ps1',
         }
         for relative in entries:
             path = ROOT/relative
             self.assertTrue(path.is_file(), relative)
             self.assertIn('devflower_launch.py', path.read_text(), relative)
+
+    def test_windows_installer_refuses_instead_of_installing(self):
+        # Windows is unsupported (#141); a shortcut install would fake support.
+        text = (ROOT/'launcher/windows/install.ps1').read_text()
+        self.assertNotIn('CreateShortcut', text)
+        self.assertIn('does not support Windows', text)
 
     def test_desktop_entry_fields(self):
         text = (ROOT/'launcher/linux/DevFlower.desktop').read_text()
