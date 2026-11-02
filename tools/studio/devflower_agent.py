@@ -195,7 +195,18 @@ class DevFlowerAgent:
             self.closed.set();connection.close();watcher.join(timeout=.3);self.connection=None;self.response_socket=None
     def catalog(self):
         self.deadline=time.monotonic()+self.timeout
-        value,_=self._request('GET','/v1/models');rows=value.get('data',[])
+        try:value,_=self._request('GET','/v1/models')
+        except Blocked as exc:
+            # A 404 means this endpoint has no model list. Say which protocol is
+            # in use and what to do next instead of only echoing the status.
+            message=str(exc)
+            if 'HTTP 404' in message:
+                if self.config['protocol']=='anthropic':
+                    message+='；当前连接按 Anthropic 协议访问：请改用 OpenAI 兼容地址（通常以 /v1 结尾），或把「助手模型ID」直接填成要用的模型后保存'
+                else:
+                    message+='；请核对地址是否是提供 /v1/models 的 OpenAI 兼容中转，或把「助手模型ID」直接填成要用的模型后保存'
+            raise Blocked(message) from None
+        rows=value.get('data',[])
         if not isinstance(rows,list) or len(rows)>2000:raise Blocked('助手模型目录无效')
         models=[dict(id=v['id'],name=v.get('display_name') or v['id']) for v in rows if isinstance(v,dict) and isinstance(v.get('id'),str)]
         return dict(agent_id=AGENT_ID,provider='model-api',source='DevFlower 助手独立模型 API',models=models,default_model=self.config['model'],observed_at=time.time(),inference_calls=0)
