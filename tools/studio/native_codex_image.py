@@ -6,11 +6,13 @@ cannot establish the provenance or safety of arbitrary operator-selected code.
 """
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
 import stat
 import struct
+from functools import lru_cache
 
 from orchestration.common import Blocked
 from .session_sources import opened
@@ -18,6 +20,9 @@ from .session_sources import opened
 EXECUTABLE_ALIAS='/run/devflower-cli/codex'
 LIMIT=512*1024*1024
 SEALS=fcntl.F_SEAL_WRITE|fcntl.F_SEAL_GROW|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL
+# npm's optional platform package ships the real static binary next to the JS
+# launcher. Resolve only this fixed layout; never execute the launcher.
+VENDOR_TARGETS={'x86_64':('linux-x64','x86_64-unknown-linux-musl')}
 
 
 def binary_digest(fd):
@@ -40,19 +45,80 @@ STATIC_HINT=('DevFlower 只能执行静态原生二进制：请安装 Codex 官�
 SCRIPT_HINT='当前 Codex 是脚本启动器（常见于 npm / pnpm 安装），脚本无法固定为不可变映像。'+STATIC_HINT
 
 
+def _package_root(path):
+    """The @openai/codex package that owns this launcher, if any."""
+    for parent in path.parents:
+        meta=parent/'package.json'
+        if meta.is_file():
+            try:
+                if json.loads(meta.read_text('utf-8','replace')).get('name')=='@openai/codex':
+                    return parent
+            except (OSError,ValueError): pass
+    return None
+
+
+def _static_ok(path):
+    with opened(str(path)) as fd: static_elf(fd)
+
+
+@lru_cache(maxsize=8)
+def _cached_digest(path,stamp):
+    with opened(path) as fd: return binary_digest(fd)
+
+
+def _digest(path):
+    meta=os.stat(path)
+    return _cached_digest(str(path),(meta.st_dev,meta.st_ino,meta.st_size,meta.st_mtime_ns,meta.st_ctime_ns))
+
+
+def vendor_binary(path):
+    """Fixed npm layout: <pkg>/node_modules/@openai/codex-<plat>/vendor/<target>/bin/codex."""
+    path=Path(path)
+    pkg=_package_root(path)
+    target=VENDOR_TARGETS.get(platform.machine()) if pkg else None
+    if not target: return None
+    plat,triple=target
+    candidate=pkg/'node_modules'/'@openai'/('codex-'+plat)/'vendor'/triple/'bin'/'codex'
+    try: info=candidate.lstat()
+    except OSError: return None
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or not 0<info.st_size<=LIMIT:
+        return None
+    try: real=candidate.resolve(strict=True)
+    except OSError: return None
+    # The target must stay inside the same package tree; a symlinked vendor
+    # directory that escapes it is not accepted.
+    if not real.is_relative_to(pkg.resolve()): return None
+    try: _static_ok(real)
+    except Blocked: return None
+    return real
+
+
+def resolve(executable):
+    """Pick the pinnable executable: the file itself, or the npm vendor binary.
+
+    Returns {'path','source','sha256'}; raises the static-binary refusal when
+    neither is usable. The JavaScript launcher is never executed.
+    """
+    path=Path(str(executable)).resolve(strict=True)
+    try:
+        _static_ok(path)
+        return dict(path=str(path),source='configured static binary',sha256=_digest(path))
+    except Blocked as exc: refusal=exc
+    candidate=vendor_binary(path)
+    if candidate is not None:
+        try: return dict(path=str(candidate),source='npm package vendor binary',sha256=_digest(candidate))
+        except (Blocked,OSError): pass
+    raise Blocked(str(refusal))
+
+
 def incompatibility(path):
     """Return an actionable reason when this file can never be pinned.
 
     Read-only and bounded: it inspects the first bytes, never executes them.
     """
-    try:
-        with opened(str(path)) as fd: raw=os.pread(fd,64,0)
-    except (OSError,ValueError):
-        return '原生CLI无法读取；请检查安装路径后重新选择执行工具'
-    if raw[:2]==b'#!': return SCRIPT_HINT
-    if len(raw)!=64 or raw[:7]!=b'\x7fELF\x02\x01\x01':
-        return '当前文件不是受支持的 ELF 二进制。'+STATIC_HINT
-    return None
+    try: resolve(path); return None
+    except Blocked as exc: return str(exc)
+    except (OSError,ValueError): return '原生CLI无法读取；请检查安装路径后重新选择执行工具'
 
 
 def static_elf(fd):
@@ -92,7 +158,10 @@ class NativeImage:
     def __init__(self, executable, *, expected_sha256=None):
         self.fd=None;self.closed=True
         try:
-            self.path=str(Path(executable).resolve(strict=True))
+            # An npm launcher resolves to its package's static vendor binary;
+            # the launcher itself is never run.
+            resolved=resolve(executable)
+            self.path=resolved['path'];self.origin=resolved['source']
             with opened(self.path) as source:
                 before=os.fstat(source)
                 if not before.st_mode&0o111:raise Blocked('原生CLI不可执行')
