@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-try:
-    import fcntl
-except ImportError:  # Windows has no POSIX file locking; the platform guard explains it.
-    fcntl = None
 import hashlib
 import http.client
 import json
@@ -24,6 +20,7 @@ import webbrowser
 sys.dont_write_bytecode = True
 from orchestration.common import Blocked, canonical, clean_env, cli_probe_env, digest, manifest
 from orchestration.store import alive, process_identity
+from orchestration.locking import lock, unlock
 from studio.session_sources import clean_path, opened
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,13 +130,26 @@ def executable(value):
     return path
 
 
-def system_preflight(home):
-    if sys.version_info < (3, 11) or not sys.platform.startswith('linux'):
-        raise Blocked('需要 Python 3.11+ 和 Linux。')
+def platform_mode():
+    if os.name != 'posix':
+        return 'unsupported'
+    return 'linux' if sys.platform == 'linux' else 'readonly'
+
+
+def system_preflight(home, isolated=True):
+    if sys.version_info < (3, 11) or os.name != 'posix':
+        raise Blocked('需要 Python 3.11+ 和 POSIX 平台（当前支持 Linux；macOS 仅只读浏览）。')
     git = shutil.which('git')
     if not git: raise Blocked('缺少 Git；请先安装 Git。')
     git = executable(git)
     probe([git, '--version'], home)
+    for name in ('workbench.html', 'workbench.css', 'workbench.js'):
+        if not (ROOT/'tools/studio/static'/name).is_file():
+            raise Blocked('随库前端不完整；请取得完整发行副本，无需 Node 启动。')
+    if not isolated:
+        # UI and read-only browsing do not need bubblewrap/Landlock. Agent
+        # execution is blocked separately and never pretends to be isolated.
+        return {str(p): file_hash(p) for p in (git, executable(sys.executable))}
     if not BWRAP.is_file(): raise Blocked('缺少 /usr/bin/bwrap；请安装 bubblewrap。')
     bwrap = executable(BWRAP)
     probe([bwrap, '--die-with-parent', '--unshare-user', '--unshare-pid', '--unshare-ipc',
@@ -149,9 +159,6 @@ def system_preflight(home):
            '--proc', '/proc', '--dev', '/dev', '--', '/bin/true'], home)
     from orchestration.sandbox import abi
     if abi() < 6: raise Blocked('现有隔离执行器需要 Landlock ABI >= 6；不能以 chmod 替代。')
-    for name in ('workbench.html', 'workbench.css', 'workbench.js'):
-        if not (ROOT/'tools/studio/static'/name).is_file():
-            raise Blocked('随库前端不完整；请取得完整发行副本，无需 Node 启动。')
     return {str(p): file_hash(p) for p in (git, bwrap, executable(sys.executable))}
 
 
@@ -300,16 +307,19 @@ def service(state, record, candidate, args):
         raise Blocked('受管服务的进程/候选/配置不能确认。'+GUIDANCE)
     port = receipt['port']
     if type(port) is not int or not 1 <= port <= 65535: raise Blocked('本机端口记录无效。')
-    # Bind the receipt to a real listening socket held by this exact PID.
-    lines = Path('/proc/net/tcp').read_text().splitlines()[1:]
-    inodes = {line.split()[9] for line in lines if line.split()[1] == '0100007F:'+format(port, '04X') and line.split()[3] == '0A'}
-    handles = Path('/proc')/str(receipt['process']['pid'])/'fd'
-    sockets = set()
-    for path in handles.iterdir():
-        try: sockets.add(os.readlink(path))
-        except FileNotFoundError: pass
-    if not sockets.intersection({'socket:['+i+']' for i in inodes}):
-        raise Blocked('服务 PID 未持有本机监听 socket。'+GUIDANCE)
+    # Linux binds the receipt to a real listening socket held by this PID.
+    # macOS has no /proc; it still verifies the live process identity and HTTP
+    # status below, with that weaker (documented) socket guarantee.
+    if sys.platform == 'linux':
+        lines = Path('/proc/net/tcp').read_text().splitlines()[1:]
+        inodes = {line.split()[9] for line in lines if line.split()[1] == '0100007F:'+format(port, '04X') and line.split()[3] == '0A'}
+        handles = Path('/proc')/str(receipt['process']['pid'])/'fd'
+        sockets = set()
+        for path in handles.iterdir():
+            try: sockets.add(os.readlink(path))
+            except FileNotFoundError: pass
+        if not sockets.intersection({'socket:['+i+']' for i in inodes}):
+            raise Blocked('服务 PID 未持有本机监听 socket。'+GUIDANCE)
     token = read(state/'runtime/workbench-capability', confidential=True).decode().strip()
     if not token or len(token) > 200: raise Blocked('访问能力记录无效。')
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
@@ -336,15 +346,16 @@ def main(argv=None):
     args = parser().parse_args(argv)
     previous_umask = None
     try:
-        if sys.platform != 'linux' or fcntl is None:
-            # The current runtime needs POSIX file locks, bubblewrap and
-            # Landlock. Never pretend a non-Linux host can execute Agents.
-            raise Blocked('当前版本仅支持 Linux：macOS/Windows 缺少本机隔离执行所需能力，未启动服务；'
-                          '不会静默降级，也不会在没有隔离时运行 Agent。')
+        mode = platform_mode()
+        if mode == 'unsupported':
+            raise Blocked('Windows 尚未支持：本机文件锁与隔离执行适配未完成，未启动服务。')
+        # macOS (POSIX) can show the UI and browse read-only data, but has no
+        # bubblewrap/Landlock: Agent execution stays blocked with a reason.
+        readonly = mode == 'readonly'
         if not 0 <= args.port <= 65535: raise Blocked('端口须在 0–65535 范围内。')
         home = Path(clean_path(str(Path.home())))
         state = location(args, home)
-        dependencies = system_preflight(home)
+        dependencies = system_preflight(home, isolated=not readonly)
         profiles, local, models, pins, notices = discover(args, home)
         if any((ROOT/name).exists() or (ROOT/name).is_symlink() for name in ('.codex', '.claude', '.aws', '.ssh')):
             raise Blocked('安装目录包含可能的私有配置；请使用干净的完整公开源码副本，不读取或排除这些内容来伪造完整哈希。')
@@ -361,7 +372,7 @@ def main(argv=None):
                 # Synchronize with the exclusive startup transaction without
                 # creating or changing state; a busy launcher is not ready.
                 with directory(state) as state_fd:
-                    try: fcntl.flock(state_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    try: lock(state_fd, exclusive=False, blocking=False)
                     except BlockingIOError: raise Blocked('另一个启动正在核验此状态，请稍后重试。'+GUIDANCE) from None
                     try:
                         record = inspect_state(state)
@@ -369,13 +380,13 @@ def main(argv=None):
                         if previous != op or json.loads(read(state/'config/policy.json', confidential=True)) != policy:
                             raise Blocked('本次模型/配置选择与已有状态不同。'+GUIDANCE)
                         service(state, record, candidate, args)
-                    finally: fcntl.flock(state_fd, fcntl.LOCK_UN)
+                    finally: unlock(state_fd)
             for notice in notices: print(notice)
             print('CHECK OK：依赖/完整源码/配置已检查；未创建状态、启动服务或调用模型。')
             return 0
         previous_umask = os.umask(0o077)
         with directory(state, create=True) as state_fd:
-            try: fcntl.flock(state_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try: lock(state_fd, exclusive=True, blocking=False)
             except BlockingIOError: raise Blocked('另一个启动正在核验此状态；未重复启动。') from None
             try:
                 if exists or os.listdir(state_fd):
@@ -398,13 +409,21 @@ def main(argv=None):
                 from studio.workbench_server import create_server
                 rt = WorkbenchRuntime(state/'config/operator.json', record['operator_sha256'], candidate,
                     state/'config/policy.json', record['policy_sha256'])
+                rt.execution_blocked = readonly
+                if readonly:
+                    rt.execution_reason = ('当前平台（'+sys.platform+'）缺少 bubblewrap/Landlock 本机隔离；'
+                                           '仅可浏览与查看历史，Agent 执行已禁用。')
+                    for existing in rt.db.listing('workspace', limit=None):
+                        if existing.get('execution_allowed') is not False:
+                            rt.db.put('workspace', existing['id'], {**existing,
+                                'execution_allowed': False, 'execution_reason': rt.execution_reason})
                 if not exists: write_new(rt.storage/'installation.json', record)
                 # Storage is protected by the existing runtime. No capability,
                 # process receipt or startup intent is left in the state parent.
                 lock_path = rt.storage/'workbench-service.lock'
                 lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
                 private(os.fstat(lock_fd))
-                try: fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try: lock(lock_fd, exclusive=True, blocking=False)
                 except BlockingIOError:
                     os.close(lock_fd)
                     raise Blocked('已有服务占用此运行目录；未重复启动。') from None
@@ -420,7 +439,7 @@ def main(argv=None):
                     if server: server.server_close()
                     os.close(lock_fd)
                     raise
-            finally: fcntl.flock(state_fd, fcntl.LOCK_UN)
+            finally: unlock(state_fd)
         try:
             for notice in notices: print(notice, flush=True)
             announce(f'http://127.0.0.1:{server.server_port}/#'+token, args)

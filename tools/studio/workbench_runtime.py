@@ -209,6 +209,9 @@ class WorkbenchRuntime(SessionRuntime):
             self.hosted_project_records(row,'文件夹已打开；原有数据未覆盖。此位置不能使用项目内记录，已改用独立本机记录区。')
             row['project_storage'] = self.project_files(row['id']).initialize()
         row['project_storage'].update(location=row['record_location'],notice=row['record_notice'])
+        if getattr(self, 'execution_blocked', False):
+            row.update(execution_allowed=False, execution_reason=getattr(self, 'execution_reason',
+                '当前平台缺少本机隔离；仅可浏览与查看历史，Agent 执行已禁用。'))
         self.db.put('workspace', row['id'], row)
         # Non-destructive migration of visible hosted conversation records.
         for value in self.flow.list('canvas-conversation'):
@@ -289,6 +292,9 @@ class WorkbenchRuntime(SessionRuntime):
         return workspace_hash(path)
 
     def node_binding(self, workspace, node, *, admission=True, direct=False, direct_environment_version=3, managed_workflow=False):
+        if getattr(self, 'execution_blocked', False):
+            raise Blocked(getattr(self, 'execution_reason',
+                '当前平台缺少本机隔离；仅可浏览与查看历史，Agent 执行已禁用。'))
         if 'shared_conversation' in node and type(node['shared_conversation']) is not bool:
             raise Invalid('共享原生对话选项必须是布尔值')
         project = self.session_center.workspace(workspace)
@@ -498,7 +504,11 @@ class WorkbenchRuntime(SessionRuntime):
         return result
 
     def prepare_flow(self, request):
-        self.check_operator();workspace=request['workspace'];project=self.session_center.workspace(workspace)
+        self.check_operator()
+        if getattr(self, 'execution_blocked', False):
+            raise Blocked(getattr(self, 'execution_reason',
+                '当前平台缺少本机隔离；仅可浏览与查看历史，Agent 执行已禁用。'))
+        workspace=request['workspace'];project=self.session_center.workspace(workspace)
         direct = request.get('interaction') == 'click'
         source=self.validate_source(project['path'],ordinary=direct)
         view=source if source.get('kind')=='native-workspace-view-v1' else None
