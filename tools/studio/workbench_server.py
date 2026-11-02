@@ -155,6 +155,9 @@ def create_server(runtime,port=0):
                 elif path=='/api/model-registration/confirm':
                     from .model_registration import ModelRegistration
                     value=ModelRegistration(runtime).confirm(data['id'],data['sha256'],data['answer'])
+                elif path=='/api/model-registration/manual':
+                    from .model_registration import ModelRegistration
+                    value=ModelRegistration(runtime).manual(data)
                 elif path=='/api/model-admission/prepare':
                     from .model_admission import ModelAdmission
                     value=ModelAdmission(runtime).prepare(data)
