@@ -13,6 +13,7 @@ sys.path[:0] = [str(Path(__file__).resolve().parents[1]/'tools'), str(Path(__fil
 from orchestration.common import Blocked, canonical
 from studio.assistant_settings import DEFAULT_CONNECTION, settings_root
 from studio.devflower_agent import AgentConnection
+from studio.graph import Invalid
 from studio.server import Conflict
 from studio.session_sources import Refused
 
@@ -110,6 +111,33 @@ class PersistentAssistantTests(unittest.TestCase):
                 else: os.link(target, lock)
                 with self.assertRaises((Blocked, OSError)): self.save()
                 self.assertEqual(target.read_text(), 'preserve'); lock.unlink()
+
+    def test_protocol_switch_on_same_origin_keeps_saved_key(self):
+        # #156: switching only the protocol on the same endpoint must not
+        # force the user to retype a key that is already saved for that service.
+        public = self.save()
+        switched = self.connection.save(dict(expected=public['fingerprint'], protocol='anthropic',
+                                              base_url=DEFAULT_CONNECTION['base_url'],
+                                              model='chosen-model', effort='high', api_key=''))
+        self.assertEqual(switched['protocol'], 'anthropic')
+        self.assertTrue(switched['has_credentials'])
+        self.assertEqual(self.connection.read()['api_key'], 'SYNTHETIC_PRIVATE_KEY')
+        self.assertEqual(self.config('runtime-B').public(), switched)
+
+    def test_new_origin_still_requires_its_own_key_and_keeps_old_value(self):
+        # #156: changing the address never forwards the previous credential.
+        public = self.save()
+        with self.assertRaisesRegex(Invalid, '新的模型服务需要单独填写密钥'):
+            self.connection.save(dict(expected=public['fingerprint'], protocol='openai',
+                                       base_url='https://other.example/v1',
+                                       model='chosen-model', effort='high', api_key=''))
+        self.assertEqual(self.connection.public(), public)
+
+    def test_saved_protocol_survives_reopen(self):
+        # #156: what the user saved is what the panel reads back next time.
+        public = self.save(protocol='anthropic')
+        self.assertEqual(public['protocol'], 'anthropic')
+        self.assertEqual(self.config('runtime-B').public()['protocol'], 'anthropic')
 
     def test_owned_workers_inherit_exact_settings_root(self):
         from studio.preference_baseline import worker_baseline
