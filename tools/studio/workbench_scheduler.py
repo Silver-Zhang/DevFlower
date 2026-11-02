@@ -29,6 +29,13 @@ REPLY = {'type': 'object', 'additionalProperties': False,
     'issues': {'type': 'array', 'items': {'type': 'string'}}, 'next': {'type': 'string'}}}
 
 
+def skip_reason(incoming, states):
+    """A skipped upstream is a failure/cancel path, not a route choice."""
+    if any(states[e['source']]['state'] == 'SKIPPED' for e in incoming):
+        return '上游失败、取消或状态未确认'
+    return '未选择此条件分支'
+
+
 def writes(node):
     if node['kind']=='loop':return any(writes(n) for n in node['body']['nodes'])
     if node['kind']=='delivery':return True
@@ -233,7 +240,7 @@ class Scheduler:
                             workflow_id=self.db.get('run',self.run).get('graph_sha256',digest(canonical(graph))),content_sha256=digest(canonical(content)),source_content_sha256=digest(canonical(content)),
                             fields=e.get('field') if e.get('transfer')=='field' else e.get('transfer','result'),received_at=time.time()))
                     if incoming and not inputs:
-                        self.db.change('activation', a['id'], {'state': 'SKIPPED', 'reason': '未选择此条件分支'},
+                        self.db.change('activation', a['id'], {'state': 'SKIPPED', 'reason': skip_reason(incoming, states)},
                                        event={'kind': 'node-skipped'}); progressed = True; continue
                     if n['kind']=='merge' and n.get('strategy','all')=='all' and len(inputs)!=len(incoming):
                         self.db.change('activation',a['id'],{'state':'SKIPPED','received':len(inputs),'expected':len(incoming),
