@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows has no POSIX file locking; the platform guard explains it.
+    fcntl = None
 import hashlib
 import http.client
 import json
@@ -333,6 +336,11 @@ def main(argv=None):
     args = parser().parse_args(argv)
     previous_umask = None
     try:
+        if sys.platform != 'linux' or fcntl is None:
+            # The current runtime needs POSIX file locks, bubblewrap and
+            # Landlock. Never pretend a non-Linux host can execute Agents.
+            raise Blocked('当前版本仅支持 Linux：macOS/Windows 缺少本机隔离执行所需能力，未启动服务；'
+                          '不会静默降级，也不会在没有隔离时运行 Agent。')
         if not 0 <= args.port <= 65535: raise Blocked('端口须在 0–65535 范围内。')
         home = Path(clean_path(str(Path.home())))
         state = location(args, home)

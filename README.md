@@ -42,7 +42,7 @@ python3 -B tools/devflower_launch.py --port 8911 --state-dir ~/.local/state/devf
 
 参数：`--port`（默认 0 自动选择）、`--state-dir`、`--no-browser`、`--print-url`。`--print-url` 不会打开浏览器。
 
-### Linux
+### Linux（当前支持）
 
 ```bash
 bash launcher/linux/install.sh
@@ -51,25 +51,11 @@ bash launcher/linux/install.sh
 
 安装脚本把 `launcher/linux/DevFlower.desktop` 安装到 `${XDG_DATA_HOME:-~/.local/share}/applications/`，并写入当前仓库的绝对路径。卸载：删除该 `.desktop` 文件。
 
-### macOS
+### macOS / Windows（当前未支持）
 
-```bash
-bash launcher/macos/install.command   # 可选：生成 ~/Applications/DevFlower.app
-# 或直接双击 launcher/macos/DevFlower.command
-```
+macOS 与 Windows 的入口文件（`launcher/macos/`、`launcher/windows/`）已随仓库提供，但**当前版本尚不能在对应系统启动服务**：运行时依赖 POSIX 文件锁、bubblewrap 与 Landlock，macOS/Windows 没有这些能力。启动器会明确返回「当前版本仅支持 Linux」并退出 1，**不会静默降级，也不会在缺少隔离时运行 Agent**。
 
-卸载：`rm -rf ~/Applications/DevFlower.app`。
-
-### Windows
-
-```powershell
-powershell -ExecutionPolicy Bypass -File launcher\windows\install.ps1
-# 或直接双击 launcher\windows\DevFlower.cmd
-```
-
-安装脚本在桌面和开始菜单创建 `DevFlower.lnk`。卸载：删除这两个快捷方式。
-
-> 当前实际验证平台为 Linux；macOS 与 Windows 入口只做了静态检查，尚未在对应系统上运行。三个平台都只调用 `tools/devflower_launch.py`，不复制启动器的权限、目录或 token 逻辑。
+这些入口目前仅用于后续平台适配的占位；在完成平台抽象并在对应系统实测之前，不把它们视为已支持。
 
 ## 第一次使用
 
