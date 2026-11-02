@@ -51,11 +51,17 @@ bash launcher/linux/install.sh
 
 安装脚本把 `launcher/linux/DevFlower.desktop` 安装到 `${XDG_DATA_HOME:-~/.local/share}/applications/`，并写入当前仓库的绝对路径。卸载：删除该 `.desktop` 文件。
 
-### macOS / Windows（当前未支持）
+### macOS（只读浏览；未在实机验证）
 
-macOS 与 Windows 的入口文件（`launcher/macos/`、`launcher/windows/`）已随仓库提供，但**当前版本尚不能在对应系统启动服务**：运行时依赖 POSIX 文件锁、bubblewrap 与 Landlock，macOS/Windows 没有这些能力。启动器会明确返回「当前版本仅支持 Linux」并退出 1，**不会静默降级，也不会在缺少隔离时运行 Agent**。
+macOS 可以启动工作台并浏览工作区、只读文件与历史，但**没有 bubblewrap/Landlock，Agent 执行被明确禁用**：工作区显示「仅可浏览与查看历史，Agent 执行已禁用」，启动运行会被拒绝，不会静默降级。文件锁走 POSIX `fcntl`。
 
-这些入口目前仅用于后续平台适配的占位；在完成平台抽象并在对应系统实测之前，不把它们视为已支持。
+macOS 入口（`launcher/macos/`）尚未在真实 Mac 上运行验证；本轮只做静态检查与代理测试。不要把它写成「已适配」。
+
+### Windows（当前未支持）
+
+Windows 的入口文件（`launcher/windows/`）已随仓库提供，但**当前版本不能启动服务**：已提供 `msvcrt.locking` 锁抽象，但启动器的目录句柄与隔离执行仍依赖 POSIX/Linux 能力。启动器会明确返回「Windows 尚未支持」并退出 1。
+
+Windows 仅在完成平台适配并在实机验证后才算支持；当前入口是占位，不是可用功能。
 
 ## 第一次使用
 
