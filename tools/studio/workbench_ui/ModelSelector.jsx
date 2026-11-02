@@ -3,7 +3,7 @@ import React,{useEffect,useRef,useState} from 'react';
 const EFFORTS=['default','low','medium','high','xhigh','max'];
 
 // The server selects approved endpoints and credentials. No browser-supplied URL.
-export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disabled=false,workspace,mode='Ask',permission,tools,timeout=300,context,onSelecting}){
+export function ModelSelector({api,profile,model,effort,onChange,onCatalog,onSwitchToClaude,disabled=false,workspace,mode='Ask',permission,tools,timeout=300,context,onSelecting}){
  const [catalog,setCatalog]=useState(profile),[pending,setPending]=useState(false),[error,setError]=useState('');
  const [manualModel,setManualModel]=useState(''),[manualEffort,setManualEffort]=useState(effort||'high'),[manualNotice,setManualNotice]=useState(''),[manualBusy,setManualBusy]=useState(false);
  const version=useRef(0);
@@ -25,6 +25,8 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
  const efforts=reasoning(selected);
  // The list came from the pre-registered policy, not from a live directory.
  const degraded=Boolean(error||current?.error||current?.source==='预登记配置（不是完整模型列表）');
+ // The stored reason is the actionable launcher text from native_codex_image.
+ const launcherBlocked=/静态原生二进制|启动器/.test(String(error||current?.error||''));
  async function saveManual(){
   if(manualBusy||!workspace?.id||!manualModel.trim())return;
   setManualBusy(true);setManualNotice('');
@@ -44,7 +46,7 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,disab
   <label className="field"><span>推理强度</span><select aria-label="推理强度" disabled={disabled||pending} value={effort||''} onChange={e=>choose({model,effort:e.target.value})}>{!efforts.includes(effort)&&<option value={effort||''}>{effort||'unknown'}</option>}{efforts.map(x=><option key={x}>{x}</option>)}</select><small className="hint">低更省 token；高强度更慢，按任务选择。</small></label>
   <button type="button" className="refresh-models" aria-busy={pending} disabled={pending||disabled} onClick={()=>load(true)}>刷新模型</button>
   {pending&&<small role="status" aria-label="模型读取状态">正在读取模型目录…</small>}
-  {(error||current?.error)&&<p role="alert">{error||current.error}</p>}
+  {(error||current?.error)&&<p role="alert">{error||current.error}{launcherBlocked&&onSwitchToClaude&&!disabled&&<button type="button" className="switch-provider" onClick={onSwitchToClaude}>改用 Claude Code</button>}</p>}
   <details className="model-connection-details"><summary>模型目录详情</summary><p>模型直接来自当前工具或账号目录；选择即可使用。调用失败会显示真实错误，模型选择不会改变工作区权限。</p>
   <div className="catalog-meta"><span role="status">{current?.refresh_pending?'另一个刷新正在进行，请稍后再读':current?.stale?'旧数据／未发现实时目录':'目录已获取'} · {current?.source||'尚未查询'}</span><small>更新：{current?.updated_at?new Date(current.updated_at*1000).toLocaleString('zh-CN'):'尚无成功查询'}</small>
   {current?.error&&<small role="note">为什么退回预登记：{current.error}</small>}
