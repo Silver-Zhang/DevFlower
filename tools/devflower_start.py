@@ -348,7 +348,9 @@ def main(argv=None):
     try:
         mode = platform_mode()
         if mode == 'unsupported':
-            raise Blocked('Windows 尚未支持：本机文件锁与隔离执行适配未完成，未启动服务。')
+            # No Windows lock path is shipped: state-directory pinning uses
+            # dir_fd/O_DIRECTORY/O_NOFOLLOW and Linux /proc verification.
+            raise Blocked('Windows 尚未支持：启动依赖 POSIX 目录句柄与 Linux /proc 核验，未启动服务。')
         # macOS (POSIX) can show the UI and browse read-only data, but has no
         # bubblewrap/Landlock: Agent execution stays blocked with a reason.
         readonly = mode == 'readonly'

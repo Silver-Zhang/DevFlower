@@ -1,7 +1,9 @@
 """Non-Linux platform policy (#141).
 
 macOS is simulated via sys.platform: this suite runs on Linux and does not
-claim that the macOS UI was executed on real hardware. Windows stays refused.
+claim that the macOS UI was executed on real hardware. Windows stays refused:
+the state directory is pinned with POSIX dir_fd/O_NOFOLLOW/O_DIRECTORY and
+Linux /proc, so no Windows lock implementation is shipped or tested.
 """
 import io
 import os

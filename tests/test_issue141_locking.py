@@ -1,11 +1,13 @@
-"""Portable lock abstraction: POSIX flock and Windows msvcrt (#141)."""
+"""File locks are POSIX-only (#141).
+
+No Windows lock branch is shipped: Windows is refused before any lock is
+taken, so a tested-but-unreachable ``msvcrt`` path would be misleading.
+"""
 import os
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / 'tools'), str(Path(__file__).resolve().parent)]
 
@@ -29,19 +31,19 @@ class PosixLockTests(unittest.TestCase):
                 os.close(first)
                 os.close(second)
 
-
-class WindowsLockTests(unittest.TestCase):
-    def test_windows_branch_uses_msvcrt_byte_lock(self):
-        calls = []
-        fake = types.ModuleType('msvcrt')
-        fake.LK_LOCK, fake.LK_NBLCK, fake.LK_UNLCK = 1, 2, 3
-        fake.locking = lambda fd, mode, count: calls.append((fd, mode, count))
-        with patch.object(locking.os, 'name', 'nt'), \
-             patch.object(locking.os, 'lseek', lambda *args: 0), \
-             patch.dict(sys.modules, {'msvcrt': fake}):
-            locking.lock(7, exclusive=True, blocking=False)
-            locking.unlock(7)
-        self.assertEqual(calls, [(7, 2, 1), (7, 3, 1)])
+    def test_shared_lock_allows_two_readers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'lock'
+            first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+            second = os.open(path, os.O_RDWR)
+            try:
+                locking.lock(first, exclusive=False, blocking=False)
+                locking.lock(second, exclusive=False, blocking=False)
+                locking.unlock(first)
+                locking.unlock(second)
+            finally:
+                os.close(first)
+                os.close(second)
 
 
 if __name__ == '__main__':
