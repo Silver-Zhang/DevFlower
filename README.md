@@ -31,6 +31,46 @@ python3 -B tools/devflower_start.py --provider claude
 
 详细参数、重复启动与版本切换规则见 [本机公共启动](docs/WORKBENCH.md#本机公共启动)。
 
+## 启动入口
+
+统一的启动入口是 `tools/devflower_launch.py`：它复用 `tools/devflower_start.py` 的启动与安全语义。若同一 `--state-dir` 上已有服务在应答，入口会直接打开记录的私有地址并退出，不会起第二个实例。
+
+```bash
+python3 -B tools/devflower_launch.py --print-url
+python3 -B tools/devflower_launch.py --port 8911 --state-dir ~/.local/state/devflower/workbench
+```
+
+参数：`--port`（默认 0 自动选择）、`--state-dir`、`--no-browser`、`--print-url`。`--print-url` 不会打开浏览器。
+
+### Linux
+
+```bash
+bash launcher/linux/install.sh
+# 从应用菜单打开 DevFlower，或直接运行入口
+```
+
+安装脚本把 `launcher/linux/DevFlower.desktop` 安装到 `${XDG_DATA_HOME:-~/.local/share}/applications/`，并写入当前仓库的绝对路径。卸载：删除该 `.desktop` 文件。
+
+### macOS
+
+```bash
+bash launcher/macos/install.command   # 可选：生成 ~/Applications/DevFlower.app
+# 或直接双击 launcher/macos/DevFlower.command
+```
+
+卸载：`rm -rf ~/Applications/DevFlower.app`。
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File launcher\windows\install.ps1
+# 或直接双击 launcher\windows\DevFlower.cmd
+```
+
+安装脚本在桌面和开始菜单创建 `DevFlower.lnk`。卸载：删除这两个快捷方式。
+
+> 当前实际验证平台为 Linux；macOS 与 Windows 入口只做了静态检查，尚未在对应系统上运行。三个平台都只调用 `tools/devflower_launch.py`，不复制启动器的权限、目录或 token 逻辑。
+
 ## 第一次使用
 
 1. **打开工作区**：点击“打开文件夹”，选择具体项目，确认页面显示的路径和环境。
