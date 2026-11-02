@@ -59,9 +59,9 @@ macOS 入口（`launcher/macos/`）尚未在真实 Mac 上运行验证；本轮�
 
 ### Windows（当前未支持）
 
-Windows 的入口文件（`launcher/windows/`）已随仓库提供，但**当前版本不能启动服务**：已提供 `msvcrt.locking` 锁抽象，但启动器的目录句柄与隔离执行仍依赖 POSIX/Linux 能力。启动器会明确返回「Windows 尚未支持」并退出 1。
+Windows 的入口文件（`launcher/windows/`）只是占位：启动器会明确返回「Windows 尚未支持」并退出 1，不创建状态目录、不启动服务。
 
-Windows 仅在完成平台适配并在实机验证后才算支持；当前入口是占位，不是可用功能。
+这不是只差一处适配：状态目录的固定依赖 POSIX 目录句柄（`dir_fd`、`O_DIRECTORY`、`O_NOFOLLOW`），服务核验依赖 Linux `/proc`，隔离执行依赖 bubblewrap/Landlock；Windows 路径（`C:\...`）也会被现有路径校验直接拒绝。因此仓库**不提供 Windows 锁实现**，也不声称「可移植」；只有在完成平台适配并在实机验证后才算支持。
 
 ## 第一次使用
 
