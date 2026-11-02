@@ -64,6 +64,10 @@ html[data-reduce=true] .handoff-pulse { display:none!important; }
 .catalog-meta small { width:100%; line-height:1.5; }
 .catalog-meta p { color:var(--studio-error); margin:3px 0; line-height:1.5; overflow-wrap:anywhere; }
 .model-picker .field { margin-bottom:10px; }
+.manual-model { display:flex; flex-wrap:wrap; gap:7px; align-items:flex-end; margin:8px 0 4px; padding-top:8px; border-top:1px dashed var(--line); }
+.manual-model p, .manual-model small { flex-basis:100%; margin:0; line-height:1.5; overflow-wrap:anywhere; }
+.manual-model .field { flex:1 1 120px; margin:0; }
+.manual-model .field>span { font-size:11px; }
 .chat-composer>div:has(.model-picker) { flex-wrap:wrap; align-items:flex-start; max-height:45vh; overflow:auto; }
 .chat-composer .model-picker { width:min(420px,100%); }
 .conversation-toolbar { flex-wrap:wrap; gap:10px; }
