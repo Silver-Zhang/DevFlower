@@ -48,7 +48,9 @@ def create_server(runtime,port=0):
                     raise PermissionError('请求来源不受支持')
                 url=urlsplit(self.path);path=url.path;q={k:v[-1] for k,v in parse_qs(url.query).items()}
                 files={'/':('workbench.html','text/html; charset=utf-8'),'/workbench.js':('workbench.js','text/javascript; charset=utf-8'),
-                       '/workbench.css':('workbench.css','text/css; charset=utf-8')}
+                       '/workbench.css':('workbench.css','text/css; charset=utf-8'),
+                       '/favicon.svg':('favicon.svg','image/svg+xml'),
+                       '/favicon.ico':('favicon.svg','image/svg+xml')}
                 if not post and path in files:
                     name,mime=files[path];return self.respond(200,(STATIC/name).read_bytes(),mime)
                 if not secrets.compare_digest(self.headers.get('Authorization',''),'Bearer '+token):
