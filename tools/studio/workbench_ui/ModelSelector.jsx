@@ -50,6 +50,7 @@ export function ModelSelector({api,profile,model,effort,onChange,onCatalog,onSwi
   <details className="model-connection-details"><summary>模型目录详情</summary><p>模型直接来自当前工具或账号目录；选择即可使用。调用失败会显示真实错误，模型选择不会改变工作区权限。</p>
   <div className="catalog-meta"><span role="status">{current?.refresh_pending?'另一个刷新正在进行，请稍后再读':current?.stale?'旧数据／未发现实时目录':'目录已获取'} · {current?.source||'尚未查询'}</span><small>更新：{current?.updated_at?new Date(current.updated_at*1000).toLocaleString('zh-CN'):'尚无成功查询'}</small>
   {current?.error&&<small role="note">为什么退回预登记：{current.error}</small>}
+  {current?.binary&&<small role="note">执行二进制：{current.binary.source} · {current.binary.path} · sha256 {String(current.binary.sha256||'').slice(0,16)}</small>}
   {degraded&&<small role="note">此时列表只含明确登记的模型与强度，不是完整目录；修复上面的原因后点「刷新模型」即可看到真实模型与可用强度档位。</small>}
   <small>目录不是调用成功证明。实际物理后端与生效 effort：unknown；以原生回合回执分别核对。</small></div>
   {degraded&&workspace?.id&&<div className="manual-model" role="group" aria-label="手动登记模型">

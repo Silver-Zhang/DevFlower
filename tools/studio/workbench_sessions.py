@@ -691,7 +691,17 @@ class WorkbenchSessions:
             extensions=extension_capabilities(profile)
             local=bool(self.rt.operator.get('native_local',{}).get(profile['provider']))
             if local:extensions=dict(extensions,skills=extensions['skills'] if profile['provider']=='codex' else False,subagents=False)
-            result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,**catalog,
+            binary=None
+            if local and profile['provider']=='codex':
+                # Show which binary would actually be pinned (npm vendor or the
+                # configured static file), including its sha256 prefix.
+                try:
+                    from .native_codex_image import resolve
+                    resolved=resolve(profile['executable'])
+                    binary=dict(path=resolved['path'],source=resolved['source'],sha256=resolved['sha256'])
+                except (Blocked,OSError,ValueError):
+                    binary=None
+            result.append(dict(id=name,provider=profile['provider'],available=cli['available'],cli=cli,binary=binary,**catalog,
                 execution_backend='native-local' if local else 'isolated',
                 inference_verified=False,verification_scope='exact selection; use model-admission/status',modes=['Ask','Plan'] if profile['provider']=='copilot' or local and profile['provider']=='claude' else ['Ask','Plan','Agent'],terminal=profile['provider']!='copilot',context_only=profile['provider']=='copilot',skills=[],skills_supported=extensions['skills'] and (not local or profile['provider']=='codex'),subagents=extensions['subagents'] and not local,extensions=extensions,
                 model=profile['model'],effort=profile['effort'],timeout_seconds=profile.get('timeout_seconds',1800),resolved_effort='unknown'))
