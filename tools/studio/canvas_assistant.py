@@ -105,7 +105,7 @@ def decode_reply(text,choices):
 
 class CanvasAssistant:
     def __init__(self,rt):
-        self.rt=rt;self.lock=threading.RLock();self.active={};self.finalizing=set();self.closed=False;self.catalog_cache=None
+        self.rt=rt;self.lock=threading.RLock();self.active={};self.finalizing=set();self.closed=False;self.catalog_cache=None;self.catalog_failure=None
         self.root=rt.storage/'canvas-assistant';self.root.mkdir(mode=0o700,exist_ok=True)
         self.default_backend=lambda cwd,**kw:DevFlowerAgent(self.rt,cwd,**kw);self.backend=self.default_backend
 
@@ -120,6 +120,12 @@ class CanvasAssistant:
         with self.lock:
             if not refresh and self.catalog_cache and self.catalog_cache[0]==tag and time.time()-self.catalog_cache[1]<60:
                 return dict(self.catalog_cache[2],cached=True)
+            # A failed catalog read is cached too: reopening the assistant must
+            # not send the same hopeless request every time. The explicit
+            # refresh button bypasses this and clears it on success.
+            failure=self.catalog_failure
+            if not refresh and failure and failure[0]==tag and time.time()-failure[1]<300:
+                raise Blocked(failure[2]+'（本次结果已缓存；修改连接或点「刷新助手模型」可立即重试）')
         # A catalog read sends no workspace, prompt or source and does no inference.
         key='catalog-'+secrets.token_hex(16);cancel=threading.Event()
         with self.lock:
@@ -127,8 +133,12 @@ class CanvasAssistant:
             self.active[key]=(cancel,threading.current_thread())
         try:
             with self.backend(self.root,timeout=30,cancelled=cancel.is_set) as client:result=client.catalog()
-            with self.lock:self.catalog_cache=(tag,time.time(),result)
+            with self.lock:
+                self.catalog_cache=(tag,time.time(),result);self.catalog_failure=None
             return dict(result,cached=False)
+        except Blocked as exc:
+            with self.lock:self.catalog_failure=(tag,time.time(),str(exc))
+            raise
         finally:
             with self.lock:self.active.pop(key,None)
 

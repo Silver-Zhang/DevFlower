@@ -548,8 +548,8 @@ class PublicStartTests(unittest.TestCase):
         self.assertIn('依赖/原生配置变化',self.call('--no-browser')[2])
 
     def test_preflight_checks_platform_bwrap_and_landlock_without_state(self):
-        with patch.object(sys,'platform','unsupported'):
-            self.assertIn('Python 3.11+ 和 Linux',self.call('--check')[2])
+        # Non-Linux POSIX platforms are read-only (no bubblewrap/Landlock
+        # preflight); Linux still requires both. Windows is refused earlier.
         with patch.object(start,'BWRAP',self.bin/'not-installed'):
             self.assertIn('安装 bubblewrap',self.call('--check')[2])
         with patch('orchestration.sandbox.abi',return_value=5):

@@ -57,6 +57,19 @@ export function projectRun(snapshot,connection,runId){
   state:trusted?(!ended&&snapshot.run.paused?'PAUSED':snapshot.state):'UNKNOWN',
   reason:trusted?(snapshot.run.reason||latest.find(x=>['FAILED','RECOVERY_REQUIRED'].includes(x.activation?.state))?.activation.reason||''):'连接或运行身份尚未核验。正在读取同一运行，不会重复启动 Agent。'};
 }
+export function failureDiagnostic(snapshot,projection){
+ // Only persisted evidence of this exact run; never infer from a draft.
+ if(!projection?.trusted||!snapshot?.run?.id)return null;
+ if(!['FAILED','CANCELLED'].includes(snapshot.state))return null;
+ const failed=projection.latest.filter(x=>x.activation&&['FAILED','RECOVERY_REQUIRED'].includes(x.activation.state));
+ const skipped=projection.latest.filter(x=>x.activation?.state==='SKIPPED').length;
+ const lines=failed.map(x=>`- ${x.node.name||x.node.path}（${x.node.path}）：${x.activation.reason||'未记录原因'}`);
+ return {id:'run-diagnostic:'+snapshot.run.id+':'+snapshot.state+':'+failed.map(x=>x.activation.id||x.node.path).join(','),
+  failed:failed.map(x=>x.node.path),skipped,
+  text:`本次运行 ${snapshot.run.id} 状态 ${snapshot.state}${projection.reason?'：'+projection.reason:''}。`+
+   (lines.length?`\n失败或待确认的节点：\n${lines.join('\n')}`:'\n未记录到具体的失败节点与原因。')+
+   `\n已跳过 ${skipped} 个节点。请只根据以上真实结果诊断原因，并给出可应用到下一份草稿的修改步骤；不要修改本次已冻结的运行。`};
+}
 export function visibleNodeState(projection,path){
  if(!projection.trusted)return {state:'UNKNOWN'};
  const item=projection.latest.find(x=>x.node.path===path);

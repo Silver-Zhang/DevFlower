@@ -136,6 +136,41 @@ class ModelRegistration:
             human_questions=['配置此模型供当前工作区选择；不调用模型、不授予执行权限。首次使用仍需真实连接检查。'],
             capability_source=effort_source))
 
+    def manual(self,data):
+        """Record a user-named model while the live directory is unavailable.
+
+        The entry is explicitly unverified: it only widens the workspace picker
+        for a model the user says exists. Executing still needs a real
+        connection check, and nothing here grants permissions.
+        """
+        if set(data)!={'workspace','profile','model','effort'}:
+            raise Invalid('请选择工作区、Agent、模型与强度')
+        self.rt.check_operator();self.rt.session_center.workspace(data['workspace'])
+        p=self.rt.operator['profiles'].get(data['profile'])
+        if not p:raise Invalid('Agent配置不存在')
+        model,effort=data['model'],data['effort']
+        if not isinstance(model,str) or not 1<=len(model.strip())<=200 or any(ord(c)<32 for c in model):
+            raise Invalid('请输入有效的模型ID')
+        model=model.strip()
+        if effort not in ('default','low','medium','high','xhigh','max'):raise Invalid('请选择推理强度')
+        # A directory-verified choice must keep going through prepare/confirm;
+        # this path only fills the gap while discovery is unavailable.
+        try: cache=self.rt.flow.get('model-discovery',data['profile'])
+        except Invalid: cache=None
+        if (cache and not cache.get('error') and 0<=time.time()-cache.get('at',0)<300 and
+                cache.get('environment_sha256')==profile_identity(p) and
+                any(row.get('id')==model for row in cache.get('models',[]))):
+            raise Invalid('此模型已在当前目录中，请直接从模型列表选择')
+        key=self.key(data['workspace'],data['profile'],model)
+        record=dict(workspace=data['workspace'],profile=data['profile'],model=model,effort=effort,
+            environment=profile_identity(p),operator=self.rt.operator_sha256,policy=self.rt.policy_sha,
+            capability_source='manual entry; live catalog unavailable',configured_at=time.time())
+        with self.rt.flow.tx() as db:
+            db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)',
+                       ('model-registration',key,canonical(dict(record,id=key,state='CONFIGURED')).decode()))
+        return dict(configured=True,model=model,effort=effort,execution_allowed=False,
+                    discovered=False,capability_source=record['capability_source'])
+
     def select(self,data):
         # A model pick is a local selection, not a second approval ceremony.
         # The same fresh account/profile/effort contract still applies; this

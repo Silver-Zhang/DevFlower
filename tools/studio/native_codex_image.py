@@ -35,6 +35,26 @@ def binary_digest(fd):
     return value.hexdigest()
 
 
+STATIC_HINT=('DevFlower 只能执行静态原生二进制：请安装 Codex 官方静态二进制并在「执行工具」中重新指定，'
+             '或把 Agent 改用 Claude Code（本机已核验的 Claude 连接可直接使用）')
+SCRIPT_HINT='当前 Codex 是脚本启动器（常见于 npm / pnpm 安装），脚本无法固定为不可变映像。'+STATIC_HINT
+
+
+def incompatibility(path):
+    """Return an actionable reason when this file can never be pinned.
+
+    Read-only and bounded: it inspects the first bytes, never executes them.
+    """
+    try:
+        with opened(str(path)) as fd: raw=os.pread(fd,64,0)
+    except (OSError,ValueError):
+        return '原生CLI无法读取；请检查安装路径后重新选择执行工具'
+    if raw[:2]==b'#!': return SCRIPT_HINT
+    if len(raw)!=64 or raw[:7]!=b'\x7fELF\x02\x01\x01':
+        return '当前文件不是受支持的 ELF 二进制。'+STATIC_HINT
+    return None
+
+
 def static_elf(fd):
     """Support Linux little-endian ELF64 x86-64 without an ELF interpreter.
 
@@ -46,7 +66,7 @@ def static_elf(fd):
         raise Blocked('此平台尚未验证不可变原生CLI执行')
     size=os.fstat(fd).st_size;raw=os.pread(fd,64,0)
     if len(raw)!=64 or raw[:7]!=b'\x7fELF\x02\x01\x01':
-        raise Blocked('原生CLI必须直接指定静态原生二进制；JS、shell及其他启动器不受支持')
+        raise Blocked(SCRIPT_HINT if raw[:2]==b'#!' else '当前文件不是受支持的 ELF 二进制。'+STATIC_HINT)
     fields=struct.unpack('<16sHHIQQQIHHHHHH',raw)
     _,kind,machine,version,entry,phoff,_,_,ehsize,phsize,phnum,*_=fields
     if kind not in (2,3) or machine!=62 or version!=1 or ehsize!=64 or phsize!=56 or not 0<phnum<=256 or phoff<64 or phoff+phnum*56>size:

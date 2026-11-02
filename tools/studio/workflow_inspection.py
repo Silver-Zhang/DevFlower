@@ -217,6 +217,12 @@ def inspect_workflow(rt, graph, task, *, workspace_path=None, workspace_id=None)
                 if not profile:add('error',f'「{name}」的 Provider 配置不可用，请重新选择。',node=path,field='profile')
                 else:
                     if n.get('provider',profile['provider'])!=profile['provider']:add('error',f'「{name}」的 Provider 与所选配置不一致。',node=path,field='profile')
+                    if (profile['provider']=='codex' and rt.operator.get('native_local',{}).get('codex')):
+                        # Report an unpinnable Codex (npm/shell launcher) at the
+                        # check stage instead of failing only when the run starts.
+                        from .native_codex_image import incompatibility
+                        problem=incompatibility(profile.get('executable',''))
+                        if problem:add('error',f'「{name}」的 Codex 无法执行：{problem}。',node=path,field='profile')
                     try: cli=rt.flow.get('cli-probe',n['profile'])
                     except Invalid:cli=None
                     if cli and not cli.get('available'):add('error',f'「{name}」的 CLI 不可用，请检查安装后刷新。',node=path,field='profile')
