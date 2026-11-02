@@ -117,7 +117,10 @@ class AgentConnection:
         try:previous=self.read(migrate=False)
         except ConnectionMissing:previous=None
         if data['expected']!=(previous or {}).get('fingerprint'):raise Conflict('助手连接已变化，请刷新后再保存')
-        same_origin=previous and urlsplit(data['base_url'])[:2]==urlsplit(previous['base_url'])[:2] and data['protocol']==previous['protocol']
+        # Same scheme+host+port is the same service: switching only the API
+        # protocol there keeps the saved credential in place. A different
+        # origin never receives the previous key; the user must enter one.
+        same_origin=previous and urlsplit(data['base_url'])[:2]==urlsplit(previous['base_url'])[:2]
         key=data['api_key'] or ((previous or {}).get('api_key','') if same_origin else '')
         if not key and not self.local(data['base_url']):raise Invalid('新的模型服务需要单独填写密钥；不会把旧服务密钥转发到新地址')
         v=dict(version=1,**{k:data[k] for k in ('protocol','base_url','model','effort')},api_key=key);self.validate(v)
