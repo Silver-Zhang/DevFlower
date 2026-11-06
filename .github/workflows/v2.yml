@@ -35,6 +35,16 @@ jobs:
           git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/v2-evidence/source.tar.gz"
           cp tools/studio/workbench_ui/package.json tools/studio/workbench_ui/package-lock.json "$RUNNER_TEMP/v2-ui/"
           npm ci --prefix "$RUNNER_TEMP/v2-ui" --ignore-scripts --no-audit --no-fund
+      - name: Resolve existing locked native test images (synthetic transport only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/v2-evidence/native-cli-identity.json"
       - name: V2 domain and reused native primitives (synthetic; no accounts or inference)
         shell: bash
         run: |
