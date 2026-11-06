@@ -154,8 +154,8 @@ class Scheduler:
                            'output': result, 'finished_at': time.time()}, event={'kind': 'run-finished'})
         except (Blocked, Invalid, OSError, ValueError, KeyError) as exc:
             row = self.db.get('run', self.run)
-            uncertain = any(a['run'] == self.run and a['state'] == 'RECOVERY_REQUIRED' for a in self.db.list('activation'))
-            state = 'CANCELLED' if row.get('cancel_requested') else 'RECOVERY_REQUIRED' if uncertain else 'FAILED'
+            uncertain = any(a['run'] == self.run and (a['state'] == 'RECOVERY_REQUIRED' or a.get('effect_uncertain') is True) for a in self.db.list('activation'))
+            state = 'RECOVERY_REQUIRED' if uncertain else 'CANCELLED' if row.get('cancel_requested') else 'FAILED'
             self.db.change('run', self.run, {'state': state, 'reason': safe_text(str(exc)), 'finished_at': time.time()},
                            event={'kind': 'run-finished', 'reason': safe_text(str(exc))})
             for node in self.db.list('activation'):

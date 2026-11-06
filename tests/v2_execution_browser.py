@@ -8,10 +8,11 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from orchestration.common import canonical,digest
+from orchestration.common import canonical,digest,save
 from orchestration.store import process_identity
 from studio.workbench_graph import request_sections,request_text
 from studio.workbench_scheduler import Scheduler
@@ -38,9 +39,21 @@ class SyntheticRuntime(V2Runtime):
         parts=request_sections(node,inputs,first=True,task_context='')
         request=request_text(node,inputs,first=True,task_context='')
         for item in inputs:item['handoff_id']=digest(canonical([key,item['edge']]))
-        self.flow.change('activation',key,dict(inputs=inputs,actual_request=request,actual_request_sha256=digest(request.encode()),request_sections=parts,synthetic_fixture=True))
+        run=self.flow.get('activation',key)['run'];operation='fixture-'+uuid.uuid4().hex;sid=str(uuid.uuid4());process=dict(process_identity(os.getpid()),pid=2147483647,pgid=2147483647,sid=2147483647)
+        proc=dict(process=process,operation_id=operation,exit=0,timeout=False,cancelled=False,overflow=False)
+        receipt=dict(session_id=sid,native_turn_id='unknown',requested_model='fixture-model',requested_effort='low',resolved_model='unknown',resolved_effort='unknown',process=proc)
         answer='synthetic visible answer' if node['name']!='Long source' else 'LONG_PUBLIC_'+'a'*17000
-        return dict(answer=answer,summary='synthetic only',result={},evidence=[],issues=[],next='',artifacts=[])
+        output=dict(answer=answer,summary='synthetic only',result={},evidence=[],issues=[],next='',artifacts=[])
+        sha=digest(request.encode());request_id=digest(canonical([key,'synthetic-request']))
+        completion=dict(run=run,activation=key,request_id=request_id,request_sha256=sha,receipt=receipt,output=output)
+        artifact=self.storage/'flow-artifacts'/run/key;artifact.mkdir(parents=True,exist_ok=True)
+        save(artifact/'completion.json',completion)
+        self.flow.put('native-step',operation,dict(id=operation,run=run,activation=key,kind='PROCESS',status='EXITED',data=proc))
+        self.flow.change('activation',key,dict(inputs=inputs,actual_request=request,actual_request_sha256=sha,request_sections=parts,
+            request_id=request_id,input_sent_sha256=sha,input_sent_operation_id=operation,process=process,process_result=proc,
+            observed_session=sid,native_turn_id=None,native_terminal_events=[dict(type='turn.completed',session_id=sid,native_turn_id=None)],
+            executed_image_sha256='a'*64,receipt=receipt,receipt_verified=True,effect_uncertain=False,completion_sha256=digest(canonical(completion)),synthetic_fixture=True))
+        return output
 
 
 def main():

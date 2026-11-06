@@ -28,6 +28,20 @@ from .documents import check_chain
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 
 
+def persist_completion(artifacts,completion,storage):
+    """Atomic files plus durable directory entries before activation publication."""
+    def durable(name,value):
+        save(artifacts/name,value)  # fsync temporary bytes, then atomic replace.
+        for directory in [artifacts,*artifacts.parents]:
+            fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+            if directory==storage:break
+    durable('completion.json',completion)
+    durable('completion-proof.json',dict(version=1,run=completion['run'],activation=completion['activation'],
+        request_sha256=completion['request_sha256'],completion_sha256=digest(canonical(completion))))
+
+
 class V2Journal(Journal):
     """Retain old Journal process/send semantics; never create legacy chat indexes."""
     def intent(self, run, kind, data):
@@ -276,7 +290,10 @@ class V2Runtime:
                                       evidence=report['evidence'], issues=report['issues'], next=report['next'], artifacts=[]))
             completion = dict(run=run['id'], activation=key, request_id=activation['request_id'],
                               request_sha256=activation['actual_request_sha256'], receipt=visible, output=output)
-            save(artifacts / 'completion.json', completion)
+            # A worker may die before publishing the activation update. A
+            # second durable digest detects a changed-but-valid JSON artifact
+            # in that window; either missing file remains unconfirmed.
+            persist_completion(artifacts,completion,self.storage)
             self.flow.change('activation', key, dict(effect_uncertain=False, receipt_verified=True, receipt=visible,
                                                    completion_sha256=digest(canonical(completion))))
             return output
@@ -294,31 +311,83 @@ class V2Runtime:
                         process=process, terminal='turn.failed', requested_model=binding['model'], requested_effort=binding['effort'])})
             raise Blocked(public_provider_error(exc)) from None
 
-    def state(self, run):
-        state = run['state']
-        if state not in TERMINAL and time.time() - run['created_at'] > 3 and not alive(run.get('worker')):
-            return 'RECOVERY_REQUIRED'
-        return state
+    def _records(self):
+        # One committed SQLite snapshot; a live worker may publish after this
+        # read, but a list/detail never mixes its old node with a new run row.
+        with self.flow.tx(read=True) as db:
+            rows={(kind,key):json.loads(raw) for kind,key,raw in db.execute(
+                "SELECT kind,id,data FROM records WHERE kind IN ('run','definition','activation','native-step')")}
+            events=[dict(json.loads(raw),seq=seq) for seq,raw in db.execute('SELECT seq,data FROM events ORDER BY seq')]
+        return rows,events
 
-    def snapshot(self, workspace, run_id):
-        self.store.workspace(workspace)
-        run = self.flow.get('run', run_id)
-        if run['workspace'] != workspace: raise Conflict('运行不属于当前工作空间')
-        definition = self.flow.get('definition', run['definition_id'])
-        nodes = [row for row in self.flow.list('activation') if row['run'] == run_id]
-        state = self.state(run)
-        public_nodes = [{k: v for k, v in row.items() if k not in ('process_result',)} for row in nodes]
-        if state == 'RECOVERY_REQUIRED':
-            public_nodes = [dict(row,state='RECOVERY_REQUIRED') if row['state'] not in TERMINAL and row['state']!='SKIPPED' else row for row in public_nodes]
-        public_run = {k:v for k,v in run.items() if k!='graph'}
-        public_run.update(state=state,persisted_state=run['state'])
-        if state!=run['state']:public_run['reason']='工作进程状态未确认；请核验原生回执，未自动重发。'
-        return dict(run=public_run, state=state, nodes=public_nodes,
-                    definition={k: v for k, v in definition.items() if k not in ('bindings', 'runtime_sources')},
-                    events=self.flow.events(run_id), worker_alive=alive(run.get('worker')))
+    def _snapshot(self,run,rows,events):
+        from .recovery import project
+        definition=rows.get(('definition',run['definition_id']))
+        if definition is None:raise Invalid('冻结执行定义缺失，请保留本次运行并核验状态目录')
+        nodes=[r for (kind,_),r in rows.items() if kind=='activation' and r.get('run')==run['id']]
+        steps=[r for (kind,_),r in rows.items() if kind=='native-step' and r.get('run')==run['id']]
+        value=project(self,run,definition,nodes,steps)
+        value.update(definition={k:v for k,v in definition.items() if k not in ('bindings','runtime_sources')},
+                     events=[e for e in events if e.get('run')==run['id']][-1000:])
+        return value
 
-    def runs(self, workspace):
+    def state(self,run):
+        return self.snapshot(run['workspace'],run['id'])['state']
+
+    def snapshot(self,workspace,run_id):
         self.store.workspace(workspace)
-        return [dict({k: row.get(k) for k in ('id', 'definition_id', 'draft_id', 'draft_revision', 'launch_intent', 'created_at', 'reason')},
-                     state=self.state(row), name=self.flow.get('definition',row['definition_id'])['draft_document']['name'])
-                for row in self.flow.list('run') if row['workspace'] == workspace]
+        if not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{32}',run_id):raise Invalid('运行身份无效')
+        rows,events=self._records();run=rows.get(('run',run_id))
+        if run is None:raise Invalid('找不到此运行，请从当前工作空间历史选择')
+        if run['workspace']!=workspace:raise Conflict('运行不属于当前工作空间')
+        return self._snapshot(run,rows,events)
+
+    def runs(self,workspace):
+        self.store.workspace(workspace);rows,events=self._records();result=[]
+        for (kind,_),run in rows.items():
+            if kind!='run' or run['workspace']!=workspace:continue
+            value=self._snapshot(run,rows,events);public=value['run']
+            result.append(dict({k:public.get(k) for k in ('id','definition_id','draft_id','draft_revision','launch_intent',
+                'created_at','reason','state','cancel_requested','provider_outcome','local_status')},
+                name=value['definition']['draft_document']['name']))
+        return result
+
+    def cancel(self,workspace,run_id):
+        from orchestration.store import lease
+        from orchestration.process import stop
+        from .recovery import observe,owned_group
+        before=self.snapshot(workspace,run_id)
+        if before['state'] in ('COMPLETED','FAILED','CANCELLED'):return before
+        with self.flow.tx() as db:
+            row=json.loads(db.execute("SELECT data FROM records WHERE kind='run' AND id=?",(run_id,)).fetchone()[0])
+            if not row.get('cancel_requested'):
+                row.update(cancel_requested=True,cancel_requested_at=time.time())
+                db.execute("UPDATE records SET data=? WHERE kind='run' AND id=?",(canonical(row).decode(),run_id))
+                db.execute('INSERT INTO events(run,data) VALUES(?,?)',(run_id,canonical(dict(run=run_id,kind='cancel-requested',at=time.time())).decode()))
+        # A matching live worker observes the durable flag in controls()/execute.
+        # Never signal its PID, take its lease, or replace it with another worker.
+        worker=observe(row.get('worker'))
+        if worker=='dead':
+            try:
+                with lease(self.storage/(run_id+'.worker.lock')):
+                    rows,_=self._records();current=rows['run',run_id]
+                    if observe(current.get('worker'))!='dead':raise Blocked('原运行器身份发生变化；取消标记已保留，未发送信号')
+                    steps=[r for (k,_),r in rows.items() if k=='native-step' and r.get('run')==run_id]
+                    activations=[r for (k,_),r in rows.items() if k=='activation' and r.get('run')==run_id]
+                    groups=[]
+                    for activation in activations:
+                        record=owned_group(activation,steps)
+                        if record and observe(record,group=True)=='alive':groups.append(record)
+                    for step in steps:
+                        if step.get('kind')=='PROCESS' and step.get('status')=='RUNNING' and not any(
+                            a.get('process')==step.get('data',{}).get('process') for a in activations):
+                            raise Blocked('存在未关联的原生进程；取消标记已保留，未发送信号')
+                    for record in groups:
+                        if observe(record,group=True)!='alive':continue
+                        stop(record)
+                    if groups:self.flow.event(run_id,'owned-process-stop-requested',groups=len(groups))
+            except Blocked:
+                # The durable cancellation survives a busy worker lease or
+                # uncertain ownership. Projection explains unknown, not success.
+                self.flow.event(run_id,'cancel-awaiting-ownership',reason='取消标记已保留；进程归属或运行器锁未确认，未接管或重发。')
+        return self.snapshot(workspace,run_id)

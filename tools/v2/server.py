@@ -90,6 +90,8 @@ def create_server(store, port=0, *, runtime=None):
                     if set(data) != {'workspace','draft_id','revision','intent_key','task'}:
                         raise Invalid('启动需要明确的工作空间、草稿版本、本次任务与启动意图')
                     result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'])
+                elif post and path == '/api/v2/cancel' and runtime and set(data)=={'workspace','run_id'}:
+                    result=runtime.cancel(data['workspace'],data['run_id'])
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 self.reply(200, result)

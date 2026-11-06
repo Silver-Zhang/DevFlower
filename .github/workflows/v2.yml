@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_drafts v2_execution v2_execution_http provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination; do
+          for suite in v2_drafts v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination; do
             if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/v2-evidence/$suite.log" 2>&1; then
               printf '%s exit=0\n' "$suite"
             else
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_browser v2_execution_browser; do
+          for suite in v2_browser v2_execution_browser v2_recovery_browser; do
             if python3 -B "tests/$suite.py" --artifacts "$RUNNER_TEMP/v2-evidence/$suite" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE"; then
               :
             else
