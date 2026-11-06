@@ -20,6 +20,97 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
  await test('q03-folder-close-ignores-late-response',async()=>{let release,seen=false;const held=new Promise(r=>release=r);await page.route('**/api/v2/folders',async route=>{const response=await route.fetch();seen=true;await held;await route.fulfill({response})});await page.locator('.app-header button').click();await until(()=>seen);await page.getByLabel('关闭文件夹选择',{exact:true}).click();release();await sleep(200);assert.equal(await page.getByRole('dialog',{name:'打开工作空间',exact:true}).count(),0);await page.unroute('**/api/v2/folders')});
  await test('q03-save-response-keeps-newer-edit',async()=>{let release,seen=false;const held=new Promise(r=>release=r);await page.route('**/api/v2/drafts/save',async route=>{const response=await route.fetch();seen=true;await held;await route.fulfill({response})});await page.getByLabel('工作流名称',{exact:true}).fill('提交快照');await page.getByRole('button',{name:'保存',exact:true}).click();await until(()=>seen);await page.getByLabel('工作流名称',{exact:true}).fill('保存中的新编辑');release();await until(async()=>await page.getByRole('button',{name:'保存',exact:true}).isEnabled());assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'保存中的新编辑');assert.equal(await page.locator('.save-state').textContent(),'未保存');await page.unroute('**/api/v2/drafts/save');await save()});
  await test('light-dark-1440-and-1280-layout',async()=>{assert.equal(await page.getByRole('dialog').count(),0,'Layout requires a clean foreground');await page.locator('.workspace-link').filter({hasText:'A'}).click();await until(async()=>await page.locator('.app-header button').textContent()==='A');await page.locator('.workflow-link').filter({hasText:'A未保存'}).click();await until(async()=>await page.getByRole('dialog',{name:'未保存的草稿'}).count()>0||await page.locator('.agent-card').count()===2);if(await page.getByRole('dialog',{name:'未保存的草稿'}).count())await page.getByRole('button',{name:'放弃修改',exact:true}).click();await until(async()=>await page.locator('.agent-card').count()===2);await node('提取');for(const size of [{width:1440,height:900},{width:1280,height:800}]){await page.setViewportSize(size);for(const mode of ['light','dark']){await page.getByLabel('外观主题',{exact:true}).selectOption(mode);assert(await page.getByRole('button',{name:'添加 Agent',exact:true}).isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:path.join(out,`layout-${size.width}-${mode}.png`)})}}});
+ await test('f1-save-disconnect-before-send-and-explicit-retry',async()=>{
+  await node('提取');await page.getByLabel('每轮提示词',{exact:true}).fill('F1 interrupted edit retained');
+  let attempts=0;const blocked=route=>{attempts++;return route.abort('failed')};
+  await page.route('**/api/v2/drafts/save',blocked);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('保存结果未确认'));
+  assert((await page.getByRole('alert').innerText()).includes('检查本机服务连接'));
+  assert.equal(await page.locator('.save-state').textContent(),'未保存');
+  assert.equal(await page.getByLabel('每轮提示词',{exact:true}).inputValue(),'F1 interrupted edit retained');
+  assert(!(await page.getByRole('alert').innerText()).includes('Failed to fetch'));
+  const banner=await page.getByRole('alert').boundingBox(),inspector=await page.getByLabel('Agent 配置',{exact:true}).boundingBox();assert(banner.x+banner.width<=inspector.x+1,'Save recovery guidance must remain outside the inspector overlay');
+  await sleep(200);assert.equal(attempts,1,'No automatic save retry');
+  await page.screenshot({path:path.join(out,'f1-before-send-unconfirmed.png')});
+  await page.setViewportSize({width:989,height:535});const compactBanner=await page.getByRole('alert').boundingBox(),compactInspector=await page.getByLabel('Agent 配置',{exact:true}).boundingBox();assert(compactBanner.x+compactBanner.width<=compactInspector.x+1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.getByRole('button',{name:'保存',exact:true}).click({trial:true});await page.getByLabel('关闭错误',{exact:true}).click({trial:true});await page.screenshot({path:path.join(out,'f1-css-viewport-989x535-not-real-browser-zoom.png')});await page.setViewportSize({width:1280,height:800});
+  await page.unroute('**/api/v2/drafts/save',blocked);await save();
+ });
+ await test('f1-committed-response-lost-verifies-only-sent-snapshot',async()=>{
+  const writes=[];const lose=async route=>{writes.push(route.request().postDataJSON());const response=await route.fetch();assert.equal(response.status(),200);await route.abort('failed')};
+  await page.getByLabel('每轮提示词',{exact:true}).fill('F1 committed snapshot');
+  await page.route('**/api/v2/drafts/save',lose);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('保存结果未确认'));
+  assert.equal(await page.locator('.save-state').textContent(),'未保存');assert.equal(writes.length,1);
+  await page.getByLabel('每轮提示词',{exact:true}).fill('F1 newer local edit');
+  await page.screenshot({path:path.join(out,'f1-committed-response-lost.png')});
+  await page.unroute('**/api/v2/drafts/save',lose);
+  let extraWrites=0;const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))extraWrites++};page.on('request',observe);
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.locator('.notice').innerText()).includes('当前后续修改尚未保存'));
+  assert.equal(extraWrites,0,'Readback must not send newer local edits');
+  assert.equal(await page.locator('.save-state').textContent(),'未保存');assert.equal(await page.getByLabel('每轮提示词',{exact:true}).inputValue(),'F1 newer local edit');
+  await page.screenshot({path:path.join(out,'f1-readback-keeps-newer-edit-dirty.png')});
+  await save();assert.equal(extraWrites,1);page.off('request',observe);
+ });
+ await test('f1-new-draft-response-lost-keeps-one-id',async()=>{
+  await page.getByLabel('关闭检查器',{exact:true}).click();await page.getByLabel('新建工作流',{exact:true}).click();
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 new uncertain draft');const before=await page.locator('.workflow-link').count();
+  const writes=[];const lose=async route=>{writes.push(route.request().postDataJSON());const response=await route.fetch();assert.equal(response.status(),200);await route.abort('failed')};
+  await page.route('**/api/v2/drafts/save',lose);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('保存结果未确认'));
+  assert.match(writes[0].id,/^[0-9a-f]{32}$/);assert.equal(writes[0].expected,null);
+  await page.unroute('**/api/v2/drafts/save',lose);let retryWrites=0;const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))retryWrites++};page.on('request',observe);
+  await save();assert.equal(retryWrites,0);assert.equal(await page.locator('.workflow-link').count(),before+1);page.off('request',observe);
+ });
+ await test('f1-acknowledged-save-with-list-failure-remains-confirmed',async()=>{
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 acknowledged save');
+  const blocked=route=>route.abort('failed');await page.route('**/api/v2/drafts?*',blocked);
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('本次保存已确认，但工作流列表未刷新'));
+  assert.equal(await page.locator('.save-state').textContent(),'已保存');
+  assert((await page.locator('.notice').innerText()).includes('已保存'));
+  assert(!(await page.getByRole('alert').innerText()).includes('保存结果未确认'));
+  await page.screenshot({path:path.join(out,'f1-save-confirmed-list-unavailable.png')});
+  await page.unroute('**/api/v2/drafts?*',blocked);await save();
+ });
+ await test('f1-recovery-read-error-never-implies-absence',async()=>{
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 retry after read failure');
+  const blocked=route=>route.abort('failed');await page.route('**/api/v2/drafts/save',blocked);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('保存结果未确认'));await page.unroute('**/api/v2/drafts/save',blocked);
+  let writes=0;const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))writes++};page.on('request',observe);
+  const rejectRead=async route=>{const url=new URL(route.request().url());url.searchParams.set('workspace','invalid');const response=await route.fetch({url:url.href});assert.equal(response.status(),400);await route.fulfill({response})};
+  await page.route('**/api/v2/drafts?*',rejectRead);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('HTTP 400'));
+  assert((await page.getByRole('alert').innerText()).includes('工作空间身份无效'));assert.equal(writes,0);assert.equal(await page.locator('.save-state').textContent(),'未保存');
+  await page.unroute('**/api/v2/drafts?*',rejectRead);
+  const loseRead=route=>route.abort('failed');await page.route('**/api/v2/drafts?*',loseRead);await page.getByRole('button',{name:'保存',exact:true}).click();
+  await until(async()=>(await page.getByRole('alert').innerText()).includes('未能完整读取本机服务响应'));
+  assert.equal(writes,0);assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'F1 retry after read failure');
+  await page.screenshot({path:path.join(out,'f1-recovery-read-failure.png')});await page.unroute('**/api/v2/drafts?*',loseRead);await save();assert.equal(writes,1);page.off('request',observe);
+ });
+ await test('f1-different-remote-content-retains-local-cas-conflict',async()=>{
+  const other=await context.newPage();await other.goto(process.env.V2_URL);await until(async()=>await other.getByLabel('工作流名称',{exact:true}).inputValue()==='F1 retry after read failure');
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 local conflict retained');const blocked=route=>route.abort('failed');
+  await page.route('**/api/v2/drafts/save',blocked);await page.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('保存结果未确认'));await page.unroute('**/api/v2/drafts/save',blocked);
+  await other.getByLabel('工作流名称',{exact:true}).fill('F1 concurrent saved version');await other.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>await other.locator('.save-state').textContent()==='已保存');
+  let writes=0;const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))writes++};page.on('request',observe);
+  await page.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('不能覆盖'));
+  assert.equal(writes,0);assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'F1 local conflict retained');assert.equal(await page.locator('.save-state').textContent(),'未保存');assert((await page.getByRole('alert').innerText()).includes('复制的标签页'));
+  assert.equal(await other.getByLabel('工作流名称',{exact:true}).inputValue(),'F1 concurrent saved version');await page.screenshot({path:path.join(out,'f1-cas-conflict-retains-edit.png')});page.off('request',observe);await other.close();
+  await page.locator('.workflow-link').filter({hasText:'F1 concurrent saved version'}).click();await page.getByRole('button',{name:'放弃修改',exact:true}).click();await until(async()=>await page.getByLabel('工作流名称',{exact:true}).inputValue()==='F1 concurrent saved version');
+ });
+ await test('f1-http-errors-remain-specific-and-folder-network-readable',async()=>{
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 auth error edit');
+  const unauth=async route=>{const response=await route.fetch({headers:{...route.request().headers(),authorization:'Bearer synthetic-invalid-capability-401'}});assert.equal(response.status(),401);await route.fulfill({response})};
+  await page.route('**/api/v2/drafts/save',unauth);await page.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('HTTP 401'));assert((await page.getByRole('alert').innerText()).includes('本机访问凭证已失效'));assert.equal(await page.locator('.save-state').textContent(),'未保存');await page.unroute('**/api/v2/drafts/save',unauth);await save();
+  const other=await context.newPage();await other.goto(process.env.V2_URL);await until(async()=>await other.getByLabel('工作流名称',{exact:true}).inputValue()==='F1 auth error edit');await other.getByLabel('工作流名称',{exact:true}).fill('F1 newer saved after 401');await other.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>await other.locator('.save-state').textContent()==='已保存');
+  await page.getByLabel('工作流名称',{exact:true}).fill('F1 explicit 409 local');await page.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('HTTP 409'));assert((await page.getByRole('alert').innerText()).includes('工作流已由另一处保存'));assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'F1 explicit 409 local');await other.close();
+  const offline=route=>route.abort('failed');await page.route('**/api/v2/folders',offline);await page.locator('.app-header button').click();await until(async()=>(await page.getByRole('dialog',{name:'打开工作空间'}).getByRole('alert').innerText()).includes('未能完整读取本机服务响应'));await page.screenshot({path:path.join(out,'f1-get-network-readable.png')});await page.getByLabel('关闭文件夹选择',{exact:true}).click();await page.unroute('**/api/v2/folders',offline);
+ });
+ await test('f1-save-attempt-is-isolated-on-workspace-switch',async()=>{
+  const writes=[];const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))writes.push(r.postDataJSON())};page.on('request',observe);
+  await page.locator('.workspace-link').filter({hasText:'B'}).click();await page.getByRole('button',{name:'放弃修改',exact:true}).click();await until(async()=>await page.locator('.app-header button').textContent()==='B');await page.getByLabel('工作流名称',{exact:true}).fill('F1 workspace B independent');await save();assert.equal(writes.length,1);assert.equal(writes[0].document.name,'F1 workspace B independent');assert.equal(writes[0].expected,null);page.off('request',observe);
+ });
  assert.equal(requests.some(r=>/start|prepare|model|account|thread|turn|sessions/.test(r.path)),false,'M1 must not call native or legacy execution routes');assert.equal(errors.length,0,'Browser page errors: '+errors.join('; '));
  await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'real launcher/HTTP/Chromium; no Provider calls',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,results:rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

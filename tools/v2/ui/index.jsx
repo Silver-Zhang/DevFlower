@@ -13,10 +13,18 @@ const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,
 const TOKEN_KEY='devflower-v2-capability';
 let token=location.hash.slice(1)||sessionStorage.getItem(TOKEN_KEY)||'';
 if(location.hash){sessionStorage.setItem(TOKEN_KEY,token);history.replaceState(null,'',location.pathname)}
+const conflictHelp='当前修改仍保留。请保留本页编辑，在复制的标签页中重新打开工作流核对已保存版本，再决定是否重新加载。';
+class RequestError extends Error{constructor(message,{status=null,uncertain=false}={}){super(message);this.status=status;this.uncertain=uncertain}}
+function connectionError(path){return new RequestError(path==='drafts/save'?
+ '保存结果未确认，当前修改仍保留。请检查本机服务连接后点击保存重试；重试会先核验已保存版本。若出现版本冲突，请保留本页编辑，再核对已保存版本。':
+ '未能完整读取本机服务响应，当前编辑仍保留。请检查服务是否运行以及连接状态，再重试当前操作。',{uncertain:true})}
 async function api(path,data){
- const response=await fetch('/api/v2/'+path,{headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{method:'POST',body:JSON.stringify(data)}:{})});
- const result=await response.json();if(!response.ok)throw Error(result.error||'本机服务暂时不可用');return result;
+ let response;try{response=await fetch('/api/v2/'+path,{headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{method:'POST',body:JSON.stringify(data)}:{})})}catch{throw connectionError(path)}
+ let result;try{result=await response.json()}catch{if(response.ok)throw connectionError(path);throw new RequestError('本机服务返回 HTTP '+response.status+'，错误响应未完整读取。请检查服务连接后重试。',{status:response.status})}
+ if(!response.ok)throw new RequestError((result.error||'本机服务暂时不可用')+'（HTTP '+response.status+'）'+(response.status===409?'。'+conflictHelp:''),{status:response.status});return result;
 }
+const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
+const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
 function Button({icon:Icon,children,...props}){return <button {...props}>{Icon&&<Icon size={16}/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 function AgentCard({data,selected}){const n=data.node;return <article className={'agent-card'+(selected?' selected':'')}>
@@ -44,12 +52,12 @@ function App(){
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
  const [theme,setTheme]=useState(()=>localStorage.getItem('devflower-v2-theme')||'system');
  const [measurements,setMeasurements]=useState(()=>new Map());
- const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
+ const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
  const dirty=!saved||!same(doc,saved.graph);
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
- function install(next,row=null){generation.current++;docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
+ function install(next,row=null){generation.current++;saveAttempt.current=null;docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
  function edit(next,history=true){if(same(next,docRef.current))return;if(history){setPast(p=>[...p.slice(-49),copy(docRef.current)]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -57,10 +65,28 @@ function App(){
  async function refreshDrafts(w=workspaceRef.current){if(!w)return;const rows=await api('drafts?workspace='+w.id);if(workspaceRef.current?.id===w.id)setDrafts(rows)}
  async function save(){
   if(saving.current)throw Error('正在保存，请稍候');const w=workspaceRef.current;if(!w)throw Error('先打开工作空间再保存');
-  const snapshot=copy(docRef.current),row=savedRef.current,gen=generation.current;saving.current=true;setBusy('save');setError('');
-  try{const result=await api('drafts/save',{workspace:w.id,id:row?.id||null,expected:row?.revision||null,document:snapshot});
-   if(gen!==generation.current||workspaceRef.current?.id!==w.id)throw Error('保存已完成，但当前文档已切换；请从原工作空间重开');
-   savedRef.current=result;setSaved(result);remember(w,result);await refreshDrafts(w);setNotice('已保存 · '+result.graph.name);return same(snapshot,docRef.current);
+  const gen=generation.current;let attempt=saveAttempt.current;saving.current=true;setBusy('save');setError('');setNotice('');
+  const current=()=>{if(gen!==generation.current||workspaceRef.current?.id!==w.id)throw Error('保存响应属于先前的文档，当前编辑未替换；请从原工作空间核对')};
+  try{
+   if(attempt&&attempt.workspace===w.id&&attempt.generation===gen){
+    // A successful workspace-scoped listing is evidence of existence/absence.
+    // A failed GET (including HTTP 400) never authorizes another POST.
+    const rows=await api('drafts?workspace='+w.id);current();setDrafts(rows);
+    const remote=rows.find(row=>row.id===attempt.id);
+    if(remote&&samePayload(remote.graph,attempt.document)){
+     const verified={...remote,graph:copy(attempt.document)};savedRef.current=verified;setSaved(verified);saveAttempt.current=null;remember(w,verified);
+     const unchanged=same(attempt.document,docRef.current);setNotice(unchanged?'已核验上次保存 · '+remote.graph.name:'已核验上次提交；当前后续修改尚未保存，请再次点击保存。');return unchanged;
+    }
+    if(remote?remote.revision!==attempt.expected:attempt.expected!==null)throw new RequestError('已保存版本与上次提交不同，不能覆盖。'+conflictHelp,{status:409});
+   }else{
+    const row=savedRef.current;attempt={workspace:w.id,generation:gen,id:row?.id||crypto.randomUUID().replaceAll('-',''),expected:row?.revision||null,document:copy(docRef.current)};
+   }
+   saveAttempt.current=attempt;let result;
+   try{result=await api('drafts/save',{workspace:w.id,id:attempt.id,expected:attempt.expected,document:attempt.document})}
+   catch(e){if(!e.uncertain&&e.status!==409&&saveAttempt.current===attempt)saveAttempt.current=null;throw e}
+   current();savedRef.current=result;setSaved(result);saveAttempt.current=null;remember(w,result);setNotice('已保存 · '+result.graph.name);
+   try{await refreshDrafts(w)}catch(e){throw new RequestError('本次保存已确认，但工作流列表未刷新。'+e.message,{status:e.status})}
+   return same(attempt.document,docRef.current);
   }finally{saving.current=false;setBusy('')}
  }
  const guard=fn=>async(...args)=>{setError('');try{await fn(...args)}catch(e){setError(e.message||'操作失败，请重试')}};
