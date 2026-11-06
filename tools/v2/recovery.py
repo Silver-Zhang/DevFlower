@@ -70,6 +70,10 @@ def read_completion(rt,run,node,definition,steps):
         or value.get('request_sha256')!=node.get('actual_request_sha256')
         or node.get('completion_sha256') not in (None,digest(canonical(value)))):raise ValueError('completion identity')
     binding=definition['bindings'][node['node']]
+    if (not isinstance(value.get('receipt'),dict) or not isinstance(value.get('output'),dict)
+        or not isinstance(binding,dict) or not isinstance(node.get('process_result'),dict)
+        or not isinstance(node.get('native_terminal_events'),list)
+        or any(not isinstance(event,dict) for event in node['native_terminal_events'])):raise ValueError('completion evidence types')
     receipt=copy.deepcopy(value['receipt']);output=value['output']
     if receipt.get('native_turn_id')=='unknown':receipt['native_turn_id']=None
     if (not isinstance(output,dict) or set(output)!={'answer','summary','result','evidence','issues','next','artifacts'}
@@ -111,23 +115,28 @@ def project(rt,run,definition,nodes,steps):
         elif node.get('terminal_failure_verified'):
             try:
                 failure=node['failure_receipt'];proc=failure['process'];binding=definition['bindings'][node['node']]
+                if (not isinstance(proc,dict) or not isinstance(node.get('process_result'),dict)
+                    or not isinstance(node.get('native_terminal_events'),list)
+                    or any(not isinstance(event,dict) for event in node['native_terminal_events'])):raise ValueError('failure evidence types')
                 turn=failure.get('native_turn_id');turn=None if turn=='unknown' else turn
                 step=next(s for s in steps if s['id']==proc['operation_id'])
                 if (not bad_definition and terminal_correlated(node,proc,binding,'turn.failed',failure['session_id'],turn)
                     and type(proc['exit']) is int and proc['exit']!=0 and not proc.get('timeout') and not proc.get('overflow')
+                    and observe(proc.get('process'))!='alive'
                     and step['run']==run['id'] and step['activation']==node['id'] and step['status']=='EXITED'
                     and all(step['data'].get(k)==proc.get(k) for k in ('process','operation_id','exit','timeout','cancelled','overflow'))):outcome='failed'
                 else:outcome='unknown'
-            except (KeyError,TypeError,StopIteration):outcome='unknown'
+            except (KeyError,TypeError,ValueError,StopIteration):outcome='unknown'
         elif outcome!='unknown':
-            sent=bool(node.get('input_sent_sha256') or node.get('effect_uncertain') or node.get('process'))
+            sent=bool(node.get('input_sent_sha256') or node.get('effect_uncertain') or node.get('process') or node.get('observed_session'))
             try:owned_group(node,steps)
             except Blocked:outcome='unknown'
             if node['state']=='RECOVERY_REQUIRED' or (sent and (worker!='alive' or node['state'] in END)):outcome='unknown'
             elif outcome!='unknown' and not sent and not node.get('observed_session'):outcome='not_sent'
         if outcome=='unknown':node.update(state='RECOVERY_REQUIRED',persisted_receipt_verified=bool(source.get('receipt_verified')),
             receipt_verified=False,terminal_failure_verified=False,reason='请求或终结证据未完整确认；停止本机调度不代表 Provider 未执行，未自动重发。')
-        elif worker=='dead' and node['state'] not in END:node.update(state='CANCELLED' if run.get('cancel_requested') else 'SKIPPED',reason='原运行器已结束；没有请求发送证据，未继续执行。')
+        elif outcome=='failed':node.update(state='FAILED',reason=node.get('reason') or '原生终结失败已关联核验；已保留失败回执，未自动重发。')
+        elif worker=='dead' and node['state'] not in END and outcome=='not_sent':node.update(state='CANCELLED' if run.get('cancel_requested') else 'SKIPPED',reason='原运行器已结束；没有请求发送证据，未继续执行。')
         node['provider_outcome']=outcome;outcomes.append(outcome);projected.append(node)
     expected=[n for n in definition.get('graph',{}).get('nodes',[]) if n.get('kind')=='agent']
     all_complete=bool(expected) and len(proofs)==len(expected) and not bad_definition

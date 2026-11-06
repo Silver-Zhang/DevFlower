@@ -111,6 +111,33 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(snapshot['state'],'COMPLETED');self.assertEqual(snapshot['nodes'][0]['output']['answer'],'synthetic completion')
         self.assertEqual(listed['state'],'COMPLETED');self.assertEqual(self.store.db.get('activation',a['id'])['state'],'RUNNING','Recovery is derived; original journal is preserved')
 
+    def test_verified_failure_before_state_commit_is_failed_even_with_cancel_requested(self):
+        for cancelled in (False,True):
+            with self.subTest(cancelled=cancelled):
+                run,a,_=self.run_fixture();self.sent(run,a,failed=True)
+                self.store.db.change('activation',a['id'],dict(state='RUNNING'))
+                self.store.db.change('run',run['id'],dict(cancel_requested=cancelled))
+                result=self.rt.snapshot(self.workspace,run['id']);node=result['nodes'][0]
+                self.assertEqual(result['state'],'CANCELLED' if cancelled else 'FAILED')
+                self.assertEqual(result['provider_outcome'],'failed');self.assertEqual(node['state'],'FAILED')
+                self.assertTrue(node['terminal_failure_verified']);self.assertTrue(node['input_sent_sha256'])
+                self.assertIn('失败',node['reason']);self.assertNotIn('没有请求发送证据',node['reason'])
+                self.assertEqual(next(r for r in self.rt.runs(self.workspace) if r['id']==run['id'])['state'],result['state'])
+                # Missing, malformed or conflicting terminal evidence never
+                # becomes a definite failure or an HTTP handler exception.
+                original=self.store.db.get('activation',a['id'])
+                for changes in (dict(native_terminal_events=[]),dict(native_terminal_events=[None]),dict(process_result=None),dict(failure_receipt={'process':[]})):
+                    self.store.db.put('activation',a['id'],dict(original,**changes))
+                    self.assertEqual(self.rt.snapshot(self.workspace,run['id'])['state'],'RECOVERY_REQUIRED')
+
+    def test_terminal_failure_with_exact_process_still_alive_is_unknown_and_cancellable(self):
+        run,a,_=self.run_fixture();native,identity=self.child();self.sent(run,a,failed=True,process=identity)
+        self.store.db.change('run',run['id'],dict(state='FAILED'))
+        result=self.rt.snapshot(self.workspace,run['id']);self.assertEqual(result['state'],'RECOVERY_REQUIRED')
+        self.assertFalse(result['nodes'][0]['terminal_failure_verified'])
+        # The contradictory receipt never prevents local ownership-checked stop.
+        self.rt.cancel(self.workspace,run['id']);native.wait(timeout=3)
+
     def test_missing_corrupt_mismatched_and_symlink_completion_remain_unknown(self):
         for mode in ('missing','corrupt','session','process','hash','symlink','alive'):
             with self.subTest(mode=mode):
