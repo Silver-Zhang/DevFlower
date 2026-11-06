@@ -44,7 +44,7 @@ python3 -B tests/v2_execution_browser.py --artifacts /absolute/new/synthetic-evi
 
 运行视图的“取消本次运行”先持久记录取消请求，原 worker 通过既有控制检查停止后续调度并停止自有 CLI 进程。界面区分“取消已请求”“本机调度已取消”“待核验”和已核验的 Provider 终结。请求已发送但缺少一致终结证据时保持结果未知；本机进程停止不证明 Provider 未执行，也不恢复或重发。已完成回执仍可阅读，下游未执行不会补造发送或结果。
 
-服务进程退出与关闭浏览器不同于取消。使用原 state/allow-root 重启服务，不产生新 worker 或意图；完整 host/boot/PID/start/PGID/SID 匹配的 worker 可以继续。服务不接管活 worker 的锁。原 worker 已死时，仅在 PROCESS 与 activation/operation 归属及全部进程身份匹配后，取消操作才会请求停止残留自有进程组；身份不明则保留未知，不发信号。列表、详情与节点从同一 SQLite 快照和相同证据规则投影，不会只凭 PID 或进程退出认定 Provider 结局。
+服务进程退出与关闭浏览器不同于取消。使用原 state/allow-root 重启服务，不产生新 worker 或意图；完整 host/boot/PID/start/PGID/SID 匹配的 worker 可以继续。服务不接管活 worker 的锁。原 worker 已死时，仅在 PROCESS 与 activation/operation 归属及全部进程身份匹配后，取消操作才会请求停止残留自有进程组；身份不明则保留未知，不发信号。控制层停止残留进程前会持久记录其外部结果未确认；即使随后进程已死，也不会据此接受先前缺失或矛盾的终结声明。列表、详情与节点从同一 SQLite 快照和相同证据规则投影，不会只凭 PID 或进程退出认定 Provider 结局。
 
 服务每次重启生成新访问凭证，须从新启动入口重新打开。使用明确 `--port` 可维持原浏览器 origin；新凭证即使在当前标签形成 fragment 导航也会重新加载认证。端口改变时，原 origin 的浏览器选中状态不迁移；从“最近工作空间”选择原目录，再在运行历史显式重开原 run。未保存编辑仍服从浏览器关闭/刷新提示，不能将其当作已持久草稿。
 

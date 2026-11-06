@@ -66,10 +66,12 @@ class RecoveryTests(unittest.TestCase):
         return self.store.db.get('activation',activation['id'])
 
     def test_full_six_field_worker_identity_and_unknown_foreign_process(self):
-        child,identity=self.child();self.assertEqual(observe(identity),'alive')
+        child,identity=self.child();other,_=self.child();self.assertEqual(observe(identity),'alive')
         for field in ('host','pid','start','pgid','sid'):
-            bad=dict(identity);bad[field]='other' if field in ('host','start') else identity[field]+1
-            self.assertEqual(observe(bad),'unknown' if field!='pid' else 'dead')
+            bad=dict(identity);bad[field]='other' if field in ('host','start') else other.pid if field=='pid' else identity[field]+1
+            self.assertEqual(observe(bad),'unknown')
+        absent=dict(identity,pid=2147483647,pgid=2147483647,sid=2147483647)
+        self.assertIsNone(process_identity(absent['pid']));self.assertEqual(observe(absent),'dead')
         bad=dict(identity,boot_id='prior-boot');self.assertEqual(observe(bad),'dead')
         child.kill();child.wait(timeout=3);self.assertEqual(observe(identity),'dead')
 
@@ -136,7 +138,9 @@ class RecoveryTests(unittest.TestCase):
         result=self.rt.snapshot(self.workspace,run['id']);self.assertEqual(result['state'],'RECOVERY_REQUIRED')
         self.assertFalse(result['nodes'][0]['terminal_failure_verified'])
         # The contradictory receipt never prevents local ownership-checked stop.
-        self.rt.cancel(self.workspace,run['id']);native.wait(timeout=3)
+        stopped=self.rt.cancel(self.workspace,run['id']);native.wait(timeout=3)
+        self.assertEqual(stopped['state'],'RECOVERY_REQUIRED','Stopping a contradictory live process does not validate its prior failure receipt')
+        self.assertEqual(self.rt.snapshot(self.workspace,run['id'])['provider_outcome'],'unknown')
 
     def test_missing_corrupt_mismatched_and_symlink_completion_remain_unknown(self):
         for mode in ('missing','corrupt','session','process','hash','symlink','alive'):

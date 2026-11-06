@@ -102,9 +102,10 @@ def project(rt,run,definition,nodes,steps):
     for source in nodes:
         node=copy.deepcopy(source)
         if node['kind']!='agent':projected.append(node);continue
-        outcome='pending';completion=None
+        forced_unknown=bool(node.get('control_stop_unconfirmed'))
+        outcome='unknown' if forced_unknown else 'pending';completion=None
         try:
-            if bad_definition:raise ValueError('definition identity')
+            if bad_definition or forced_unknown:raise ValueError('unconfirmed control stop or definition identity')
             completion=read_completion(rt,run,node,definition,steps)
         except (OSError,Blocked,ValueError,KeyError,TypeError,StopIteration):
             if node.get('receipt_verified') or node['state']=='COMPLETED':outcome='unknown'
@@ -112,7 +113,7 @@ def project(rt,run,definition,nodes,steps):
             outcome='completed';proofs[node['node']]=completion['output']
             node.update(state='COMPLETED',output=completion['output'],receipt=completion['receipt'],receipt_verified=True,
                         recovery_evidence='validated_completion',effect_uncertain=False)
-        elif node.get('terminal_failure_verified'):
+        elif node.get('terminal_failure_verified') and not forced_unknown:
             try:
                 failure=node['failure_receipt'];proc=failure['process'];binding=definition['bindings'][node['node']]
                 if (not isinstance(proc,dict) or not isinstance(node.get('process_result'),dict)

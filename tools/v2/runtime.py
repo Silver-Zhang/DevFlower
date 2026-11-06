@@ -377,13 +377,18 @@ class V2Runtime:
                     groups=[]
                     for activation in activations:
                         record=owned_group(activation,steps)
-                        if record and observe(record,group=True)=='alive':groups.append(record)
+                        if record and observe(record,group=True)=='alive':groups.append((activation['id'],record))
                     for step in steps:
                         if step.get('kind')=='PROCESS' and step.get('status')=='RUNNING' and not any(
                             a.get('process')==step.get('data',{}).get('process') for a in activations):
                             raise Blocked('存在未关联的原生进程；取消标记已保留，未发送信号')
-                    for record in groups:
+                    for activation_id,record in groups:
                         if observe(record,group=True)!='alive':continue
+                        # Preserve the observed lack/conflict of terminal
+                        # evidence BEFORE our signal can make that PID dead.
+                        # Its later disappearance cannot validate an old claim.
+                        self.flow.change('activation',activation_id,dict(control_stop_unconfirmed=True,
+                            control_stop_requested_at=time.time()),event={'kind':'control-stop-unconfirmed'})
                         stop(record)
                     if groups:self.flow.event(run_id,'owned-process-stop-requested',groups=len(groups))
             except Blocked:
