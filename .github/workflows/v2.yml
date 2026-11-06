@@ -25,6 +25,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # checkout's temporary HOME does not carry its trust into shell steps.
+          # Trust this checkout only; the runner remains disposable.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           mkdir -p "$RUNNER_TEMP/v2-evidence" "$RUNNER_TEMP/v2-ui"
           git rev-parse HEAD > "$RUNNER_TEMP/v2-evidence/head.txt"
           git rev-parse HEAD^{tree} > "$RUNNER_TEMP/v2-evidence/tree.txt"
