@@ -12,7 +12,7 @@ _LAUNCHERS=frozenset('tools/'+name for name in ('devflower.py','devflower_attach
 _PUBLIC_DESIGN_FILES=frozenset(('tools/studio/static/theme.css','tools/studio/workbench_ui/vendor/awesome-design-md/LICENSE','tools/studio/workbench_ui/vendor/awesome-design-md/PROVENANCE.md'))
 if not isinstance(_manifest,list) or len(_manifest)>512 or len(set(_manifest))!=len(_manifest) or any(not isinstance(p,str) or PurePosixPath(p).is_absolute() or '..' in PurePosixPath(p).parts or not (p.startswith(('tools/studio/','tools/orchestration/')) and p.endswith('.py') or p.startswith('tools/studio/workbench_ui/') and p.endswith(('.jsx','.mjs','.css')) or p.startswith('docs/') and p.endswith('.md') or p in _LAUNCHERS or p in _PUBLIC_DESIGN_FILES) for p in _manifest):
     raise Invalid('公开源码清单无效')
-PUBLIC_FILES=frozenset([*_manifest,'docs/V2_MVP.md'])
+PUBLIC_FILES=frozenset(_manifest)
 class PublicSourceReader:
     def __init__(self,rt,cancelled=lambda:False,deadline=None):
         self.rt=rt;self.calls=0;self.bytes=0;self.cancelled=cancelled;self.deadline=time.monotonic()+60 if deadline is None else deadline
