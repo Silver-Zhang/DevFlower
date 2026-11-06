@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_drafts v2_execution v2_execution_http native_codex_exec provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination; do
+          for suite in v2_drafts v2_execution v2_execution_http provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination; do
             if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/v2-evidence/$suite.log" 2>&1; then
               printf '%s exit=0\n' "$suite"
             else
@@ -95,5 +95,51 @@ jobs:
         with:
           name: v2-synthetic-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/v2-evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+  native-capabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: tools
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare host namespace support and exact native evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/v2-native-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/v2-native-evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/v2-native-evidence/tree.txt"
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Resolve locked supported and legacy native images
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/v2-native-evidence/native-cli-identity.json"
+      - name: Entire native exec contract including ordinary slow-resume probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_native_codex_exec.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/native-codex-exec.log"
+      - name: Preserve native synthetic evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v2-native-synthetic-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/v2-native-evidence/
           retention-days: 7
           if-no-files-found: error
