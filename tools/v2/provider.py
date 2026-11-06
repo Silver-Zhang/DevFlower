@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 def public_provider_error(error):
     """Native RPC/relay text is untrusted, including URLs and reflected secrets."""
     text = str(error).lower()
+    if '未找到 codex cli' in text:
+        return '未找到 Codex CLI；编辑和保存仍可使用。请在原生客户端安装并登录后重启本机服务'
+    if 'codex_home' in text:
+        return '当前 CODEX_HOME 与本用户原生配置根不同；编辑和保存仍可使用，请核对原生账户配置后重启服务'
     if re.search(r'401|403|auth|credential|login|认证|登录|账户', text):
         return 'Codex 认证或账户配置未通过，请在原生客户端核对登录和访问权限；未自动重试'
     if re.search(r'429|quota|rate.limit|额度', text):

@@ -23,6 +23,7 @@ from studio.native_codex_image import binary_digest
 from studio.usage import public_usage
 from .provider import CodexProvider, public_provider_error
 from .definitions import compile_definition, source_manifest, ROOT
+from .documents import check_chain
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 
@@ -126,6 +127,20 @@ class V2Runtime:
             return dict(provider='codex', models=[], stale=True, error=self.provider_error, at=None, inference_verified=False)
         return self.provider.discover() if refresh else self.provider.cached()
 
+    def inspect(self, workspace, document):
+        self.store.workspace(workspace)
+        result = check_chain(document)
+        result['message'] = '配置检查不调用模型；启动时仍会核验当前账户、CLI 能力与权限。'
+        if not result['issues']:
+            for node in document['nodes']:
+                try:
+                    if not self.provider: raise Blocked(self.provider_error)
+                    self.provider.binding(workspace,node)
+                except (Invalid,Blocked) as exc:
+                    result['issues'].append(dict(node_id=node['id'],message=str(exc)))
+        result['execution_available'] = not result['issues']
+        return result
+
     def check_operator(self):
         if not self.worker_run: return
         run = self.flow.get('run', self.worker_run)
@@ -150,6 +165,12 @@ class V2Runtime:
 
     def launch(self, workspace, draft_id, revision, intent_key, task=''):
         self.store.workspace(workspace)
+        if not isinstance(draft_id,str) or not re.fullmatch(r'[0-9a-f]{32}',draft_id):
+            raise Invalid('草稿身份无效')
+        if not isinstance(revision,str) or not re.fullmatch(r'[0-9a-f]{64}',revision):
+            raise Invalid('草稿版本无效')
+        if not isinstance(task,str) or len(task)>20000 or '\x00' in task:
+            raise Invalid('本次任务需要 20000 字符以内的文本')
         if not isinstance(intent_key, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,128}', intent_key):
             raise Invalid('启动意图身份无效')
         payload = dict(workspace=workspace, draft_id=draft_id, revision=revision, task=task)
@@ -273,21 +294,31 @@ class V2Runtime:
                         process=process, terminal='turn.failed', requested_model=binding['model'], requested_effort=binding['effort'])})
             raise Blocked(public_provider_error(exc)) from None
 
+    def state(self, run):
+        state = run['state']
+        if state not in TERMINAL and time.time() - run['created_at'] > 3 and not alive(run.get('worker')):
+            return 'RECOVERY_REQUIRED'
+        return state
+
     def snapshot(self, workspace, run_id):
         self.store.workspace(workspace)
         run = self.flow.get('run', run_id)
         if run['workspace'] != workspace: raise Conflict('运行不属于当前工作空间')
         definition = self.flow.get('definition', run['definition_id'])
         nodes = [row for row in self.flow.list('activation') if row['run'] == run_id]
-        state = run['state']
-        if state not in TERMINAL and time.time() - run['created_at'] > 3 and not alive(run.get('worker')):
-            state = 'RECOVERY_REQUIRED'
+        state = self.state(run)
         public_nodes = [{k: v for k, v in row.items() if k not in ('process_result',)} for row in nodes]
-        return dict(run={k: v for k, v in run.items() if k != 'graph'}, state=state, nodes=public_nodes,
+        if state == 'RECOVERY_REQUIRED':
+            public_nodes = [dict(row,state='RECOVERY_REQUIRED') if row['state'] not in TERMINAL and row['state']!='SKIPPED' else row for row in public_nodes]
+        public_run = {k:v for k,v in run.items() if k!='graph'}
+        public_run.update(state=state,persisted_state=run['state'])
+        if state!=run['state']:public_run['reason']='工作进程状态未确认；请核验原生回执，未自动重发。'
+        return dict(run=public_run, state=state, nodes=public_nodes,
                     definition={k: v for k, v in definition.items() if k not in ('bindings', 'runtime_sources')},
                     events=self.flow.events(run_id), worker_alive=alive(run.get('worker')))
 
     def runs(self, workspace):
         self.store.workspace(workspace)
-        return [{k: row.get(k) for k in ('id', 'definition_id', 'draft_id', 'draft_revision', 'state', 'created_at', 'reason')}
+        return [dict({k: row.get(k) for k in ('id', 'definition_id', 'draft_id', 'draft_revision', 'launch_intent', 'created_at', 'reason')},
+                     state=self.state(row), name=self.flow.get('definition',row['definition_id'])['draft_document']['name'])
                 for row in self.flow.list('run') if row['workspace'] == workspace]

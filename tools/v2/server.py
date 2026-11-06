@@ -1,4 +1,4 @@
-"""Loopback-only V2 draft HTTP boundary. No Provider or legacy runtime endpoints."""
+"""Loopback-only V2 drafts, metadata and explicit frozen execution boundary."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -8,12 +8,13 @@ from urllib.parse import parse_qs, urlsplit
 
 from studio.graph import Invalid
 from studio.server import Conflict
+from orchestration.common import Blocked
 from .documents import check_chain
 
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_server(store, port=0):
+def create_server(store, port=0, *, runtime=None):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -59,9 +60,13 @@ def create_server(store, port=0):
                         raise Invalid('请求需要 JSON 对象')
                 query = {key: values[0] for key, values in parse_qs(urlsplit(self.path).query).items()}
                 if not post and path == '/api/v2/status':
-                    result = {'stage': 'M1', 'channel': 'Development', 'execution_available': False,
+                    result = {'stage': 'M2' if runtime else 'M1', 'channel': 'Development',
+                              'execution_supported': bool(runtime), 'provider_available': bool(runtime and runtime.provider),
+                              'execution_available': None if runtime and runtime.provider else False,
+                              'execution_check': 'native capability and permissions are checked on explicit launch',
                               'workspaces': [row for row in store.db.list('workspace')],
-                              'roots': list(map(str, store.roots)), 'environment': store.environment}
+                              'roots': list(map(str, store.roots)), 'environment': store.environment,
+                              'provider': runtime.catalog() if runtime else None}
                 elif not post and path == '/api/v2/folders':
                     result = store.browse(query.get('path'))
                 elif post and path == '/api/v2/workspaces/open' and set(data) == {'path'}:
@@ -74,12 +79,24 @@ def create_server(store, port=0):
                     result = store.save(data['workspace'], data['id'], data['expected'], data['document'])
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
-                    result = check_chain(data['document'])
+                    result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
+                elif post and path == '/api/v2/providers/discover' and data == {} and runtime:
+                    result = runtime.catalog(refresh=True)
+                elif not post and path == '/api/v2/runs' and runtime:
+                    result = runtime.runs(query.get('workspace'))
+                elif not post and path == '/api/v2/run' and runtime:
+                    result = runtime.snapshot(query.get('workspace'),query.get('id'))
+                elif post and path == '/api/v2/launch' and runtime:
+                    if set(data) != {'workspace','draft_id','revision','intent_key','task'}:
+                        raise Invalid('启动需要明确的工作空间、草稿版本、本次任务与启动意图')
+                    result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'])
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 self.reply(200, result)
             except Conflict as exc:
                 self.reply(409, {'error': str(exc)})
+            except Blocked as exc:
+                self.reply(409, {'error':str(exc)})
             except (Invalid, ValueError, TypeError, KeyError, RecursionError):
                 # Domain errors are written for the user; parser exceptions are not.
                 import sys
