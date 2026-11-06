@@ -34,8 +34,9 @@ class DraftStore:
         if requested.is_relative_to(source) or source.is_relative_to(requested):
             raise Invalid('V2 状态目录必须放在产品源码目录之外')
         self.state = private_directory(state)
-        permitted = {'v2.sqlite', 'v2.sqlite-wal', 'v2.sqlite-shm', 'v2.sqlite-journal', 'v2-service.lock'}
-        if any(item.name not in permitted for item in self.state.iterdir()):
+        permitted = {'v2.sqlite', 'v2.sqlite-wal', 'v2.sqlite-shm', 'v2.sqlite-journal', 'v2-service.lock',
+                     '.native-metadata-preflight.lock', 'flow-artifacts'}
+        if any(item.name not in permitted and not re.fullmatch(r'[0-9a-f]{32}\.worker\.lock|recovery-[0-9a-f]{64}\.json', item.name) for item in self.state.iterdir()):
             raise Invalid('此目录含有其他状态或用户文件；请选择全新 V2 状态目录')
         self.roots = [Path(root).resolve(strict=True) for root in allowed_roots]
         if not self.roots or any(not root.is_dir() for root in self.roots):

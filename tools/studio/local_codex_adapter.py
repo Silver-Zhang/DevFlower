@@ -437,7 +437,7 @@ class LocalCodex:
                     except ValueError:raise Blocked('原生会话身份无效或重复') from None
                     observed=event_sid
                     if store:store.finish(op,'AGENT_SESSION',actual_session=event_sid,resolved_model='unknown')
-                if event.get('type')=='turn.completed':
+                if event.get('type') in ('turn.completed','turn.failed'):
                     turn=event.get('turn_id')
                     if turn is None and isinstance(event.get('turn'),dict):turn=event['turn'].get('id')
                     if turn is not None:
@@ -445,6 +445,15 @@ class LocalCodex:
                             if not isinstance(turn,str) or str(uuid.UUID(turn))!=turn or observed_turn is not None:raise ValueError()
                         except ValueError:raise Blocked('原生回合身份无效或重复') from None
                         observed_turn=turn
+                if (event.get('type') in ('turn.completed','turn.failed') and store and
+                        callable(getattr(store,'native_terminal_event',None))):
+                    # Optional public terminal evidence only; never forward raw
+                    # protocol items or reasoning into the controller journal.
+                    error=event.get('error')
+                    message=error.get('message') if isinstance(error,dict) else None
+                    store.native_terminal_event(dict(type=event['type'],session_id=observed,
+                        native_turn_id=observed_turn,usage=event.get('usage'),
+                        message=safe_text(redact(message,secrets_found))[:1200] if isinstance(message,str) else None))
                 item=event.get('item')
                 if (store and callable(getattr(store,'native_tool_event',None)) and
                     event.get('type') in ('item.started','item.updated','item.completed') and

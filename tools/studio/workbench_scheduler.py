@@ -334,7 +334,8 @@ class Scheduler:
                            event={'kind': 'node-completed'})
         except (Blocked, Invalid, OSError, ValueError, KeyError) as exc:
             row = self.db.get('activation', key)
-            uncertain = row.get('state') == 'RUNNING' and group_alive(row.get('process'))
+            uncertain = (row.get('state') == 'RECOVERY_REQUIRED' or row.get('effect_uncertain') is True or
+                         row.get('state') == 'RUNNING' and group_alive(row.get('process')))
             cancelled=self.db.get('run',self.run).get('cancel_requested')
             state='CANCELLED' if cancelled and not uncertain else 'RECOVERY_REQUIRED' if uncertain else 'FAILED'
             self.db.change('activation', key, {'state':state,
