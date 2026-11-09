@@ -7,6 +7,7 @@ import '../../studio/static/theme.css';
 import './style.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
+import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 
 const copy=value=>JSON.parse(JSON.stringify(value));
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -25,8 +26,8 @@ function connectionError(path){return new RequestError(path==='cancel'?
  '启动结果未确认。请保留本次启动身份，检查服务连接后点击“核验本次启动”；不会自动重发或创建第二次运行。':path==='drafts/save'?
  '保存结果未确认，当前修改仍保留。请检查本机服务连接后点击保存重试；重试会先核验已保存版本。若出现版本冲突，请保留本页编辑，再核对已保存版本。':
  '未能完整读取本机服务响应，当前编辑仍保留。请检查服务是否运行以及连接状态，再重试当前操作。',{uncertain:true})}
-async function api(path,data){
- let response;try{response=await fetch('/api/v2/'+path,{headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{method:'POST',body:JSON.stringify(data)}:{})})}catch{throw connectionError(path)}
+async function api(path,data,{raw=false}={}){
+ let response;try{response=await fetch('/api/v2/'+path,{headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{method:'POST',body:raw?data:JSON.stringify(data)}:{})})}catch{throw connectionError(path)}
  let result;try{result=await response.json()}catch{if(response.ok)throw connectionError(path);throw new RequestError('本机服务返回 HTTP '+response.status+'，错误响应未完整读取。请检查服务连接后重试。',{status:response.status})}
  if(!response.ok)throw new RequestError((result.error||'本机服务暂时不可用')+'（HTTP '+response.status+'）'+(response.status===409&&path==='drafts/save'?'。'+conflictHelp:''),{status:response.status});return result;
 }
@@ -72,6 +73,8 @@ function App(){
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
  const [sideView,setSideView]=useState('');
+ const [transferred,setTransferred]=useState(false);
+ const transferTicket=useRef(null),fileChoice=useRef(null),transferInput=useRef(null);
  const filesOpen=sideView==='files',nativeOpen=sideView==='native';
  const workspaceEpoch=useRef(0),workspacePicker=useRef(null),filesOpener=useRef(null),nativeOpener=useRef(null);
  const [theme,setTheme]=useState(()=>localStorage.getItem('devflower-v2-theme')||'system');
@@ -81,14 +84,14 @@ function App(){
  const [launching,setLaunching]=useState(false),[launchAttempt,setLaunchAttempt]=useState(null),[cancelling,setCancelling]=useState(false);
  const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),environmentRef=useRef(null),cancelBusy=useRef(null);
  const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
- const dirty=!same(doc,saved?.graph||blank());
+ const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null){generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
- function edit(next,history=true){if(same(next,docRef.current))return;if(history){setPast(p=>[...p.slice(-49),copy(docRef.current)]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
+ function install(next,row=null,fromArchive=false){cancelTransfer();setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
+ function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){setPast(p=>[...p.slice(-49),copy(docRef.current)]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
  function remember(w,row){
@@ -118,7 +121,7 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function showRun(id,w=workspaceRef.current,environment){cancelTransfer();const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
  function editDraft(){setViewMode('draft');setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
   try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');if(ended(response.state))refreshRuns().catch(()=>{});return ended(response.state)}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
@@ -127,7 +130,7 @@ function App(){
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
   if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns().catch(()=>{});setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}}
- async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');launchBusy.current=true;setLaunching(true);setError('');
+ async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
   try{let attempt=launchRef.current;if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
    const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);setRunSnapshot(result);setRunTrusted(true);refreshRuns(w).catch(()=>{});setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
   }catch(e){if(!e.uncertain&&e.status&&e.status<500&&workspaceRef.current?.id===w.id){
@@ -137,8 +140,9 @@ function App(){
     try{const rows=await api('runs?workspace='+w.id);if(workspaceRef.current?.id===w.id){setRuns(rows);if(!rows.some(row=>row.launch_intent===launchRef.current?.intent_key))keepLaunch(null,w)}}catch{}
    }throw e}finally{launchBusy.current=false;setLaunching(false)}
  }
- async function save(){
+ async function save(preservedTransfer=null){
   if(saving.current)throw Error('正在保存，请稍候');const w=workspaceRef.current;if(!w)throw Error('先打开工作空间再保存');
+  if(transferTicket.current!==preservedTransfer)cancelTransfer();
   const gen=generation.current;let attempt=saveAttempt.current;saving.current=true;setBusy('save');setError('');setNotice('');
   const current=()=>{if(gen!==generation.current||workspaceRef.current?.id!==w.id)throw Error('保存响应属于先前的文档，当前编辑未替换；请从原工作空间核对')};
   try{
@@ -167,9 +171,90 @@ function App(){
   const epoch=workspaceEpoch.current;setError('');
   try{await fn(...args)}catch(e){if(epoch===workspaceEpoch.current)setError(e.message||'操作失败，请重试')}
  };
- function navigate(action,title){if(busy||launchBusy.current)return;if(workspaceRef.current&&dirtyRef.current){const value={action,title};pendingRef.current=value;setPending(value)}else guard(action)()}
- function closePending(){pendingRef.current=null;setPending(null)}
- async function saveAndContinue(){const operation=pendingRef.current;if(!operation)return;const unchanged=await save();if(pendingRef.current!==operation)return;if(!unchanged)throw Error('保存期间草稿已变化，请再次保存或取消切换');closePending();await operation.action()}
+ function cancelTransfer(){transferTicket.current=null;fileChoice.current=null}
+ useEffect(()=>{
+  addEventListener('pagehide',cancelTransfer);
+  return ()=>{removeEventListener('pagehide',cancelTransfer);cancelTransfer()};
+ },[]);
+ function beginTransfer(){
+  const currentWorkspace=workspaceRef.current;
+  if(!currentWorkspace||busy||launchBusy.current||viewMode!=='draft')return null;
+  const ticket={workspace:currentWorkspace,epoch:workspaceEpoch.current,generation:generation.current};
+  transferTicket.current=ticket;fileChoice.current=null;
+  return ticket;
+ }
+ function currentTransfer(ticket){
+  return ticket&&transferTicket.current===ticket&&ticket.generation===generation.current&&inWorkspace(ticket.workspace,ticket.epoch);
+ }
+ async function exportDraft(){
+  const selected=savedRef.current;
+  if(!selected||dirtyRef.current)return;
+  const ticket=beginTransfer();
+  if(!ticket)return;
+  setError('');
+  try{
+   const result=await api('draft?'+new URLSearchParams({workspace:ticket.workspace.id,id:selected.id}));
+   if(!currentTransfer(ticket))return;
+   if(result.workspace!==ticket.workspace.id||result.id!==selected.id||result.revision!==selected.revision)throw new Error();
+   const bytes=await makeDraftArchive(result.graph);
+   if(currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected)downloadDraftArchive(bytes);
+  }catch{
+   if(currentTransfer(ticket))setError('当前已保存版本已变化，请重新打开工作流。');
+  }finally{
+   if(currentTransfer(ticket))cancelTransfer();
+  }
+ }
+ function chooseArchive(){
+  const ticket=beginTransfer();
+  if(!ticket)return;
+  fileChoice.current=ticket;
+  transferInput.current.value='';
+  transferInput.current.click();
+ }
+ function cancelArchiveChoice(){
+  if(fileChoice.current&&fileChoice.current===transferTicket.current)cancelTransfer();
+ }
+ async function importArchive(event){
+  const ticket=fileChoice.current,file=event.currentTarget.files?.[0];
+  event.currentTarget.value='';fileChoice.current=null;
+  if(!currentTransfer(ticket))return;
+  if(!file){cancelTransfer();return}
+  setError('');
+  try{
+   const archive=await readDraftArchive(file);
+   if(!currentTransfer(ticket))return;
+   const proof=await api('drafts/validate?'+new URLSearchParams({workspace:ticket.workspace.id}),archive.bytes,{raw:true});
+   if(!currentTransfer(ticket))return;
+   if(proof.valid!==true||proof.workspace!==ticket.workspace.id||proof.document_sha256!==archive.documentSha){
+    throw Error('当前工作空间暂不能核验，请重新打开后再试。');
+   }
+   navigate(()=>{
+    if(!currentTransfer(ticket))return;
+    install(archive.document,null,true);
+    setNotice('已打开未保存的工作流，保存后将创建新副本。');
+   },'导入工作流',ticket);
+  }catch(e){
+   if(currentTransfer(ticket)){cancelTransfer();setError(e.message||'工作流文件格式或编码无效。')}
+  }
+ }
+ function navigate(action,title,transfer=null){
+  if(busy||launchBusy.current)return;
+  if(!transfer)cancelTransfer();
+  if(workspaceRef.current&&dirtyRef.current){const value={action,title,transfer};pendingRef.current=value;setPending(value)}else guard(action)()
+ }
+ function closePending(preservedTransfer=null){
+  const transfer=pendingRef.current?.transfer;
+  if(transfer&&transfer!==preservedTransfer&&currentTransfer(transfer))cancelTransfer();
+  pendingRef.current=null;setPending(null)
+ }
+ async function saveAndContinue(){
+  const operation=pendingRef.current;if(!operation)return;
+  if(operation.transfer&&!currentTransfer(operation.transfer)){closePending();return}
+  const unchanged=await save(operation.transfer);
+  if(pendingRef.current!==operation)return;
+  if(!unchanged)throw Error('保存期间草稿已变化，请再次保存或取消切换');
+  closePending(operation.transfer);await operation.action()
+ }
  function selectWorkspace(w,rows,row=null){
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
@@ -229,8 +314,8 @@ function App(){
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
  function closeInspector(){setSelected(null);setEdge(null);setTimeout(()=>document.querySelector('[aria-label="工作流画布"]')?.focus(),0)}
  useEffect(()=>{const key=e=>{if(e.key==='Escape'){if(pendingRef.current){closePending();return}if(folder){hideFolder();return}if(filesOpen){closeFiles();return}if(nativeOpen){closeNative();return}closeInspector()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(workspaceRef.current&&viewMode==='draft'&&!launchBusy.current)guard(save)()}if(viewMode==='draft'&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}};addEventListener('keydown',key);return()=>removeEventListener('keydown',key)},[folder,past,future,busy,viewMode,filesOpen,nativeOpen]);
- function undo(){if(!past.length||busy)return;const previous=past.at(-1);setFuture(f=>[copy(docRef.current),...f]);setPast(p=>p.slice(0,-1));docRef.current=previous;setDoc(previous);setChecks(null)}
- function redo(){if(!future.length||busy)return;const next=future[0];setPast(p=>[...p,copy(docRef.current)]);setFuture(f=>f.slice(1));docRef.current=next;setDoc(next);setChecks(null)}
+ function undo(){if(!past.length||busy)return;cancelTransfer();const previous=past.at(-1);setFuture(f=>[copy(docRef.current),...f]);setPast(p=>p.slice(0,-1));docRef.current=previous;setDoc(previous);setChecks(null)}
+ function redo(){if(!future.length||busy)return;cancelTransfer();const next=future[0];setPast(p=>[...p,copy(docRef.current)]);setFuture(f=>f.slice(1));docRef.current=next;setDoc(next);setChecks(null)}
  function addAgent(){const id=uid('n');change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:{x:100+d.nodes.length*300,y:160},provider:'',model:'',effort:'',initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));setSelected(id);setEdge(null)}
  function connect(source,destination){if(!canConnect(docRef.current,source,destination)){setError('本期仅支持无环顺序链；请先删除重复、分支或反向连线');return}change(d=>d.edges.push({id:uid('e'),source,target:destination}));setNotice('已连接两个 Agent · 运行时使用独立新会话')}
  const readOnly=viewMode==='run',shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
@@ -254,6 +339,13 @@ function App(){
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={guard(()=>refreshRuns())} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
   <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(!doc.nodes.length||!status?.provider_available))} title={status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
+   {workspace&&!readOnly&&<div className="draft-transfer">
+    <Button disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
+    <Button disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
+    <input ref={transferInput} hidden type="file" accept=".json,application/json" aria-label="选择工作流文件"
+     onChange={importArchive} onCancel={cancelArchiveChoice}/>
+    {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
+   </div>}
    <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<Button onClick={guard(rereadRun)}>重新读取</Button>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button><p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
@@ -289,7 +381,7 @@ function App(){
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
   {folder&&<div className="scrim"><section className="dialog folder-dialog" role="dialog" aria-modal="true" aria-label="打开工作空间"><header><h2>打开工作空间</h2><button aria-label="关闭文件夹选择" onClick={hideFolder}><X size={18}/></button></header><p>选择本机允许范围内的文件夹。打开和保存不会启动 Agent。</p><div className="folder-address"><input autoFocus aria-label="文件夹路径" disabled={Boolean(folder.loading)} value={folderPath} onChange={e=>{folderEpoch.current++;setFolderPath(e.target.value);setFolder(f=>f?{...f,loading:false}:f)}} onKeyDown={e=>{if(e.key==='Enter')browse(folderPath)}}/><Button onClick={()=>browse(folderPath)}>前往</Button></div>{folderError&&<p role="alert" className="error-text">{folderError}</p>}<div className="folder-roots">{folder.roots.map(root=><button key={root} onClick={()=>browse(root)}>{root}</button>)}</div><div className="folder-list">{folder.parent&&<button onClick={()=>browse(folder.parent)}>← 返回上级</button>}{folder.entries.map(entry=><button key={entry.path} onClick={()=>browse(entry.path)}><FolderOpen size={16}/>{entry.name}</button>)}{!folder.entries.length&&<p className="muted">此目录没有可浏览的子文件夹</p>}</div><footer><Button onClick={hideFolder}>取消</Button><Button className="primary" disabled={!folder.path||folder.loading||folderPath!==folder.path||!!busy} onClick={()=>navigate(()=>openWorkspacePath(folder.path),'切换工作空间')}>打开此文件夹</Button></footer></section></div>}
-  {pending&&<div className="scrim confirm-scrim"><section className="dialog" role="dialog" aria-modal="true" aria-label="未保存的草稿"><h2>保存后再{pending.title}？</h2><p>当前工作流有未保存的修改。空白和不完整草稿也可以保存。</p>{error&&<p role="alert" className="error-text">{error}</p>}<footer><Button autoFocus onClick={closePending}>{pending.title==='关闭工作空间'?'取消关闭':'取消切换'}</Button><Button disabled={!!busy} onClick={guard(async()=>{const operation=pendingRef.current;closePending();await operation.action()})}>放弃修改</Button><Button className="primary" disabled={!!busy} onClick={guard(saveAndContinue)}>保存并继续</Button></footer></section></div>}
+  {pending&&<div className="scrim confirm-scrim"><section className="dialog" role="dialog" aria-modal="true" aria-label="未保存的草稿"><h2>保存后再{pending.title}？</h2><p>当前工作流有未保存的修改。空白和不完整草稿也可以保存。</p>{error&&<p role="alert" className="error-text">{error}</p>}<footer><Button autoFocus onClick={closePending}>{pending.title==='关闭工作空间'?'取消关闭':'取消切换'}</Button><Button disabled={!!busy} onClick={guard(async()=>{const operation=pendingRef.current;if(!operation)return;closePending(operation.transfer);await operation.action()})}>放弃修改</Button><Button className="primary" disabled={!!busy} onClick={guard(saveAndContinue)}>保存并继续</Button></footer></section></div>}
  </div>
 }
 createRoot(document.getElementById('root')).render(<ReactFlowProvider><App/></ReactFlowProvider>);

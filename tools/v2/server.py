@@ -10,6 +10,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .documents import check_chain
+from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
 from .native_sessions import NativeHistoryError, request_parameters
@@ -58,6 +59,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                         return self.reply(404, {'error': '入口不存在'})
                     filename, mime = files[path]
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
+                if post and path == '/api/v2/drafts/validate':
+                    workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
+                    return self.reply(200, validate_archive(store, workspace, raw))
                 if not post and path == '/api/v2/native-session-activity':
                     params = activity_parameters(urlsplit(self.path).query)
                     if native_activity is None:
@@ -170,7 +174,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 self.reply(200, result)
-            except NativeHistoryError as exc:
+            except (NativeHistoryError, DraftTransferError) as exc:
                 self.reply(exc.status, {'code': exc.code, 'error': str(exc)})
             except Conflict as exc:
                 self.reply(409, {'error': str(exc)})
