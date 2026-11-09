@@ -82,7 +82,7 @@ function App(){
  const [catalog,setCatalog]=useState(null),[catalogBusy,setCatalogBusy]=useState(false),[runs,setRuns]=useState([]);
  const [viewMode,setViewMode]=useState('draft'),[activeRun,setActiveRun]=useState(null),[runSnapshot,setRunSnapshot]=useState(null),[runError,setRunError]=useState(''),[runTrusted,setRunTrusted]=useState(false);
  const [launching,setLaunching]=useState(false),[launchAttempt,setLaunchAttempt]=useState(null),[cancelling,setCancelling]=useState(false);
- const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),environmentRef=useRef(null),cancelBusy=useRef(null);
+ const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),runListRead=useRef(0),environmentRef=useRef(null),cancelBusy=useRef(null);
  const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
@@ -106,13 +106,24 @@ function App(){
   const epoch=workspaceEpoch.current,rows=await api('drafts?workspace='+w.id);
   if(inWorkspace(w,epoch))setDrafts(rows);
  }
- async function refreshRuns(w=workspaceRef.current){
-  if(!w)return;
-  const epoch=workspaceEpoch.current;
+ async function refreshRuns(w=workspaceRef.current,{showError=false,launchIntent=null}={}){
+  if(!w||workspaceRef.current!==w)return;
+  const epoch=workspaceEpoch.current,ticket=++runListRead.current;
+  const current=()=>inWorkspace(w,epoch)&&runListRead.current===ticket;
+  function sameIntent(){
+   if(!launchIntent||launchRef.current!==launchIntent)return false;
+   try{return samePayload(pendingLaunch(w),launchIntent)}catch{return false}
+  }
+  if(showError)setError('');
   try{
+   const verifyIntent=sameIntent();
    const rows=await api('runs?workspace='+w.id);
-   if(inWorkspace(w,epoch))setRuns(rows);
-  }catch(e){if(inWorkspace(w,epoch))throw e}
+   if(!current())return;
+   if(!Array.isArray(rows))throw connectionError('runs');
+   setRuns(rows);
+   if(verifyIntent&&sameIntent()&&rows.every(row=>typeof row?.launch_intent==='string'&&row.launch_intent)&&
+      !rows.some(row=>row.launch_intent===launchIntent.intent_key))keepLaunch(null,w);
+  }catch(e){if(current()&&showError)setError(e.message||'操作失败，请重试')}
  }
  async function discover(){const epoch=workspaceEpoch.current;setCatalogBusy(true);try{const value=await api('providers/discover',{});setCatalog(value);if(value.error)throw Error(value.error);if(epoch===workspaceEpoch.current)setNotice('已读取真实模型目录；目录和登录状态不代表推理已成功。')}finally{setCatalogBusy(false)}}
  function rememberRun(value,mode='run',environment=environmentRef.current){
@@ -124,20 +135,20 @@ function App(){
  function showRun(id,w=workspaceRef.current,environment){cancelTransfer();const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
  function editDraft(){setViewMode('draft');setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
-  try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');if(ended(response.state))refreshRuns().catch(()=>{});return ended(response.state)}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
+  try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');if(ended(response.state))refreshRuns();return ended(response.state)}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
  useEffect(()=>{if(!activeRun)return;let closed=false,timer;const read=async()=>{const finished=await rereadRun();if(!closed&&!finished)timer=setTimeout(read,900)};read();return()=>{closed=true;clearTimeout(timer)}},[activeRun?.id,activeRun?.epoch]);
  async function cancelRun(){const value=runRef.current;if(!value||cancelBusy.current)return;cancelBusy.current=value;setCancelling(true);setError('');try{
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
-  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns().catch(()=>{});setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
+  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}}
- async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
-  try{let attempt=launchRef.current;if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
-   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);setRunSnapshot(result);setRunTrusted(true);refreshRuns(w).catch(()=>{});setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
-  }catch(e){if(!e.uncertain&&e.status&&e.status<500&&workspaceRef.current?.id===w.id){
+ async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
+  try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
+   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
+  }catch(e){if(!e.uncertain&&e.status&&e.status<500&&inWorkspace(w,epoch)){
     // Even an explicit HTTP error can follow durable reservation (e.g. worker
     // publication refusal). Only a successful scoped list proving absence may
     // clear this identity; a failed read never authorizes a new launch key.
-    try{const rows=await api('runs?workspace='+w.id);if(workspaceRef.current?.id===w.id){setRuns(rows);if(!rows.some(row=>row.launch_intent===launchRef.current?.intent_key))keepLaunch(null,w)}}catch{}
+    await refreshRuns(w,{launchIntent:attempt});
    }throw e}finally{launchBusy.current=false;setLaunching(false)}
  }
  async function save(preservedTransfer=null){
@@ -282,7 +293,7 @@ function App(){
    if(gen!==generation.current||!same(snapshot,docRef.current))throw Error('读取期间草稿已变化，未切换工作空间');
    const row=initialDraft?rows.find(d=>d.id===initialDraft):null;
    selectWorkspace(w,rows,row||null);rememberRun({workspace:w.id},'draft');
-   if(status?.execution_supported)guard(()=>refreshRuns(w))();
+   if(status?.execution_supported)refreshRuns(w,{showError:true});
    hideFolder();remember(w,row);setNotice('已打开 '+w.name+' · 保存不会启动 Agent');
    setStatus(s=>({...s,workspaces:[w,...(s?.workspaces||[]).filter(x=>x.id!==w.id)]}));
   }finally{setBusy('')}
@@ -303,7 +314,7 @@ function App(){
     if(!w)return;
     const rows=await api('drafts?workspace='+w.id);
     selectWorkspace(w,rows,rows.find(d=>d.id===last.draft));
-    if(s.execution_supported)guard(()=>refreshRuns(w))();
+    if(s.execution_supported)refreshRuns(w,{showError:true});
     if(view?.mode==='run'&&view.workspace===w.id&&view.id)showRun(view.id,w);
    }finally{setBusy('')}
   })();
@@ -336,7 +347,7 @@ function App(){
    </div>}
    <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(()=>openDraft(row),'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}{workspace&&!drafts.length&&<p className="muted small empty-list">还没有已保存的工作流。<br/>从空白画布开始。</p>}</nav>
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
-   <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={guard(()=>refreshRuns())} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
+   <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
   <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(!doc.nodes.length||!status?.provider_available))} title={status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
    {workspace&&!readOnly&&<div className="draft-transfer">
