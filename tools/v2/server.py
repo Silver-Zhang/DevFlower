@@ -10,12 +10,13 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .documents import check_chain
+from .native_sessions import NativeHistoryError, request_parameters
 from .project_files import read_project
 
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_server(store, port=0, *, runtime=None):
+def create_server(store, port=0, *, runtime=None, native_sessions=None):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -64,6 +65,7 @@ def create_server(store, port=0, *, runtime=None):
                     result = {'stage': 'M2' if runtime else 'M1', 'channel': 'Development',
                               'execution_supported': bool(runtime), 'provider_available': bool(runtime and runtime.provider),
                               'execution_available': None if runtime and runtime.provider else False,
+                              'native_history_available': native_sessions is not None,
                               'execution_check': 'native capability and permissions are checked on explicit launch',
                               'workspaces': [row for row in store.db.list('workspace')],
                               'roots': list(map(str, store.roots)), 'environment': store.environment,
@@ -79,6 +81,17 @@ def create_server(store, port=0, *, runtime=None):
                         raise Invalid('读取项目文件需要工作空间身份和可选相对路径')
                     result = read_project(store, params['workspace'][0], params.get('path', [''])[0],
                                           preview=path == '/api/v2/project-file')
+                elif not post and path in ('/api/v2/native-sessions', '/api/v2/native-session'):
+                    transcript = path == '/api/v2/native-session'
+                    try:
+                        params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict',
+                                          max_num_fields=3)
+                    except ValueError:
+                        raise NativeHistoryError('NATIVE_QUERY_INVALID') from None
+                    params = request_parameters(params, transcript=transcript)
+                    if native_sessions is None:
+                        raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
+                    result = native_sessions.read(**params) if transcript else native_sessions.listing(**params)
                 elif not post and path == '/api/v2/drafts':
                     result = store.drafts(query.get('workspace'))
                 elif not post and path == '/api/v2/draft':
@@ -103,6 +116,8 @@ def create_server(store, port=0, *, runtime=None):
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 self.reply(200, result)
+            except NativeHistoryError as exc:
+                self.reply(exc.status, {'code': exc.code, 'error': str(exc)})
             except Conflict as exc:
                 self.reply(409, {'error': str(exc)})
             except Blocked as exc:

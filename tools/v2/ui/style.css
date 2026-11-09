@@ -74,3 +74,19 @@
  .project-panel.has-preview .project-tree { display: none; }
  .project-preview { border-left: 0; }
 }
+
+.native-panel.has-preview { width: min(780px, calc(100vw - 24px)); }
+.native-list > .field { padding: 8px 4px; }
+.native-list > section { margin: 10px 0; }
+.native-list > section > h3 { padding: 5px 4px; }
+.native-list > section > ul { padding-left: 0; }
+.native-list .native-coverage { color: var(--studio-text); font-weight: 550; }
+.native-list .native-coverage-reasons { padding: 0 4px 8px; color: var(--studio-muted); font-size: 11px; }
+.native-list .native-session-item { align-items: flex-start; min-height: 44px; margin-bottom: 3px; }
+.native-session-item[aria-pressed="true"] { background: var(--studio-selected); }
+.native-session-item small { display: block; color: var(--studio-muted); font-size: 10px; }
+.native-session-item:disabled { opacity: 1; color: var(--studio-muted); }
+.native-window-controls, .native-messages { padding: 12px; }
+.native-window-controls > p { padding-top: 6px; }
+.native-messages > article + article { margin-top: 12px; }
+.native-messages > article > pre { margin: 5px 0 0; }

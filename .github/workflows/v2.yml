@@ -1,7 +1,7 @@
 name: V2 workflow regression
 on:
   push:
-    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation']
+    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader']
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_drafts v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination v2_session_identity v2_session_lease; do
+          for suite in v2_drafts v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination v2_session_identity v2_session_lease v2_native_sessions; do
             if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/v2-evidence/$suite.log" 2>&1; then
               printf '%s exit=0\n' "$suite"
             else
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_browser v2_execution_browser v2_recovery_browser; do
+          for suite in v2_browser v2_execution_browser v2_recovery_browser v2_native_sessions_browser; do
             if python3 -B "tests/$suite.py" --artifacts "$RUNNER_TEMP/v2-evidence/$suite" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE"; then
               :
             else

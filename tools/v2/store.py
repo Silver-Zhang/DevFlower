@@ -12,6 +12,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from studio.workbench_store import WorkbenchStore
 from .documents import validate_draft
+from .workspace_select import select_existing_workspace, state_file_allowed
 
 
 def private_directory(value):
@@ -34,9 +35,7 @@ class DraftStore:
         if requested.is_relative_to(source) or source.is_relative_to(requested):
             raise Invalid('V2 状态目录必须放在产品源码目录之外')
         self.state = private_directory(state)
-        permitted = {'v2.sqlite', 'v2.sqlite-wal', 'v2.sqlite-shm', 'v2.sqlite-journal', 'v2-service.lock',
-                     '.native-metadata-preflight.lock', 'flow-artifacts'}
-        if any(item.name not in permitted and not re.fullmatch(r'[0-9a-f]{32}\.worker\.lock|recovery-[0-9a-f]{64}\.json', item.name) for item in self.state.iterdir()):
+        if any(not state_file_allowed(item.name) for item in self.state.iterdir()):
             raise Invalid('此目录含有其他状态或用户文件；请选择全新 V2 状态目录')
         self.roots = [Path(root).resolve(strict=True) for root in allowed_roots]
         if not self.roots or any(not root.is_dir() for root in self.roots):
@@ -103,10 +102,10 @@ class DraftStore:
             db.execute('INSERT INTO records VALUES(?,?,?)', ('workspace', identity, canonical(result).decode()))
         return result
 
-    def workspace(self, key):
+    def workspace(self, key, *, existing_only=False):
         if not isinstance(key, str) or not re.fullmatch(r'[0-9a-f]{64}', key):
             raise Invalid('工作空间身份无效；请重新打开工作空间')
-        row = self.db.get('workspace', key)
+        row = json.loads(select_existing_workspace(self.state, key)) if existing_only else self.db.get('workspace', key)
         path, meta = self.directory(row['path'])
         if digest(canonical([str(path), meta.st_dev, meta.st_ino])) != key:
             raise Conflict('工作空间文件夹身份已变化；请重新打开')

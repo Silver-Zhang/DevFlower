@@ -11,6 +11,7 @@ from studio.graph import Invalid
 from v2.store import DraftStore
 from v2.server import create_server
 from v2.runtime import V2Runtime
+from v2.native_sessions import NativeSessions
 
 
 def main():
@@ -20,14 +21,16 @@ def main():
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true', help='print private local URL')
     parser.add_argument('--codex-cli', help='explicit installed Codex executable; default: discover installed CLI')
+    parser.add_argument('--native-history-config', help='private opt-in JSON for read-only native history')
     args = parser.parse_args()
     try:
         if sys.platform != 'linux':
             raise Invalid('V2 当前支持 Linux 本机环境')
         store = DraftStore(args.state_dir, args.allow_root)
         with lease(store.state / 'v2-service.lock'):
+            native = NativeSessions.from_path(store, args.native_history_config) if args.native_history_config else None
             runtime = V2Runtime(store,args.codex_cli)
-            server, token = create_server(store, args.port,runtime=runtime)
+            server, token = create_server(store, args.port,runtime=runtime,native_sessions=native)
             url = 'http://127.0.0.1:' + str(server.server_port) + '/#' + token
             if args.no_browser or not webbrowser.open(url):
                 print(url, flush=True)

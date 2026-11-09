@@ -1,6 +1,6 @@
 # DevFlower V2：顺序 Agent 工作流
 
-这是隔离的 Development 入口，首期为 Linux 与本用户已安装、已登录的 Codex CLI。V2 草稿唯一权威存储是私有 state 目录的 `v2.sqlite`，不读取旧工作台数据库或原生用户历史。空白、不连通和未配置的草稿可以保存；保存不会调用模型。
+这是隔离的 Development 入口，首期为 Linux 与本用户已安装、已登录的 Codex CLI。V2 草稿唯一权威存储是私有 state 目录的 `v2.sqlite`，不读取旧工作台数据库。原生历史浏览默认关闭，可由本机操作员单独启用。空白、不连通和未配置的草稿可以保存；保存不会调用模型。
 
 ## 使用
 
@@ -25,6 +25,23 @@ python3 -B tools/devflower_v2.py --state-dir /absolute/new/private/v2-state --al
 打开工作空间后，点击左侧“文件”浏览项目。目录按需展开，超过浏览预算时显示截断提示。点击文件可预览最多 16,000 字节的 UTF-8 纯文本，预览支持返回文件树。文件面板沿用浅色和深色主题，关闭后回到文件入口。
 
 项目文件接口复用本机访问凭证和已登记的工作空间范围。隐藏或敏感名称、受保护目录、链接、特殊文件和跨挂载路径不会开放；当前项目的 `.gitignore` 和 `.ignore` 规则可进一步排除条目。预览会过滤已知的凭据格式，普通文件中的任意秘密仍需由项目自身保护。文件浏览不会读取原生认证，不会授予 Agent 文件权限。
+
+## 原生会话只读浏览
+
+操作员可用 `--native-history-config /absolute/private/history.json` 启用。配置必须是当前用户拥有、权限为 0600 的普通文件。示例只启用已打开工作空间内的嵌套发现：
+
+```json
+{
+  "version": 1,
+  "discover_defaults": false,
+  "discover_nested": true,
+  "profiles": []
+}
+```
+
+把 `discover_defaults` 设为 true 会登记当前本机 HOME 中标准的 Codex `.codex/sessions` 和 Claude Code `.claude/projects`。可以在 `profiles` 中以 `id`、`provider`、`anchor` 和 `root` 登记其他已批准的会话目录。Provider 值为 `codex` 或 `claude`，两个目录字段为绝对路径，root 必须在 anchor 内。首次启用生成 0600 的私有句柄种子，同一物理挂载下使用原 state 重启服务时保留句柄。
+
+打开工作空间后，在左侧点“原生会话”。列表标注来源、最近活动和覆盖情况，按 Provider 筛选。只能打开当前工作空间内已核实归属的会话。列表部分覆盖或身份冲突时，部分记录只显示来源。正文显示最近有限条可见用户和助手消息，搜索限当前已加载窗口。文件内容、工作目录或列表快照变化后，请刷新会话列表。
 
 ## 身份与窄复用
 
