@@ -57,10 +57,10 @@ MAX_BODY_BYTES = 128 * 1024
 
 
 class NativeHistoryError(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, *, message=None):
         self.code = code
-        self.status, message = ERRORS[code]
-        super().__init__(message)
+        self.status, default_message = ERRORS[code]
+        super().__init__(default_message if message is None else message)
 
 
 def request_parameters(params, *, transcript=False):

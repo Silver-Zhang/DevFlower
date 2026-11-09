@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from threading import Lock
 import unicodedata
 
 from orchestration.common import Blocked, canonical, digest
@@ -153,6 +154,7 @@ class NativeSessionViews:
     def __init__(self, reader):
         self.reader = reader
         self.state = reader.store.state
+        self._mutation_gate = Lock()
 
     def _scope(self, workspace, revision):
         path, identity, proof = self.reader.workspace(workspace, database_error='NATIVE_VIEW_CONFLICT')
@@ -202,17 +204,24 @@ class NativeSessionViews:
             raise NativeHistoryError('NATIVE_REVISION_STALE') from None
 
     def change(self, action):
-        path, identity, proof, snapshot = self._scope(action.workspace, action.revision)
-        record = snapshot.reads.get(action.handle)
-        if record is None:
-            raise NativeHistoryError('NATIVE_SESSION_UNAVAILABLE')
-        if not self.reader.read_slots.acquire(blocking=False):
-            raise conflict()
+        # Even the scope SELECT can create temporary SQLite sidecars. Start
+        # excluding sibling mutations before that SELECT can overlap a commit.
+        if not self._mutation_gate.acquire(blocking=False):
+            raise NativeHistoryError('NATIVE_VIEW_CONFLICT', message='另一项会话整理正在提交，请稍后刷新核对。')
         try:
-            self._verify(action, path, identity, record, readable=True)
-            view = self._commit(action, path, identity, proof, record)
+            path, identity, proof, snapshot = self._scope(action.workspace, action.revision)
+            record = snapshot.reads.get(action.handle)
+            if record is None:
+                raise NativeHistoryError('NATIVE_SESSION_UNAVAILABLE')
+            if not self.reader.read_slots.acquire(blocking=False):
+                raise conflict()
+            try:
+                self._verify(action, path, identity, record, readable=True)
+                view = self._commit(action, path, identity, proof, record)
+            finally:
+                self.reader.read_slots.release()
         finally:
-            self.reader.read_slots.release()
+            self._mutation_gate.release()
         return {'workspace': action.workspace, 'revision': action.revision, 'view': view}
 
     def _commit(self, action, path, identity, proof, record):

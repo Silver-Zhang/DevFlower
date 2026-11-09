@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 from tempfile import TemporaryDirectory
-from threading import Barrier, Thread
+from threading import Barrier, Event, Thread
 from unittest import TestCase
 from unittest.mock import patch
 from urllib.parse import urlencode
@@ -239,6 +239,77 @@ class SessionViewTests(TestCase):
                 revision = next(body['view']['view_revision'] for status, body in results if status == 200)
                 self.assertEqual(revision, round_index + 1)
         self.assertEqual(len(self.store.db.list(KIND)), 1)
+
+    def test_http_mutation_gate_refuses_before_scope_or_database(self):
+        entered, release = Event(), Event()
+        scope_calls = []
+        original_scope = NativeSessionViews._scope
+        self.store.save(self.a, None, None, {'version': 1, 'name': '保留草稿', 'nodes': [], 'edges': []})
+        self.store.db.put('run', 'fixture-run', {'workspace': self.a, 'state': 'UNKNOWN'})
+        self.store.db.event('fixture-run', 'fixture-event')
+        self.store.db.put('native-session-claim', 'fixture-claim', {'session': SID})
+        native_before = snapshot(self.data['projects'], self.data['home'], self.data['isolated'])
+        state_before = self.state_files()
+
+        def hold_first_scope(service, workspace, revision):
+            scope_calls.append((workspace, revision))
+            if len(scope_calls) == 1:
+                entered.set()
+                if not release.wait(15):
+                    raise AssertionError('fixture did not release first scope')
+            return original_scope(service, workspace, revision)
+
+        def unrelated_rows():
+            with self.store.db.tx(read=True) as db:
+                records = db.execute('SELECT kind,id,data FROM records WHERE kind<>? ORDER BY kind,id', (KIND,))
+                return (records.fetchall(), db.execute('SELECT * FROM events').fetchall(),
+                        db.execute('SELECT * FROM drafts').fetchall(), db.execute('SELECT * FROM launch_intents').fetchall())
+
+        unrelated_before = unrelated_rows()
+        route = 'native-session-view'
+        with self.running(self.reader) as request, ThreadPoolExecutor(max_workers=2) as pool:
+            with (patch.object(NativeSessionViews, '_scope', hold_first_scope),
+                  patch.object(sqlite3, 'connect', wraps=sqlite3.connect) as open_db,
+                  patch.object(NativeSessionViews, '_verify', autospec=True,
+                               side_effect=NativeSessionViews._verify) as verify):
+                first = pool.submit(request, route, payload=self.payload('rename', alias='第一个请求'))
+                try:
+                    self.assertTrue(entered.wait(5))
+                    second = request(route, payload=self.payload('rename', alias='竞争请求'))
+                    self.assertEqual(second, (409, {'code': 'NATIVE_VIEW_CONFLICT',
+                                                    'error': '另一项会话整理正在提交，请稍后刷新核对。'}))
+                    self.assertEqual(scope_calls, [(self.a, self.listing['revision'])])
+                    open_db.assert_not_called()
+                    verify.assert_not_called()
+                    self.assertEqual(self.state_files(), state_before)
+                    self.assertEqual(request(self.view_query()), (200, {
+                        'workspace': self.a, 'revision': self.listing['revision'], 'views': [],
+                    }))
+                    self.assertEqual(self.state_files(), state_before)
+                finally:
+                    release.set()
+                status, result = first.result(8)
+            self.assertEqual(status, 200)
+            view = result['view']
+            self.assertEqual((view['alias'], view['view_revision']), ('第一个请求', 1))
+            self.assertEqual(self.store.db.list(KIND), [dict(view, workspace=self.a)])
+            committed = self.state_files()
+            self.assertEqual(request(self.view_query()), (200, {
+                'workspace': self.a, 'revision': self.listing['revision'], 'views': [view],
+            }))
+            self.assertEqual(self.state_files(), committed)
+            self.assertEqual(request(route, payload=self.payload('hide')),
+                             (409, {'code': 'NATIVE_VIEW_CONFLICT',
+                                    'error': '会话整理状态已变化，请刷新后重试。'}))
+            self.assertEqual(self.state_files(), committed)
+            status, result = request(route, payload=self.payload('hide', 1))
+            self.assertEqual(status, 200)
+            self.assertEqual(result['view'], dict(view, hidden=True, view_revision=2))
+            self.assertEqual(self.store.db.list(KIND), [dict(result['view'], workspace=self.a)])
+        self.assertEqual(unrelated_rows(), unrelated_before)
+        self.assertEqual({key: value for key, value in self.state_files().items() if key[1] != 'v2.sqlite'},
+                         {key: value for key, value in state_before.items() if key[1] != 'v2.sqlite'})
+        self.assertEqual(snapshot(self.data['projects'], self.data['home'], self.data['isolated']), native_before)
 
     def test_database_missing_busy_third_file_and_after_connect_replacement_refuse(self):
         database = self.store.state / 'v2.sqlite'
