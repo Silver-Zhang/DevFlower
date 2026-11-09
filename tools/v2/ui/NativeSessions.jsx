@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
 import {VisibleHistory} from './VisibleHistory.jsx';
+import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
 const ACTIVITY_GROUPS = [['day', '近 24 小时'], ['week', '24 小时至 7 天'], ['older', '更早'], ['unknown', '活动时间未知']];
@@ -99,6 +100,7 @@ function compareRows(a, b, order) {
 export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const [list, setList] = useState(null);
  const [reading, setReading] = useState(null);
+ const [markdownSelection, setMarkdownSelection] = useState(null);
  const [loading, setLoading] = useState(enabled);
  const [listError, setListError] = useState('');
  const [provider, setProvider] = useState('');
@@ -287,22 +289,20 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const activityGrouping = grouping === 'activity';
  const groups = activityGrouping ? ACTIVITY_GROUPS : Object.entries(PROVIDERS);
  const selectedOutsideFilter = reading && rows.some(row => row.handle === reading.row.handle && !row.matches);
- const messages = reading?.result?.messages || [];
+ const messages = reading?.result?.messages;
  const normalized = query.trim().toLocaleLowerCase();
- const visible = messages.filter(message => !normalized || message.text.toLocaleLowerCase().includes(normalized));
+ const visible = Array.isArray(messages) ? messages.filter(message =>
+  !normalized || isVisibleMessage(message) && message.text.toLocaleLowerCase().includes(normalized)) : null;
  const selection = selectionGeneration.current, listVersion = listGeneration.current, historyVersion = historyGeneration.current;
+ const format = markdownSelection === selection ? 'markdown' : 'text';
  const defaultWindow = reading?.result && <>
    <div className="native-window-controls">
     <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
      onChange={event => setQuery(event.target.value)}/></label>
     <p className="muted small">{reading.result.truncated ? '当前内容已截断。' : ''}搜索仅匹配此处已加载的可见消息。</p>
    </div>
-   <div aria-label="已加载消息" className="native-messages">
-    {visible.length === 0 && <p className="muted small">{normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}</p>}
-    {visible.map((message, index) => <article key={index}>
-     <h3>{message.role === 'user' ? '用户' : '助手'}</h3><pre>{message.text}</pre>
-    </article>)}
-   </div>
+   <NativeMessages label="已加载消息" messages={visible} format={format} truncated={reading.result.truncated}
+    empty={normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}/>
  </>;
  return <aside className={'project-panel native-panel' + (reading ? ' has-preview' : '')} aria-label="原生会话"
   onKeyDown={event => {
@@ -397,8 +397,13 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
        </button>)}
      </div>
      {mutationError && <p className="error-text" role="alert">{mutationError}</p>}
+     <label className="field native-message-format"><span>会话正文格式</span>
+      <select value={format} onChange={event => setMarkdownSelection(event.target.value === 'markdown' ? selection : null)}>
+       <option value="text">纯文本</option><option value="markdown">Markdown</option>
+      </select>
+     </label>
      {provider && provider !== reading.row.provider ? defaultWindow :
-      <VisibleHistory key={selection} api={api}
+      <VisibleHistory key={selection} api={api} format={format}
        scope={{workspace: workspace.id, handle: reading.row.handle, revision: list.revision}}
        isCurrent={() => isCurrent() && selectionGeneration.current === selection
         && listGeneration.current === listVersion && historyGeneration.current === historyVersion}>

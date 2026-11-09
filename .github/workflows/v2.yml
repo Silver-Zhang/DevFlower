@@ -1,7 +1,7 @@
 name: V2 workflow regression
 on:
   push:
-    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader', 'v2/parity-session-views', 'v2/parity-session-pages', 'v2/parity-session-list']
+    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader', 'v2/parity-session-views', 'v2/parity-session-pages', 'v2/parity-session-list', 'v2/parity-session-markdown']
   workflow_dispatch:
 permissions:
   contents: read
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_browser v2_execution_browser v2_recovery_browser v2_native_sessions_browser v2_native_session_views_browser v2_native_session_pages_browser v2_native_session_list_browser; do
+          for suite in v2_browser v2_execution_browser v2_recovery_browser v2_native_sessions_browser v2_native_session_views_browser v2_native_session_pages_browser v2_native_session_list_browser v2_native_session_markdown_browser; do
             if python3 -B "tests/$suite.py" --artifacts "$RUNNER_TEMP/v2-evidence/$suite" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE"; then
               :
             else

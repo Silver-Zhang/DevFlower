@@ -1,9 +1,10 @@
 import React, {useEffect, useRef, useState} from 'react';
+import {NativeMessages} from './NativeMessages.jsx';
 
 const STACK_LIMIT = 16;
 const FORBIDDEN_QUERY_CHAR = /[\p{Cc}\p{Cf}\p{Cs}]/u;
 
-export function VisibleHistory({api, scope, isCurrent, children}) {
+export function VisibleHistory({api, scope, isCurrent, format, children}) {
  const [query, setQuery] = useState('');
  const [page, setPage] = useState(null);
  const generation = useRef(0);
@@ -72,16 +73,8 @@ export function VisibleHistory({api, scope, isCurrent, children}) {
       {browsing ? '更早一页' : '下一页搜索结果'}</button>}
     </div>
    </div>
-   {page.result && <div aria-label="已核验消息片段" className="native-messages">
-    {!page.result.messages.length && <p className="muted small">
-     {browsing ? '此快照没有可显示的消息。' : '此快照的可见会话没有匹配内容。'}
-    </p>}
-    {page.result.messages.map((part, index) => <article key={index}>
-     <h3>{part.role === 'user' ? '用户' : '助手'}
-      {part.part_count > 1 && <small className="muted"> · 片段 {part.part_index}/{part.part_count}</small>}</h3>
-     <pre>{part.text}</pre>
-    </article>)}
-   </div>}
+   {page.result && <NativeMessages label="已核验消息片段" messages={page.result.messages}
+    format={format} paged empty={browsing ? '此快照没有可显示的消息。' : '此快照的可见会话没有匹配内容。'}/>}
   </section>}
  </>;
 }

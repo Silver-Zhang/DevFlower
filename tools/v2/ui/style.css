@@ -146,3 +146,28 @@
 .native-history-summary { border-bottom: 1px solid var(--studio-line); }
 .native-history-summary p, .native-history-summary .native-history-buttons { margin-top: 5px; }
 .native-history-summary h3:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }
+
+.native-message-format { padding: 8px 12px; }
+.native-message-note { margin: 4px 0; }
+.native-markdown {
+ min-width: 0;
+ margin-top: 5px;
+ padding: 10px 12px;
+ border-radius: 6px;
+ background: var(--studio-subtle-bg);
+ overflow-wrap: anywhere;
+}
+.native-markdown > :first-child { margin-top: 0; }
+.native-markdown > :last-child { margin-bottom: 0; }
+.native-markdown p + p { margin-top: 6px; }
+.native-markdown h1, .native-markdown h2 { font-size: 16px; }
+.native-markdown h3, .native-markdown h4, .native-markdown h5, .native-markdown h6 { font-size: 13px; }
+.native-markdown blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--studio-line-strong); }
+.native-markdown ul, .native-markdown ol { padding-inline-start: 22px; }
+.native-markdown code { font-family: ui-monospace, monospace; }
+.native-markdown pre { margin: 8px 0; border: 1px solid var(--studio-line); }
+.native-md-link, .native-md-image { text-decoration: underline dotted; }
+.native-markdown-table { max-width: 100%; overflow-x: auto; margin: 8px 0; }
+.native-markdown-table:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }
+.native-markdown-table table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.native-markdown-table th, .native-markdown-table td { padding: 4px 8px; border: 1px solid var(--studio-line); text-align: start; }
