@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
 import {VisibleHistory} from './VisibleHistory.jsx';
+import {NativeActivity} from './NativeActivity.jsx';
 import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
@@ -387,7 +388,9 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
     {selectedOutsideFilter && <p role="status" className="muted small">当前阅读的会话不在筛选结果中。</p>}
     {reading.loading && <p className="muted" role="status">正在读取已核验的会话…</p>}
     {reading.error && <p className="error-text" role="alert">{reading.error}</p>}
-    {reading.result && <>
+    {reading.result && <NativeActivity key={selection} api={api}
+     scope={{workspace: workspace.id, handle: reading.row.handle, revision: list.revision}}
+     isCurrent={() => isCurrent() && selectionGeneration.current === selection && listGeneration.current === listVersion}>
      <div className="native-view-actions" aria-label="仅在 DevFlower 整理">
       {['rename', selectedView.hidden ? 'unhide' : 'hide',
        ...(selectedView.collection === 'active' ? ['archive', 'trash'] :
@@ -409,7 +412,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
         && listGeneration.current === listVersion && historyGeneration.current === historyVersion}>
        {defaultWindow}
       </VisibleHistory>}
-    </>}
+    </NativeActivity>}
    </section>}
   </div>
   {dialogAction && <ViewDialog action={dialogAction.action} initialAlias={selectedView.alias} onCancel={dismissDialog}

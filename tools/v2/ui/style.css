@@ -171,3 +171,12 @@
 .native-markdown-table:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }
 .native-markdown-table table { width: max-content; min-width: 100%; border-collapse: collapse; }
 .native-markdown-table th, .native-markdown-table td { padding: 4px 8px; border: 1px solid var(--studio-line); text-align: start; }
+
+.native-activity-entry, .native-activity { padding: 8px 12px; }
+.native-activity-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.native-activity > p { margin: 8px 0; }
+.native-activity-items { list-style: none; margin: 8px 0 0; padding: 0; }
+.native-activity-items li { border-top: 1px solid var(--studio-line); padding: 8px 0; }
+.native-activity-items li > span { margin-inline-start: 8px; }
+.native-activity-items dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 4px 0 0; font-size: 12px; }
+.native-activity-items dd { margin: 0; overflow-wrap: anywhere; }

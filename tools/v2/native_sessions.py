@@ -36,6 +36,8 @@ ERRORS = {
     'NATIVE_SEARCH_INVALID': (400, '原生会话搜索参数无效。'),
     'NATIVE_CURSOR_INVALID': (409, '会话翻页已失效，请重新打开会话。'),
     'NATIVE_VISIBLE_BUDGET': (409, '本次读取超过范围限制，无法确认完整结果。'),
+    'NATIVE_ACTIVITY_INVALID': (400, '原生工具活动查询参数无效。'),
+    'NATIVE_ACTIVITY_BUDGET': (409, '本次工具活动超过读取范围，无法确认完整结果。'),
 }
 WORKSPACE = re.compile(r'[0-9a-f]{64}')
 REVISION = re.compile(r'[0-9a-f]{32}')
