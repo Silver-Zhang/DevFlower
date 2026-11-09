@@ -3,6 +3,9 @@ import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
 import {VisibleHistory} from './VisibleHistory.jsx';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
+const ACTIVITY_GROUPS = [['day', '近 24 小时'], ['week', '24 小时至 7 天'], ['older', '更早'], ['unknown', '活动时间未知']];
+const DAY = 24 * 60 * 60 * 1000;
+const NAME_ORDER = new Intl.Collator('zh-CN', {numeric: true, sensitivity: 'base'});
 const COVERAGE = {
  source_unavailable: '部分已登记来源不可读或已变化',
  source_alias: '检测到不安全的来源别名',
@@ -58,10 +61,39 @@ function ViewDialog({action, initialAlias, onCancel, onConfirm}) {
  </dialog>;
 }
 
-function sessionTime(value) {
- if (!value) return '时间未知';
- const date = new Date(value);
- return Number.isFinite(date.getTime()) ? date.toLocaleString() : '时间未知';
+function listText(value) {
+ return value.normalize('NFKC').toLowerCase();
+}
+
+function collectionRows(list, preference, collection, query) {
+ if (!list) return [];
+ const counts = new Map();
+ return list.sessions.flatMap((row, index) => {
+  const view = preference(row.handle);
+  if (!belongs(view, collection)) return [];
+  const number = (counts.get(row.provider) || 0) + 1;
+  counts.set(row.provider, number);
+  const providerName = PROVIDERS[row.provider];
+  const name = view.alias || providerName + ' 会话 ' + number;
+  const matches = !query || [name, providerName, ...row.source_labels].some(value => listText(value).includes(query));
+  const epoch = typeof row.updated_at === 'string' ? Date.parse(row.updated_at) : NaN;
+  const time = Number.isFinite(epoch) && epoch <= list.referenceTime ? epoch : null;
+  return [{...row, index, name, matches, time, hidden: view.hidden}];
+ });
+}
+
+function activityGroup(time, referenceTime) {
+ if (time === null) return 'unknown';
+ const age = referenceTime - time;
+ return age < DAY ? 'day' : age < 7 * DAY ? 'week' : 'older';
+}
+
+function compareRows(a, b, order) {
+ if (order === 'name') return NAME_ORDER.compare(a.name, b.name) || a.index - b.index;
+ if (a.time === b.time) return a.index - b.index;
+ if (a.time === null) return 1;
+ if (b.time === null) return -1;
+ return order === 'earliest' ? a.time - b.time : b.time - a.time;
 }
 
 export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
@@ -70,6 +102,9 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const [loading, setLoading] = useState(enabled);
  const [listError, setListError] = useState('');
  const [provider, setProvider] = useState('');
+ const [listQuery, setListQuery] = useState('');
+ const [grouping, setGrouping] = useState('provider');
+ const [order, setOrder] = useState('latest');
  const [query, setQuery] = useState('');
  const [collection, setCollection] = useState('current');
  const [views, setViews] = useState(() => new Map());
@@ -110,7 +145,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    }));
    if (current() && preferences.workspace === workspace.id && preferences.revision === result.revision) {
     setViews(new Map(preferences.views.map(view => [view.handle, view])));
-    setList(result);
+    setList({...result, referenceTime: Date.now()});
    }
   } catch (error) {
    if (isCurrent() && generation === listGeneration.current) setListError(error.message);
@@ -246,8 +281,12 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   changeView(dialogAction.action, alias);
  }
 
- const filtered = list?.sessions.filter(row => belongs(preference(row.handle), collection)
-   && (!provider || provider === row.provider)) || [];
+ const listNeedle = listText(listQuery).trim();
+ const rows = collectionRows(list, preference, collection, listNeedle);
+ const filtered = rows.filter(row => row.matches && (!provider || provider === row.provider));
+ const activityGrouping = grouping === 'activity';
+ const groups = activityGrouping ? ACTIVITY_GROUPS : Object.entries(PROVIDERS);
+ const selectedOutsideFilter = reading && rows.some(row => row.handle === reading.row.handle && !row.matches);
  const messages = reading?.result?.messages || [];
  const normalized = query.trim().toLocaleLowerCase();
  const visible = messages.filter(message => !normalized || message.text.toLocaleLowerCase().includes(normalized));
@@ -298,21 +337,44 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
       </label>)}
      </fieldset>
      {notice && <p role="status" className="muted small">{notice}</p>}
-     <label className="field"><span>Provider</span><select aria-label="筛选会话 Provider" value={provider} onChange={event => filterProvider(event.target.value)}>
-      <option value="">全部</option>{Object.entries(PROVIDERS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-     </select></label>
-     {!filtered.length && <p className="muted">当前工作空间没有匹配的原生会话。</p>}
-     {Object.entries(PROVIDERS).map(([id, name]) => {
-      const group = filtered.filter(row => row.provider === id);
+     <div className="native-list-options">
+      <label className="field"><span>筛选会话列表</span>
+       <input type="search" aria-describedby="native-list-filter-scope" value={listQuery}
+        onChange={event => setListQuery([...event.target.value].slice(0, 200).join(''))}/>
+      </label>
+      <small id="native-list-filter-scope" className="muted">仅筛选会话名称、Provider 和来源。</small>
+      <label className="field"><span>Provider</span>
+       <select aria-label="筛选会话 Provider" value={provider} onChange={event => filterProvider(event.target.value)}>
+        <option value="">全部</option>{Object.entries(PROVIDERS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+       </select>
+      </label>
+      <label className="field"><span>会话列表分组</span>
+       <select value={grouping} onChange={event => setGrouping(event.target.value)}>
+        <option value="provider">按 Provider</option><option value="activity">按活动时间</option>
+       </select>
+      </label>
+      <label className="field"><span>会话列表排序</span>
+       <select value={order} onChange={event => setOrder(event.target.value)}>
+        <option value="latest">最近活动优先</option><option value="earliest">最早活动优先</option>
+        <option value="name">按名称</option>
+       </select>
+      </label>
+     </div>
+     {!filtered.length && <p className="muted">{listNeedle || provider ? '当前集合没有符合筛选条件的会话。' :
+      '当前工作空间没有匹配的原生会话。'}</p>}
+     {groups.map(([id, name]) => {
+      const group = filtered.filter(row => (activityGrouping ? activityGroup(row.time, list.referenceTime) : row.provider) === id);
+      group.sort((a, b) => compareRows(a, b, order));
       return group.length > 0 && <section key={id} aria-label={name}>
        <h3>{name}</h3>
-       <ul>{group.map((row, index) => <li key={row.handle}>
+       <ul>{group.map(row => <li key={row.handle}>
         <button className="native-session-item" aria-pressed={reading?.row.handle === row.handle}
+         ref={button => { if (button && reading?.row.handle === row.handle) opener.current = button; }}
          disabled={row.access !== 'readable'} onClick={event => choose(row, event.currentTarget)}>
          <MessageSquareText size={15}/>
-         <span>{preference(row.handle).alias || name + ' 会话 ' + (index + 1)}
-          <small>{row.source_labels.join(' · ')} · {sessionTime(row.updated_at)}</small>
-          <small>{ACCESS[row.access]}{preference(row.handle).hidden ? ' · 已隐藏' : ''}</small></span>
+         <span>{row.name}
+          <small>{row.source_labels.join(' · ')} · {row.time === null ? '时间未知' : new Date(row.time).toLocaleString()}</small>
+          <small>{ACCESS[row.access]}{row.hidden ? ' · 已隐藏' : ''}</small></span>
         </button>
        </li>)}</ul>
       </section>;
@@ -322,6 +384,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    {reading && <section className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
      <h3>{selectedView.alias || PROVIDERS[reading.row.provider]} · 只读</h3></header>
+    {selectedOutsideFilter && <p role="status" className="muted small">当前阅读的会话不在筛选结果中。</p>}
     {reading.loading && <p className="muted" role="status">正在读取已核验的会话…</p>}
     {reading.error && <p className="error-text" role="alert">{reading.error}</p>}
     {reading.result && <>

@@ -76,7 +76,9 @@
 }
 
 .native-panel.has-preview { width: min(780px, calc(100vw - 24px)); }
-.native-list > .field { padding: 8px 4px; }
+.native-list-options { display: grid; gap: 6px; padding: 8px 4px; }
+.native-list-options label, .native-list-options select { min-width: 0; }
+.native-list-options small { overflow-wrap: anywhere; }
 .native-list > section { margin: 10px 0; }
 .native-list > section > h3 { padding: 5px 4px; }
 .native-list > section > ul { padding-left: 0; }
