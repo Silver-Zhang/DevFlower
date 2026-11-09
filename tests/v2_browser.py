@@ -50,10 +50,21 @@ def main():
         p.error('Evidence must remain outside product source')
     out.mkdir(parents=True, mode=0o700, exist_ok=False)
     spaces = out / 'workspaces'; spaces.mkdir()
-    for name in ['A', 'B']: (spaces / name).mkdir()
+    for name in ['A', 'B']:
+        project = spaces / name
+        (project / 'nested').mkdir(parents=True)
+        (project / 'nested' / '空目录').mkdir()
+        (project / 'constructor').mkdir()
+        (project / 'constructor' / 'plain.txt').write_text('ordinary directory name', encoding='utf-8')
+        (project / 'nested' / 'readme.txt').write_text(f'{name} 项目 <b>字面文本</b>\n', encoding='utf-8')
+        (project / 'quick.txt').write_text(f'{name} quick', encoding='utf-8')
+        (project / 'bad.bin').write_bytes(b'binary\0')
+        (project / '.codex').mkdir()
+        (project / '.codex' / 'auth.json').write_text('synthetic read sentinel', encoding='utf-8')
     log = (out / 'server-stderr.txt').open('w')
     server = subprocess.Popen([sys.executable, '-B', str(root / 'tools/devflower_v2.py'),
-        '--state-dir', str(out / 'state'), '--allow-root', str(spaces), '--no-browser'],
+        '--state-dir', str(out / 'state'), '--allow-root', str(spaces),
+        '--codex-cli', str(out / 'no-codex-fixture'), '--no-browser'],
         cwd=root, stdout=subprocess.PIPE, stderr=log, text=True)
     sel = selectors.DefaultSelector(); sel.register(server.stdout, selectors.EVENT_READ)
     try:

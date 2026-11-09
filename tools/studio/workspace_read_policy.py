@@ -31,8 +31,8 @@ def stamp(s):
 
 
 class IgnoreRules:
-    def __init__(self,opener,*,snapshot=False,forbidden=lambda p:False):
-        self.opener=opener;self.forbidden=forbidden
+    def __init__(self,opener,*,snapshot=False,forbidden=lambda p:False,file_opener=regular_at):
+        self.opener=opener;self.forbidden=forbidden;self.file_opener=file_opener
         self.directories={};self.files={};self.seen=set();self.total=0;self.rules_count=0
         self.frozen=False
         if snapshot:self.snapshot()
@@ -49,7 +49,7 @@ class IgnoreRules:
             values=[]
             for name in ('.gitignore','.ignore'):
                 try:
-                    with regular_at(name,dir_fd=directory) as fd:
+                    with self.file_opener(name,dir_fd=directory) as fd:
                         before=os.fstat(fd)
                         if before.st_size>16000:raise Blocked('忽略规则超过16000字节预算；读取已停止')
                         raw=os.pread(fd,16001,0);after=os.fstat(fd)

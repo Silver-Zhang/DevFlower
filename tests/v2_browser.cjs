@@ -111,6 +111,144 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   const writes=[];const observe=r=>{if(r.method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'))writes.push(r.postDataJSON())};page.on('request',observe);
   await page.locator('.workspace-link').filter({hasText:'B'}).click();await page.getByRole('button',{name:'放弃修改',exact:true}).click();await until(async()=>await page.locator('.app-header button').textContent()==='B');await page.getByLabel('工作流名称',{exact:true}).fill('F1 workspace B independent');await save();assert.equal(writes.length,1);assert.equal(writes[0].document.name,'F1 workspace B independent');assert.equal(writes[0].expected,null);page.off('request',observe);
  });
+ await test('p1a-close-pristine-and-reopen-explicitly-saved-blank',async()=>{
+  const close=page.getByRole('button',{name:'关闭工作空间',exact:true});
+  const recent=page.locator('.workspace-link').filter({hasText:'B'});
+  const name=page.getByLabel('工作流名称',{exact:true});
+  const list=page.getByLabel('工作流列表',{exact:true}).locator('button');
+  const savePosts=()=>requests.filter(r=>r.method==='POST'&&r.path==='/api/v2/drafts/save').length;
+  const previous=await list.count(),writes=savePosts();
+  await page.getByLabel('新建工作流',{exact:true}).click();
+  assert.equal(await name.inputValue(),'新工作流');
+  await close.click();
+  assert.equal(await page.getByRole('dialog',{name:'未保存的草稿'}).count(),0);
+  assert.equal(savePosts(),writes);
+  assert(await name.isDisabled());
+  await page.reload();await recent.waitFor();
+  assert(await name.isDisabled());
+  await recent.click();await until(()=>name.isEnabled());
+  assert.equal(await list.count(),previous);
+
+  let committed;
+  const saved=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/api/v2/drafts/save'));
+  await save();committed=await (await saved).json();
+  assert.equal(committed.graph.name,'新工作流');assert.deepEqual(committed.graph.nodes,[]);
+  await close.click();assert(await name.isDisabled());
+  await recent.click();await until(()=>name.isEnabled());
+  const read=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v2/draft');
+  await list.getByText('新工作流',{exact:true}).click();
+  const reopened=await (await read).json();
+  assert.equal(reopened.id,committed.id);assert.equal(reopened.revision,committed.revision);
+  await until(async()=>await page.locator('.save-state').innerText()==='已保存');
+ });
+
+ await test('p1a-close-keeps-edits-on-save-error-cancel-and-explicit-discard',async()=>{
+  const close=page.getByRole('button',{name:'关闭工作空间',exact:true});
+  const recent=page.locator('.workspace-link').filter({hasText:'B'});
+  const name=page.getByLabel('工作流名称',{exact:true});
+  const dialog=page.getByRole('dialog',{name:'未保存的草稿',exact:true});
+  const pointers=()=>page.evaluate(()=>Object.entries(localStorage).filter(([key])=>key.startsWith('devflower-v2-last:')));
+  const previous=await pointers();
+  const saveRoute='**/api/v2/drafts/save';
+  await name.fill('p1a 保存关闭时的编辑');
+  await close.click();
+  for(const status of [409,503]){
+   const fail=route=>route.fulfill({status,json:{error:'synthetic save failure '+status}});
+   await page.route(saveRoute,fail);
+   await dialog.getByRole('button',{name:'保存并继续',exact:true}).click();
+   await dialog.getByText(new RegExp('HTTP '+status)).waitFor();
+   assert.deepEqual(await pointers(),previous);
+   assert.equal(await name.inputValue(),'p1a 保存关闭时的编辑');
+   await page.unroute(saveRoute,fail);
+  }
+  await dialog.getByRole('button',{name:'取消关闭',exact:true}).click();
+  assert.equal(await name.inputValue(),'p1a 保存关闭时的编辑');
+  await close.click();
+  await dialog.getByRole('button',{name:'保存并继续',exact:true}).click();
+  await until(()=>name.isDisabled());
+  assert.deepEqual(await pointers(),[]);
+  await recent.click();await until(()=>name.isEnabled());
+  const saved=page.getByLabel('工作流列表',{exact:true}).getByText('p1a 保存关闭时的编辑',{exact:true});
+  await saved.click();await until(async()=>await name.inputValue()==='p1a 保存关闭时的编辑');
+  await name.fill('p1a 应丢弃');
+  await close.click();await dialog.getByRole('button',{name:'放弃修改',exact:true}).click();
+  await until(()=>name.isDisabled());await recent.click();await until(()=>name.isEnabled());
+  assert.equal(await page.getByLabel('工作流列表',{exact:true}).getByText('p1a 应丢弃',{exact:true}).count(),0);
+ });
+
+ await test('p1a-file-tree-narrow-focus-and-pure-text',async()=>{
+  const entry=page.getByRole('button',{name:'文件',exact:true});
+  const panel=page.getByLabel('项目文件',{exact:true});
+  const preview=page.getByLabel('文件预览',{exact:true});
+  const name=page.getByLabel('工作流名称',{exact:true});
+  await name.fill('文件视图不改编辑');
+  for(const width of [600,900,1440]){
+   await page.setViewportSize({width,height:900});
+   await page.getByLabel('外观主题',{exact:true}).selectOption(width===900?'dark':'light');
+   await entry.focus();await page.keyboard.press('Enter');await panel.waitFor();
+   const ordinary=panel.getByRole('button',{name:'constructor',exact:true});
+   await ordinary.click();
+   await panel.getByRole('button',{name:'预览文件 constructor/plain.txt',exact:true}).waitFor();
+   await ordinary.click();
+   const nested=panel.getByRole('button',{name:'nested',exact:true});
+   assert.equal(await nested.getAttribute('aria-expanded'),'false');
+   assert.equal(await panel.getByRole('button',{name:'预览文件 nested/readme.txt',exact:true}).count(),0);
+   await nested.focus();await page.keyboard.press('Space');
+   await panel.getByRole('button',{name:'空目录',exact:true}).click();
+   await panel.getByText('此处没有可浏览的条目',{exact:true}).waitFor();
+   const file=panel.getByRole('button',{name:'预览文件 nested/readme.txt',exact:true});
+   await file.click();await preview.locator('pre').waitFor();
+   assert.equal(await preview.locator('pre').textContent(),'B 项目 <b>字面文本</b>\n');
+   assert.equal(await preview.locator('b').count(),0);
+   await preview.getByRole('button',{name:'返回文件树',exact:true}).click();
+   await until(()=>file.evaluate(button=>button===document.activeElement));
+   await nested.click();assert.equal(await nested.getAttribute('aria-expanded'),'false');
+   assert.equal(await file.count(),0);
+   assert.equal(await panel.getByText('.codex',{exact:true}).count(),0);
+   await panel.getByRole('button',{name:'预览文件 bad.bin',exact:true}).click();
+   await preview.getByRole('alert').filter({hasText:'二进制'}).waitFor();
+   await panel.getByRole('button',{name:'关闭项目文件',exact:true}).click();
+   await until(()=>entry.evaluate(button=>button===document.activeElement));
+   assert.equal(await name.inputValue(),'文件视图不改编辑');
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  }
+  await page.getByRole('button',{name:'关闭工作空间',exact:true}).click();
+  await page.getByRole('button',{name:'放弃修改',exact:true}).click();
+ });
+
+ await test('p1a-late-preview-cannot-replace-newer-or-returning-workspace',async()=>{
+  const recent=name=>page.locator('.workspace-link').filter({hasText:name});
+  const panel=page.getByLabel('项目文件',{exact:true});
+  const entry=page.getByRole('button',{name:'文件',exact:true});
+  const preview=page.getByLabel('文件预览',{exact:true});
+  const name=page.getByLabel('工作流名称',{exact:true});
+  const routePattern='**/api/v2/project-file?*';
+  let release,heldOnce=false,completed=false;
+  const delayed=new Promise(resolve=>{release=resolve});
+  const hold=async route=>{
+   if(heldOnce||!new URL(route.request().url()).searchParams.get('path').endsWith('readme.txt')) return route.continue();
+   heldOnce=true;const response=await route.fetch();await delayed;
+   await route.fulfill({response});completed=true;
+  };
+  await recent('A').click();await until(()=>name.isEnabled());
+  await entry.click();await panel.getByRole('button',{name:'nested',exact:true}).click();
+  await page.route(routePattern,hold);
+  await panel.getByRole('button',{name:'预览文件 nested/readme.txt',exact:true}).click();
+  await until(()=>heldOnce);
+  await panel.getByRole('button',{name:'预览文件 quick.txt',exact:true}).click();
+  await preview.getByText('A quick',{exact:true}).waitFor();
+  await recent('B').click();
+  await until(async()=>await page.locator('.app-header button').textContent()==='B');
+  await recent('A').click();
+  await until(async()=>await page.locator('.app-header button').textContent()==='A');
+  await entry.click();await panel.getByRole('button',{name:'预览文件 quick.txt',exact:true}).click();
+  await preview.getByText('A quick',{exact:true}).waitFor();
+  release();await until(()=>completed);await sleep(150);
+  assert.equal(await preview.locator('pre').textContent(),'A quick');
+  assert.equal(await panel.getByText(/字面文本/).count(),0);
+  await page.unroute(routePattern,hold);
+ });
+ assert.equal(requests.some(r=>r.path.endsWith('/launch')||r.path.endsWith('/cancel')),false);
  assert.equal(requests.some(r=>/start|prepare|model|account|thread|turn|sessions/.test(r.path)),false,'M1 must not call native or legacy execution routes');assert.equal(errors.length,0,'Browser page errors: '+errors.join('; '));
  await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'real launcher/HTTP/Chromium; no Provider calls',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,results:rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

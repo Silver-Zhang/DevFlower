@@ -5,3 +5,72 @@
 @media(max-width:1350px){.editor:has(+.inspector) .run-summary,.editor:has(+.inspector) .launch-warning{margin-right:346px}.document-bar>div:first-child{flex-wrap:wrap;gap:4px 12px}.canvas-toolbar{flex-shrink:0;flex-wrap:wrap}}
 
 .run-evidence>*{flex-shrink:0}
+
+.workspace-actions {
+ display: flex;
+ flex-wrap: wrap;
+ gap: 6px;
+ padding: 0 4px 12px;
+}
+.project-panel {
+ position: fixed;
+ z-index: 12;
+ top: 64px;
+ right: 12px;
+ bottom: 12px;
+ width: min(360px, calc(100vw - 24px));
+ display: flex;
+ flex-direction: column;
+ border: 1px solid var(--studio-line-strong);
+ border-radius: 10px;
+ box-shadow: var(--studio-shadow);
+ background: var(--studio-bg);
+}
+.project-panel.has-preview { width: min(680px, calc(100vw - 24px)); }
+.project-panel-header, .project-preview header {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ padding: 10px 12px;
+ border-bottom: 1px solid var(--studio-line);
+}
+.project-panel-header > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.project-panel-content {
+ flex: 1;
+ min-height: 0;
+ display: grid;
+ grid-template-columns: minmax(0, 1fr);
+}
+.has-preview .project-panel-content { grid-template-columns: minmax(150px, 2fr) minmax(0, 3fr); }
+.project-tree, .project-preview { min-width: 0; min-height: 0; overflow: auto; }
+.project-tree { padding: 10px 12px; }
+.project-tree p { padding: 8px 4px; }
+.project-tree ul { padding: 0 0 0 12px; margin: 0; list-style: none; }
+.project-tree > ul { padding-left: 0; }
+.project-tree button {
+ width: 100%;
+ text-align: left;
+ justify-content: flex-start;
+ border: 0;
+ white-space: normal;
+ overflow-wrap: anywhere;
+}
+.project-tree button svg { flex-shrink: 0; }
+.project-tree button span { min-width: 0; }
+.project-preview { border-left: 1px solid var(--studio-line); }
+.project-preview h3 { min-width: 0; overflow-wrap: anywhere; }
+.project-preview pre {
+ margin: 12px;
+ padding: 12px;
+ white-space: pre-wrap;
+ overflow-wrap: anywhere;
+ border-radius: 6px;
+ background: var(--studio-subtle-bg);
+ font: 12px/1.6 ui-monospace, monospace;
+}
+.project-preview > p { padding: 12px; }
+@media (max-width: 700px) {
+ .project-panel.has-preview .project-panel-content { grid-template-columns: minmax(0, 1fr); }
+ .project-panel.has-preview .project-tree { display: none; }
+ .project-preview { border-left: 0; }
+}

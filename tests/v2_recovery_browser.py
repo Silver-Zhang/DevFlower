@@ -22,6 +22,7 @@ def main():
     out=Path(args.artifacts).resolve();root=Path(__file__).resolve().parents[1]
     if out.is_relative_to(root) or root.is_relative_to(out):parser.error('Evidence must remain outside source')
     out.mkdir(parents=True,mode=0o700,exist_ok=False);spaces=out/'workspaces';spaces.mkdir();(spaces/'A').mkdir()
+    (spaces/'A'/'readme.txt').write_text('read-only during a synthetic run', encoding='utf-8')
     log=(out/'server-stderr.txt').open('w');services=[]
     def launch(mode='hold',port=0):
         proc=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('v2_process_fixture.py')),'server','--state',str(out/'state'),'--spaces',str(spaces),'--mode',mode,'--port',str(port)],stdout=subprocess.PIPE,stderr=log,text=True);services.append(proc)

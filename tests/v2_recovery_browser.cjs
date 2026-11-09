@@ -23,6 +23,56 @@ async function proof(name,fn){try{await fn();await page.screenshot({path:path.jo
  await proof('new-capability-declined-reload-keeps-dirty-draft-saveable',async()=>{await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await node('Controlled A');await page.getByLabel('每轮提示词',{exact:true}).fill('M3 retained dirty edit after declined reload');const response=await control({control:'restart-service',mode:'hold',samePort:true});let dismissed=false;page.removeAllListeners('dialog');page.once('dialog',async d=>{await d.dismiss();dismissed=true});await page.goto(response.url);await until(()=>dismissed);page.on('dialog',d=>d.accept());assert.equal(await page.getByLabel('每轮提示词',{exact:true}).inputValue(),'M3 retained dirty edit after declined reload');assert.equal(await page.locator('.save-state').innerText(),'未保存');await page.getByRole('button',{name:'保存',exact:true}).click();await until(async()=>await page.locator('.save-state').innerText()==='已保存');await page.getByLabel('运行历史',{exact:true}).locator('button.workflow-link').filter({hasText:runName}).click();await state('运行中');assert.notEqual((await snapshot()).definition.draft_document.nodes[0].round_prompt,'M3 retained dirty edit after declined reload')});
  await proof('browser-network-disconnect-reconnect-keeps-run-and-send',async()=>{const offline=route=>route.abort('failed');await page.route('**/api/v2/run?*',offline);await page.getByRole('button',{name:'重新读取',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('运行状态未确认'));assert((await page.getByLabel('运行状态',{exact:true}).innerText()).startsWith('状态未确认'));assert((await page.locator('.agent-card').first().innerText()).includes('状态未确认'));assert((await page.getByLabel('运行历史',{exact:true}).locator('button.active').innerText()).includes('状态未确认'));await page.screenshot({path:path.join(out,'offline-state-unconfirmed.png')});await page.unroute('**/api/v2/run?*',offline);await page.getByRole('button',{name:'重新读取',exact:true}).click();await state('运行中');const snap=await snapshot();assert.equal(snap.run.actual_calls,1);assert.deepEqual(snap.run.worker,owner)});
  await proof('service-only-process-restart-keeps-live-worker',async()=>{const before=requests.filter(r=>r.path.endsWith('/launch')).length;await restart('hold',true);await state('运行中');const snap=await snapshot();assert(snap.worker_alive);assert.deepEqual(snap.run.worker,owner);assert.equal(snap.run.actual_calls,1);assert.equal(requests.filter(r=>r.path.endsWith('/launch')).length,before)});
+ await proof('p1a-active-workspace-close-keeps-worker-and-launch-intent',async()=>{
+  const history=()=>api('runs?workspace='+workspace);
+  const before=(await history()).map(r=>r.id);
+  const actions=()=>requests.filter(r=>r.path.endsWith('/launch')||r.path.endsWith('/cancel')).length;
+  const actionCount=actions();
+  const {environment}=await api('status');
+  const key='devflower-v2-launch:'+environment.id+':'+workspace;
+  const pending={workspace,intent_key:'synthetic-p1a-preserved-key'};
+  await page.evaluate(([key,pending])=>localStorage.setItem(key,JSON.stringify(pending)),[key,pending]);
+
+  await page.getByRole('button',{name:'文件',exact:true}).click();
+  const panel=page.getByLabel('项目文件',{exact:true});
+  await panel.getByRole('button',{name:'预览文件 readme.txt',exact:true}).click();
+  await panel.getByText('read-only during a synthetic run',{exact:true}).waitFor();
+  await panel.getByRole('button',{name:'关闭项目文件',exact:true}).click();
+  await state('运行中');
+
+  let release,seen=false,finished=false;
+  const delayed=new Promise(resolve=>{release=resolve});
+  const routePattern='**/api/v2/run?*';
+  const hold=async route=>{
+   if(seen)return route.continue();
+   seen=true;
+   const response=await route.fetch();
+   const row=await response.json();
+   await delayed;
+   await route.fulfill({response,json:{...row,state:'FAILED',run:{...row.run,reason:'STALE-OLD-RUN'}}});
+   finished=true;
+  };
+  await page.route(routePattern,hold);
+  await until(()=>seen);
+  await page.getByRole('button',{name:'关闭工作空间',exact:true}).click();
+  await page.getByRole('heading',{name:'把想法连接成工作流',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('运行状态',{exact:true}).count(),0);
+  assert.deepEqual((await history()).map(r=>r.id),before);
+  assert.equal((await snapshot()).run.worker.pid,owner.pid);
+  assert.deepEqual(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key),pending);
+  assert.equal(await page.evaluate(id=>localStorage.getItem('devflower-v2-run-view:'+id),environment.id),null);
+
+  await page.locator('.workspace-link').filter({hasText:'A'}).click();
+  await page.getByRole('button',{name:'核验本次启动',exact:true}).waitFor();
+  await page.getByLabel('运行历史',{exact:true}).locator('button.workflow-link').filter({hasText:runName}).click();
+  await state('运行中');
+  release();await until(()=>finished);await sleep(150);
+  await state('运行中');
+  assert.equal(await page.getByText('STALE-OLD-RUN',{exact:true}).count(),0);
+  assert.equal(actions(),actionCount);
+  await page.unroute(routePattern,hold);
+  await page.evaluate(key=>localStorage.removeItem(key),key);
+ });
  await proof('cancel-response-loss-unknown-provider-and-no-downstream',async()=>{const lose=async route=>{const response=await route.fetch();assert.equal(response.status(),200);await route.abort('failed')};await page.route('**/api/v2/cancel',lose);await page.getByRole('button',{name:'取消本次运行',exact:true}).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('取消结果未确认'));await page.unroute('**/api/v2/cancel',lose);await page.getByRole('button',{name:'重新读取',exact:true}).click();await state('待核验');const snap=await snapshot();assert.equal(snap.provider_outcome,'unknown');assert.equal(snap.run.actual_calls,1);assert(snap.run.cancel_requested);assert(!snap.nodes.find(n=>n.name==='Controlled B').input_sent_sha256);assert(!snap.nodes.find(n=>n.name==='Controlled B').process,'Downstream native process never starts after cancelling A');assert(fs.existsSync('/proc/'+process.env.UNRELATED_PID+'/stat'),'Unrelated process survives');const before=requests.filter(r=>r.path.endsWith('/launch')).length;await restart();await state('待核验');assert.equal((await snapshot()).run.actual_calls,1);assert.equal(requests.filter(r=>r.path.endsWith('/launch')).length,before)});
  await proof('sent-worker-death-and-service-restart-stay-unknown',async()=>{await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await newBlank();await prepare('M3 worker death');await launch();await control({control:'kill-worker',run});await restart();await state('待核验');const snap=await snapshot();assert.equal(snap.provider_outcome,'unknown');assert.equal(snap.run.actual_calls,1);assert.equal(snap.nodes.filter(n=>n.receipt_verified).length,0)});
  await proof('completion-file-crash-window-reopens-verified-result',async()=>{await restart('completion-before-record');await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await newBlank();await prepare('M3 completion recovery');await launch();await release();await barrier('completion-before-record');await state('已完成');await node('Controlled A');assert.equal(await page.getByLabel('Agent 最终回答',{exact:true}).innerText(),'synthetic controlled completion');const before=requests.filter(r=>r.path.endsWith('/launch')).length;await restart();await state('已完成');assert.equal((await snapshot()).run.actual_calls,1);assert.equal(requests.filter(r=>r.path.endsWith('/launch')).length,before)});

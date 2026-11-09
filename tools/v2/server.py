@@ -10,6 +10,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .documents import check_chain
+from .project_files import read_project
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -71,6 +72,13 @@ def create_server(store, port=0, *, runtime=None):
                     result = store.browse(query.get('path'))
                 elif post and path == '/api/v2/workspaces/open' and set(data) == {'path'}:
                     result = store.open_workspace(data['path'])
+                elif not post and path in ('/api/v2/project-files', '/api/v2/project-file'):
+                    params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict')
+                    if 'workspace' not in params or set(params) - {'workspace', 'path'} or any(
+                            len(values) != 1 for values in params.values()):
+                        raise Invalid('读取项目文件需要工作空间身份和可选相对路径')
+                    result = read_project(store, params['workspace'][0], params.get('path', [''])[0],
+                                          preview=path == '/api/v2/project-file')
                 elif not post and path == '/api/v2/drafts':
                     result = store.drafts(query.get('workspace'))
                 elif not post and path == '/api/v2/draft':
