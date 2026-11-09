@@ -1,7 +1,7 @@
 name: V2 workflow regression
 on:
   push:
-    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces']
+    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation']
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_drafts v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination; do
+          for suite in v2_drafts v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination v2_session_identity v2_session_lease; do
             if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/v2-evidence/$suite.log" 2>&1; then
               printf '%s exit=0\n' "$suite"
             else
@@ -135,6 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p test_native_codex_exec.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/native-codex-exec.log"
+          unshare -Ur -m --propagation private python3 -B tests/v2_session_bind_mount.py 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-session-bind-mount.log"
       - name: Preserve native synthetic evidence, including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
