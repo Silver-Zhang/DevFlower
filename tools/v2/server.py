@@ -11,6 +11,7 @@ from studio.server import Conflict
 from orchestration.common import Blocked
 from .documents import check_chain
 from .native_sessions import NativeHistoryError, request_parameters
+from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, action_parameters, list_parameters
 from .project_files import read_project
 
 STATIC = Path(__file__).parent / 'static'
@@ -18,6 +19,7 @@ STATIC = Path(__file__).parent / 'static'
 
 def create_server(store, port=0, *, runtime=None, native_sessions=None):
     token = secrets.token_urlsafe(32)
+    native_views = NativeSessionViews(native_sessions) if native_sessions is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -52,6 +54,28 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                         return self.reply(404, {'error': '入口不存在'})
                     filename, mime = files[path]
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
+                if post and path == '/api/v2/native-session-view':
+                    try:
+                        size = int(self.headers.get('Content-Length', '0'))
+                        if (not 0 < size <= MAX_ACTION_BYTES or urlsplit(self.path).query
+                                or self.headers.get('Content-Type', '').split(';')[0] != 'application/json'):
+                            raise ValueError()
+                        action = action_parameters(self.rfile.read(size))
+                    except ValueError:
+                        raise NativeHistoryError('NATIVE_VIEW_INVALID') from None
+                    if native_views is None:
+                        raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
+                    return self.reply(200, native_views.change(action))
+                if not post and path == '/api/v2/native-session-views':
+                    try:
+                        params = parse_qs(urlsplit(self.path).query, keep_blank_values=True,
+                                          errors='strict', max_num_fields=2)
+                        workspace, revision = list_parameters(params)
+                    except ValueError:
+                        raise NativeHistoryError('NATIVE_VIEW_INVALID') from None
+                    if native_views is None:
+                        raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
+                    return self.reply(200, native_views.listing(workspace, revision))
                 data = {}
                 if post:
                     size = int(self.headers.get('Content-Length', '0'))

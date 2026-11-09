@@ -22,7 +22,7 @@ from .native_history_config import PROVIDERS, SourceSpec, load_history_config, s
 from .project_files import FileView
 from .session_identity import (HANDLE, FixtureSession, LocatorIndex, ProfileRegistry, ReadProfile, SessionLocator,
                                SessionRefused, StorageRootIdentity, display_source, session_path, verified_directory)
-from .workspace_select import capture_workspace_proof, require_current
+from .workspace_select import WorkspaceDatabaseConflict, capture_workspace_proof, require_current
 
 ERRORS = {
     'NATIVE_QUERY_INVALID': (400, '原生会话查询参数无效。'),
@@ -30,6 +30,8 @@ ERRORS = {
     'NATIVE_SESSION_UNAVAILABLE': (404, '此工作空间没有可读取的对应会话。'),
     'NATIVE_REVISION_STALE': (409, '会话来源或列表已变化，请刷新会话列表。'),
     'NATIVE_SCAN_BUSY': (409, '会话读取正在进行，请稍后重试。'),
+    'NATIVE_VIEW_INVALID': (400, '会话整理参数无效。'),
+    'NATIVE_VIEW_CONFLICT': (409, '会话整理状态已变化，请刷新后重试。'),
 }
 WORKSPACE = re.compile(r'[0-9a-f]{64}')
 REVISION = re.compile(r'[0-9a-f]{32}')
@@ -132,6 +134,7 @@ class Snapshot:
     expires: float
     workspace_identity: StorageRootIdentity
     reads: dict = field(repr=False)
+    handles: frozenset = field(repr=False)
 
 
 def stamp(meta):
@@ -503,7 +506,7 @@ class NativeSessions:
             raise SessionRefused('PROFILE_REFUSED')
         return source_for(spec, self.seed)
 
-    def workspace(self, key):
+    def workspace(self, key, *, database_error='NATIVE_REVISION_STALE'):
         try:
             proof = capture_workspace_proof(self.store.state)
             path = Path(self.store.workspace(key, existing_only=True)['path'])
@@ -512,6 +515,8 @@ class NativeSessions:
                 raise Conflict('workspace changed')
             require_current(self.store.state, proof)
             return path, identity, proof
+        except WorkspaceDatabaseConflict:
+            raise NativeHistoryError(database_error) from None
         except Conflict:
             raise NativeHistoryError('NATIVE_REVISION_STALE') from None
         except (OSError, ValueError, Blocked):
@@ -586,7 +591,7 @@ class NativeSessions:
         sessions = sorted(rows.values(), key=lambda row: row['updated_at'] or '', reverse=True)
         result = {'workspace': workspace, 'revision': revision,
                   'coverage': {'state': state, 'reasons': sorted(reasons)}, 'sessions': sessions}
-        return result, Snapshot(revision, time.monotonic() + SNAPSHOT_SECONDS, identity, reads)
+        return result, Snapshot(revision, time.monotonic() + SNAPSHOT_SECONDS, identity, reads, frozenset(rows))
 
     def _snapshot(self, workspace, revision):
         snapshot = self.snapshots.get(workspace)
@@ -596,6 +601,18 @@ class NativeSessions:
                 raise NativeHistoryError('NATIVE_SESSION_UNAVAILABLE')
             raise NativeHistoryError('NATIVE_REVISION_STALE')
         return snapshot
+
+    @contextmanager
+    def verified_record(self, workspace, handle, path, identity, record):
+        locator = record.index.resolve(workspace, handle)
+        with rooted_view(path, identity) as scope, rooted_view(record.source.profile.root, locator.root_identity) as view:
+            require_cwds(scope, record.cwd_evidence)
+            require_directories(view, record.directories)
+            yield view, locator
+            require_directories(view, record.directories)
+            require_cwds(scope, record.cwd_evidence)
+            require_file(view, record.ref)
+        record.source.registry.verify(locator.profile_id)
 
     def read(self, workspace, handle, revision):
         path, identity, proof = self.workspace(workspace)
@@ -609,14 +626,8 @@ class NativeSessions:
         if not self.read_slots.acquire(blocking=False):
             raise NativeHistoryError('NATIVE_SCAN_BUSY')
         try:
-            locator = record.index.resolve(workspace, handle)
-            with rooted_view(path, identity) as scope, rooted_view(record.source.profile.root, locator.root_identity) as view:
-                require_cwds(scope, record.cwd_evidence)
-                require_directories(view, record.directories)
+            with self.verified_record(workspace, handle, path, identity, record) as (view, locator):
                 messages, truncated = project_messages(view, record.ref, locator.provider, self.literals)
-                require_directories(view, record.directories)
-                require_cwds(scope, record.cwd_evidence)
-            record.source.registry.verify(locator.profile_id)
             self.require_proof(proof)
             with self.guard:
                 self._snapshot(workspace, revision)

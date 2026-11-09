@@ -20,6 +20,43 @@ const COVERAGE = {
 };
 const ACCESS = {readable: '只读', unverified: '归属或覆盖待核验', conflict: '会话身份冲突'};
 
+const COLLECTIONS = [['current', '当前'], ['hidden', '隐藏'], ['archived', '归档'], ['trash', '回收站']];
+const DEFAULT_VIEW = {alias: null, hidden: false, collection: 'active', view_revision: null};
+const ACTIONS = {
+ rename: '设置本地别名', hide: '隐藏', unhide: '取消隐藏',
+ archive: '归档', trash: '移入回收站', restore: '恢复到当前列表',
+};
+
+function belongs(view, collection) {
+ if (view.collection !== 'active') return collection === view.collection;
+ return collection === (view.hidden ? 'hidden' : 'current');
+}
+
+function ViewDialog({action, initialAlias, onCancel, onConfirm}) {
+ const dialog = useRef(null);
+ const [alias, setAlias] = useState(initialAlias || '');
+ useEffect(() => {
+  dialog.current.showModal();
+ }, []);
+ const rename = action === 'rename';
+ return <dialog ref={dialog} className="native-view-dialog" aria-labelledby="native-view-title"
+  onCancel={event => { event.preventDefault(); onCancel(); }}
+  onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
+  <form onSubmit={event => { event.preventDefault(); onConfirm(rename ? alias : undefined); }}>
+   <h3 id="native-view-title">{ACTIONS[action]}</h3>
+   <p>仅影响 DevFlower 列表。</p>
+   {rename && <label className="field"><span>本地别名</span><input autoFocus value={alias} maxLength={320}
+     onChange={event => setAlias(event.target.value)}/></label>}
+   <div className="native-view-dialog-buttons">
+    <button type="button" autoFocus={!rename} onClick={onCancel}>取消</button>
+    <button type="submit" className="primary" disabled={rename && (!alias.trim() || [...alias.trim()].length > 160)}>
+     {rename ? '保存别名' : action === 'archive' ? '确认归档' : '确认移入回收站'}
+    </button>
+   </div>
+  </form>
+ </dialog>;
+}
+
 function sessionTime(value) {
  if (!value) return '时间未知';
  const date = new Date(value);
@@ -33,11 +70,21 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const [listError, setListError] = useState('');
  const [provider, setProvider] = useState('');
  const [query, setQuery] = useState('');
+ const [collection, setCollection] = useState('current');
+ const [views, setViews] = useState(() => new Map());
+ const [dialogAction, setDialogAction] = useState(null);
+ const [mutating, setMutating] = useState(false);
+ const [mutationError, setMutationError] = useState('');
+ const [refreshCue, setRefreshCue] = useState('');
+ const [notice, setNotice] = useState('');
  const listGeneration = useRef(0);
  const selectionGeneration = useRef(0);
  const closeButton = useRef(null);
  const backButton = useRef(null);
  const opener = useRef(null);
+ const actionOpener = useRef(null);
+ const collectionGroup = useRef(null);
+ const mutation = useRef(null);
 
  async function refresh() {
   if (!enabled) return;
@@ -47,10 +94,22 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   setList(null);
   setReading(null);
   setListError('');
+  setMutationError('');
+  setRefreshCue('');
+  setNotice('');
+  setDialogAction(null);
   setQuery('');
   try {
+   const current = () => isCurrent() && generation === listGeneration.current;
    const result = await api('native-sessions?' + new URLSearchParams({workspace: workspace.id}));
-   if (isCurrent() && generation === listGeneration.current && result.workspace === workspace.id) setList(result);
+   if (!current() || result.workspace !== workspace.id) return;
+   const preferences = await api('native-session-views?' + new URLSearchParams({
+    workspace: workspace.id, revision: result.revision
+   }));
+   if (current() && preferences.workspace === workspace.id && preferences.revision === result.revision) {
+    setViews(new Map(preferences.views.map(view => [view.handle, view])));
+    setList(result);
+   }
   } catch (error) {
    if (isCurrent() && generation === listGeneration.current) setListError(error.message);
   } finally {
@@ -72,6 +131,9 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   const {revision} = list;
   const current = () => isCurrent() && generation === selectionGeneration.current;
   opener.current = button;
+  setDialogAction(null);
+  setMutationError('');
+  setNotice('');
   setQuery('');
   setReading({row, loading: true});
   try {
@@ -91,6 +153,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
 
  function back() {
   selectionGeneration.current++;
+  setDialogAction(null);
   setReading(null);
   requestAnimationFrame(() => {
    if (!isCurrent()) return;
@@ -99,20 +162,99 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   });
  }
 
- const filtered = list?.sessions.filter(row => !provider || provider === row.provider) || [];
+ const preference = handle => views.get(handle) || DEFAULT_VIEW;
+ const selectedView = reading ? preference(reading.row.handle) : DEFAULT_VIEW;
+
+ function switchCollection(value) {
+  selectionGeneration.current++;
+  setCollection(value);
+  setDialogAction(null);
+  setReading(null);
+  setNotice('');
+  setMutationError('');
+ }
+
+ function dismissDialog() {
+  setDialogAction(null);
+  requestAnimationFrame(() => actionOpener.current?.focus());
+ }
+
+ async function changeView(action, alias) {
+  if (!list || !reading?.result || mutation.current) return;
+  const {handle} = reading.row;
+  const {revision} = list;
+  const generation = listGeneration.current, selection = selectionGeneration.current;
+  const listCurrent = () => isCurrent() && generation === listGeneration.current;
+  const current = () => listCurrent() && selection === selectionGeneration.current;
+  const ticket = {};
+  mutation.current = ticket;
+  setMutating(true);
+  setDialogAction(null);
+  setMutationError('');
+  setNotice('');
+  try {
+   const result = await api('native-session-view', {
+    workspace: workspace.id, handle, revision, expected_view_revision: selectedView.view_revision,
+    action, ...(action === 'rename' ? {alias} : {}),
+   });
+   if (listCurrent() && result.workspace === workspace.id && result.revision === revision && result.view.handle === handle) {
+    const next = result.view;
+    setViews(old => new Map(old).set(handle, next));
+    if (current()) {
+     setNotice(action === 'restore' && next.hidden ? '已恢复到隐藏列表。' : 'DevFlower 列表已更新。');
+     if (!belongs(next, collection)) {
+      selectionGeneration.current++;
+      setReading(null);
+      requestAnimationFrame(() => collectionGroup.current?.querySelector('input:checked')?.focus());
+     }
+    }
+   }
+  } catch (error) {
+   if (current()) setMutationError(error.message + ' 刷新列表核对后再操作。');
+   else if (listCurrent()) setRefreshCue('上一项整理结果需要刷新列表核对。');
+  } finally {
+   if (mutation.current === ticket) {
+    mutation.current = null;
+    if (listCurrent()) setMutating(false);
+   }
+  }
+ }
+
+ function manage(action, event) {
+  if (['rename', 'archive', 'trash'].includes(action)) {
+   actionOpener.current = event.currentTarget;
+   setDialogAction({action, handle: reading.row.handle, revision: list.revision,
+    selection: selectionGeneration.current});
+  } else {
+   changeView(action);
+  }
+ }
+
+ function confirmView(alias) {
+  if (!isCurrent() || !dialogAction || reading?.row.handle !== dialogAction.handle
+      || list?.revision !== dialogAction.revision || selectionGeneration.current !== dialogAction.selection) {
+   dismissDialog();
+   return;
+  }
+  changeView(dialogAction.action, alias);
+ }
+
+ const filtered = list?.sessions.filter(row => belongs(preference(row.handle), collection)
+   && (!provider || provider === row.provider)) || [];
  const messages = reading?.result?.messages || [];
  const normalized = query.trim().toLocaleLowerCase();
  const visible = messages.filter(message => !normalized || message.text.toLocaleLowerCase().includes(normalized));
  return <aside className={'project-panel native-panel' + (reading ? ' has-preview' : '')} aria-label="原生会话"
   onKeyDown={event => {
-   if (event.key === 'Escape' && reading) {
+   if (event.key === 'Escape' && reading && !dialogAction) {
     event.stopPropagation();
     back();
    }
   }}>
   <header className="project-panel-header">
-   <div><h2>原生会话</h2><p className="muted small">{workspace.name} · 只读 · 占用状态未核实</p></div>
-   <button aria-label="刷新原生会话" title="刷新原生会话" disabled={!enabled || loading} onClick={refresh}><RefreshCw size={16}/></button>
+   <div><h2>原生会话</h2><p className="muted small">{workspace.name} · 只读 · 占用状态未核实</p>
+    {refreshCue && <p role="status" className="muted small">{refreshCue}</p>}</div>
+   <button aria-label="刷新原生会话" title="刷新原生会话" disabled={!enabled || loading || mutating} onClick={refresh}><RefreshCw size={16}/></button>
    <button ref={closeButton} aria-label="关闭原生会话" title="关闭原生会话" onClick={onClose}><X size={16}/></button>
   </header>
   <div className="project-panel-content">
@@ -127,6 +269,14 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
      {list.coverage.reasons.length > 0 && <ul className="native-coverage-reasons">
       {list.coverage.reasons.map(reason => <li key={reason}>{COVERAGE[reason] || '部分来源未核实'}</li>)}
      </ul>}
+     <fieldset className="native-collections" ref={collectionGroup}>
+      <legend>会话整理分类</legend>
+      {COLLECTIONS.map(([id, label]) => <label key={id}>
+       <input type="radio" name="native-collection" checked={collection === id}
+        onChange={() => switchCollection(id)}/><span>{label}</span>
+      </label>)}
+     </fieldset>
+     {notice && <p role="status" className="muted small">{notice}</p>}
      <label className="field"><span>Provider</span><select aria-label="筛选会话 Provider" value={provider} onChange={event => setProvider(event.target.value)}>
       <option value="">全部</option>{Object.entries(PROVIDERS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
      </select></label>
@@ -139,8 +289,9 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
         <button className="native-session-item" aria-pressed={reading?.row.handle === row.handle}
          disabled={row.access !== 'readable'} onClick={event => choose(row, event.currentTarget)}>
          <MessageSquareText size={15}/>
-         <span>{name} 会话 {index + 1}<small>{row.source_labels.join(' · ')} · {sessionTime(row.updated_at)}</small>
-          <small>{ACCESS[row.access]}</small></span>
+         <span>{preference(row.handle).alias || name + ' 会话 ' + (index + 1)}
+          <small>{row.source_labels.join(' · ')} · {sessionTime(row.updated_at)}</small>
+          <small>{ACCESS[row.access]}{preference(row.handle).hidden ? ' · 已隐藏' : ''}</small></span>
         </button>
        </li>)}</ul>
       </section>;
@@ -149,10 +300,19 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    </nav>
    {reading && <section className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
-     <h3>{PROVIDERS[reading.row.provider]} · 只读</h3></header>
+     <h3>{selectedView.alias || PROVIDERS[reading.row.provider]} · 只读</h3></header>
     {reading.loading && <p className="muted" role="status">正在读取已核验的会话…</p>}
     {reading.error && <p className="error-text" role="alert">{reading.error}</p>}
     {reading.result && <>
+     <div className="native-view-actions" aria-label="仅在 DevFlower 整理">
+      {['rename', selectedView.hidden ? 'unhide' : 'hide',
+       ...(selectedView.collection === 'active' ? ['archive', 'trash'] :
+          selectedView.collection === 'archived' ? ['trash', 'restore'] : ['restore'])].map(action =>
+       <button key={action} disabled={mutating} onClick={event => manage(action, event)}>
+        {action === 'restore' && selectedView.hidden ? '恢复到隐藏列表' : ACTIONS[action]}
+       </button>)}
+     </div>
+     {mutationError && <p className="error-text" role="alert">{mutationError}</p>}
      <div className="native-window-controls">
       <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
        onChange={event => setQuery(event.target.value)}/></label>
@@ -167,5 +327,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
     </>}
    </section>}
   </div>
+  {dialogAction && <ViewDialog action={dialogAction.action} initialAlias={selectedView.alias} onCancel={dismissDialog}
+   onConfirm={confirmView}/>}
  </aside>;
 }
