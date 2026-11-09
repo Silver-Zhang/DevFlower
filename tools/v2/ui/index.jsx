@@ -121,7 +121,9 @@ function App(){
    if(!current())return;
    if(!Array.isArray(rows))throw connectionError('runs');
    setRuns(rows);
-   if(verifyIntent&&sameIntent()&&rows.every(row=>typeof row?.launch_intent==='string'&&row.launch_intent)&&
+   if(verifyIntent&&sameIntent()&&rows.every(row=>
+      typeof row?.id==='string'&&/^[0-9a-f]{32}$/.test(row.id)&&
+      typeof row.launch_intent==='string'&&/^[a-zA-Z0-9_-]{16,128}$/.test(row.launch_intent))&&
       !rows.some(row=>row.launch_intent===launchIntent.intent_key))keepLaunch(null,w);
   }catch(e){if(current()&&showError)setError(e.message||'操作失败，请重试')}
  }
