@@ -130,3 +130,17 @@
 .native-view-dialog::backdrop { background: #0005; }
 .native-view-dialog p { margin: 8px 0; color: var(--studio-muted); }
 .native-view-dialog-buttons { padding: 10px 0 0; justify-content: flex-end; }
+
+.native-history-controls, .native-history-summary { padding: 8px 12px; }
+.native-history-controls { border-top: 1px solid var(--studio-line); }
+.native-history-controls form, .native-history-buttons {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: end;
+ gap: 6px;
+}
+.native-history-controls form { margin-top: 6px; }
+.native-history-controls form .field { flex: 1 1 125px; min-width: 0; }
+.native-history-summary { border-bottom: 1px solid var(--studio-line); }
+.native-history-summary p, .native-history-summary .native-history-buttons { margin-top: 5px; }
+.native-history-summary h3:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }

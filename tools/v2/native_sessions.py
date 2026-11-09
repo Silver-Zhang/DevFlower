@@ -32,6 +32,10 @@ ERRORS = {
     'NATIVE_SCAN_BUSY': (409, '会话读取正在进行，请稍后重试。'),
     'NATIVE_VIEW_INVALID': (400, '会话整理参数无效。'),
     'NATIVE_VIEW_CONFLICT': (409, '会话整理状态已变化，请刷新后重试。'),
+    'NATIVE_PAGE_INVALID': (400, '原生会话分页参数无效。'),
+    'NATIVE_SEARCH_INVALID': (400, '原生会话搜索参数无效。'),
+    'NATIVE_CURSOR_INVALID': (409, '会话翻页已失效，请重新打开会话。'),
+    'NATIVE_VISIBLE_BUDGET': (409, '本次读取超过范围限制，无法确认完整结果。'),
 }
 WORKSPACE = re.compile(r'[0-9a-f]{64}')
 REVISION = re.compile(r'[0-9a-f]{32}')
@@ -401,9 +405,15 @@ def indexed_rows(source, records, directories, reasons, workspace, path, view, t
                   for handle, (ref, evidence) in reads.items()}
 
 
-def bounded_lines(fd, length, checksum):
+class TranscriptLineLimit(ValueError):
+    pass
+
+
+def bounded_lines(fd, length, checksum, *, checkpoint=None):
     pending = b''
     while length:
+        if checkpoint is not None:
+            checkpoint()
         chunk = os.read(fd, min(length, 64 * 1024))
         if not chunk:
             raise ValueError()
@@ -412,10 +422,10 @@ def bounded_lines(fd, length, checksum):
         parts = (pending + chunk).split(b'\n')
         pending = parts.pop()
         if len(pending) >= LINE_BYTES:
-            raise ValueError()
+            raise TranscriptLineLimit()
         for line in parts:
             if len(line) >= LINE_BYTES:
-                raise ValueError()
+                raise TranscriptLineLimit()
             yield line
     if pending:
         raise ValueError()
@@ -603,13 +613,13 @@ class NativeSessions:
         return snapshot
 
     @contextmanager
-    def verified_record(self, workspace, handle, path, identity, record):
+    def verified_record(self, workspace, handle, path, identity, record, *, deadline=None):
         locator = record.index.resolve(workspace, handle)
         with rooted_view(path, identity) as scope, rooted_view(record.source.profile.root, locator.root_identity) as view:
             require_cwds(scope, record.cwd_evidence)
-            require_directories(view, record.directories)
+            require_directories(view, record.directories, deadline)
             yield view, locator
-            require_directories(view, record.directories)
+            require_directories(view, record.directories, deadline)
             require_cwds(scope, record.cwd_evidence)
             require_file(view, record.ref)
         record.source.registry.verify(locator.profile_id)

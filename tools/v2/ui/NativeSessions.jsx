@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
+import {VisibleHistory} from './VisibleHistory.jsx';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
 const COVERAGE = {
@@ -79,6 +80,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const [notice, setNotice] = useState('');
  const listGeneration = useRef(0);
  const selectionGeneration = useRef(0);
+ const historyGeneration = useRef(0);
  const closeButton = useRef(null);
  const backButton = useRef(null);
  const opener = useRef(null);
@@ -174,6 +176,11 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   setMutationError('');
  }
 
+ function filterProvider(value) {
+  if (reading?.result && value && value !== reading.row.provider) historyGeneration.current++;
+  setProvider(value);
+ }
+
  function dismissDialog() {
   setDialogAction(null);
   requestAnimationFrame(() => actionOpener.current?.focus());
@@ -244,6 +251,20 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const messages = reading?.result?.messages || [];
  const normalized = query.trim().toLocaleLowerCase();
  const visible = messages.filter(message => !normalized || message.text.toLocaleLowerCase().includes(normalized));
+ const selection = selectionGeneration.current, listVersion = listGeneration.current, historyVersion = historyGeneration.current;
+ const defaultWindow = reading?.result && <>
+   <div className="native-window-controls">
+    <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
+     onChange={event => setQuery(event.target.value)}/></label>
+    <p className="muted small">{reading.result.truncated ? '当前内容已截断。' : ''}搜索仅匹配此处已加载的可见消息。</p>
+   </div>
+   <div aria-label="已加载消息" className="native-messages">
+    {visible.length === 0 && <p className="muted small">{normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}</p>}
+    {visible.map((message, index) => <article key={index}>
+     <h3>{message.role === 'user' ? '用户' : '助手'}</h3><pre>{message.text}</pre>
+    </article>)}
+   </div>
+ </>;
  return <aside className={'project-panel native-panel' + (reading ? ' has-preview' : '')} aria-label="原生会话"
   onKeyDown={event => {
    if (event.key === 'Escape' && reading && !dialogAction) {
@@ -277,7 +298,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
       </label>)}
      </fieldset>
      {notice && <p role="status" className="muted small">{notice}</p>}
-     <label className="field"><span>Provider</span><select aria-label="筛选会话 Provider" value={provider} onChange={event => setProvider(event.target.value)}>
+     <label className="field"><span>Provider</span><select aria-label="筛选会话 Provider" value={provider} onChange={event => filterProvider(event.target.value)}>
       <option value="">全部</option>{Object.entries(PROVIDERS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
      </select></label>
      {!filtered.length && <p className="muted">当前工作空间没有匹配的原生会话。</p>}
@@ -313,17 +334,13 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
        </button>)}
      </div>
      {mutationError && <p className="error-text" role="alert">{mutationError}</p>}
-     <div className="native-window-controls">
-      <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
-       onChange={event => setQuery(event.target.value)}/></label>
-      <p className="muted small">{reading.result.truncated ? '当前内容已截断。' : ''}搜索仅匹配此处已加载的可见消息。</p>
-     </div>
-     <div aria-label="已加载消息" className="native-messages">
-      {visible.length === 0 && <p className="muted small">{normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}</p>}
-      {visible.map((message, index) => <article key={index}>
-       <h3>{message.role === 'user' ? '用户' : '助手'}</h3><pre>{message.text}</pre>
-      </article>)}
-     </div>
+     {provider && provider !== reading.row.provider ? defaultWindow :
+      <VisibleHistory key={selection} api={api}
+       scope={{workspace: workspace.id, handle: reading.row.handle, revision: list.revision}}
+       isCurrent={() => isCurrent() && selectionGeneration.current === selection
+        && listGeneration.current === listVersion && historyGeneration.current === historyVersion}>
+       {defaultWindow}
+      </VisibleHistory>}
     </>}
    </section>}
   </div>

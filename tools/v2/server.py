@@ -10,6 +10,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .documents import check_chain
+from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
 from .native_sessions import NativeHistoryError, request_parameters
 from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, action_parameters, list_parameters
 from .project_files import read_project
@@ -20,6 +21,7 @@ STATIC = Path(__file__).parent / 'static'
 def create_server(store, port=0, *, runtime=None, native_sessions=None):
     token = secrets.token_urlsafe(32)
     native_views = NativeSessionViews(native_sessions) if native_sessions is not None else None
+    native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -54,6 +56,27 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                         return self.reply(404, {'error': '入口不存在'})
                     filename, mime = files[path]
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
+                if not post and path == '/api/v2/native-session-page':
+                    request = page_parameters(urlsplit(self.path).query)
+                    if native_pages is None:
+                        raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
+                    return self.reply(200, native_pages.read(request))
+                if post and path == '/api/v2/native-session-search':
+                    try:
+                        lengths = self.headers.get_all('Content-Length', [])
+                        size = int(lengths[0]) if len(lengths) == 1 else 0
+                    except ValueError:
+                        size = 0
+                    if (not 0 < size <= MAX_SEARCH_BODY or '?' in self.path or self.headers.get('Transfer-Encoding')
+                            or self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json'):
+                        raise NativeHistoryError('NATIVE_SEARCH_INVALID')
+                    raw = self.rfile.read(size)
+                    if len(raw) != size:
+                        raise NativeHistoryError('NATIVE_SEARCH_INVALID')
+                    request = search_parameters(raw)
+                    if native_pages is None:
+                        raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
+                    return self.reply(200, native_pages.read(request))
                 if post and path == '/api/v2/native-session-view':
                     try:
                         size = int(self.headers.get('Content-Length', '0'))
