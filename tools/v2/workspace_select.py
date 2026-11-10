@@ -21,7 +21,7 @@ JOURNAL = MAIN + '-journal'
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 MAX_STATE_NAMES = 4096
 STATE_FILES = SIDECARS | {MAIN, JOURNAL, 'v2-service.lock', '.native-metadata-preflight.lock',
-                         'flow-artifacts', SEED_FILE}
+                         'flow-artifacts', 'session-artifacts', SEED_FILE}
 
 
 def state_file_allowed(name):

@@ -1,0 +1,489 @@
+"""Explicit standalone native effects, bound to V2 workspace and provider evidence."""
+from contextlib import ExitStack
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
+from threading import BoundedSemaphore, Thread
+import time
+import uuid
+
+from orchestration.common import Blocked, canonical, digest
+from orchestration.process import group_alive
+from orchestration.store import process_identity
+from studio.agent_sessions import safe_text
+from studio.graph import Invalid
+from studio.local_claude_adapter import LocalClaude
+from studio.local_codex_adapter import LocalCodex
+from studio.model_registration import profile_identity
+from studio.native_codex_image import binary_digest
+from studio.native_codex_rpc import CodexRPC, metadata, metadata_guard
+from studio.native_local import native_busy
+from studio.server import Conflict
+from studio.session_sources import UUID
+
+from .native_session_links import claim_key, verified_workflow
+from .native_history_config import CONFIG_BYTES, private_bytes, unique_pairs
+from .native_session_views import verify_bytes
+from .native_sessions import HANDLE, REVISION, prove_file
+from .project_files import FileView, mount_id
+from .provider import public_provider_error
+from .session_identity import SessionLocator, SessionRefused, StorageRootIdentity, session_path, verified_directory
+from .session_lease import current_owner, production_session_gate
+
+KIND = 'native-session-operation'
+STEP = 'native-session-step'
+INTENT = re.compile(r'[A-Za-z0-9_-]{16,96}')
+MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}')
+PROVIDERS = ('codex', 'claude')
+DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/anthropic'
+ACTIVE = {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
+REASON_UNKNOWN = '原生结果待核验。已保留本次请求记录，未自动重发。'
+
+
+def load_write_profiles(path):
+    try:
+        path = session_path(path)
+        with verified_directory(path.parent) as directory:
+            raw = private_bytes(FileView(directory, mount_id(directory)), directory, path.name, CONFIG_BYTES)
+        value = json.loads(raw, object_pairs_hook=unique_pairs)
+        if (not isinstance(value, dict) or set(value) - {'version', *PROVIDERS}
+                or type(value.get('version')) is not int or value['version'] != 1
+                or 'codex' in value and value['codex'] is not True):
+            raise ValueError()
+        claude = value.get('claude')
+        if 'claude' in value and (not isinstance(claude, dict) or set(claude) not in ({'model', 'effort'}, {'model', 'effort', 'anthropic_base_url'})
+                or not isinstance(claude['model'], str) or not MODEL.fullmatch(claude['model'])
+                or claude['effort'] not in ('low', 'medium', 'high', 'max', 'xhigh')
+                or 'anthropic_base_url' in claude and (claude['anthropic_base_url'] != DEEPSEEK_ENDPOINT
+                    or claude['model'] != 'deepseek-flash')):
+            raise ValueError()
+        return {key: value[key] for key in PROVIDERS if key in value}
+    except (OSError, ValueError, TypeError, Blocked):
+        raise Invalid('原生写入配置无效。请核对启动配置与私有权限。') from None
+
+
+def operation_id(workspace, intent):
+    if not isinstance(intent, str) or not INTENT.fullmatch(intent):
+        raise Invalid('会话操作意图无效。')
+    return digest(canonical(['native-session-operation-v1', workspace, intent]))
+
+
+class OperationJournal:
+    """Provider transport callbacks backed by the reserved V2 effect row."""
+    process_started = False
+
+    def __init__(self, operations, row, check):
+        self.operations, self.row, self.check_before_spawn = operations, row, check
+        self.db = operations.store.db
+        self.writer_gates = ExitStack()
+        self.writer_sid = None
+
+    def get(self, key):
+        return {'data': self.db.get(KIND, key)}
+
+    def intent(self, run, kind, data):
+        key = uuid.uuid4().hex
+        self.db.put(STEP, key, dict(id=key, operation=run, kind=kind, status='INTENT', data=data))
+        return key
+
+    def finish(self, key, status, **updates):
+        step = self.db.get(STEP, key)
+        row = self.row
+        if step['kind'] == 'PROCESS' and status == 'RUNNING':
+            process = updates.get('process')
+            if (not process or process['pid'] != process['pgid'] or process['pid'] != process['sid']):
+                raise Blocked('原生进程身份未确认。')
+            self._require_process_scope(process)
+            fd = os.open(f"/proc/{process['pid']}/exe", os.O_RDONLY)
+            try:
+                image = binary_digest(fd)
+            finally:
+                os.close(fd)
+            self._require_process_scope(process)
+            if image != row['binding']['_executable_sha256']:
+                raise Blocked('原生进程映像已变化，未发送输入。')
+            self.db.change(KIND, row['id'], dict(state='RUNNING', process=process, process_step=key,
+                                                effect_uncertain=True), states={'RESERVED'})
+        sid = updates.get('actual_session')
+        if step['kind'] == 'AGENT_REQUEST' and sid:
+            if not row['target'] and self.writer_sid is None:
+                self.writer_gates.enter_context(production_session_gate(row['binding'], None, target=sid))
+                self.writer_sid = sid
+            if self.writer_sid is not None and self.writer_sid != sid:
+                raise SessionRefused('LOCATOR_REFUSED')
+            self.operations.bind_observed(row, sid)
+        self.db.change(STEP, key, dict(status=status, data=dict(step['data'], **updates)))
+
+    def _require_process_scope(self, process):
+        root = Path('/proc') / str(process['pid'])
+        if os.readlink(root / 'cwd') != self.row['binding']['cwd']:
+            raise SessionRefused('LOCATOR_REFUSED')
+        fd = os.open(root / 'cwd', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            if StorageRootIdentity.from_fd(fd).fields() != self.row['binding']['cwd_identity']:
+                raise SessionRefused('LOCATOR_REFUSED')
+        finally:
+            os.close(fd)
+        current = process_identity(process['pid'])
+        if not current or any(current[key] != process[key] for key in ('host', 'boot_id', 'pid', 'start', 'pgid', 'sid')):
+            raise SessionRefused('OWNER_UNKNOWN')
+
+    def input_sent(self, step, size, sha):
+        if sha != self.row['prompt_sha256'] or size != self.row['prompt_size']:
+            raise Blocked('输入回执与本次授权不一致。')
+        self.db.change(KIND, self.row['id'], {'input_step': step, 'input_sha256': sha})
+
+    def native_terminal_event(self, event):
+        self.db.change(KIND, self.row['id'], {'terminal_event': {
+            key: event.get(key) for key in ('type', 'session_id', 'native_turn_id')}})
+
+    def native_tool_event(self, _):
+        raise Blocked('对话出现未获准的工具活动，已停止本机进程。')
+
+
+class SessionOperations:
+    def __init__(self, store, reader, codex, profiles):
+        self.store, self.reader, self.codex = store, reader, codex
+        self.profiles = {}
+        self.claude_env = {}
+        self.slots = BoundedSemaphore(4)
+        self.owner = current_owner()
+        from .store import private_directory
+        self.artifacts = private_directory(store.state / 'session-artifacts')
+        for provider, options in profiles.items():
+            source = next((source for source in reader.static if source.profile.id == 'default-' + provider), None)
+            if source is None:
+                raise Invalid('原生写入需要同时明确批准对应的默认原生历史根。')
+            home = reader.home
+            config = home / ('.' + provider)
+            binding = dict(provider=provider, home=str(home), config_root=str(config),
+                           runtime_profile='default-' + provider, execution_backend='native-local',
+                           root_identity=StorageRootIdentity.capture(config).fields(),
+                           local_lock_root=str(config / '.devflower-writer-locks'))
+            if provider == 'codex':
+                if not codex or (codex.home, codex.config_root) != (str(home), str(config)):
+                    raise Invalid('Codex 写入与当前原生账户根不一致。')
+            else:
+                if os.environ.get('CLAUDE_CONFIG_DIR'):
+                    raise Invalid('Claude 原生写入仅支持默认 HOME 配置。')
+                executable = shutil.which('claude')
+                if not executable:
+                    raise Invalid('未找到 Claude Code。')
+                executable = str(Path(executable).resolve(strict=True))
+                fd = os.open(executable, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    image = binary_digest(fd)
+                finally:
+                    os.close(fd)
+                from orchestration.common import cli_probe_env
+                try:
+                    with TemporaryDirectory(prefix='df-claude-capability-') as scratch:
+                        help_result = subprocess.run([executable, '--help'], env=cli_probe_env(scratch),
+                                                     capture_output=True, timeout=12, check=False)
+                except subprocess.SubprocessError:
+                    raise Invalid('Claude Code 启动能力无法核验。') from None
+                if help_result.returncode or any(flag not in help_result.stdout for flag in (
+                        b'--safe-mode', b'--restricted', b'--disable-slash-commands', b'--tools', b'--strict-mcp-config')):
+                    raise Invalid('Claude Code 缺少禁用本机扩展和工具的必要能力。')
+                if options.get('anthropic_base_url'):
+                    secret = os.environ.get('ANTHROPIC_AUTH_TOKEN', '')
+                    if not 16 <= len(secret) <= 8192 or any(char.isspace() for char in secret):
+                        raise Invalid('启动 Claude DeepSeek 配置需要有效的 ANTHROPIC_AUTH_TOKEN 环境变量。')
+                    self.claude_env = {'ANTHROPIC_BASE_URL': DEEPSEEK_ENDPOINT, 'ANTHROPIC_AUTH_TOKEN': secret}
+                    binding['relay_credential_sha256'] = digest(secret.encode())
+                    reader.literals = (*reader.literals, secret)
+                binding.update(options, executable=executable, _executable_sha256=image,
+                               role='reviewer', chat_only=True, readonly_files=[])
+            self.profiles[provider] = (source, binding)
+        self.reader.managed_records = self.managed_records
+
+    def status(self):
+        return list(self.profiles)
+
+    def _public(self, row):
+        state = row['state']
+        if state in ('RESERVED', 'RUNNING') and row.get('owner') != self.owner:
+            state = 'RECOVERY_REQUIRED' if row.get('effect_uncertain') else 'NOT_SENT'
+        result = {key: row[key] for key in ('workspace', 'provider', 'intent_key') }
+        result.update(state=state, reason=REASON_UNKNOWN if state == 'RECOVERY_REQUIRED' else row.get('reason'))
+        if state == 'COMPLETED':
+            result.update(handle=row['result_handle'], receipt=row['receipt'], reply=row['reply'])
+        return result
+
+    def _get(self, key):
+        try:
+            return self.store.db.get(KIND, key)
+        except Invalid:
+            return None
+
+    def operation(self, workspace, intent_key):
+        self.store.workspace(workspace)
+        row = self._get(operation_id(workspace, intent_key))
+        if row is None:
+            return {'workspace': workspace, 'intent_key': intent_key, 'state': 'UNREGISTERED'}
+        return self._public(row)
+
+    def resolve(self, workspace, handle, revision):
+        path, identity, proof = self.reader.workspace(workspace)
+        with self.reader.guard:
+            snapshot = self.reader._snapshot(workspace, revision)
+            record = snapshot.reads.get(handle)
+        if record is None or identity != snapshot.workspace_identity:
+            raise SessionRefused('LOCATOR_REFUSED')
+        with self.reader.verified_record(workspace, handle, path, identity, record) as (view, locator):
+            verify_bytes(view, record.ref)
+        self.reader.require_proof(proof)
+        with self.reader.guard:
+            self.reader._snapshot(workspace, revision)
+        return locator, record
+
+    def add_continue_eligibility(self, listing):
+        profile = self.profiles.get('codex')
+        if profile is None:
+            return
+        workspace, revision = listing['workspace'], listing['revision']
+        with self.reader.guard:
+            snapshot = self.reader._snapshot(workspace, revision)
+            for row in listing['sessions']:
+                record = snapshot.reads.get(row['handle'])
+                row['can_request_continue'] = bool(record and record.source.profile == profile[0].profile
+                    and record.cwd_evidence and record.cwd_evidence[0][0] == Path('.')
+                    and len(record.cwd_evidence) == 1)
+
+    def prepare_binding(self, workspace, provider, handle, revision, model=None, effort=None):
+        if provider not in self.profiles:
+            raise Invalid('此 Provider 尚未启用独立会话写入。')
+        source, approved = self.profiles[provider]
+        cwd = self.store.workspace(workspace)['path']
+        locator, record = self.resolve(workspace, handle, revision) if handle else (None, None)
+        if locator is not None:
+            if provider == 'claude':
+                raise Blocked('当前共享 Claude HOME 的外部客户端可同时写入同一会话，续聊和终端接管暂不可用。')
+            if (locator.provider != provider or locator.profile_id != source.profile.id
+                    or locator.root_identity != source.profile.identity or locator.original_cwd != cwd
+                    or record.source.profile.root != source.profile.root or len(record.cwd_evidence) != 1):
+                raise SessionRefused('LOCATOR_REFUSED')
+        if provider == 'codex':
+            binding = dict(self.codex.binding(workspace, dict(provider=provider, model=model, effort=effort)), **approved)
+        else:
+            binding = dict(approved, direct_environment_sha256=profile_identity(approved))
+        cwd_identity = StorageRootIdentity.capture(cwd)
+        if digest(canonical([cwd, cwd_identity.device, cwd_identity.inode])) != workspace:
+            raise SessionRefused('LOCATOR_REFUSED')
+        binding.update(cwd=cwd, cwd_identity=cwd_identity.fields(), project=workspace,
+                       session_id=locator.native_uuid if locator else None, conversation_format='text')
+        return binding, locator, record
+
+    def send(self, data):
+        base = {'workspace', 'provider', 'handle', 'revision', 'intent_key', 'prompt'}
+        provider, handle, revision = (data.get(key) for key in ('provider', 'handle', 'revision'))
+        prompt = data.get('prompt')
+        if (provider not in PROVIDERS or set(data) != (base | {'model', 'effort'} if provider == 'codex' else base)
+                or not isinstance(prompt, str) or not prompt.strip() or len(prompt.encode()) > 60000 or '\x00' in prompt
+                or handle is None and revision is not None
+                or handle is not None and (not isinstance(handle, str) or not HANDLE.fullmatch(handle)
+                    or not isinstance(revision, str) or not REVISION.fullmatch(revision))):
+            raise Invalid('需要明确的 Provider、会话和本次用户消息。')
+        workspace = data['workspace']
+        self.store.workspace(workspace)
+        key = operation_id(workspace, data['intent_key'])
+        request_sha = digest(canonical(data))
+        prior = self._get(key)
+        if prior is not None:
+            if prior['request_sha256'] != request_sha:
+                raise Conflict('同一发送意图对应不同请求。')
+            return self._public(prior)
+        binding, locator, record = self.prepare_binding(workspace, provider, handle, revision, data.get('model'), data.get('effort'))
+        if not self.slots.acquire(blocking=False):
+            raise Conflict('已有多个原生操作正在执行。请查询原操作后再提交。')
+        started = False
+        try:
+            if provider == 'claude' and locator is None:
+                binding['new_session_id'] = str(uuid.uuid4())
+            row = dict(id=key, workspace=workspace, provider=provider, intent_key=data['intent_key'], handle=handle,
+                       revision=revision, request_sha256=request_sha, prompt_sha256=digest(prompt.encode()),
+                       prompt_size=len(prompt.encode()), authorization='explicit-session-send', owner=self.owner,
+                       binding=binding, native_sha256=record.ref.sha if record else None,
+                       target=binding['session_id'] or binding.get('new_session_id'), state='RESERVED', created=time.time())
+            with self.store.db.tx() as db:
+                stored = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (KIND, key)).fetchone()
+                if stored:
+                    prior = json.loads(stored[0])
+                    if prior['request_sha256'] != request_sha:
+                        raise Conflict('同一发送意图对应不同请求。')
+                    return self._public(prior)
+                db.execute('INSERT INTO records VALUES(?,?,?)', (KIND, key, canonical(row).decode()))
+            try:
+                Thread(target=self._execute, args=(row, prompt, locator, record), daemon=True,
+                       name='native-session-' + key[:8]).start()
+            except RuntimeError:
+                failed = self.store.db.change(KIND, key, dict(state='NOT_SENT', reason='本机无法启动会话执行线程。'))
+                return self._public(failed)
+            started = True
+            return self._public(row)
+        finally:
+            if not started:
+                self.slots.release()
+
+    def require_idle(self, binding, *, ignore=None, owner_kind=KIND):
+        sid = binding.get('session_id') or binding.get('new_session_id')
+        if not sid:
+            return
+        for kind in (KIND, 'native-session-pty'):
+            for row in self.store.db.list(kind):
+                if row['id'] == ignore and kind == owner_kind:
+                    continue
+                prior = row.get('binding', {})
+                if (row.get('observed_session', row.get('target')) == sid
+                        and prior.get('provider') == binding['provider'] and prior.get('config_root') == binding['config_root']
+                        and row['state'] in ACTIVE):
+                    if row['state'] == 'RESERVED' and (row.get('owner') != self.owner or kind == owner_kind
+                            and ignore is not None):
+                        continue
+                    raise SessionRefused('RECOVERY_REQUIRED' if row['state'] == 'RECOVERY_REQUIRED'
+                                         or row.get('owner') != self.owner else 'LEASE_HELD')
+        if binding['provider'] == 'codex':
+            try:
+                self.store.db.get('native-session-claim', claim_key(binding['config_root'], sid))
+            except Invalid:
+                pass
+            else:
+                verified_workflow(self.store, binding['config_root'], sid)
+            if native_busy(binding, sid):
+                raise SessionRefused('EXTERNAL_BUSY')
+
+    def require_scope(self, binding):
+        if (self.store.workspace(binding['project'])['path'] != binding['cwd']
+                or StorageRootIdentity.capture(binding['cwd']).fields() != binding['cwd_identity']):
+            raise SessionRefused('LOCATOR_REFUSED')
+        if StorageRootIdentity.capture(binding['config_root']).fields() != binding['root_identity']:
+            raise SessionRefused('ROOT_CHANGED')
+
+    def require_binding(self, binding):
+        self.require_scope(binding)
+        if binding['provider'] == 'codex':
+            self.codex.require_account(binding)
+        elif profile_identity(binding) != binding['direct_environment_sha256']:
+            raise SessionRefused('ROOT_CHANGED')
+
+    def check_resume(self, row, locator, record):
+        binding = row['binding']
+        self.require_binding(binding)
+        if locator is None:
+            return
+        path, identity, proof = self.reader.workspace(row['workspace'])
+        with self.reader.verified_record(row['workspace'], row['handle'], path, identity, record) as (view, current):
+            if current != locator or record.ref.sha != row['native_sha256']:
+                raise SessionRefused('LOCATOR_REFUSED')
+            verify_bytes(view, record.ref)
+        self.reader.require_proof(proof)
+        with metadata_guard(self.store.state, timeout=20) as remaining:
+            with CodexRPC(binding['executable'], binding['home'], binding['config_root'], binding['cwd'],
+                          timeout=remaining) as rpc:
+                thread = rpc.request('thread/read', {'threadId': locator.native_uuid, 'includeTurns': False})['thread']
+                config = rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False})['config']
+        if (thread.get('id') != locator.native_uuid or thread.get('cwd') != binding['cwd']
+                or thread.get('path') != str(record.source.profile.root / record.ref.relative)
+                or thread.get('modelProvider') != (config.get('model_provider') or 'openai')):
+            raise SessionRefused('LOCATOR_REFUSED')
+
+    def bind_observed(self, row, sid):
+        if not isinstance(sid, str) or not UUID.fullmatch(sid) or row['target'] and sid != row['target']:
+            raise SessionRefused('LOCATOR_REFUSED')
+        if row['provider'] == 'codex' and not row['target']:
+            key = claim_key(row['binding']['config_root'], sid)
+            with self.store.db.tx() as db:
+                claim = db.execute("SELECT data FROM records WHERE kind IN ('native-session-claim','standalone-native-claim') AND id=?",
+                                   (key,)).fetchall()
+                if any(json.loads(item[0]).get('operation') != row['id'] for item in claim):
+                    raise SessionRefused('LOCATOR_REFUSED')
+                db.execute('INSERT OR IGNORE INTO records VALUES(?,?,?)',
+                           ('standalone-native-claim', key, canonical({'operation': row['id']}).decode()))
+        self.store.db.change(KIND, row['id'], {'observed_session': sid})
+
+    def prove_after(self, binding, sid):
+        source = self.profiles[binding['provider']][0]
+        if binding['provider'] == 'codex':
+            thread = metadata(binding, binding['cwd'], 'thread/read', dict(threadId=sid, includeTurns=False))['thread']
+            if thread['id'] != sid or thread.get('cwd') != binding['cwd']:
+                raise SessionRefused('LOCATOR_REFUSED')
+            relative = Path(thread['path']).relative_to(source.profile.root)
+        else:
+            directory = re.sub('[^a-zA-Z0-9]', '-', binding['cwd'])
+            relative = Path(directory) / (sid + '.jsonl')
+        return prove_file(source, binding['project'], binding['cwd'], sid, relative)
+
+    def _execute(self, row, prompt, locator, record):
+        binding = row['binding']
+        provider = row['provider']
+        def check():
+            self.check_resume(row, locator, record)
+            self.require_idle(binding, ignore=row['id'])
+        journal = OperationJournal(self, row, check)
+        try:
+            with journal.writer_gates as held:
+                if row['target'] is not None:
+                    held.enter_context(production_session_gate(binding, locator, target=row['target']))
+                check()
+                artifacts = self.artifacts / row['id']
+                artifacts.mkdir(mode=0o700, parents=True, exist_ok=False)
+                limits = dict(step_timeout_seconds=300, max_log_bytes=2_000_000)
+                adapter = LocalCodex(binding, limits) if provider == 'codex' else LocalClaude(
+                    binding, limits, credential_env=self.claude_env)
+                result = adapter.start(
+                    prompt, binding['cwd'], artifacts, None, journal, row['id'])
+                final = self.store.db.get(KIND, row['id'])
+                process = result.get('process')
+                step = self.store.db.get(STEP, final['process_step'])
+                sid = result['session_id']
+                if (sid != final.get('observed_session') or not process or process['exit'] != 0
+                        or any(process.get(key) for key in ('timeout', 'cancelled', 'overflow'))
+                        or process['operation_id'] != final['process_step'] or process['process'] != final['process']
+                        or step['status'] != 'EXITED' or step['data'].get('operation_id') != process['operation_id']
+                        or final.get('input_step') != process['operation_id'] or final.get('input_sha256') != row['prompt_sha256']
+                        or group_alive(process['process'])
+                        or any(result.get(key) != binding[key] for key in ('home', 'cwd', 'provider'))
+                        or result.get('requested_model') != binding['model'] or result.get('requested_effort') != binding['effort']
+                        or not isinstance(result['report'].get('reply'), str)
+                        or provider == 'codex' and final.get('terminal_event') != {
+                            'type': 'turn.completed', 'session_id': sid, 'native_turn_id': result.get('native_turn_id')}):
+                    raise Blocked('原生终结回执无法关联到本次输入。')
+                actual, ref, _ = self.prove_after(binding, sid)
+                self.require_scope(binding)
+                source = self.profiles[provider][0]
+                self.store.db.change(KIND, row['id'], dict(
+                    state='COMPLETED', effect_uncertain=False, result_handle=source.registry.handle(actual),
+                    relative=str(ref.relative), native_after_sha256=ref.sha, reply=safe_text(result['report']['reply']),
+                    receipt=dict(provider=provider, session_id=sid, native_turn_id=result.get('native_turn_id'),
+                                 requested_model=binding['model'], requested_effort=binding['effort'])))
+        except Exception as exc:
+            current = self.store.db.get(KIND, row['id'])
+            uncertain = bool(current.get('effect_uncertain') or journal.process_started)
+            reason = (str(exc) if isinstance(exc, SessionRefused) else public_provider_error(exc) if provider == 'codex'
+                      else 'Claude 原生请求无法启动。请检查本机配置和权限。')
+            self.store.db.change(KIND, row['id'], dict(state='RECOVERY_REQUIRED' if uncertain else 'NOT_SENT',
+                                                       reason=REASON_UNKNOWN if uncertain else reason))
+        finally:
+            self.slots.release()
+
+    def managed_records(self, workspace):
+        seen = set()
+        with self.store.db.tx(read=True) as db:
+            rows = db.execute("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.workspace')=? "
+                              "AND json_extract(data,'$.state')='COMPLETED' ORDER BY rowid DESC LIMIT 120",
+                              (KIND, workspace)).fetchall()
+        for (raw,) in rows:
+            row = json.loads(raw)
+            handle, provider = row['result_handle'], row['provider']
+            if handle in seen or provider not in self.profiles:
+                continue
+            seen.add(handle)
+            source, current = self.profiles[provider]
+            binding = row['binding']
+            if any(binding.get(key) != current.get(key) for key in ('provider', 'home', 'config_root', 'root_identity')):
+                continue
+            yield source, binding['cwd'], row['observed_session'], row['relative'], handle

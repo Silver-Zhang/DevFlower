@@ -141,6 +141,7 @@ class Snapshot:
     workspace_identity: StorageRootIdentity
     reads: dict = field(repr=False)
     handles: frozenset = field(repr=False)
+    links: dict = field(default_factory=dict, repr=False)
 
 
 def stamp(meta):
@@ -364,6 +365,29 @@ def require_cwds(view, evidence):
                 raise SessionRefused('ROOT_CHANGED')
 
 
+def prove_file(source, workspace, cwd, sid, relative, *, budget=None):
+    """A native receipt supplies the UUID; the file must independently prove it."""
+    profile = source.registry.verify(source.profile.id)
+    rel = Path(relative)
+    if rel.is_absolute() or '..' in rel.parts or plausible_kind(profile.provider, rel) != 'file':
+        raise SessionRefused('LOCATOR_REFUSED')
+    with rooted_view(profile.root, profile.identity) as view, view.directory(rel.parent) as directory:
+        with view.regular(rel.name, directory) as fd:
+            before = os.fstat(fd)
+            if before.st_uid != os.geteuid():
+                raise SessionRefused('LOCATOR_REFUSED')
+            if budget is not None:
+                budget.file(before.st_size)
+            parsed = read_session(fd, profile.provider, rel.name,
+                                  {'file_bytes': FILE_BYTES, 'line_bytes': LINE_BYTES}, initial_stat=before)
+        ref = FileRef(rel, stamp(before), parsed['sha256'])
+        require_file(view, ref)
+    source.registry.verify(profile.id)
+    if parsed['session_id'] != sid or parsed['cwd'] != cwd or parsed['cwd_changed']:
+        raise SessionRefused('LOCATOR_REFUSED')
+    return SessionLocator(profile.provider, profile.id, profile.identity, cwd, workspace, sid), ref, parsed['updated']
+
+
 def indexed_rows(source, records, directories, reasons, workspace, path, view, total):
     # Every parsed candidate participates in conflict detection, even when the
     # other candidate belongs to a different workspace and cannot be returned.
@@ -491,6 +515,8 @@ class NativeSessions:
         self.scanning = set()
         self.guard = Lock()
         self.read_slots = BoundedSemaphore(4)
+        self.managed_records = None
+        self.workflow_links = False
         specs = list(config.profiles)
         if config.discover_defaults:
             defaults = []
@@ -563,7 +589,7 @@ class NativeSessions:
         reasons = set(self.startup_reasons)
         candidates = list(self.static)
         total = Budget(SCAN_BOUNDS, time.monotonic() + SCAN_SECONDS)
-        rows, reads = {}, {}
+        rows, reads, links = {}, {}, {}
         try:
             with rooted_view(path, identity) as view:
                 if self.config.discover_nested:
@@ -591,6 +617,8 @@ class NativeSessions:
                     reasons.update(source_reasons)
                     if any(row['access'] == 'conflict' for row in scanned.values()):
                         reasons.add('identity_conflict')
+                if self.managed_records is not None or self.workflow_links:
+                    self.supplement(workspace, path, view, sources, rows, reads, links, reasons)
         except (OSError, ValueError, Blocked):
             raise NativeHistoryError('NATIVE_REVISION_STALE') from None
         if not candidates and not self.config.discover_nested:
@@ -603,7 +631,49 @@ class NativeSessions:
         sessions = sorted(rows.values(), key=lambda row: row['updated_at'] or '', reverse=True)
         result = {'workspace': workspace, 'revision': revision,
                   'coverage': {'state': state, 'reasons': sorted(reasons)}, 'sessions': sessions}
-        return result, Snapshot(revision, time.monotonic() + SNAPSHOT_SECONDS, identity, reads, frozenset(rows))
+        return result, Snapshot(revision, time.monotonic() + SNAPSHOT_SECONDS, identity, reads, frozenset(rows), links)
+
+    def supplement(self, workspace, path, view, sources, rows, reads, links, reasons):
+        from itertools import chain
+        from .native_session_links import workflow_records
+
+        budget = Budget(ROOT_BOUNDS, time.monotonic() + SCAN_SECONDS)
+        managed = ((source, cwd, sid, relative, None) for source, cwd, sid, relative, _
+                   in self.managed_records(workspace)) if self.managed_records else ()
+        workflow = workflow_records(self.store, workspace, sources, budget) if self.workflow_links else ()
+        checked = {}
+        try:
+            for source, cwd, sid, relative, link in chain(managed, workflow):
+                budget.time()
+                try:
+                    evidence = checked_cwd(view, path, cwd)
+                    if evidence is None or not any(source.registry.fingerprint == current.registry.fingerprint
+                                                   for current in sources):
+                        continue
+                    locator, ref, updated = prove_file(source, workspace, cwd, sid, relative, budget=budget)
+                    handle = source.registry.handle(locator)
+                    previous = checked.get(handle) or (reads[handle].ref if handle in reads else None)
+                    if rows.get(handle, {}).get('access') == 'conflict' or (previous and previous != ref):
+                        reads.pop(handle, None)
+                        links.pop(handle, None)
+                        if handle in rows:
+                            rows[handle] = dict(rows[handle], access='conflict', updated_at=None, workflow=None)
+                        reasons.add('identity_conflict')
+                        continue
+                    checked[handle] = ref
+                    if handle not in reads:
+                        index = LocatorIndex(source.registry, {workspace: [cwd]}, [FixtureSession(
+                            locator.profile_id, cwd, workspace, sid, digest(canonical([str(ref.relative), ref.stamp[:2]])))])
+                        reads[handle] = IndexedRead(source, index, ref, {}, (evidence,))
+                        rows[handle] = dict(handle=handle, provider=locator.provider, source_labels=source.labels,
+                                            updated_at=updated, access='readable')
+                    if link:
+                        links[handle] = {key: link[key] for key in ('group', 'workflow', 'agent', 'run', 'activation', 'node')}
+                        rows[handle]['workflow'] = links[handle]
+                except (OSError, ValueError, Blocked):
+                    reasons.add('transcript_unavailable')
+        except StopScan as exc:
+            reasons.add(str(exc))
 
     def _snapshot(self, workspace, revision):
         snapshot = self.snapshots.get(workspace)

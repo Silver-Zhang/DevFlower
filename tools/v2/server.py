@@ -15,17 +15,24 @@ from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
 from .native_sessions import NativeHistoryError, request_parameters
-from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, action_parameters, list_parameters
+from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, WorkflowSessionTrash, action_parameters, list_parameters
 from .project_files import read_project
+from .session_identity import SessionRefused
+from .session_lease import CODEX_COORDINATION_VERSION
+from .native_history_config import unique_pairs
 from .run_summary import RunSummaryError, read_run_summary, request_parameters as run_summary_parameters
 
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None):
+def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None):
     token = secrets.token_urlsafe(32)
     catalog = CopilotCatalog() if copilot_catalog is None else copilot_catalog
+    if native_sessions is not None and runtime is not None:
+        native_sessions.workflow_links = bool(runtime.provider or store.db.list('node-session'))
     native_views = NativeSessionViews(native_sessions) if native_sessions is not None else None
+    workflow_trash = (WorkflowSessionTrash(native_views) if native_views and native_sessions.workflow_links
+                      and getattr(runtime.provider, 'version', None) == CODEX_COORDINATION_VERSION else None)
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
 
@@ -64,6 +71,29 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
                 if path == '/api/v2/provider-catalog/copilot':
                     return self.reply(*catalog.request(self.path, self.headers, self.rfile, post=post))
+                if path in ('/api/v2/session-send', '/api/v2/session-operation', '/api/v2/workflow-session-trash'):
+                    group_trash = path == '/api/v2/workflow-session-trash'
+                    if group_trash and workflow_trash is None or not group_trash and session_operations is None:
+                        return self.reply(404, {'error': '本机尚未启用此原生会话操作。'})
+                    if post and path != '/api/v2/session-operation':
+                        lengths = self.headers.get_all('Content-Length', [])
+                        size = int(lengths[0]) if len(lengths) == 1 else 0
+                        if (not 0 < size <= (8192 if group_trash else 125000) or '?' in self.path or self.headers.get('Transfer-Encoding')
+                                or self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json'):
+                            raise Invalid('会话发送需要有界的 JSON 请求。')
+                        raw = self.rfile.read(size)
+                        if len(raw) != size:
+                            raise Invalid('会话发送请求不完整。')
+                        data = json.loads(raw, object_pairs_hook=unique_pairs)
+                        if not isinstance(data, dict):
+                            raise Invalid('会话发送需要 JSON 对象。')
+                        return self.reply(200, workflow_trash.request(data) if group_trash else session_operations.send(data))
+                    if not post and path == '/api/v2/session-operation':
+                        params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, max_num_fields=2)
+                        if set(params) != {'workspace', 'intent_key'} or any(len(value) != 1 for value in params.values()):
+                            raise Invalid('会话操作查询需要明确的工作空间和发送意图。')
+                        return self.reply(200, session_operations.operation(params['workspace'][0], params['intent_key'][0]))
+                    return self.reply(405, {'error': '会话操作方法无效。'})
                 if post and path == '/api/v2/drafts/validate':
                     workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
                     return self.reply(200, validate_archive(store, workspace, raw))
@@ -132,6 +162,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                               'execution_supported': bool(runtime), 'provider_available': bool(runtime and runtime.provider),
                               'execution_available': None if runtime and runtime.provider else False,
                               'native_history_available': native_sessions is not None,
+                              'native_session_writes': session_operations.status() if session_operations else [],
+                              'native_workflow_links': bool(native_sessions and native_sessions.workflow_links),
+                              'native_workflow_trash': workflow_trash is not None,
                               'execution_check': 'native capability and permissions are checked on explicit launch',
                               'workspaces': [row for row in store.db.list('workspace')],
                               'roots': list(map(str, store.roots)), 'environment': store.environment,
@@ -163,6 +196,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     if native_sessions is None:
                         raise NativeHistoryError('NATIVE_HISTORY_DISABLED')
                     result = native_sessions.read(**params) if transcript else native_sessions.listing(**params)
+                    if not transcript and session_operations is not None:
+                        session_operations.add_continue_eligibility(result)
                 elif not post and path == '/api/v2/drafts':
                     result = store.drafts(query.get('workspace'))
                 elif not post and path == '/api/v2/draft':
@@ -189,6 +224,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 self.reply(200, result)
             except (NativeHistoryError, DraftTransferError, RunSummaryError) as exc:
                 self.reply(exc.status, {'code': exc.code, 'error': str(exc)})
+            except SessionRefused as exc:
+                self.reply(409, {'code': exc.code, 'error': str(exc)})
             except Conflict as exc:
                 self.reply(409, {'error': str(exc)})
             except Blocked as exc:

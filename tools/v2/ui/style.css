@@ -219,3 +219,23 @@
 .provider-catalog-content ul { padding: 0; list-style: none; }
 .provider-catalog-content li { padding: 7px 0; border-bottom: 1px solid var(--studio-line); overflow-wrap: anywhere; }
 .provider-catalog-content li span { display: block; color: var(--studio-muted); }
+
+.native-workflow-group, .native-composer > header, .native-composer-actions {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ gap: 8px;
+ flex-wrap: wrap;
+}
+.native-workflow-group h3, .native-composer h3 { margin: 0; }
+.native-composer {
+ padding: 12px;
+ border-top: 1px solid var(--border);
+ background: var(--surface);
+ overflow: auto;
+ max-height: min(45vh, 420px);
+}
+.native-composer form { display: grid; gap: 8px; margin-top: 8px; }
+.native-composer textarea { width: 100%; resize: vertical; }
+.native-composer-models { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.native-composer-actions { justify-content: flex-start; }

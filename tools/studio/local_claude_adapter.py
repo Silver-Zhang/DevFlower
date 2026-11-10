@@ -10,8 +10,18 @@ from .native_local import native_environment
 from .agent_sessions import safe_text
 
 
+def chat_only_args():
+    """Native authentication with customizations, hooks and tools disabled."""
+    return ['--safe-mode', '--restricted', '--disable-slash-commands', '--tools', '',
+            '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+            '--setting-sources', '',
+            '--settings', '{"disableAllHooks":true,"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}']
+
+
 class LocalClaude:
-    def __init__(self,binding,limits):self.b,self.limits=binding,limits
+    def __init__(self, binding, limits, *, credential_env=None):
+        self.b, self.limits = binding, limits
+        self.credential_env = credential_env or {}
 
     def start(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
         cwd=str(cwd)
@@ -20,25 +30,31 @@ class LocalClaude:
         # Do not claim a verified workspace-write boundary from a prompt.
         if b['role']=='implementer':raise Blocked('本机 Claude 写入边界尚未完成原生验证；当前仅开放 Ask/Plan，旧隔离配置保留')
         if sid and not isinstance(sid,str):raise Blocked('原生恢复需要明确 UUID')
-        requested=sid or str(uuid.uuid4())
+        requested=sid or b.get('new_session_id') or str(uuid.uuid4())
+        chat_only=b.get('chat_only') is True
+        tools=chat_only_args() if chat_only else ['--tools','Read,Glob,Grep','--strict-mcp-config',
+            '--mcp-config','{"mcpServers":{}}','--setting-sources','user']
         args=[b['executable'],'-p','--output-format','json','--permission-mode','plan',
-            '--tools','Read,Glob,Grep','--strict-mcp-config','--mcp-config','{"mcpServers":{}}',
-            '--setting-sources','user','--model',b['model'],'--effort',b['effort'],
-            '--resume' if sid else '--session-id',requested]
+              *tools,'--model',b['model'],'--effort',b['effort'],
+              '--resume' if sid else '--session-id',requested]
         if output_schema:
             schema=json.loads(Path(output_schema).read_text());schema.pop('$schema',None)
             args+=['--json-schema',json.dumps(schema)]
         key=store.intent(run,'AGENT_REQUEST',dict(kind='claude',project=b['project'],role=b['role'],
             requested_session=requested,requested_model=b['model'],requested_effort=b['effort'])) if store else None
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
+        if store and callable(getattr(store,'check_before_spawn',None)):
+            store.check_before_spawn()
         process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
             cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
-            env_extra=dict(native_environment(b),CLAUDE_CODE_MAX_RETRIES='0'),
+            env_extra=dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0', **self.credential_env),
             context={'provider':'claude','agent_role':b['role'],'transport':'native-local'})
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:
             secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
+            if 'ANTHROPIC_AUTH_TOKEN' in self.credential_env:
+                secret.add(self.credential_env['ANTHROPIC_AUTH_TOKEN'])
             detail=safe_text(redact('; '.join(native_errors('claude',out))[:1200],secret))
             if process.get('timeout'):
                 limit=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
@@ -55,9 +71,11 @@ class LocalClaude:
             raise Blocked(reason+((': '+detail) if detail else '')) from None
         if result['session_id']!=requested:raise Blocked('原生 CLI 返回了不同的会话身份')
         secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
+        if 'ANTHROPIC_AUTH_TOKEN' in self.credential_env:
+            secret.add(self.credential_env['ANTHROPIC_AUTH_TOKEN'])
         result['report']=redact(result['report'],secret)
         if store:store.finish(key,'AGENT_COMPLETED',actual_session=requested,transport={'mode':'native-local'})
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,
-            home=b['home'],cwd=cwd,provider='claude',permission_mode='native-plan/read-tools',
+            home=b['home'],cwd=cwd,provider='claude',permission_mode='native-plan/no-tools' if chat_only else 'native-plan/read-tools',
             transport={'mode':'native-local'},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-local/1')
         return result

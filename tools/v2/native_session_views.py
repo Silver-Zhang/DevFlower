@@ -264,3 +264,124 @@ class NativeSessionViews:
             raise
         except (Conflict, OSError, ValueError, Blocked, sqlite3.Error):
             raise conflict() from None
+
+
+class WorkflowSessionTrash:
+    """V1 batch preview/member recheck over V2's reversible view records."""
+    def __init__(self, views):
+        self.views = views
+        self.reader = views.reader
+        self.db = self.reader.store.db
+
+    def _known_members(self, db, workspace, group):
+        runs = db.execute("SELECT data FROM records WHERE kind='run' AND json_extract(data,'$.workspace')=? LIMIT 401",
+                          (workspace,)).fetchall()
+        if len(runs) > 400:
+            raise conflict()
+        group_runs = set()
+        for (raw,) in runs:
+            run = json.loads(raw)
+            if digest(canonical(['v2-workflow-session-group', workspace, run['draft_id']])) == group:
+                if run['state'] not in ('COMPLETED', 'FAILED', 'CANCELLED'):
+                    raise SessionRefused('RECOVERY_REQUIRED' if run['state'] == 'RECOVERY_REQUIRED' else 'LEASE_HELD')
+                group_runs.add(run['id'])
+        sessions = db.execute("""
+            SELECT chat.data, run.data FROM records chat
+            JOIN records run ON run.kind='run' AND run.id=json_extract(chat.data,'$.run')
+            WHERE chat.kind='node-session' AND json_extract(chat.data,'$.workspace')=?
+            LIMIT 401
+        """, (workspace,)).fetchall()
+        if len(sessions) > 400:
+            raise conflict()
+        known = {}
+        for chat_raw, run_raw in sessions:
+            chat, run = json.loads(chat_raw), json.loads(run_raw)
+            if run['id'] not in group_runs or run['workspace'] != workspace:
+                continue
+            sid = chat.get('native_session_id')
+            if sid:
+                known[sid] = run['id']
+        return known
+
+    def _members(self, db, workspace, group, snapshot):
+        known = self._known_members(db, workspace, group)
+        actual = {}
+        members = []
+        for handle, link in sorted(snapshot.links.items()):
+            if link['group'] != group:
+                continue
+            record = snapshot.reads[handle]
+            locator = record.index.resolve(workspace, handle)
+            actual[locator.native_uuid] = link['run']
+            raw = db.execute('SELECT data FROM records WHERE kind=? AND id=?',
+                             (KIND, view_id(workspace, handle))).fetchone()
+            view = parse_view(raw[0], workspace, handle) if raw else default_view(handle)
+            if view['collection'] == 'archived':
+                raise NativeHistoryError('NATIVE_VIEW_CONFLICT', message='工作流含归档会话，请先逐条核对。')
+            if view['collection'] != 'trash':
+                members.append((handle, locator, record, view))
+        if (not members or actual != known or len(members) > 80
+                or sum(record.ref.stamp[4] for _, _, record, _ in members) > 32 * 1024 * 1024):
+            raise NativeHistoryError('NATIVE_VIEW_CONFLICT', message='工作流会话成员未完整核验，未进行批量整理。')
+        return members
+
+    @staticmethod
+    def _fingerprint(members):
+        return digest(canonical([[handle, locator.lease_key, record.ref.sha, view]
+                                 for handle, locator, record, view in members]))
+
+    def request(self, data):
+        from contextlib import ExitStack
+        from .session_lease import codex_presentation_guard, production_session_gate
+
+        required = {'workspace', 'revision', 'group'}
+        if (set(data) not in (required, required | {'expected'})
+                or not matches(WORKSPACE, data['workspace']) or not matches(REVISION, data['revision'])
+                or not matches(WORKSPACE, data['group'])
+                or 'expected' in data and not matches(WORKSPACE, data['expected'])):
+            raise invalid()
+        workspace, revision, group = (data[key] for key in ('workspace', 'revision', 'group'))
+        if not self.views._mutation_gate.acquire(blocking=False):
+            raise conflict()
+        try:
+            path, identity, proof, snapshot = self.views._scope(workspace, revision)
+            with self.db.tx(read=True) as db:
+                members = self._members(db, workspace, group, snapshot)
+            fingerprint = self._fingerprint(members)
+            if 'expected' not in data:
+                self.reader.require_proof(proof)
+                return {'workspace': workspace, 'group': group, 'count': len(members), 'expected': fingerprint}
+            if data['expected'] != fingerprint:
+                raise conflict()
+            with ExitStack() as stack:
+                roots = {}
+                for _, locator, record, _ in members:
+                    root = record.source.profile.root.parent
+                    binding = dict(provider='codex', home=str(root.parent), config_root=str(root),
+                                   execution_backend='native-local', local_lock_root=str(root / '.devflower-writer-locks'),
+                                   root_identity=StorageRootIdentity.capture(root).fields(), project=workspace,
+                                   cwd=locator.original_cwd, session_id=locator.native_uuid)
+                    stack.enter_context(production_session_gate(binding, locator))
+                    roots.setdefault(root, []).append(locator.native_uuid)
+                _, fresh = self.reader.scan(workspace, path, identity)
+                checks = [stack.enter_context(codex_presentation_guard(root, sessions)) for root, sessions in roots.items()]
+                with self.db.tx() as db:
+                    if self._fingerprint(self._members(db, workspace, group, fresh)) != fingerprint:
+                        raise conflict()
+                    for handle, _, record, previous in members:
+                        action = ViewAction(workspace, handle, revision, previous['view_revision'], 'trash', None)
+                        self.views._verify(action, path, identity, record)
+                        updated = transition(previous, action)
+                        db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)', (
+                            KIND, view_id(workspace, handle), canonical(dict(updated, workspace=workspace)).decode()))
+                    with self.reader.guard:
+                        self.reader._snapshot(workspace, revision)
+                        require_current(self.reader.store.state, proof, transaction=True)
+                        for check in checks:
+                            check()
+                        db.commit()
+            return {'workspace': workspace, 'group': group, 'count': len(members), 'views': [
+                transition(view, ViewAction(workspace, handle, revision, view['view_revision'], 'trash', None))
+                for handle, _, _, view in members]}
+        finally:
+            self.views._mutation_gate.release()

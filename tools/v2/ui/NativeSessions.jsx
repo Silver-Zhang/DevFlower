@@ -3,6 +3,8 @@ import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
 import {VisibleHistory} from './VisibleHistory.jsx';
 import {NativeActivity} from './NativeActivity.jsx';
 import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
+import {NativeComposer} from './NativeComposer.jsx';
+import {groupKeyFor} from '../../studio/workbench_ui/session_groups.mjs';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
 const ACTIVITY_GROUPS = [['day', '近 24 小时'], ['week', '24 小时至 7 天'], ['older', '更早'], ['unknown', '活动时间未知']];
@@ -63,6 +65,22 @@ function ViewDialog({action, initialAlias, onCancel, onConfirm}) {
  </dialog>;
 }
 
+function GroupTrashDialog({dialog, busy, error, onCancel, onConfirm}) {
+ const ref = useRef(null);
+ useEffect(() => { ref.current.showModal(); }, []);
+ return <dialog ref={ref} className="native-view-dialog" aria-label="工作流会话整理"
+  onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}
+  onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
+  <h3>整组移入回收站</h3>
+  <p>将 {dialog.count} 个已核验的工作流会话移入 DevFlower 回收站，可逐个恢复。此操作保留原生历史和运行记录。</p>
+  {error && <p className="error-text" role="alert">{error}</p>}
+  <div className="native-view-dialog-buttons">
+   <button autoFocus disabled={busy} onClick={onCancel}>取消</button>
+   <button className="primary" disabled={busy} onClick={onConfirm}>确认整组移入</button>
+  </div>
+ </dialog>;
+}
+
 function listText(value) {
  return value.normalize('NFKC').toLowerCase();
 }
@@ -98,7 +116,8 @@ function compareRows(a, b, order) {
  return order === 'earliest' ? a.time - b.time : b.time - a.time;
 }
 
-export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
+export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, catalog,
+ refreshCatalog, isCurrent, onClose, onWorkflow}) {
  const [list, setList] = useState(null);
  const [reading, setReading] = useState(null);
  const [markdownSelection, setMarkdownSelection] = useState(null);
@@ -116,6 +135,13 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const [mutationError, setMutationError] = useState('');
  const [refreshCue, setRefreshCue] = useState('');
  const [notice, setNotice] = useState('');
+ const [composer, setComposer] = useState(false);
+ const [collapsed, setCollapsed] = useState(() => new Set());
+ const [groupDialog, setGroupDialog] = useState(null);
+ const [groupError, setGroupError] = useState('');
+ const [groupBusy, setGroupBusy] = useState(false);
+ const restoreKey = 'devflower-v2-session-last:' + workspace.id;
+ const canRestore = Boolean(writeProviders.length || workflowLinks);
  const listGeneration = useRef(0);
  const selectionGeneration = useRef(0);
  const historyGeneration = useRef(0);
@@ -126,7 +152,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const collectionGroup = useRef(null);
  const mutation = useRef(null);
 
- async function refresh() {
+ async function refresh(reopen = null) {
   if (!enabled) return;
   const generation = ++listGeneration.current;
   selectionGeneration.current++;
@@ -139,6 +165,8 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
   setNotice('');
   setDialogAction(null);
   setQuery('');
+  setGroupDialog(null);
+  setGroupError('');
   try {
    const current = () => isCurrent() && generation === listGeneration.current;
    const result = await api('native-sessions?' + new URLSearchParams({workspace: workspace.id}));
@@ -149,6 +177,16 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    if (current() && preferences.workspace === workspace.id && preferences.revision === result.revision) {
     setViews(new Map(preferences.views.map(view => [view.handle, view])));
     setList({...result, referenceTime: Date.now()});
+    const row = reopen && result.sessions.find(item => item.handle === reopen);
+    if (row?.access === 'readable') {
+     const stored = preferences.views.find(item => item.handle === reopen) || DEFAULT_VIEW;
+     const category = stored.collection === 'active' ? stored.hidden ? 'hidden' : 'current' : stored.collection;
+     setCollection(category);
+     const byHandle = new Map(preferences.views.map(view => [view.handle, view]));
+     const named = collectionRows({...result, referenceTime: Date.now()}, handle =>
+      byHandle.get(handle) || DEFAULT_VIEW, category, '').find(item => item.handle === reopen);
+     await choose(named, null, result.revision);
+    }
    }
   } catch (error) {
    if (isCurrent() && generation === listGeneration.current) setListError(error.message);
@@ -158,17 +196,18 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  }
  useEffect(() => {
   closeButton.current?.focus();
-  refresh();
+  refresh(canRestore ? localStorage.getItem(restoreKey) : null);
   return () => {
    listGeneration.current++;
    selectionGeneration.current++;
   };
  }, []);
 
- async function choose(row, button) {
-  if (!list || row.access !== 'readable') return;
+ async function choose(row, button, revision = list?.revision) {
+  if (!revision || row.access !== 'readable') return;
   const generation = ++selectionGeneration.current;
-  const {revision} = list;
+  if (canRestore) localStorage.setItem(restoreKey, row.handle);
+  setComposer(false);
   const current = () => isCurrent() && generation === selectionGeneration.current;
   opener.current = button;
   setDialogAction(null);
@@ -192,6 +231,8 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  }, [reading?.row.handle]);
 
  function back() {
+  setComposer(false);
+  if (canRestore) localStorage.removeItem(restoreKey);
   selectionGeneration.current++;
   setDialogAction(null);
   setReading(null);
@@ -206,6 +247,8 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const selectedView = reading ? preference(reading.row.handle) : DEFAULT_VIEW;
 
  function switchCollection(value) {
+  setComposer(false);
+  if (canRestore) localStorage.removeItem(restoreKey);
   selectionGeneration.current++;
   setCollection(value);
   setDialogAction(null);
@@ -288,7 +331,38 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
  const rows = collectionRows(list, preference, collection, listNeedle);
  const filtered = rows.filter(row => row.matches && (!provider || provider === row.provider));
  const activityGrouping = grouping === 'activity';
- const groups = activityGrouping ? ACTIVITY_GROUPS : Object.entries(PROVIDERS);
+ const workflowGrouping = grouping === 'workflow';
+ const groupFor = row => groupKeyFor({workflow_group_id: row.workflow?.group}, 'workflow');
+ const workflowGroups = new Map();
+ if (workflowGrouping) for (const row of filtered) {
+  const id = groupFor(row);
+  if (!workflowGroups.has(id)) workflowGroups.set(id, row.workflow?.workflow || '未关联工作流');
+ }
+ const groups = workflowGrouping ? [...workflowGroups] : activityGrouping ? ACTIVITY_GROUPS : Object.entries(PROVIDERS);
+ const canContinue = Boolean(reading?.result && reading.row.can_request_continue && writeProviders.includes('codex'));
+ const pendingSend = writeProviders.length > 0 && Boolean(sessionStorage.getItem('devflower-v2-session-intent:' + workspace.id));
+
+ async function groupAction(group, expected) {
+  if (!list || groupBusy) return;
+  const generation = listGeneration.current;
+  setGroupBusy(true);
+  setGroupError('');
+  try {
+   const value = await api('workflow-session-trash', {workspace: workspace.id, revision: list.revision, group,
+    ...(expected ? {expected} : {})});
+   if (!isCurrent() || generation !== listGeneration.current || value.workspace !== workspace.id || value.group !== group) return;
+   if (expected) {
+    setViews(previous => new Map([...previous, ...value.views.map(view => [view.handle, view])]));
+    if (reading && value.views.some(view => view.handle === reading.row.handle)) back();
+    setGroupDialog(null);
+    setNotice('已将 ' + value.count + ' 个会话移入 DevFlower 回收站，可逐个恢复。');
+   } else setGroupDialog(value);
+  } catch (error) {
+   if (isCurrent() && generation === listGeneration.current) setGroupError(error.message);
+  } finally {
+   if (isCurrent()) setGroupBusy(false);
+  }
+ }
  const selectedOutsideFilter = reading && rows.some(row => row.handle === reading.row.handle && !row.matches);
  const messages = reading?.result?.messages;
  const normalized = query.trim().toLocaleLowerCase();
@@ -313,9 +387,10 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    }
   }}>
   <header className="project-panel-header">
-   <div><h2>原生会话</h2><p className="muted small">{workspace.name} · 只读 · 占用状态未核实</p>
+   <div><h2>原生会话</h2><p className="muted small">{workspace.name} · {writeProviders.length ? '会话中心' : '只读 · 占用状态未核实'}</p>
     {refreshCue && <p role="status" className="muted small">{refreshCue}</p>}</div>
-   <button aria-label="刷新原生会话" title="刷新原生会话" disabled={!enabled || loading || mutating} onClick={refresh}><RefreshCw size={16}/></button>
+   {writeProviders.length > 0 && <button onClick={() => setComposer('new')}>{pendingSend ? '核验上次发送' : '新建会话'}</button>}
+   <button aria-label="刷新原生会话" title="刷新原生会话" disabled={!enabled || loading || mutating} onClick={() => refresh(canRestore ? reading?.row.handle : null)}><RefreshCw size={16}/></button>
    <button ref={closeButton} aria-label="关闭原生会话" title="关闭原生会话" onClick={onClose}><X size={16}/></button>
   </header>
   <div className="project-panel-content">
@@ -337,6 +412,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
         onChange={() => switchCollection(id)}/><span>{label}</span>
       </label>)}
      </fieldset>
+     {groupError && <p role="alert" className="error-text">{groupError}</p>}
      {notice && <p role="status" className="muted small">{notice}</p>}
      <div className="native-list-options">
       <label className="field"><span>筛选会话列表</span>
@@ -352,6 +428,7 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
       <label className="field"><span>会话列表分组</span>
        <select value={grouping} onChange={event => setGrouping(event.target.value)}>
         <option value="provider">按 Provider</option><option value="activity">按活动时间</option>
+        {workflowLinks && <option value="workflow">按工作流</option>}
        </select>
       </label>
       <label className="field"><span>会话列表排序</span>
@@ -364,20 +441,30 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
      {!filtered.length && <p className="muted">{listNeedle || provider ? '当前集合没有符合筛选条件的会话。' :
       '当前工作空间没有匹配的原生会话。'}</p>}
      {groups.map(([id, name]) => {
-      const group = filtered.filter(row => (activityGrouping ? activityGroup(row.time, list.referenceTime) : row.provider) === id);
+      const group = filtered.filter(row => (workflowGrouping ? groupFor(row) : activityGrouping ?
+       activityGroup(row.time, list.referenceTime) : row.provider) === id);
       group.sort((a, b) => compareRows(a, b, order));
       return group.length > 0 && <section key={id} aria-label={name}>
-       <h3>{name}</h3>
-       <ul>{group.map(row => <li key={row.handle}>
+       {workflowGrouping ? <div className="native-workflow-group">
+        <h3><button aria-expanded={!collapsed.has(id)} onClick={() => setCollapsed(previous => {
+         const next = new Set(previous);
+         if (next.has(id)) next.delete(id); else next.add(id);
+         return next;
+        })}>{name}</button></h3>
+        {workflowTrash && id !== 'unlinked' && collection === 'current' && <button disabled={groupBusy || mutating}
+         onClick={() => groupAction(id)}>整组移入回收站</button>}
+       </div> : <h3>{name}</h3>}
+       {(!workflowGrouping || !collapsed.has(id)) && <ul>{group.map(row => <li key={row.handle}>
         <button className="native-session-item" aria-pressed={reading?.row.handle === row.handle}
          ref={button => { if (button && reading?.row.handle === row.handle) opener.current = button; }}
          disabled={row.access !== 'readable'} onClick={event => choose(row, event.currentTarget)}>
          <MessageSquareText size={15}/>
          <span>{row.name}
           <small>{row.source_labels.join(' · ')} · {row.time === null ? '时间未知' : new Date(row.time).toLocaleString()}</small>
-          <small>{ACCESS[row.access]}{row.hidden ? ' · 已隐藏' : ''}</small></span>
+          <small>{ACCESS[row.access]}{row.hidden ? ' · 已隐藏' : ''}</small>
+          {row.workflow && <small>{row.workflow.agent}</small>}</span>
         </button>
-       </li>)}</ul>
+       </li>)}</ul>}
       </section>;
      })}
     </>}
@@ -385,6 +472,18 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
    {reading && <section className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
      <h3>{selectedView.alias || PROVIDERS[reading.row.provider]} · 只读</h3></header>
+    {reading.row.workflow && <div className="native-view-actions">
+     <button onClick={() => onWorkflow(reading.row.workflow)}>查看工作流节点 · {reading.row.workflow.agent}</button>
+    </div>}
+    {canContinue && <div className="native-view-actions">
+     <button onClick={() => setComposer('resume')}>继续会话</button>
+    </div>}
+    {reading.result && writeProviders.includes(reading.row.provider) && <div className="native-view-actions">
+     <button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
+     <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
+      ? '共享 Claude HOME 允许外部并发写入。续聊和终端接管暂不可用。'
+      : 'Codex 交互终端的用户 Shell 可访问原生存储。终端接管暂不可用。'}</small>
+    </div>}
     {selectedOutsideFilter && <p role="status" className="muted small">当前阅读的会话不在筛选结果中。</p>}
     {reading.loading && <p className="muted" role="status">正在读取已核验的会话…</p>}
     {reading.error && <p className="error-text" role="alert">{reading.error}</p>}
@@ -415,6 +514,13 @@ export function NativeSessions({api, workspace, enabled, isCurrent, onClose}) {
     </NativeActivity>}
    </section>}
   </div>
+  {composer && <NativeComposer key={composer + (reading?.row.handle || '')} api={api} workspace={workspace}
+   providers={writeProviders} scope={composer === 'resume' && reading ? {
+    provider: reading.row.provider, handle: reading.row.handle, revision: list.revision
+   } : null} catalog={catalog} refreshCatalog={refreshCatalog} onClose={() => setComposer(false)}
+   onCompleted={handle => { setComposer(false); refresh(handle); }}/>}
+  {groupDialog && <GroupTrashDialog dialog={groupDialog} busy={groupBusy} error={groupError}
+   onCancel={() => setGroupDialog(null)} onConfirm={() => groupAction(groupDialog.group, groupDialog.expected)}/>}
   {dialogAction && <ViewDialog action={dialogAction.action} initialAlias={selectedView.alias} onCancel={dismissDialog}
    onConfirm={confirmView}/>}
  </aside>;

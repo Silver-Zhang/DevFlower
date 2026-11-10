@@ -1,4 +1,5 @@
 """V2 execution boundary around the existing scheduler, native adapter and journal."""
+from contextlib import ExitStack
 import copy
 import json
 import os
@@ -20,6 +21,10 @@ from studio.workbench_graph import request_sections, request_text
 from studio.workbench_scheduler import Scheduler, Journal, REPLY
 from studio.local_codex_adapter import LocalCodex
 from studio.native_codex_image import binary_digest
+from studio.session_sources import UUID
+from .native_session_links import claim_key
+from .session_identity import StorageRootIdentity
+from .session_lease import production_session_gate
 from studio.usage import public_usage
 from . import worker_facts
 from .provider import CodexProvider, public_provider_error
@@ -45,20 +50,33 @@ def persist_completion(artifacts,completion,storage):
 
 class V2Journal(Journal):
     """Retain old Journal process/send semantics; never create legacy chat indexes."""
+    def __init__(self, scheduler, activation):
+        super().__init__(scheduler, activation)
+        self.writer_gates = ExitStack()
+        self.writer_sid = None
+
     def intent(self, run, kind, data):
         key = super().intent(run, kind, data)
         self.s.db.change('native-step', key, {'created_at': time.time()})
         return key
 
     def bind_session(self, sid):
-        if not isinstance(sid, str) or not re.fullmatch(r'[0-9a-f-]{36}', sid):
+        if not isinstance(sid, str) or not UUID.fullmatch(sid):
             raise Blocked('原生会话身份无效')
         activation = self.s.db.get('activation', self.key)
         chat = self.s.db.get('node-session', activation['chat_key'])
-        claim = digest(canonical(['codex', chat['binding']['config_root'], sid]))
+        native_scope = chat.get('native_scope')
+        if self.writer_sid is not None and self.writer_sid != sid:
+            raise Blocked('新节点原生会话身份发生变化。')
+        if native_scope and self.writer_sid is None:
+            binding = dict(chat['binding'], **native_scope, session_id=sid)
+            self.writer_gates.enter_context(production_session_gate(binding, None))
+            self.writer_sid = sid
+        claim = claim_key(chat['binding']['config_root'], sid)
         with self.s.db.tx() as db:
             row = db.execute("SELECT data FROM records WHERE kind='native-session-claim' AND id=?", (claim,)).fetchone()
-            if row and json.loads(row[0])['binding_id'] != chat['id']:
+            standalone = db.execute("SELECT 1 FROM records WHERE kind='standalone-native-claim' AND id=?", (claim,)).fetchone()
+            if standalone or row and json.loads(row[0])['binding_id'] != chat['id']:
                 raise Blocked('新节点收到已被其他节点绑定的原生会话；未采用该会话')
             db.execute('INSERT OR IGNORE INTO records VALUES(?,?,?)', ('native-session-claim', claim, canonical(dict(binding_id=chat['id'], session_id=sid)).decode()))
         binding = dict(chat['binding'], session_id=sid)
@@ -313,8 +331,16 @@ class V2Runtime:
         binding = copy.deepcopy(definition['bindings'][node['id']])
         self.provider.require_account(binding)
         chat_key = digest(canonical([run['id'], node['id']]))
-        self.flow.put('node-session', chat_key, dict(id=chat_key, run=run['id'], node=node['id'], binding=binding,
-                                                  workspace=run['workspace'], native_session_id=None))
+        cwd = self.store.workspace(run['workspace'])['path']
+        chat = dict(id=chat_key, run=run['id'], node=node['id'], binding=binding,
+                    workspace=run['workspace'], native_session_id=None)
+        if (binding.get('execution_backend') == 'native-local' and
+                binding['config_root'] == str(Path(binding['home']) / '.codex')):
+            config = Path(binding['config_root'])
+            chat['native_scope'] = dict(cwd=cwd, cwd_identity=StorageRootIdentity.capture(cwd).fields(),
+                runtime_profile='default-codex', root_identity=StorageRootIdentity.capture(config).fields(),
+                local_lock_root=str(config / '.devflower-writer-locks'))
+        self.flow.put('node-session', chat_key, chat)
         for item in inputs: item['handoff_id'] = digest(canonical([run['id'], item['edge'], item['activation'], key]))
         parts = request_sections(node, inputs, first=True, task_context=run['task'])
         prompt = request_text(node, inputs, first=True, task_context=run['task'])
@@ -327,7 +353,7 @@ class V2Runtime:
         journal = V2Journal(Scheduler(self, run['id']), key)
         try:
             receipt = LocalCodex(binding, dict(step_timeout_seconds=node['timeout'], max_log_bytes=2_000_000)).start(
-                prompt, self.store.workspace(run['workspace'])['path'], artifacts, schema, journal, run['id'])
+                prompt, cwd, artifacts, schema, journal, run['id'])
             activation = self.flow.get('activation', key)
             verify_completion(activation, receipt, binding)
             report = receipt['report']; structured = json.loads(report['result_json'])
@@ -360,6 +386,8 @@ class V2Runtime:
                     'failure_receipt': dict(session_id=row['observed_session'], native_turn_id=row.get('native_turn_id', 'unknown'),
                         process=process, terminal='turn.failed', requested_model=binding['model'], requested_effort=binding['effort'])})
             raise Blocked(public_provider_error(exc)) from None
+        finally:
+            journal.writer_gates.close()
 
     def _records(self):
         # One committed SQLite snapshot; a live worker may publish after this

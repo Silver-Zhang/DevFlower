@@ -1,4 +1,4 @@
-"""Fixture-only, persistent single-writer leases for the V2 session locator."""
+"""Kernel-backed session gates and the persistent fixture lease protocol."""
 from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
@@ -542,3 +542,102 @@ class SessionLease:
 
     def __exit__(self, *_):
         self.close()
+
+
+@contextmanager
+def production_session_gate(binding, locator, *, target=None):
+    """Use the same native-root kernel gate across participating DevFlower clients.
+
+    Read locators alone grant no authority. The caller holds a frozen operation,
+    checks its recovery journal inside this gate, and uses the native writer
+    implementation for Codex external concurrency.
+    """
+    from studio.native_local import session_lease
+    from studio.session_sources import UUID
+
+    sid = target or binding.get('session_id')
+    if sid is not None and (not isinstance(sid, str) or not UUID.fullmatch(sid)):
+        raise SessionRefused('LOCATOR_REFUSED')
+    root = session_path(binding['config_root'])
+    home = session_path(binding['home'])
+    if (binding.get('execution_backend') != 'native-local'
+            or root != home / ('.' + binding['provider'])
+            or binding.get('local_lock_root') != str(root / '.devflower-writer-locks')
+            or StorageRootIdentity.capture(root).fields() != binding['root_identity']):
+        raise SessionRefused('ROOT_CHANGED')
+    if locator is not None and (locator.provider, locator.native_uuid, locator.original_cwd, locator.workspace_id) != (
+            binding['provider'], sid, binding['cwd'], binding['project']):
+        raise SessionRefused('LOCATOR_REFUSED')
+    # Retain the V1 lock namespace so separate Development states and old
+    # participating V1 paths serialize on the same provider UUID.
+    with verified_directory(root) as root_fd, verified_directory(home) as home_fd:
+        root_mount = StorageRootIdentity.from_fd(root_fd).mount_id
+        if (any(os.fstat(fd).st_uid != os.geteuid() for fd in (root_fd, home_fd))
+                or mount_table().get(root_mount, (None, None, None))[2] not in LOCAL_FILESYSTEMS):
+            raise SessionRefused('PROFILE_REFUSED')
+        with session_lease(dict(binding, session_id=sid)):
+            if StorageRootIdentity.capture(root).fields() != binding['root_identity']:
+                raise SessionRefused('ROOT_CHANGED')
+            yield
+
+
+CODEX_COORDINATION_VERSION = 'codex-cli 0.163.0'
+
+
+@contextmanager
+def codex_presentation_guard(config_root, session_ids):
+    """Guard the exact Codex 0.163 writer file lifecycle without creating native files.
+
+    Native writers take .coordination.lock around per-UUID file creation and
+    removal. Holding it makes an absent per-UUID lock meaningful, while any
+    existing per-UUID lock is checked without waiting for its current writer.
+    """
+    from contextlib import ExitStack
+    from studio.session_sources import UUID
+
+    session_ids = tuple(sorted(set(session_ids)))
+    if not session_ids or any(not isinstance(sid, str) or not UUID.fullmatch(sid) for sid in session_ids):
+        raise SessionRefused('LOCATOR_REFUSED')
+    root = Path(config_root) / 'thread-writer-locks'
+    with verified_directory(root, 'EXTERNAL_UNKNOWN') as directory, ExitStack() as held:
+        expected = StorageRootIdentity.from_fd(directory)
+        if mount_table().get(expected.mount_id, (None, None, None))[2] not in LOCAL_FILESYSTEMS:
+            raise SessionRefused('EXTERNAL_UNKNOWN')
+        locks = {}
+        def lock(name, *, optional=False):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            except FileNotFoundError:
+                if optional:
+                    locks[name] = None
+                    return
+                raise SessionRefused('EXTERNAL_UNKNOWN') from None
+            held.callback(os.close, fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid()
+                    or mount_id(fd) != expected.mount_id):
+                raise SessionRefused('EXTERNAL_UNKNOWN')
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SessionRefused('EXTERNAL_BUSY') from None
+            locks[name] = inode(info)
+
+        lock('.coordination.lock')
+        for sid in session_ids:
+            lock(sid + '.lock', optional=True)
+
+        def check():
+            with verified_directory(root, 'EXTERNAL_UNKNOWN') as current:
+                if StorageRootIdentity.from_fd(current) != expected:
+                    raise SessionRefused('EXTERNAL_UNKNOWN')
+            for name, identity in locks.items():
+                try:
+                    actual = inode(os.stat(name, dir_fd=directory, follow_symlinks=False))
+                except FileNotFoundError:
+                    actual = None
+                if actual != identity:
+                    raise SessionRefused('EXTERNAL_UNKNOWN')
+
+        check()
+        yield check

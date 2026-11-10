@@ -13,12 +13,12 @@
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
 | 工作空间 | 12 | 7 | 2 | 3 | 58.3% |
-| 会话中心 | 15 | 8 | 1 | 6 | 53.3% |
+| 会话中心 | 15 | 11 | 3 | 1 | 73.3% |
 | Agent 与 Provider | 15 | 3 | 2 | 10 | 20.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 7 | 0 | 8 | 46.7% |
 | 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **36** | **9** | **42** | **41.4%** |
+| **合计** | **87** | **39** | **11** | **37** | **44.8%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -49,17 +49,39 @@
 | S02 | 原生 Claude 会话只读发现 | `tools/studio/session_center.py` | `tools/v2/native_sessions.py` | C | P0 | 不同 provider/HOME 不误合并 |
 | S03 | 嵌套路径与历史覆盖度报告 | `tools/studio/agent_sessions.py` | `tools/v2/native_sessions.py` | C | P1 | 超预算 partial，而非宣称 complete |
 | S04 | 按 Provider 分组与过滤 | `tools/studio/workbench_ui/SessionList.jsx` | `tools/v2/ui/NativeSessions.jsx` | C | P1 | 分组过滤不丢会话且状态明确 |
-| S05 | 按 Workflow 分组与关联节点 | `tools/studio/workbench_sessions.py` | — | M | P1 | 会话可追溯所属流程及节点激活 |
+| S05 | 按 Workflow 分组与关联节点 | `tools/studio/workbench_ui/session_groups.mjs`、`tools/studio/workbench_sessions.py` | `tools/v2/native_session_links.py`、`tools/v2/ui/NativeSessions.jsx` | C | P1 | 通过运行定义、节点会话、激活、进程 cwd、原生 UUID 与记录的交叉核对后链接 Agent；其余归入未关联组 |
 | S06 | 会话搜索与排序 | `tools/studio/workbench_ui/SessionList.jsx` | `tools/v2/ui/NativeSessions.jsx` | C | P1 | 列表排序搜索与分页一致 |
 | S07 | 长会话分页与窗口搜索 | `tools/studio/agent_sessions.py` | `tools/v2/native_session_pages.py` | C | P1 | 定位连续可见历史而不扫描越权 |
 | S08 | 用户回答、Markdown 与代码块阅读 | `tools/studio/workbench_ui/ConversationView.jsx` | `tools/v2/ui/NativeMessages.jsx` | C | P1 | Markdown、代码、工具消息清晰区分 |
 | S09 | 公开工具活动与摘要 | `tools/studio/tool_activity.py` | `tools/v2/native_session_activity.py` | C | P1 | 工具活动隐藏私有输入并保留状态 |
-| S10 | 新建独立原生会话 | `tools/studio/session_center.py` | — | M | P0 | 真实新建会话并保留原生 UUID |
-| S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | — | M | P1 | 别名与原生身份分离、刷新不丢 |
-| S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | — | M | P1 | 非破坏性管理，忙碌会话拒绝删除 |
-| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | — | M | P0 | 同一 UUID 安全续聊、外部占用拒绝 |
-| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py` | — | M | P1 | 关闭视图不杀进程，显式接管键盘 |
-| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py` | P | P0 | 多端争用只允许合法写者，真实平台验证 |
+| S10 | 新建独立原生会话 | `tools/studio/session_center.py`、`local_codex_adapter.py`、`local_claude_adapter.py` | `tools/v2/session_operations.py` | C | P0 | Codex 与 Claude 使用单独批准的原生配置创建，发送意图先落盘，原生回执和记录核验后按实际 UUID 重开 |
+| S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py` | P | P1 | 本地别名按工作空间与会话持久化；Provider 原生命名写入口待实现 |
+| S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | `tools/v2/native_session_views.py` | C | P1 | 单条可逆整理；Codex 0.163.0 工作流整组入回收站按预览成员与历史版本原子提交，忙碌或来源变化整组拒绝 |
+| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | P | P0 | Codex 核对原配置、目录、UUID 与历史，原生锁下续聊；Claude 共享 HOME 续聊关闭 |
+| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | V2 会话界面显示关闭原因 | M | P1 | Codex TUI 用户 Shell 读取保护存储，Claude 共享 HOME 可并发写同 UUID；同一 PTY 的浏览器/本地接管待验证隔离机制 |
+| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/runtime.py` | P | P0 | Codex 参与方以共同 UUID Gate 和原生线程锁串行化；未知回执不重发；Claude 外部客户端未加入此锁 |
+
+#### 会话中心候选证据
+
+| 层级 | 已核对的范围 |
+|---|---|
+| CODE_PRESENT | S05 与 S10 有真实入口，S11 有本地别名，S12 有单条与工作流整组事务，S13 与 S15 有 Codex 路径，S14 显示具体拒绝原因。 |
+| INTEGRATED | 现有只读发现、翻页、搜索、活动、Markdown 和单条整理保留。独立发送走 V2 令牌与状态库；工作流仍只创建原生新会话。发送与工作流在收到原生 UUID 后进入同一受管锁域。 |
+| TESTED | 本地合成验证使用实际安装的 Codex 0.163.0 与本机响应夹具，覆盖新建、同 UUID 续聊、重复意图、原生历史、工作流链接、组操作与占用拒绝。单元和浏览器夹具与真实账号验收分别记录。 |
+| ACCEPTED | 待同候选独立验收。Claude 共享 HOME 续聊及两种 Provider 的终端接管仍关闭，未达到会话中心完整验收。 |
+
+| 追踪 | 范围 | 证据 |
+|---|---|---|
+| S11a | DevFlower 本地别名 | CODE_PRESENT、INTEGRATED、TESTED。单条事务按会话和工作空间保存，浏览器验证重开后保留。 |
+| S11b | Provider 原生命名写入 | 待实现。 |
+| S12a | 单条隐藏、归档、回收及恢复 | CODE_PRESENT、INTEGRATED、TESTED。已有 V2 浏览器夹具覆盖可逆分类与视图版本冲突。 |
+| S12b | 工作流整组回收 | CODE_PRESENT、INTEGRATED、TESTED。实际 Codex CLI 搭配本机响应夹具验证已核实分组、锁占用拒绝和整组提交；回收后可按单条恢复。 |
+
+启动时同时传入私有权限 `0600` 的 `--native-history-config` 和 `--native-session-writes`。历史配置 `{"version":1,"discover_defaults":true}` 批准浏览默认根；写入配置 `{"version":1,"codex":true}` 单独批准 Codex 独立写入。需要 Claude 的 DeepSeek Flash 时，在写入配置中加入 `"claude":{"model":"deepseek-flash","effort":"low","anthropic_base_url":"https://api.deepseek.com/anthropic"}`，从本机批准的来源提供启动环境 `ANTHROPIC_AUTH_TOKEN`。V2 只把密钥传给已配置的 Claude 子进程，操作记录保存凭据摘要。Claude 原生 CLI 使用纯对话参数。
+
+在工作空间中打开原生会话，点击「新建会话」。Codex 先刷新并选择模型、强度；发送完成后打开已核验的原生记录。点击「继续会话」发送到同一 Codex UUID。只有来源与原目录能核实的记录才允许续聊。响应不完整时使用「核验本次发送」查询同一意图。工作流模式的「整组移入回收站」先显示全组预览，确认时再次校验成员、原生协调锁、转录版本与 DevFlower 分类。Codex 协调机制使用已核对的 [0.163.0 写锁协议](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/rollout/src/writer_lock.rs)。
+
+API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提交 `workspace`、`provider`、`handle`、`revision`、`intent_key`、`prompt`，Codex 另带 `model`、`effort`。新建的 `handle` 和 `revision` 为 `null`。`GET /api/v2/session-operation?workspace=…&intent_key=…` 只查询。批量回收用 `POST /api/v2/workflow-session-trash`，提交 `workspace`、`revision`、`group` 获取预览，确认时增加预览返回的 `expected`。
 
 ### Agent 与 Provider
 
