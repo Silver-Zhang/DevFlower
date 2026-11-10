@@ -9,7 +9,6 @@ import ctypes
 import os
 from pathlib import Path
 import platform
-from .common import Blocked
 
 LIBC = ctypes.CDLL(None, use_errno=True)
 READ = (1 << 0) | (1 << 2) | (1 << 3)
@@ -33,13 +32,16 @@ class Program(ctypes.Structure):
     _fields_ = [('length', ctypes.c_ushort), ('filters', ctypes.POINTER(Filter))]
 
 
-def confine_processes():
+def confine_processes(*, deny_network=False):
     """Keep descendants in their supervised session; block cross-process memory APIs.
 
     Apply after Popen creates the session. ABI syscall numbers are architecture
     specific; unsupported architectures are rejected by enforce().
     """
     numbers = [109, 112, 101, 310, 311, 312, 438] if platform.machine() == 'x86_64' else [154, 157, 117, 270, 271, 272, 438]
+    if deny_network:
+        # No new sockets or io_uring, which can submit equivalent operations.
+        numbers.extend([41, 53, 425] if platform.machine() == 'x86_64' else [198, 199, 425])
     arch = 0xc000003e if platform.machine() == 'x86_64' else 0xc00000b7
     filters = [Filter(0x20, 0, 0, 4), Filter(0x15, 1, 0, arch),
                Filter(0x06, 0, 0, 0x80000000), Filter(0x20, 0, 0, 0),
@@ -60,13 +62,22 @@ def abi():
 
 
 def protect_controller():
+    from .common import Blocked
     if LIBC.prctl(4, 0, 0, 0, 0):  # PR_SET_DUMPABLE
         raise Blocked('cannot protect controller from ptrace')
 
 
 def enforce(read=(), write=()):
+    from .common import Blocked
     if abi() < 6:
         raise Blocked('Landlock ABI >= 6 required')
+    restrict(read, write)
+
+
+def restrict(read=(), write=(), *, deny_network=False):
+    """Apply the same Landlock policy in an already isolated native child."""
+    if abi() < 6:
+        raise OSError('Landlock ABI >= 6 required')
     attr = Ruleset(ALL, 0, 3)
     fd = LIBC.syscall(444, ctypes.byref(attr), ctypes.sizeof(attr), 0)
     if fd < 0:
@@ -87,7 +98,7 @@ def enforce(read=(), write=()):
                     os.close(handle)
         if LIBC.prctl(38, 1, 0, 0, 0) or LIBC.syscall(446, fd, 0):
             raise OSError(ctypes.get_errno(), 'landlock restrict')
-        confine_processes()
+        confine_processes(deny_network=deny_network)
     finally:
         os.close(fd)
 

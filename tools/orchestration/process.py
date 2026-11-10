@@ -42,7 +42,7 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
@@ -52,18 +52,19 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
     with tempfile.TemporaryDirectory(prefix='dfp-', dir=parent_scratch) as scratch:
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                         input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout,
-                        readonly_paths, readonly_dirs, hidden_paths, on_stderr, **spawn_options)
+                        readonly_paths, readonly_dirs, hidden_paths, on_stderr, pass_fds=pass_fds,
+                        process_attest=process_attest, **spawn_options)
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
-    spawn_options = {}
+    spawn_options = {'pass_fds': pass_fds}
     if executable_fd is not None:
         from studio.native_codex_image import SEALS
         if (backend != 'native-local' or isolate or type(executable_fd) is not int
-                or fcntl.fcntl(executable_fd, fcntl.F_GET_SEALS) != SEALS):
+                or pass_fds or fcntl.fcntl(executable_fd, fcntl.F_GET_SEALS) != SEALS):
             raise Blocked('原生执行需要已固定的不可变CLI映像')
         spawn_options = dict(executable=f'/proc/self/fd/{executable_fd}', pass_fds=(executable_fd,))
     home = Path(home)
@@ -153,8 +154,9 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
         if store is not None and hasattr(store, 'process_started'):
             store.process_started = True
         record = process_identity(proc.pid)
+        native = {'native_child': process_attest(record)} if process_attest else {}
         if store:
-            store.finish(op, 'RUNNING', process=record)
+            store.finish(op, 'RUNNING', process=record, **native)
     except BaseException:
         # Popen owns this unreaped child and its newly created session. Its
         # PID cannot be reused before wait(), even if no record was published.

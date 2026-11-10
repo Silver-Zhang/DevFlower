@@ -1,4 +1,4 @@
-"""Claude local CLI: same canonical HOME/session, no credential overlays."""
+"""Claude local CLI with canonical native history and scoped Agent tools."""
 from contextlib import nullcontext
 from pathlib import Path
 import json
@@ -28,13 +28,22 @@ def chat_only_args():
 
 def claude_args(binding, requested, *, resume=False, output_schema=None):
     chat_only = binding.get('chat_only') is True
-    tools = chat_only_args() if chat_only else ['--tools', 'Read,Glob,Grep', '--strict-mcp-config',
-        '--mcp-config', '{"mcpServers":{}}', '--setting-sources', 'user']
+    scoped = binding.get('v2_claude_scope') is True
+    if scoped:
+        allowed = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash']
+        if binding.get('v2_agent_skills'):
+            allowed.append('Skill')
+        tools = ['--tools', ','.join(allowed), '--verbose']
+    else:
+        tools = chat_only_args() if chat_only else ['--tools', 'Read,Glob,Grep', '--strict-mcp-config',
+            '--mcp-config', '{"mcpServers":{}}', '--setting-sources', 'user']
     mode = binding.get('agent_permission_mode', 'plan')
-    if mode not in ('manual', 'plan') or 'agent_permission_mode' in binding and not chat_only:
+    if (mode not in (('acceptEdits',) if scoped else ('manual', 'plan'))
+            or 'agent_permission_mode' in binding and not chat_only):
         raise Blocked('Claude 工作模式与已核验工具范围不匹配。')
-    args = [binding['executable'], '-p', '--output-format', 'json', '--permission-mode', mode, *tools]
-    if 'agent_permission_mode' in binding:
+    args = [binding['executable'], '-p', '--output-format', 'stream-json' if scoped else 'json',
+            '--permission-mode', mode, *tools]
+    if 'agent_permission_mode' in binding and not scoped:
         args += ['--permission-prompts', 'none']
     for key in ('model', 'effort'):
         value = binding[key]
@@ -51,6 +60,21 @@ def claude_args(binding, requested, *, resume=False, output_schema=None):
         schema.pop('$schema', None)
         args += ['--json-schema', json.dumps(schema)]
     return args
+
+
+def scoped_terminal(raw, expected, session):
+    try:
+        events = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        initial = [e for e in events if e.get('type') == 'system' and e.get('subtype') == 'init']
+        if (len(initial) != 1 or initial[0].get('session_id') != session
+                or not expected <= set(initial[0].get('skills', []))):
+            raise ValueError
+        terminal = events[-1]
+        if terminal.get('type') != 'result':
+            raise ValueError
+        return json.dumps(terminal)
+    except (ValueError, TypeError, IndexError, AttributeError):
+        raise Blocked('Claude 未返回匹配的原生会话、Skill 清单和终止回执。') from None
 
 
 def claude_secrets(binding, environment):
@@ -100,6 +124,7 @@ class LocalClaude:
         if sid and not isinstance(sid,str):raise Blocked('原生恢复需要明确 UUID')
         requested=sid or b.get('new_session_id') or str(uuid.uuid4())
         chat_only=b.get('chat_only') is True
+        scoped=b.get('v2_claude_scope') is True
         if chat_only and sid and (not self.managed_resume or sid != b.get('session_id')
                 or not callable(getattr(store, 'check_before_spawn', None))):
             raise Blocked('Claude 续聊需要已核验的 DevFlower 会话及执行前复核。')
@@ -107,17 +132,31 @@ class LocalClaude:
         key=store.intent(run,'AGENT_REQUEST',dict(kind='claude',project=b['project'],role=b['role'],
             requested_session=requested,requested_model=b['model'],requested_effort=b['effort'])) if store else None
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
-        if store and callable(getattr(store,'check_before_spawn',None)):
-            store.check_before_spawn()
         before = claude_secrets(b, self.credential_env) if chat_only else set()
-        image = (sealed_executable(b['executable'], 'devflower-claude', expected_sha256=b['_executable_sha256'])
-                 if chat_only else nullcontext((None, None)))
-        with image as (executable_fd, _):
-            spawn_options = {} if executable_fd is None else {'executable_fd': executable_fd}
-            process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
+        transport = 'native-workspace-scope' if scoped else 'native-local'
+
+        def launch(argv, env, **options):
+            if store and callable(getattr(store,'check_before_spawn',None)):
+                store.check_before_spawn()
+            return execute(argv,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
                 cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
-                env_extra=dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0', **self.credential_env),
-                context={'provider':'claude','agent_role':b['role'],'transport':'native-local'}, **spawn_options)
+                env_extra=env,context={'provider':'claude','agent_role':b['role'],'transport':transport}, **options)
+
+        if scoped:
+            from v2.claude_agent_scope import prepare_scope
+            with prepare_scope(b, cwd, requested, bool(sid), self.credential_env) as scope:
+                process,out,err=launch([*scope.prefix, *args[1:]], scope.environment,
+                                      pass_fds=scope.fds, process_attest=scope.attest)
+                scope.publish_history()
+                if not any(process[key] for key in ('exit', 'timeout', 'overflow', 'cancelled')):
+                    out = scoped_terminal(out, scope.skills, requested)
+        else:
+            image = (sealed_executable(b['executable'], 'devflower-claude', expected_sha256=b['_executable_sha256'])
+                     if chat_only else nullcontext((None, None)))
+            with image as (executable_fd, _):
+                options = {} if executable_fd is None else {'executable_fd': executable_fd}
+                process,out,err=launch(args, dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0',
+                                                 **self.credential_env), **options)
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:
@@ -142,9 +181,10 @@ class LocalClaude:
         if store:
             terminal = {'claude_terminal': {'type': 'result', 'subtype': 'success', 'session_id': requested}
                         } if 'agent_permission_mode' in b else {}
-            store.finish(key, 'AGENT_COMPLETED', actual_session=requested, transport={'mode': 'native-local'}, **terminal)
+            store.finish(key, 'AGENT_COMPLETED', actual_session=requested, transport={'mode': transport}, **terminal)
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,
             home=b['home'],cwd=cwd,provider='claude',
-            permission_mode=('native-' + b.get('agent_permission_mode', 'plan') + '/no-tools') if chat_only else 'native-plan/read-tools',
-            transport={'mode':'native-local'},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-local/1')
+            permission_mode=('native-acceptEdits/workspace-scope' if scoped else
+                ('native-' + b.get('agent_permission_mode', 'plan') + '/no-tools') if chat_only else 'native-plan/read-tools'),
+            transport={'mode':transport},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-local/1')
         return result

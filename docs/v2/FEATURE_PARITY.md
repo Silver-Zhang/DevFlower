@@ -123,13 +123,13 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | A04 | Copilot 可执行 Agent 适配 | `tools/studio/copilot_adapter.py` | — | M | P2 | 仅真实支持的模式可执行 |
 | A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/cli_providers.py` | P | P1 | 每种 CLI 使用本机默认 Profile，多 HOME 选择待接入 |
 | A06 | Agent 身份、职责、背景和目标 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/agent_records.py`、`tools/v2/ui/AgentManager.jsx` | C | P0 | 角色模板与 Provider 分离，版本按工作区保存和重开 |
-| A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | `tools/v2/cli_providers.py` | P | P0 | Codex Ask/Agent、Claude Ask/Plan 各自映射到真实参数 |
+| A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | `tools/v2/cli_providers.py`、`tools/v2/codex_agent_plan.py` | C | P0 | 两种 CLI 的三种模式有原生映射，Codex 完整 Plan 转 Agent 需单独确认 |
 | A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | `tools/v2/agent_execution.py` | C | P0 | 核验原生来源、工作目录、UUID 及写租约，外部 Claude 保持只读 |
 | A09 | 模型与推理强度配置 | `tools/studio/workbench_ui/ModelSelector.jsx` | `tools/v2/cli_providers.py`、`tools/v2/ui/AgentManager.jsx` | C | P1 | CLI 目录、用户默认、手工模型及逐模型推理强度独立显示 |
 | A10 | 初始化、每轮、输出交接 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/definitions.py` | C | P0 | 真实回合各部分独立可追溯 |
 | A11 | 结构化输出合同和字段选择 | `tools/studio/data_contracts.py` | `tools/v2/runtime.py` | P | P1 | Codex 沿用结构化回执，Claude 交接真实可见文本，自定义 schema 和字段选择待接入 |
-| A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | `tools/v2/codex_agent_scope.py` | P | P0 | Codex 工作区读写由原生沙箱强制，Claude 仅对话或计划 |
-| A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | `tools/v2/agent_records.py`、`tools/v2/codex_agent_scope.py` | P | P1 | Codex 原生选择与内容复核，Claude 仅发现 |
+| A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | `tools/v2/codex_agent_scope.py`、`tools/v2/claude_agent_scope.py` | C | P0 | 原生工作区读写与受控命令，验证越界、认证环境及不可用时的拒绝 |
+| A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | `tools/v2/agent_records.py`、`tools/v2/claude_agent_scope.py` | C | P1 | Claude、Codex 原生选择及内容复核，Claude 区分工作区与用户级来源 |
 | A14 | 子 Agent 与托管子任务 | `tools/studio/managed_children.py` | — | M | P2 | 深度、数量、授权和回执正确 |
 | A15 | 超时、预算与能力错误 | `tools/studio/workbench_runtime.py` | `tools/v2/cli_providers.py`、`tools/v2/runtime.py` | P | P0 | 两者支持超时与调用次数约束，Claude 支持原生美元预算 |
 
@@ -144,7 +144,16 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | 真实模型服务 | A 使用本机配置的 Codex 和 Claude Code / DeepSeek Flash 完成两节点工作流。核对冻结版本、实际输入哈希、上游标记、原生 UUID 和两条 Session Center 关联。两种 Provider 均从 Agent 入口继续同一已绑定 UUID，重复启动意图返回原运行。 |
 | 独立 QA | C 在固定候选复验 Chromium 配置与直接启动、原生 CLI 工作流、会话续用、权限、Skill 选择和丢失响应后的重放。CLI 及 OS 检查使用一次性工作区和本机合成服务。 |
 
-阶段覆盖与发布门槛分开记录。Claude 工具与选定 Skills、Codex Plan、原生子 Agent、逐命令批准和多 Profile 仍有明确限制。完整 CI 以同一集成提交的 [V2 工作流](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 为准。模式与原生参数见 [Agent Manager 执行映射](CLI_NATIVE.md#agent-manager-执行映射)。
+Phase 3 收尾候选的证据按类型记录。
+
+| 层级 | 收尾范围 |
+|---|---|
+| CODE_PRESENT / INTEGRATED | Claude 工作区 Agent 与所选原生 Skills 接入既有的配置冻结、原生历史和写租约。Codex Plan 使用原生协作模式，完整计划需要显式确认才能进入 Agent。 |
+| TESTED（合成与 OS） | 用例检查工作区、符号链接、进程环境、Bash 网络、启动拒绝和原生历史发布。Codex CLI 对照用例验证 Plan 与确认后的 Agent 回执、权限及幂等。 |
+| 真实 CLI 与模型服务 | 独立记录实际 CLI 版本、Provider、工作区标记、Skills 调用、原生 UUID 和请求回执。目录发现与合成回执单独记账。 |
+| ACCEPTED | 仅在同一集成候选取得独立 QA 和完整 CI 通过后成立。 |
+
+原生子 Agent、逐命令人工审批和多 Profile 保留为后续需求。完整 CI 以同一集成提交的 [V2 工作流](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 为准。模式与原生参数见 [Agent Manager 执行映射](CLI_NATIVE.md#agent-manager-执行映射)。
 
 ### 工作流设计器
 
