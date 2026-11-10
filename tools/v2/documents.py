@@ -44,8 +44,10 @@ def validate_draft(document):
         raise Invalid('草稿连线数量超限')
     nodes, edges, pairs = set(), set(), set()
     for node in document['nodes']:
-        fields(node, {'id', 'name', 'position', 'provider', 'model', 'effort', 'initial_prompt',
-                      'round_prompt', 'output_prompt', 'permission', 'timeout'}, {'id', 'name', 'position'})
+        reference = 'agent_id' in node or 'agent_revision' in node
+        config = {'agent_id', 'agent_revision'} if reference else {'provider', 'model', 'effort',
+                  'initial_prompt', 'round_prompt', 'output_prompt', 'permission', 'timeout'}
+        fields(node, {'id', 'name', 'position'} | config, {'id', 'name', 'position'})
         if not isinstance(node['id'], str) or not ID.fullmatch(node['id']) or node['id'] in nodes:
             raise Invalid('Agent 身份无效或重复')
         nodes.add(node['id'])
@@ -53,6 +55,11 @@ def validate_draft(document):
         fields(node['position'], {'x', 'y'}, {'x', 'y'})
         for value in node['position'].values():
             number(value, -100000, 100000)
+        if reference:
+            if any(not isinstance(node.get(key), str) or not re.fullmatch(r'[0-9a-f]{' + str(length) + '}', node[key])
+                   for key, length in (('agent_id', 32), ('agent_revision', 64))):
+                raise Invalid('工作流 Agent 引用需要完整配置身份与版本')
+            continue
         for key in ('provider', 'model', 'effort'):
             if key in node:
                 text(node[key], 200, key)
@@ -97,9 +104,10 @@ def check_chain(document):
         incoming[edge['target']].append(edge['source'])
         outgoing[edge['source']].append(edge['target'])
     for node in doc['nodes']:
-        for key, label in [('provider', 'Provider'), ('model', '模型'), ('effort', '推理强度'), ('round_prompt', '每轮提示词')]:
-            if not node.get(key, '').strip():
-                issues.append({'node_id': node['id'], 'field': key, 'message': node['name'] + '：请配置' + label})
+        if 'agent_id' not in node:
+            for key, label in [('provider', 'Provider'), ('model', '模型'), ('effort', '推理强度'), ('round_prompt', '每轮提示词')]:
+                if not node.get(key, '').strip():
+                    issues.append({'node_id': node['id'], 'field': key, 'message': node['name'] + '：请配置' + label})
         if len(incoming[node['id']]) > 1 or len(outgoing[node['id']]) > 1:
             issues.append({'node_id': node['id'], 'message': '本期仅支持顺序 Agent 链，不能分支或汇合'})
     roots = [key for key in incoming if not incoming[key]]

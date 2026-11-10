@@ -20,21 +20,16 @@ from studio.native_codex_image import NativeImage, binary_digest, sealed_executa
 from studio.session_sources import opened
 
 from .claude_session_profile import discover_cli, environment_identity, startup_environment
+from .claude_native_catalog import model_id, observe_native_catalog
 from .native_history_config import unique_pairs
 from .session_identity import StorageRootIdentity
 from .session_lease import CODEX_COORDINATION_VERSION
 
 CATALOG = 'agent-provider-catalog'
-MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}')
 EFFORT = re.compile(r'[a-z][a-z0-9_-]{0,23}')
 ALIASES = {'ANTHROPIC_DEFAULT_HAIKU_MODEL': 'haiku', 'ANTHROPIC_DEFAULT_SONNET_MODEL': 'sonnet',
            'ANTHROPIC_DEFAULT_OPUS_MODEL': 'opus', 'ANTHROPIC_DEFAULT_FABLE_MODEL': 'fable'}
 READ_ERRORS = (Blocked, Invalid, OSError, ValueError, TypeError, KeyError, RecursionError, subprocess.SubprocessError)
-
-
-def model_id(value, literals=()):
-    return (value if isinstance(value, str) and MODEL.fullmatch(value) and '://' not in value
-            and not any(secret and secret in value for secret in literals) else None)
 
 
 def model_option(value, source, *, efforts=(), default_effort=None):
@@ -185,24 +180,35 @@ class ClaudeCLI:
                 raise Invalid('Claude 环境配置无效。')
             known = claude_secrets(profile, env)
             choices = {value: model_option(value, 'cli_alias') for value in profile['aliases']}
+            menu_default = None
+            try:
+                native = observe_native_catalog(profile, self.store.state, env)
+                menu_default = native['menu_default_model']
+                for item in native['models']:
+                    if item['id'] != 'default':
+                        choices[item['id']] = dict(model_option(item['id'], 'cli_catalog', efforts=item['efforts']),
+                                                   resolved_model=item['resolved_model'])
+                row['catalog_available'] = True
+            except Blocked:
+                row['catalog_available'] = False
             for key, alias in ALIASES.items():
                 value = model_id(env.get(key) or configured_env.get(key), known)
                 if value:
-                    choices[alias] = dict(model_option(alias, 'configured_alias'), configured_model=value)
+                    choice = choices.get(alias, model_option(alias, 'cli_alias'))
+                    choices[alias] = dict(choice, source='configured_alias', configured_model=value)
                     choices.setdefault(value, model_option(value, 'native_config'))
-            configured = {value for raw in (env.get('ANTHROPIC_MODEL'), configured_env.get('ANTHROPIC_MODEL'),
-                                           settings.get('model')) if (value := model_id(raw, known))}
-            for value in sorted(configured):
-                choices[value] = model_option(value, 'native_config')
-            if len(configured) == 1:
-                row['default_model'] = {'id': next(iter(configured)), 'source': 'native_config'}
-            levels = {value for value in (env.get('CLAUDE_CODE_EFFORT_LEVEL'),
-                                          configured_env.get('CLAUDE_CODE_EFFORT_LEVEL'), settings.get('effortLevel'))
-                      if isinstance(value, str) and value in row['efforts']}
-            if len(levels) == 1:
-                row['default_effort'] = next(iter(levels))
-            row.update(models=list(choices.values()), catalog_available=False,
-                       model_note='已安装 CLI 未提供模型目录命令。原生配置与别名可见，手动输入的模型需实际执行才能核验。')
+            configured = model_id(env.get('ANTHROPIC_MODEL') or configured_env.get('ANTHROPIC_MODEL') or settings.get('model'), known)
+            if configured:
+                choices[configured] = dict(choices.get(configured, model_option(configured, 'native_config')), source='native_config')
+                row['default_model'] = {'id': configured, 'source': 'native_config'}
+            elif menu_default:
+                row['default_model'] = {'id': menu_default, 'source': 'cli_catalog'}
+            effort = env.get('CLAUDE_CODE_EFFORT_LEVEL') or configured_env.get('CLAUDE_CODE_EFFORT_LEVEL') or settings.get('effortLevel')
+            if effort in row['efforts']:
+                row['default_effort'] = effort
+            row.update(models=list(choices.values()), model_note=(
+                'CLI 原生目录和配置不代表模型可调用。' if row['catalog_available'] else
+                'CLI 原生目录尚未确认。当前显示本机配置和已核验的别名。'))
             with sealed_executable(profile['executable'], 'devflower-claude',
                                    expected_sha256=profile['_executable_sha256']) as (fd, _):
                 result = cli_read(profile['executable'], fd, ['--safe-mode', '--setting-sources', 'user', 'auth',

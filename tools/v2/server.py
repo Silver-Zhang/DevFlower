@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
+from .agent_records import AgentRecords
 from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
 from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
@@ -37,6 +38,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
     terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
+    agents = AgentRecords(store, getattr(runtime, 'cli_providers', None), session_operations)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -243,6 +245,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = runtime.cli_providers.listing()
                 elif post and path == '/api/v2/cli-providers/discover' and not query and set(data) == {'provider'} and runtime:
                     result = runtime.cli_providers.discover(data['provider'])
+                elif not post and path == '/api/v2/agents' and set(query) == {'workspace'}:
+                    result = agents.list(query['workspace'])
+                elif post and path == '/api/v2/agents/save' and not query and set(data) == {
+                        'workspace', 'id', 'expected', 'config', 'session_revision'}:
+                    result = agents.save(data['workspace'], data['id'], data['expected'], data['config'], data['session_revision'])
+                elif post and path == '/api/v2/agents/remove' and not query and set(data) == {'workspace', 'id', 'expected'}:
+                    result = agents.remove(data['workspace'], data['id'], data['expected'])
+                elif not post and path == '/api/v2/agent-skills' and set(query) == {'workspace', 'provider', 'cwd'}:
+                    result = agents.skills(query['workspace'], query['provider'], query['cwd'])
                 elif not post and path == '/api/v2/runs' and runtime:
                     result = runtime.runs(query.get('workspace'))
                 elif not post and path == '/api/v2/run' and runtime:

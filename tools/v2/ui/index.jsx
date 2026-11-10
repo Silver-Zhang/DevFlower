@@ -8,6 +8,7 @@ import './style.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
+import {AgentManager} from './AgentManager.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
@@ -40,7 +41,7 @@ function Field({label,children,note}){return <label className="field"><span>{lab
 function AgentCard({data,selected}){const n=data.node;return <article className={'agent-card'+(selected?' selected':'')}>
  <Handle type="target" position={Position.Left} aria-label={n.name+' 输入连接点'}/>
  <header><span className="agent-icon"><Workflow size={18}/></span><div><small>Agent</small><strong>{n.name||'未命名 Agent'}</strong></div><Settings2 size={15}/></header>
- <p>{n.model||'选择 Provider 与模型'}</p><footer><span>{data.activation?stateLabel(data.activation.state):n.provider==='codex'?'Codex':'待配置'}</span><span>{data.activation?.input_sent_sha256?'已写入 CLI':n.effort||'未配置强度'} · 独立会话</span></footer>
+ <p>{n.agent_id?'已保存的 Agent 配置':n.model||'选择 Provider 与模型'}</p><footer><span>{data.activation?stateLabel(data.activation.state):n.agent_id?'已绑定':n.provider==='codex'?'Codex':'待配置'}</span><span>{data.activation?.input_sent_sha256?'已写入 CLI':n.agent_id?'固定版本':(n.effort||'未配置强度')+' · 独立会话'}</span></footer>
  <Handle type="source" position={Position.Right} aria-label={n.name+' 输出连接点'}/>
  </article>}
 const nodeTypes={agent:AgentCard};
@@ -75,6 +76,8 @@ function App(){
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
  const [sideView,setSidePanel]=useState('');
+ const [agentPanel,setAgentPanel]=useState(null);
+ const agentOpener=useRef(null);
  const [providerGeneration,setProviderGeneration]=useState(0);
  const providerEpoch=useRef(0),providerOpener=useRef(null);
  const providerOpen=sideView==='providers';
@@ -349,6 +352,7 @@ function App(){
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
+  setAgentPanel(null);
   workspaceRef.current=w;setWorkspace(w);setDrafts(rows);setRuns([]);
   install(row?.graph||blank(),row);
  }
@@ -365,6 +369,25 @@ function App(){
  function closeNative(){
   setSideView('');
   requestAnimationFrame(()=>nativeOpener.current?.focus());
+ }
+ function openAgents(node=null){
+  setAgentPanel({node});
+  setSideView('agents');
+ }
+ function closeAgents(){
+  setSideView('');
+  requestAnimationFrame(()=>agentOpener.current?.focus());
+ }
+ function bindAgent(record){
+  if(viewMode!=='draft')return;
+  const previous=docRef.current.nodes.find(node=>node.id===agentPanel?.node);
+  const id=previous?.id||uid('n');
+  change(d=>{
+   const node={id,name:record.config.name,agent_id:record.id,agent_revision:record.revision,
+    position:previous?.position||{x:100+d.nodes.length*300,y:160}};
+   if(previous)d.nodes=d.nodes.map(item=>item.id===id?node:item);else d.nodes.push(node);
+  });
+  setSelected(id);setEdge(null);closeAgents();
  }
  async function openWorkspacePath(path,expectedWorkspace=null){
   const gen=generation.current,snapshot=copy(docRef.current);setBusy('open');
@@ -424,6 +447,7 @@ function App(){
    {workspace&&<div className="workspace-actions">
     <Button ref={filesOpener} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
     <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
+    <Button ref={agentOpener} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
     <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
    </div>}
    <Button ref={providerOpener} className="provider-catalog-open" aria-expanded={providerOpen}
@@ -464,13 +488,16 @@ function App(){
    <footer className="editor-footer"><span>{shown.nodes.length} 个 Agent · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
   </main>
   {(n||e)&&<aside className="inspector" aria-label={n?'Agent 配置':'连线配置'}><header><div><small>{n?'AGENT':'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
-   {n?readOnly?<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}/>:<div className="inspector-content"><Field label="Agent 名称"><input value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field><div className="session-note">每个节点使用独立新会话 · 只读提示词模式</div>
+   {n?readOnly?<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}/>:<div className="inspector-content"><Field label="Agent 名称"><input value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
+    {n.agent_id?<div className="session-note">此节点引用已保存的 Agent 配置版本。<Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></div>:<>
+    <div className="session-note">每个节点使用独立新会话 · 只读提示词模式</div>
+    <Button onClick={()=>openAgents(n.id)}>使用已保存 Agent</Button>
     <Field label="Provider"><select value={n.provider||''} onChange={e=>updateNode(n.id,{provider:e.target.value})}><option value="">待配置</option><option value="codex">Codex CLI</option></select></Field>
     <Button disabled={catalogBusy||!status?.provider_available} onClick={guard(discover)}>{catalogBusy?'正在读取目录…':'刷新模型目录'}</Button>
     <div className="config-pair"><Field label="请求模型">{models.length?<select value={n.model||''} onChange={e=>updateNode(n.id,{model:e.target.value})}><option value="">选择真实模型</option>{n.model&&!model&&<option value={n.model}>{n.model}（目录中不可用）</option>}{models.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>)}</select>:<input value={n.model||''} placeholder="待发现；可保存未验证值" onChange={e=>updateNode(n.id,{model:e.target.value})}/>}</Field><Field label="请求强度">{model?<select value={n.effort||''} onChange={e=>updateNode(n.id,{effort:e.target.value})}><option value="">请选择</option>{n.effort&&!(model.efforts||[]).includes(n.effort)&&<option value={n.effort}>{n.effort}（不可用）</option>}{(model.efforts||[]).map(x=><option key={x} value={x} disabled={x==='ultra'}>{x}{x==='ultra'?'（本期不开放）':''}</option>)}</select>:<input value={n.effort||''} placeholder="例如 low" onChange={e=>updateNode(n.id,{effort:e.target.value})}/>}</Field></div>
     <p className="field-note" aria-label="模型目录状态">{catalog?.source||'尚无真实发现目录'}{catalog?.at?' · '+new Date(catalog.at*1000).toLocaleString():''}。{catalog?.stale?'目录过期或不可用，请刷新。':''}{catalog?.error||''} {modelKnown?'所选模型与强度在目录中；启动时仍将核验。':'当前配置尚未被目录确认，原值可继续保存。'} 登录状态与目录不代表推理成功。</p>
     <Field label="初始化提示词" note="每次新运行初始化此 Agent。"><textarea rows={3} value={n.initial_prompt||''} onChange={e=>updateNode(n.id,{initial_prompt:e.target.value})}/></Field><Field label="每轮提示词"><textarea rows={4} value={n.round_prompt||''} onChange={e=>updateNode(n.id,{round_prompt:e.target.value})}/></Field><Field label="输出与交接要求"><textarea rows={3} value={n.output_prompt||''} onChange={e=>updateNode(n.id,{output_prompt:e.target.value})}/></Field>
-    <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details>
+    <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details></>}
     <section className="connect-section"><h3>连接下游 Agent</h3><p>从节点右侧端口拖向下游左侧端口，或在这里选择。</p><select aria-label="下游 Agent" value={target} onChange={e=>setTarget(e.target.value)}><option value="">选择下游 Agent</option>{doc.nodes.filter(x=>x.id!==n.id).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><Button icon={ArrowRight} disabled={!target} onClick={()=>connect(n.id,target)}>连接 Agent</Button></section>
     <div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div><Button className="danger" icon={Trash2} onClick={()=>{change(d=>{d.nodes=d.nodes.filter(x=>x.id!==n.id);d.edges=d.edges.filter(x=>x.source!==n.id&&x.target!==n.id)});closeInspector()}}>删除 Agent</Button>
    </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>交接最终回答</h3>{readOnly?<><p className="field-note">下列内容来自下游 activation 实际持久化输入；可能按执行定义截断或包装，私有回执不跨边。</p>{actualInputs.length?actualInputs.map((input,k)=><section key={k}><pre aria-label="实际交接内容">{readable(input.content)}</pre><p className="field-note">{activation(e.target)?.input_sent_sha256?'下游请求已有字节写入证据；详见下游实际请求。':'尚无下游请求写入证据。'}</p><details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details></section>):<p>尚无已持久化的下游输入。</p>}</>:<><p className="field-note">连接已保存在草稿。尚未运行，没有实际交接数据。</p><Button className="danger" icon={Trash2} onClick={()=>{change(d=>d.edges=d.edges.filter(x=>x.id!==e.id));closeInspector()}}>删除连线</Button></>}</div>}
@@ -484,6 +511,8 @@ function App(){
     terminalAvailable={status?.native_codex_terminal} catalog={catalog} refreshCatalog={discover}
     onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node);closeNative()}}
     isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
+  {workspace&&agentPanel&&<AgentManager key={workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
+   writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}
   {folder&&<div className="scrim"><section className="dialog folder-dialog" role="dialog" aria-modal="true" aria-label="打开工作空间"><header><h2>打开工作空间</h2><button aria-label="关闭文件夹选择" onClick={hideFolder}><X size={18}/></button></header><p>选择本机允许范围内的文件夹。打开和保存不会启动 Agent。</p><div className="folder-address"><input autoFocus aria-label="文件夹路径" disabled={Boolean(folder.loading)} value={folderPath} onChange={e=>{folderEpoch.current++;setFolderPath(e.target.value);setFolder(f=>f?{...f,loading:false}:f)}} onKeyDown={e=>{if(e.key==='Enter')browse(folderPath)}}/><Button onClick={()=>browse(folderPath)}>前往</Button></div>{folderError&&<p role="alert" className="error-text">{folderError}</p>}<div className="folder-roots">{folder.roots.map(root=><button key={root} onClick={()=>browse(root)}>{root}</button>)}</div><div className="folder-list">{folder.parent&&<button onClick={()=>browse(folder.parent)}>← 返回上级</button>}{folder.entries.map(entry=><button key={entry.path} onClick={()=>browse(entry.path)}><FolderOpen size={16}/>{entry.name}</button>)}{!folder.entries.length&&<p className="muted">此目录没有可浏览的子文件夹</p>}</div><footer><Button onClick={hideFolder}>取消</Button><Button className="primary" disabled={!folder.path||folder.loading||folderPath!==folder.path||!!busy} onClick={()=>navigate(()=>openWorkspacePath(folder.path),'切换工作空间')}>打开此文件夹</Button></footer></section></div>}
   {pending&&<div className="scrim confirm-scrim"><section className="dialog" role="dialog" aria-modal="true" aria-label="未保存的草稿"><h2>保存后再{pending.title}？</h2><p>当前工作流有未保存的修改。空白和不完整草稿也可以保存。</p>{error&&<p role="alert" className="error-text">{error}</p>}<footer><Button autoFocus onClick={closePending}>{pending.title==='关闭工作空间'?'取消关闭':'取消切换'}</Button><Button disabled={!!busy} onClick={guard(async()=>{const operation=pendingRef.current;if(!operation)return;closePending(operation.transfer);await operation.action()})}>放弃修改</Button><Button className="primary" disabled={!!busy} onClick={guard(saveAndContinue)}>保存并继续</Button></footer></section></div>}
