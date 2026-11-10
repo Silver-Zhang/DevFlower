@@ -466,21 +466,25 @@ class LaunchEventTests(TestCase):
             ('3' * 32, self.seed_legacy('3' * 32, 'legacy-intent-without-event', None)),
         ]
         before = self.rows()
+        persisted = {run_id: self.store.db.events(run_id) for run_id, _ in seeded}
         reopened = DraftStore(self.store.state, [self.projects])
         fresh_runtime = runtime_for(reopened)
         fresh_runtime.provider = None
         with self.service(fresh_runtime) as endpoint, patch.object(fresh_runtime, 'spawn') as spawn:
             for run_id, payload in seeded:
-                status, body = request(endpoint, 'launch', payload)
-                self.assertEqual(status, 200)
-                self.assertEqual(body['run']['id'], run_id)
-                self.assertEqual(body['events'], reopened.db.events(run_id))
-                self.assertFalse(any('event_version' in event for event in body['events']))
-            first = request(endpoint, f"run?workspace={self.workspace}&id={seeded[0][0]}")[1]
-            second = request(endpoint, f"run?workspace={self.workspace}&id={seeded[1][0]}")[1]
-            third = request(endpoint, f"run?workspace={self.workspace}&id={seeded[2][0]}")[1]
-            self.assertEqual(first['events'][0]['intent_key'], 'old-private-field')
-            self.assertNotIn('intent_key', second['events'][0])
-            self.assertEqual(third['events'], [])
+                expected = [dict(kind=event['kind'], run=event['run'], definition_id=event['definition_id'],
+                                 at=event['at'], seq=event['seq'], scope='run', activation=None)
+                            for event in persisted[run_id]]
+                for path, data in (('launch', payload), (f'run?workspace={self.workspace}&id={run_id}', None)):
+                    with self.subTest(run_id=run_id, path=path):
+                        status, body = request(endpoint, path, data)
+                        self.assertEqual(status, 200)
+                        self.assertEqual(body['run']['id'], run_id)
+                        self.assertEqual(body['events'], expected)
+                        for event in body['events']:
+                            self.assertNotIn('event_version', event)
+                            self.assertNotIn('intent_key', event)
+                        self.assertNotIn('old-private-field', json.dumps(body))
             spawn.assert_not_called()
+        self.assertEqual(reopened.db.events(seeded[0][0])[0]['intent_key'], 'old-private-field')
         self.assertEqual(self.rows(), before)
