@@ -108,6 +108,13 @@ class CodexProtocol:
                      'capabilities': {'experimentalApi': True}}
         elif not self.initialized:
             raise Refused()
+        elif method == 'skills/list':
+            cwd = self.binding['cwd']
+            if (set(params) - {'cwds', 'forceReload'} or params.get('cwds', []) not in ([], [cwd])
+                    or type(params.get('forceReload', False)) is not bool):
+                raise Refused()
+            # Skills are disabled for this terminal. Do not ask app-server to scan disk.
+            return {'id': ident, 'result': {'data': [{'cwd': cwd, 'skills': [], 'errors': []}]}}
         elif method in ('account/read', 'model/list', 'configRequirements/read', 'collaborationMode/list'):
             fixed = {'refreshToken': False} if method == 'account/read' else {'limit': 100} if method == 'model/list' else {}
         else:
@@ -464,8 +471,11 @@ class UnixGateway:
                         if request_id(request.get('id')):
                             self.send(canonical({'id': request['id'], 'error': {'code': -32600, 'message': 'DevFlower terminal scope denied'}}))
                         continue
-                    backend.stdin.write(canonical(request) + b'\n')
-                    backend.stdin.flush()
+                    if 'result' in request:
+                        self.send(canonical(request))
+                    else:
+                        backend.stdin.write(canonical(request) + b'\n')
+                        backend.stdin.flush()
             if backend.stdout in readable:
                 raw = os.read(backend.stdout.fileno(), 65536)
                 if not raw:

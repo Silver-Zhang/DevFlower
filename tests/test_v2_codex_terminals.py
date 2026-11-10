@@ -78,6 +78,21 @@ class CodexProtocolTests(unittest.TestCase):
         self.ready.assert_not_called()
         self.assertEqual(self.effects, [])
 
+    def test_disabled_skills_are_local_scoped_metadata(self):
+        for params in ({}, {'cwds': [self.cwd], 'forceReload': True}):
+            reply = self.send('skills/list', params)
+            self.assertEqual(reply, {'id': self.next_id, 'result': {
+                'data': [{'cwd': self.cwd, 'skills': [], 'errors': []}]}})
+        for params in ({'cwds': ['/outside']}, {'cwds': [self.cwd, self.cwd]},
+                       {'forceReload': 'true'}, {'path': self.cwd}):
+            with self.subTest(params=params), self.assertRaises(Refused):
+                self.send('skills/list', params)
+        for method in ('skills/config/write', 'hooks/list', 'plugin/list'):
+            with self.subTest(method=method), self.assertRaises(Refused):
+                self.send(method, {'cwds': [self.cwd]})
+        self.assertEqual(self.protocol.pending, {})
+        self.assertEqual(self.effects, [])
+
     def test_turn_reconstructs_text_and_records_effect_before_reply(self):
         self.resume()
         params = {'threadId': self.session, 'input': [{'type': 'text', 'text': 'hello'}]}

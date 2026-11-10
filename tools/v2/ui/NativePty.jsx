@@ -204,6 +204,8 @@ export function NativePty({api, workspace, scope, catalog, refreshCatalog, onClo
    <button className="primary" disabled={busy || (!attempt && (!model || !efforts.includes(effort)))}
     onClick={() => action(start)}>{attempt ? '核对上次启动' : '打开工作区读写终端'}</button>
   </div>}
+  {scope && (!row || ['STARTING', 'RUNNING'].includes(row.state)) &&
+   <p className="muted small">授权 Codex 读写当前工作区。关闭视图会保留终端，可重新连接。</p>}
   {!row && !scope && <p className="muted small">选择本工作空间的已有终端。</p>}
   {row && <p role="status" className="muted small">{row.reason || ({
    STARTING: '正在核验并启动终端…', RUNNING: owned(row) ? '此浏览器持有键盘' :
