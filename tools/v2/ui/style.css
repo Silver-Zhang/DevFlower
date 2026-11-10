@@ -287,8 +287,9 @@
 .agent-manager .field :is(input, textarea, select) { width: 100%; }
 .agent-manager .field textarea { resize: vertical; }
 .agent-manager .agent-advanced > button { margin: 8px 0; }
-.agent-skill { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 8px; overflow-wrap: anywhere; }
-.agent-skill span span { display: block; color: var(--studio-muted); }
+.agent-skill { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 8px; margin: 0 0 8px; padding: 4px 0; overflow-wrap: anywhere; }
+.agent-skill > input { width: 14px; height: 14px; margin: 3px 0 0; padding: 0; }
+.agent-skill > span > span { display: block; color: var(--studio-muted); }
 .agent-manager footer {
  position: sticky; bottom: -16px; display: flex; flex-wrap: wrap; gap: 8px;
  padding: 10px 0 14px; border-top: 1px solid var(--studio-line); background: var(--studio-bg);
