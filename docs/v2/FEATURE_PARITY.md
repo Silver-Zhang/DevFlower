@@ -17,8 +17,8 @@
 | Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
-| 运行监控与研发自动化 | 15 | 5 | 2 | 8 | 33.3% |
-| **合计** | **87** | **50** | **17** | **20** | **57.5%** |
+| 运行监控与研发自动化 | 15 | 8 | 2 | 5 | 53.3% |
+| **合计** | **87** | **53** | **17** | **17** | **60.9%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -212,9 +212,9 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O03 | 逐事件日志与完整追踪 | `tools/studio/run_journal.py` | `tools/v2/run_inspector.py`、`tools/v2/ui/RunInspector.jsx` | C | P1 | 分页按运行与激活隔离，日志与详情导出提供公开数据哈希及缺项标记 |
 | O04 | 节点实际请求和回执检查器 | `tools/studio/workbench_ui/trace_views.jsx` | `tools/v2/ui/RunInspector.jsx`、`tools/v2/ui/index.jsx` | C | P0 | 已发送请求、回执、轮次、耗时与激活身份可对应；长公开数据按哈希分页 |
 | O05 | 点击连线查看真实交接 | `tools/studio/workbench_ui/HandoffEdge.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 实际边/源/目的 activation 一致 |
-| O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | — | M | P1 | 独立会话问答，不冒充运行 |
-| O07 | AI 配置工作流提案和预览 | `tools/studio/configuration_assistant.py` | — | M | P1 | 提案可人工预览应用，不能代授权 |
-| O08 | 运行错误诊断与问题定位 | `tools/studio/workflow_inspection.py` | — | M | P1 | 定位节点错误、给可操作修复步骤 |
+| O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | `tools/v2/assistant.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 预览选择的工作区、草稿、文件和运行资料，原生回执及助手历史可读 |
+| O07 | AI 配置工作流提案和预览 | `tools/studio/configuration_assistant.py` | `tools/v2/assistant_proposals.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 比较前后图结构，当前草稿通过 Schema 校验后由用户明确应用，支持撤销 |
+| O08 | 运行错误诊断与问题定位 | `tools/studio/workflow_inspection.py` | `tools/v2/assistant.py`、`tools/v2/run_inspector.py` | C | P1 | 按原运行与激活定位错误和交接，提供修复方向并保留原执行事实 |
 | O09 | GitHub 任务与交付集成 | `tools/orchestration/github_delivery.py` | — | M | P1 | 外部 Gate 与真实 PR 权限严格区分 |
 | O10 | GitLab 任务与交付集成 | `#6` | — | M | P2 | 按授权 MR 与 CI，无自签 |
 | O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/gate.py` | — | M | P1 | 验证失败或限制结论不得交付 |
@@ -228,6 +228,13 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 C 独立验收通过 `92c3fa2a40b7f7e625ec9984af8ba371d7695216`，tree `2c25f21000c9b3a14496d3f2942cc59858be0274`。UI 定向评分 81/100。真实 Codex 与 Claude Code 运行验证了实际请求、原生回执、交接边及导出的运行身份。实时状态、超长字段、多页事件、跨工作区拒绝、脱敏和无重放另用合成夹具验证。真实付费 Provider 故障与真实模型循环轮次的浏览器比对未纳入该候选证据。
 
 运行详情按公开字段投影，历史事件在缺少确切关联时明确标示。原有运行摘要继续作为独立的轻量导出。详情导出记录快照时点、缺项和载荷上限，公开视图哈希与实际发送哈希分别呈现。
+
+#### Phase 6 Batch 2 助手与诊断证据
+
+A 和 B 在 `13df18a12ea159edd7fff88f86f4f7a8de846bf8` 分别验证真实 Claude Code 与 Codex 对话、选定文件和冻结运行上下文、实际提案及失效草稿拒绝。后续 `b91012f6ea86e8671fc2eb368102463161408ddb` 的 Chromium 合成验证覆盖已登记发送后的响应丢失与 HTTP 503，均使用原发送意图回读。独立综合验收绑定最终集成候选。
+
+助手每轮使用独立原生请求并附上有限的已确认问答。图修改通过显式确认写入当前草稿，已保存 Agent 绑定及工具配置由画布和 Agent 管理显式维护。包含已有人工审批的图，助手提案限节点改名。
+
 
 
 ## 迁移与实施规则
