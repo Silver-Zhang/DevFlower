@@ -504,11 +504,13 @@ class SessionOperations:
                 actual, ref, _ = self.prove_after(binding, sid)
                 self.require_scope(binding)
                 source = self.profiles[provider][0]
-                self.store.db.change(KIND, row['id'], dict(
+                completion = dict(
                     state='COMPLETED', effect_uncertain=False, result_handle=source.registry.handle(actual),
                     relative=str(ref.relative), native_after_sha256=ref.sha, reply=safe_text(result['report']['reply']),
                     receipt=dict(provider=provider, session_id=sid, native_turn_id=result.get('native_turn_id'),
-                                 requested_model=binding['model'], requested_effort=binding['effort'])))
+                                 requested_model=binding['model'], requested_effort=binding['effort']))
+            # The durable RUNNING state fences cooperating writers until the lease has released.
+            self.store.db.change(KIND, row['id'], completion, states={'RUNNING'})
         except Exception as exc:
             current = self.store.db.get(KIND, row['id'])
             uncertain = bool(current.get('effect_uncertain') or journal.process_started)

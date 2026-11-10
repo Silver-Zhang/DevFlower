@@ -1,4 +1,5 @@
 """Targeted V2 standalone effect counterexamples with no external inference."""
+from contextlib import contextmanager
 import fcntl
 import json
 from pathlib import Path
@@ -25,7 +26,7 @@ from v2.claude_session_profile import discover_cli, environment_identity, startu
 from v2.native_history_config import HistoryConfig
 from v2.native_sessions import NativeSessions
 from v2.session_identity import SessionRefused, StorageRootIdentity
-from v2.session_operations import KIND, OperationJournal, SessionOperations, load_write_profiles, operation_id
+from v2.session_operations import KIND, STEP, OperationJournal, SessionOperations, load_write_profiles, operation_id
 from v2.store import DraftStore
 from v2.session_lease import codex_presentation_guard
 
@@ -91,6 +92,57 @@ class SessionOperationsTests(unittest.TestCase):
         finally:
             process.terminate()
             process.wait(timeout=3)
+
+    def test_completion_is_published_after_writer_gate_releases(self):
+        ops = self.operations
+        registry = SimpleNamespace(handle=lambda _: 'fixture-handle')
+        ops.profiles['claude'] = (SimpleNamespace(registry=registry), {})
+
+        for fail_release in (False, True):
+            with self.subTest(fail_release=fail_release):
+                sid = str(uuid.uuid4())
+                intent = uuid.uuid4().hex
+                key = operation_id(self.workspace, intent)
+                binding = dict(cwd=str(self.cwd), home=str(self.home), config_root=str(self.home / '.claude'),
+                               provider='claude', session_id=sid, model=None, effort=None)
+                prompt = 'synthetic resume'
+                row = dict(id=key, workspace=self.workspace, intent_key=intent, target=sid, binding=binding,
+                           provider='claude', owner=ops.owner, state='RESERVED', prompt_sha256=digest(prompt.encode()))
+                self.store.db.put(KIND, key, row)
+                visible = []
+
+                @contextmanager
+                def gate(*_args, **_kwargs):
+                    yield
+                    visible.append(ops.operation(self.workspace, intent))
+                    if fail_release:
+                        raise OSError('fixture release failure')
+
+                def start(_prompt, _cwd, _artifacts, _schema, journal, operation):
+                    process = {'pid': 1}
+                    journal.process_started = True
+                    self.store.db.change(KIND, operation, dict(state='RUNNING', observed_session=sid,
+                        process=process, process_step=operation, input_step=operation, effect_uncertain=True,
+                        input_sha256=row['prompt_sha256']))
+                    self.store.db.put(STEP, operation, dict(status='EXITED', data={'operation_id': operation}))
+                    return dict(session_id=sid, process=dict(exit=0, process=process, operation_id=operation),
+                                home=binding['home'], cwd=binding['cwd'], provider='claude',
+                                requested_model=None, requested_effort=None, report={'reply': 'synthetic reply'})
+
+                proof = (None, SimpleNamespace(relative=Path('fixture.jsonl'), sha='fixture-digest'), None)
+                with (patch('v2.session_operations.production_session_gate', gate),
+                      patch('v2.session_operations.LocalClaude', return_value=SimpleNamespace(start=start)),
+                      patch('v2.session_operations.group_alive', return_value=False),
+                      patch.object(ops, 'check_resume'), patch.object(ops, 'prove_after', return_value=proof),
+                      patch.object(ops, 'require_scope'), patch.object(ops, 'remember_claude_secrets')):
+                    ops.slots.acquire()
+                    ops._execute(row, prompt, SimpleNamespace(), None)
+                self.assertEqual([item['state'] for item in visible], ['RUNNING'])
+                self.assertNotIn('receipt', visible[0])
+                result = ops.operation(self.workspace, intent)
+                self.assertEqual(result['state'], 'RECOVERY_REQUIRED' if fail_release else 'COMPLETED')
+                if not fail_release:
+                    self.assertEqual(result['receipt']['session_id'], sid)
 
     def test_claude_managed_eligibility_tracks_latest_completed_exact_history(self):
         sid = str(uuid.uuid4())
