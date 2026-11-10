@@ -17,6 +17,7 @@ from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC
 from studio.session_sources import UUID, opened
 
+from .codex_code_mode import pin_code_mode_host
 from .codex_terminals import BACKEND_SUPERVISOR, backend_args, configured_mcp, guarded_workspace, pin_backend_image, reap
 from .codex_terminals import safe_backend_config, wait_owned
 from .session_identity import SessionRefused
@@ -55,15 +56,16 @@ def await_mode_settings(rpc, binding, profile, sid, expected_mode):
         return
 
 
-def require_effective_config(rpc, binding, startup_args, *, read_only):
+def require_effective_config(rpc, binding, startup_args, *, read_only, code_host=False):
     config = rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False}).get('config')
     features = config.get('features') if isinstance(config, dict) else None
     disabled = {key for key, value in FEATURES.items() if not value}
-    disabled.update(('worktrees', 'code_mode_host', 'default_mode_request_user_input'))
+    disabled.update(('worktrees', 'default_mode_request_user_input'))
     if read_only:
         disabled.update(('shell_tool', 'unified_exec'))
     expected_provider = {arg for arg in startup_args[1::2] if not arg.startswith('mcp_servers.')}
     if (not isinstance(features, dict) or any(features.get(name) is not False for name in disabled)
+            or features.get('code_mode_host') is not code_host
             or config.get('notify') != [] or config.get('agents')
             or config.get('sqlite_home') not in (None, binding['config_root'])
             or any(server.get('enabled') is not False for server in configured_mcp(config).values())
@@ -109,9 +111,12 @@ class CodexPlan:
                 scratch = root / 'tmp'
                 scratch.mkdir(mode=0o700)
                 executable, fd, verify_image = pin_backend_image(root, image, held)
+                verify_host = None if plan_only else pin_code_mode_host(executable, image.path,
+                    b.get('v2_codex_code_host_sha256'), held)
+                code_host = verify_host is not None
                 profile = 'devflower_plan_' + secrets.token_hex(16)
                 argv = [sys.executable, '-I', '-B', '-c', BACKEND_SUPERVISOR, str(os.getpid()), str(fd),
-                        *backend_args(b, provider_args, executable, profile, read_only=plan_only)]
+                        *backend_args(b, provider_args, executable, profile, read_only=plan_only, code_host=code_host)]
                 journal.check_before_spawn()
                 verify_image()
                 guarded_workspace(runtime.store, b, directory)
@@ -129,7 +134,7 @@ class CodexPlan:
                     available = rpc.request('collaborationMode/list', {}).get('data', [])
                     if not any(isinstance(row, dict) and row.get('mode') == mode for row in available):
                         raise Blocked('已安装 Codex CLI 未确认请求的原生模式。')
-                    require_effective_config(rpc, b, provider_args, read_only=plan_only)
+                    require_effective_config(rpc, b, provider_args, read_only=plan_only, code_host=code_host)
                     runtime.provider.require_local(b)
                     journal.check_before_spawn()
                     guarded_workspace(runtime.store, b, directory)
@@ -153,6 +158,8 @@ class CodexPlan:
                     await_mode_settings(rpc, b, profile, sid, mode)
                     runtime.provider.require_local(b)
                     verify_image()
+                    if verify_host:
+                        verify_host()
                     guarded_workspace(runtime.store, b, directory)
                     if cancelled():
                         raise Blocked('Codex 原生运行在发送输入前已取消。')

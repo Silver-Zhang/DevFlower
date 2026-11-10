@@ -140,8 +140,10 @@ class CodexCLI:
         node = dict(provider=self.provider_id, model=model, effort=effort, timeout=agent['timeout'])
         binding = self.provider.binding(workspace, node, manual_model=agent.get('model_source') in ('manual', 'native_default'))
         if scope:
+            from .codex_code_mode import companion_identity
             binding.update(v2_agent_scope=scope, no_tools=False,
-                           role='implementer' if scope == 'workspace-write' else 'reviewer')
+                           role='implementer' if scope == 'workspace-write' else 'reviewer',
+                           v2_codex_code_host_sha256=companion_identity(binding['executable']))
         if plan:
             binding['v2_agent_plan'] = True
         return binding

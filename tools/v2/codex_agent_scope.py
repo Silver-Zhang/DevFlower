@@ -15,6 +15,7 @@ from studio.agent_extensions import skill_files, skill_header
 from studio.native_codex_image import NativeImage
 from studio.session_sources import opened
 
+from .codex_code_mode import pin_code_mode_host
 from .codex_terminals import guarded_workspace, pin_backend_image
 from .session_identity import StorageRootIdentity
 
@@ -27,7 +28,7 @@ class AgentScope:
     verify: Callable
 
 
-def scope_options(profile, cwd, executable, access):
+def scope_options(profile, cwd, executable, access, *, code_host=False):
     if access not in ('read', 'workspace-write'):
         raise Blocked('Codex Agent 的工作区权限无效。')
     fields = {':root': 'deny', ':minimal': 'read',
@@ -37,7 +38,7 @@ def scope_options(profile, cwd, executable, access):
     return ('-c', f'permissions.{profile}.filesystem={filesystem}',
             '-c', f'permissions.{profile}.network.enabled=false',
             '-c', f'default_permissions="{profile}"',
-            '-c', 'notify=[]', '-c', 'features.code_mode_host=false',
+            '-c', 'notify=[]', '-c', 'features.code_mode_host='+json.dumps(code_host),
             '-c', 'features.default_mode_request_user_input=false',
             '-c', 'shell_environment_policy={inherit="none",include_only=["PATH","LANG"],'
                   'set={PATH="/usr/bin:/bin",LANG="C.UTF-8"}}')
@@ -107,14 +108,17 @@ def prepare_agent_scope(binding, cwd):
         image = held.enter_context(NativeImage(binding['executable'], expected_sha256=binding['_executable_sha256']))
         private = Path(held.enter_context(TemporaryDirectory(prefix='df-agent-scope-', dir='/tmp')))
         executable, _, verify_image = pin_backend_image(private, image, held)
+        verify_host = pin_code_mode_host(executable, image.path, binding.get('v2_codex_code_host_sha256'), held)
         profile = 'devflower_agent_' + secrets.token_hex(16)
-        options = scope_options(profile, cwd, executable, access)
+        options = scope_options(profile, cwd, executable, access, code_host=verify_host is not None)
 
         def verify():
             if StorageRootIdentity.capture(cwd).fields() != binding['cwd_identity']:
                 raise Blocked('Codex Agent 的工作区身份已变化。')
             guarded_workspace(state, binding, directory)
             verify_image()
+            if verify_host:
+                verify_host()
 
         scratch = private / 'probe'
         scratch.mkdir(mode=0o700)

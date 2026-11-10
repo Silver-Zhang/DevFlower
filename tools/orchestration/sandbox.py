@@ -40,14 +40,21 @@ def confine_processes(*, deny_network=False):
     """
     numbers = [109, 112, 101, 310, 311, 312, 438] if platform.machine() == 'x86_64' else [154, 157, 117, 270, 271, 272, 438]
     if deny_network:
-        # No new sockets or io_uring, which can submit equivalent operations.
-        numbers.extend([41, 53, 425] if platform.machine() == 'x86_64' else [198, 199, 425])
+        # No addressable sockets or io_uring, which can submit socket ops.
+        numbers.extend([41, 425] if platform.machine() == 'x86_64' else [198, 425])
     arch = 0xc000003e if platform.machine() == 'x86_64' else 0xc00000b7
     filters = [Filter(0x20, 0, 0, 4), Filter(0x15, 1, 0, arch),
                Filter(0x06, 0, 0, 0x80000000), Filter(0x20, 0, 0, 0),
                Filter(0x45, 0, 1, 0x40000000), Filter(0x06, 0, 0, 0x50000 | 1)]
     for nr in numbers:
         filters.extend([Filter(0x15, 0, 1, nr), Filter(0x06, 0, 0, 0x50000 | 1)])  # EPERM
+    if deny_network:
+        # Tokio's signal runtime uses an anonymous AF_UNIX socketpair. The
+        # pair has no address and cannot connect to an external endpoint.
+        pair = 53 if platform.machine() == 'x86_64' else 199
+        filters.extend([Filter(0x15, 0, 4, pair), Filter(0x20, 0, 0, 16),
+                        Filter(0x15, 0, 1, 1), Filter(0x06, 0, 0, 0x7fff0000),
+                        Filter(0x06, 0, 0, 0x50000 | 1)])
     filters.append(Filter(0x06, 0, 0, 0x7fff0000))
     array = (Filter * len(filters))(*filters)
     program = Program(len(filters), array)

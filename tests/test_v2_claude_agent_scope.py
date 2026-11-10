@@ -103,6 +103,7 @@ for path in "$1" link proc-link /proc/1/environ; do
     if cat "$path" >/dev/null 2>&1; then exit 12; fi
 done
 if python3 -c 'import socket; socket.socket()' >/dev/null 2>&1; then exit 13; fi
+python3 -c 'import socket; a,b=socket.socketpair(); a.send(b"x"); assert b.recv(1)==b"x"'
 printf shell > shell-output
 '''
 subprocess.run([os.environ['SHELL'], '-c', script, 'bash', sys.argv[1]], check=True)
@@ -126,3 +127,5 @@ pathlib.Path(sys.argv[2]).write_text('native transcript\\n')
             self.assertEqual(published.stat().st_ino, ino)
             self.assertEqual(published.read_text(), 'native transcript\n')
             self.assertFalse(stage.exists())
+            with self.assertRaises(Blocked), prepare_scope(binding, str(cwd), sid, False, fake):
+                self.fail('existing native UUID was reused')

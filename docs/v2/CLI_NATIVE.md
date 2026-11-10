@@ -43,7 +43,7 @@ Agent 配置按工作区保存。角色模板填充身份内容，执行权限�
 
 Claude 启动沿用私有配置中的原生写入批准。Codex 目录取自 `model/list`，Claude 取自无用户消息的原生初始化。界面分别标出 CLI 目录、原生配置、默认值和手工模型。Claude 可传递原生 `--max-budget-usd`，两种 CLI 的运行均受 V2 调用次数和超时约束。
 
-Codex 只在收到完整原生 Plan 后显示执行确认。确认包含计划正文、工作区和读写范围，随后用原会话 UUID 建立单独的 Agent 运行，核验 Codex 报告的 `default` 模式。重复提交同一确认返回原运行。
+Codex 只在收到完整原生 Plan 后显示执行确认。确认包含计划正文、哈希、工作区和读写范围，随后用原会话 UUID 建立单独的 Agent 运行，核验 Codex 报告的 `default` 模式。重复提交同一确认返回原运行。需要 Code Mode 的模型通过本机同版本 helper 调用工作区工具。DevFlower 固定 helper 映像，并独立限制其文件、环境和网络权限。
 
 Claude Agent 读取已配置的原生 API 认证环境，支持在 `settings.json` 中配置的 API 密钥或令牌。工具模式需要 Bubblewrap、Landlock ABI 6 和已核验的 CLI。磁盘 OAuth 凭据或自定义证书无法安全投射时，该模式拒绝启动。会话继续使用 V2 的身份、写租约和未知状态恢复。新会话将 CLI 写出的原始文件原子发布到原生历史目录，续聊仅挂载所批准的原始记录。
 

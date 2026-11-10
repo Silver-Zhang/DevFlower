@@ -113,11 +113,11 @@ def frontend_args(binding, directory, executable_reader, gateway_dir, socket_nam
                    '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"']
 
 
-def backend_args(binding, provider_args, executable, profile, *, read_only=False):
+def backend_args(binding, provider_args, executable, profile, *, read_only=False, code_host=False):
     cwd = binding['cwd']
     fields = {':root': 'deny', ':minimal': 'read', cwd: 'read' if read_only else 'write', executable: 'read'}
     filesystem = '{' + ','.join(json.dumps(key) + '=' + json.dumps(value) for key, value in fields.items()) + '}'
-    flags = dict(FEATURES, worktrees=False, multi_agent=False, code_mode_host=False, shell_tool=not read_only,
+    flags = dict(FEATURES, worktrees=False, multi_agent=False, code_mode_host=code_host and not read_only, shell_tool=not read_only,
                  default_mode_request_user_input=False)
     if read_only:
         flags['unified_exec'] = False
@@ -176,13 +176,17 @@ def pin_backend_image(root, image, stack):
     """Private named copy from sealed bytes for Codex's native arg0 helper."""
     folder = root / 'bin'
     folder.mkdir(mode=0o700)
-    target = folder / 'codex'
+    return pin_image_file(folder / 'codex', image.fd, image.sha256, stack)
+
+
+def pin_image_file(target, source, sha256, stack):
+    folder = target.parent
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o500)
     try:
         offset = 0
-        length = os.fstat(image.fd).st_size
+        length = os.fstat(source).st_size
         while offset < length:
-            wrote = os.sendfile(fd, image.fd, offset, min(1048576, length - offset))
+            wrote = os.sendfile(fd, source, offset, min(1048576, length - offset))
             if wrote <= 0:
                 raise Blocked('无法固定 Codex 终端帮助程序。')
             offset += wrote
@@ -198,7 +202,7 @@ def pin_backend_image(root, image, stack):
             if ((meta.st_dev, meta.st_ino, meta.st_nlink, meta.st_uid, stat.S_IMODE(meta.st_mode)) !=
                     (original.st_dev, original.st_ino, 1, os.geteuid(), 0o500)
                     or StorageRootIdentity.capture(folder) != expected_root
-                    or stat.S_IMODE(folder.stat().st_mode) != 0o700 or binary_digest(current) != image.sha256):
+                    or stat.S_IMODE(folder.stat().st_mode) != 0o700 or binary_digest(current) != sha256):
                 raise Blocked('Codex 终端帮助程序映像已变化。')
     verify()
     return str(target), fd, verify

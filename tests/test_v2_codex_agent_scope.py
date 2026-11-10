@@ -1,10 +1,17 @@
+from contextlib import ExitStack
+import json
+import os
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 
 from orchestration.common import Blocked, canonical, digest
+from orchestration.sandbox import abi
 from studio.native_codex_exec import exec_args
+from test_native_codex_image import compile_static
 from v2.codex_agent_scope import agent_skill_options, prepare_agent_scope, scope_options
+from v2.codex_code_mode import NAME, companion_identity, pin_code_mode_host
 
 
 class CodexAgentScopeTests(unittest.TestCase):
@@ -22,6 +29,78 @@ class CodexAgentScopeTests(unittest.TestCase):
         self.assertGreater(args.index('features.code_mode_host=false'), args.index('features.code_mode_host=true'))
         self.assertIn('"/workspace/child"="read"', scope_options(
             'devflower_agent_fixture', '/workspace/child', '/fixture/pinned', 'read')[1])
+
+    @unittest.skipUnless(abi() >= 6, 'requires Linux Landlock ABI 6')
+    def test_code_mode_companion_is_pinned_and_has_no_files_credentials_or_network(self):
+        with TemporaryDirectory() as path:
+            root = Path(path)
+            main = root / 'codex'
+            companion = root / NAME
+            private = root / 'private'
+            private.write_text('unavailable to native companion')
+            compile_static(main, '''
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  if (argc < 2) return 11;
+  int status;
+  int pid = fork();
+  if (pid < 0) return 12;
+  if (!pid) {
+    if (argc == 2) execl(argv[1], argv[1], (char *)0);
+    else execl(argv[1], argv[1], "--listen", argv[2], (char *)0);
+    _exit(13);
+  }
+  return waitpid(pid, &status, 0) == pid && WIFEXITED(status) ? WEXITSTATUS(status) : 14;
+}
+''')
+            self.assertIsNone(companion_identity(main))
+            compile_static(companion, '''
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <unistd.h>
+int main(void) {
+  int pair[2];
+  if (getenv("DEVFLOWER_TEST_SECRET")) return 21;
+  if (fopen(''' + json.dumps(str(private)) + ''', "r")) return 22;
+  if (socket(AF_INET, SOCK_STREAM, 0) >= 0 || socket(AF_UNIX, SOCK_STREAM, 0) >= 0) return 23;
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair)) return 24;
+  close(pair[0]); close(pair[1]);
+  puts("scoped");
+  return 0;
+}
+''')
+            expected = companion_identity(main)
+            staged = root / 'stage'
+            staged.mkdir(mode=0o700)
+            launched = staged / 'codex'
+            os.link(main, launched)
+            wrapper = staged / NAME
+            with ExitStack() as held:
+                verify = pin_code_mode_host(launched, main, expected, held)
+                verify()
+                args = [str(launched), str(wrapper)]
+                env = dict(os.environ, DEVFLOWER_TEST_SECRET='test-only')
+                for extra in ([], ['grpc+stdio://']):
+                    result = subprocess.run(args + extra, env=env, capture_output=True, timeout=10)
+                    self.assertEqual((result.returncode, result.stdout), (0, b'scoped\n'))
+                result = subprocess.run(args + ['http://outside.invalid'], env=env, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 125)
+                wrapper.unlink()
+                wrapper.symlink_to(main)
+                with self.assertRaises(Blocked):
+                    verify()
+            replacement = root / 'replacement'
+            compile_static(replacement, 'int main(void){return 23;}')
+            replacement.replace(companion)
+            with ExitStack() as held, self.assertRaises(Blocked):
+                pin_code_mode_host(launched, main, expected, held)
+            companion.unlink()
+            companion.symlink_to(main)
+            with self.assertRaises(Blocked):
+                companion_identity(main)
 
     def test_mismatched_role_or_protected_workspace_is_rejected_before_spawn(self):
         binding = {'provider': 'codex', 'execution_backend': 'native-local', 'native_interaction': 'ordinary',

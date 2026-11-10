@@ -388,6 +388,8 @@ class V2Runtime:
                            'plan_sha256': plan['sha256'], 'text': text, 'authorization': 'confirm-workspace-write'})
         binding.pop('v2_agent_plan')
         self.cli_providers.adapter('codex').require_local(binding)
+        from .codex_code_mode import companion_identity
+        binding['v2_codex_code_host_sha256'] = companion_identity(binding['executable'])
         require_agent_scope(self, binding)
         return record, binding
 
