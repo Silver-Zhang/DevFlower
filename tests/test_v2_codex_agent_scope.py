@@ -30,7 +30,8 @@ class CodexAgentScopeTests(unittest.TestCase):
         self.assertIn('"/workspace/child"="read"', scope_options(
             'devflower_agent_fixture', '/workspace/child', '/fixture/pinned', 'read')[1])
 
-    @unittest.skipUnless(abi() >= 6, 'requires Linux Landlock ABI 6')
+    @unittest.skipUnless(abi() >= 6 and os.access('/usr/bin/cc', os.X_OK),
+                         'requires Linux Landlock ABI 6 and a static C compiler')
     def test_code_mode_companion_is_pinned_and_has_no_files_credentials_or_network(self):
         with TemporaryDirectory() as path:
             root = Path(path)
