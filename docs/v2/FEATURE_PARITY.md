@@ -17,8 +17,8 @@
 | Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
-| 运行监控与研发自动化 | 15 | 11 | 3 | 1 | 73.3% |
-| **合计** | **87** | **56** | **18** | **13** | **64.4%** |
+| 运行监控与研发自动化 | 15 | 12 | 2 | 1 | 80.0% |
+| **合计** | **87** | **57** | **17** | **13** | **65.5%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -221,7 +221,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O12 | 执行费用/Token 用量 | `tools/studio/usage.py` | `tools/v2/run_summary.py` | P | P2 | unknown 不补零，provider 自报需标注 |
 | O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx` | `tools/v2/ui/style.css` | P | P1 | 模块级操作与 1280/1440/窄屏评分 |
 | O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | — | M | P1 | 真实日志和键盘接管，不启动第二写者 |
-| O15 | 完整自举研发场景验证 | `#132` | `tools/v2/development_graph.py`、`tools/v2/designer_scheduler.py` | P | P0 | 独立真实 CLI 开发、测试、审核、反馈修复、再验证与 Gate，绑定可丢弃 Git 候选与轮次证据 |
+| O15 | 完整自举研发场景验证 | `#132` | `tools/v2/development_graph.py`、`tools/v2/designer_scheduler.py`、`tests/v2_development_live.py` | C | P0 | 独立真实 CLI 开发、测试、审核、反馈修复、再验证与 Gate，绑定可丢弃 Git 候选与轮次证据 |
 
 #### Phase 6 Batch 1 运行检查器证据
 
@@ -242,6 +242,8 @@ A 和 B 在 `13df18a12ea159edd7fff88f86f4f7a8de846bf8` 分别验证真实 Claude
 #### Phase 6 Batch 4 验证和交付边界
 
 确定性验证在 Linux Bubblewrap 的无网络、只读候选快照中执行。测试入口在运行启动时固定，进程结果与同轮 Git HEAD、源码指纹和验收合同一起保存。独立审查来自不同已保存 Agent 和真实会话。`REJECT` 与 `ACCEPT_WITH_LIMITATIONS` 保留反馈并继续受限迭代。轮次或时间上限终止后仍可检查历史和证据。
+
+Codex 0.163.0 的工作区写入调用可能在首次运行时持久记录项目为可信，导致后续激活按冻结配置拒绝发送。研发闭环将明确的项目不信任设置限制在本次原生调用，继续使用原有 V2 工作区权限、Provider 配置和账户指纹。原生 CLI 配合合成模型服务用于隔离反例；真实多 Agent 闭环与独立验收另行记录。
 
 ## 迁移与实施规则
 
