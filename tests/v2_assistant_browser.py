@@ -56,7 +56,7 @@ def main():
         preserved = store.draft(workspace,draft['id'])['graph']==document
         print(json.dumps(dict(browser_exit=result.returncode,synthetic_model_calls=len(operations.calls),
                               real_model_calls=0,draft_preserved=preserved,run_count=len(store.db.list('run')))))
-        return int(bool(result.returncode or not preserved or len(operations.calls)!=1 or len(store.db.list('run'))!=1))
+        return int(bool(result.returncode or not preserved or len(operations.calls)!=2 or len(store.db.list('run'))!=1))
     finally:
         server.shutdown()
         server.server_close()

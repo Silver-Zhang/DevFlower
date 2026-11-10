@@ -66,6 +66,24 @@ async function run(){
  await page.getByRole('button',{name:'助手会话历史',exact:true}).click();
  await assistant.getByLabel('助手会话列表',{exact:true}).getByRole('button',{name:/Rename AgentA/}).click();
  await assistant.getByLabel('画布提案',{exact:true}).waitFor();
+ await assistant.getByLabel('助手 Provider',{exact:true}).selectOption('claude');
+ await assistant.getByLabel('助手消息',{exact:true}).fill('503 fixture question');
+ await button('预览本次发送').click();
+ let serviceIntent;
+ await page.route('**/api/v2/assistant/send',async route=>{
+  const committed=await route.fetch();
+  assert.equal(committed.status(),200);
+  serviceIntent=(await committed.json()).intent;
+  await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Fixture ambiguous 503'})});
+ },{times:1});
+ await button('确认发送').click();
+ await assistant.getByRole('alert').getByText(/Fixture ambiguous 503/).waitFor();
+ const readback=page.waitForResponse(response=>response.url().includes('/api/v2/assistant/conversation?'));
+ await button('核对本次发送').click();
+ const record=await (await readback).json();
+ assert.equal(record.turns.at(-1).intent,serviceIntent);
+ await assistant.getByText('Verified fixture chat response',{exact:true}).waitFor();
+ assert.equal(await button('确认发送').count(),0);
  await button('关闭 AI 助手').click();
  await page.getByLabel('运行历史',{exact:true}).getByRole('button',{name:/Assistant diagnosis fixture/}).click();
  await button('诊断本次运行').click();
@@ -75,10 +93,10 @@ async function run(){
  await page.setViewportSize({width:560,height:760});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.screenshot({path:path.join(out,'assistant-diagnosis-narrow.png')});
- assert.equal(requests.filter(([method,route])=>method==='POST'&&route.endsWith('/assistant/send')).length,1);
+ assert.equal(requests.filter(([method,route])=>method==='POST'&&route.endsWith('/assistant/send')).length,2);
  assert(!requests.some(([method,route])=>method==='POST'&&['/launch','/drafts/save','/resume'].some(end=>route.endsWith(end))));
  assert.deepEqual(errors,[]);
- console.log('PASS preview and selected attachment, lost send readback, proposal review and undo, history, read-only diagnosis');
+ console.log('PASS preview and selected attachment, lost send and 503 readback, proposal review and undo, history, read-only diagnosis');
 }
 
 run().catch(error=>{fs.writeFileSync(path.join(out,'fatal.txt'),error.stack);console.error(error.message);process.exitCode=1})

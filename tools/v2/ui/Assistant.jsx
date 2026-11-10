@@ -114,7 +114,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    await api(route('send'),submitted);
    if(alive.current){setPreview(null);setText('');await read()}
   }catch(failure){
-   if(alive.current&&!failure.uncertain){pendingRef.current=null;setPending(null)}
+   if(alive.current&&!failure.uncertain&&Number.isInteger(failure.status)&&failure.status<500){
+    pendingRef.current=null;setPending(null);
+   }
    throw failure;
   }
  }
