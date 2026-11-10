@@ -17,8 +17,8 @@
 | Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
-| 运行监控与研发自动化 | 15 | 8 | 2 | 5 | 53.3% |
-| **合计** | **87** | **53** | **17** | **17** | **60.9%** |
+| 运行监控与研发自动化 | 15 | 11 | 3 | 1 | 73.3% |
+| **合计** | **87** | **56** | **18** | **13** | **64.4%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -193,7 +193,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | R04 | 多路 Router 与 fallback | `tools/studio/routing.py` | `tools/v2/designer_graph.py` | C | P1 | 规则按冻结顺序求值；默认路由明确，无匹配且无默认时失败 |
 | R05 | 有界 Loop 与修订闭环 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/definitions.py` | C | P0 | 子图轮次、退出原因与每轮激活可追溯；运行时间和展开预算受限 |
 | R06 | Human Approval | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/runtime.py` | C | P1 | 本机单审核者按激活审批；拒绝、超时和恢复保留决定及调度边界 |
-| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/project_files.py` | P | P1 | Validation 有通过和失败端口，Tool 支持授权文件只读。Tool 写入、命令执行与自动交付保持待实现 |
+| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/project_files.py`、`tools/v2/development_evidence.py` | P | P1 | Validation 有通过和失败端口，Tool 支持授权文件只读，研发验证执行固定的只读 Python 测试及本机 Gate。通用 Tool 写入及远端交付保持待实现 |
 | R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行，循环子图与 Agent 版本同样冻结 |
 | R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 运行可读初始化、每轮、上游、实际发送文本和原生回执 |
 | R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | P | P0 | 支持公开输出、回答、摘要、结构化结果和仅顺序约束；任意字段合同与产物引用待实现 |
@@ -215,13 +215,13 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | `tools/v2/assistant.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 预览选择的工作区、草稿、文件和运行资料，原生回执及助手历史可读 |
 | O07 | AI 配置工作流提案和预览 | `tools/studio/configuration_assistant.py` | `tools/v2/assistant_proposals.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 比较前后图结构，当前草稿通过 Schema 校验后由用户明确应用，支持撤销 |
 | O08 | 运行错误诊断与问题定位 | `tools/studio/workflow_inspection.py` | `tools/v2/assistant.py`、`tools/v2/run_inspector.py` | C | P1 | 按原运行与激活定位错误和交接，提供修复方向并保留原执行事实 |
-| O09 | GitHub 任务与交付集成 | `tools/orchestration/github_delivery.py` | — | M | P1 | 外部 Gate 与真实 PR 权限严格区分 |
-| O10 | GitLab 任务与交付集成 | `#6` | — | M | P2 | 按授权 MR 与 CI，无自签 |
-| O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/gate.py` | — | M | P1 | 验证失败或限制结论不得交付 |
+| O09 | GitHub 任务与交付集成 | `tools/orchestration/github_delivery.py` | `tools/v2/git_platform_adapters.py`、`tools/v2/git_platform.py` | C | P1 | 真实分支、Issue、PR、按提交定位的 CI 和作业日志。显式授权创建本机审核任务，展示候选 Gate |
+| O10 | GitLab 任务与交付集成 | `#6` | `tools/v2/git_platform_adapters.py`、`tools/v2/git_platform.py` | C | P2 | 真实分支、Issue、MR、Pipeline 与作业。Trace 受项目权限控制，本机审核任务需明确授权 |
+| O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/verification.py`、`tools/orchestration/gate.py` | `tools/v2/development_evidence.py`、`tools/v2/designer_scheduler.py` | C | P1 | 固定 Git 源码与测试入口，隔离执行并保留实际进程证据，三名不同会话的 CLI 角色绑定同轮；仅 `ACCEPT` 通过 |
 | O12 | 执行费用/Token 用量 | `tools/studio/usage.py` | `tools/v2/run_summary.py` | P | P2 | unknown 不补零，provider 自报需标注 |
 | O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx` | `tools/v2/ui/style.css` | P | P1 | 模块级操作与 1280/1440/窄屏评分 |
 | O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | — | M | P1 | 真实日志和键盘接管，不启动第二写者 |
-| O15 | 完整自举研发场景验证 | `#132` | — | M | P0 | 真实 Codex 开发-测试-Claude 审核-修复闭环 |
+| O15 | 完整自举研发场景验证 | `#132` | `tools/v2/development_graph.py`、`tools/v2/designer_scheduler.py` | P | P0 | 独立真实 CLI 开发、测试、审核、反馈修复、再验证与 Gate，绑定可丢弃 Git 候选与轮次证据 |
 
 #### Phase 6 Batch 1 运行检查器证据
 
@@ -235,7 +235,13 @@ A 和 B 在 `13df18a12ea159edd7fff88f86f4f7a8de846bf8` 分别验证真实 Claude
 
 助手每轮使用独立原生请求并附上有限的已确认问答。图修改通过显式确认写入当前草稿，已保存 Agent 绑定及工具配置由画布和 Agent 管理显式维护。包含已有人工审批的图，助手提案限节点改名。
 
+#### Phase 6 Batch 3 平台证据
 
+`4165581775f929f173806c7b3dee3c9301afa114` 经 V2 工作区接口读回两个真实平台的分支、Issue、PR 或 MR、按提交过滤的检查和作业。GitHub 失败作业日志已实读。公开 GitLab 项目的日志端点返回 401；日志解析、工作区绑定和授权创建本机审核任务另有合成测试。审核任务保留远端提交标识并等待独立审核，Phase 6 远端发布入口关闭。
+
+#### Phase 6 Batch 4 验证和交付边界
+
+确定性验证在 Linux Bubblewrap 的无网络、只读候选快照中执行。测试入口在运行启动时固定，进程结果与同轮 Git HEAD、源码指纹和验收合同一起保存。独立审查来自不同已保存 Agent 和真实会话。`REJECT` 与 `ACCEPT_WITH_LIMITATIONS` 保留反馈并继续受限迭代。轮次或时间上限终止后仍可检查历史和证据。
 
 ## 迁移与实施规则
 
