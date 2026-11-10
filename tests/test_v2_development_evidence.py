@@ -10,6 +10,8 @@ import tempfile
 
 from orchestration.common import Blocked, canonical, digest, tree_hash
 from v2 import development_evidence as evidence
+from v2.git_workspace import bind_workspace
+from v2.store import DraftStore
 
 
 class DevelopmentEvidenceTests(TestCase):
@@ -22,11 +24,15 @@ class DevelopmentEvidenceTests(TestCase):
         self.git('init', '-q')
         self.git('-c', 'user.email=fixture@example.invalid', '-c', 'user.name=Fixture',
                  'commit', '--allow-empty', '-qm', 'fixture')
-        self.run = dict(id='run', workspace='fixture')
-        self.verify = dict(id='verify', round=1, iteration_path=[1], node='loop/verify')
         self.state = self.base / 'state'
+        store = DraftStore(self.state, [self.root])
+        workspace = store.open_workspace(str(self.root))['id']
+        source = bind_workspace(store, workspace, require_origin=False)
+        self.run = dict(id='run', workspace=workspace, graph={'development': {'source': dict(
+            binding=source.identity, branch=source.branch, head=source.head)}})
+        self.verify = dict(id='verify', round=1, iteration_path=[1], node='loop/verify')
         self.rt = SimpleNamespace(storage=self.state, check_operator=lambda: None,
-            store=SimpleNamespace(workspace=lambda _: dict(path=str(self.root))),
+            store=store,
             flow=SimpleNamespace(get=lambda *_: self.run, list=lambda _: []))
 
     def git(self, *args):
@@ -60,6 +66,14 @@ class DevelopmentEvidenceTests(TestCase):
         (self.root / 'check.py').write_text('print("false")\n')
         with patch.object(evidence, 'verify') as spawn:
             with self.assertRaisesRegex(Blocked, '冻结的文件不同'):
+                evidence.verify_candidate(self.rt, 'run', self.verify, frozen)
+        spawn.assert_not_called()
+
+    def test_git_head_or_branch_change_refuses_verifier_before_spawn(self):
+        frozen = self.checker()
+        self.git('branch', '-m', 'changed')
+        with patch.object(evidence, 'verify') as spawn:
+            with self.assertRaisesRegex(Blocked, '启动时的候选不同'):
                 evidence.verify_candidate(self.rt, 'run', self.verify, frozen)
         spawn.assert_not_called()
 

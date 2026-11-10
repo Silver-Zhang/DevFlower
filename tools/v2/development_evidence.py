@@ -14,7 +14,7 @@ from studio.session_sources import opened, regular_at
 from studio.workspace_read_policy import stamp
 from studio.workbench_data import public_data
 
-from .git_workspace import OID, git_read
+from .git_workspace import OID, bind_workspace, git_read
 from .recovery import frozen_node, read_completion
 
 CONTRACT = 'workspace-verification'
@@ -146,9 +146,17 @@ def evidence_path(rt, run_id, activation):
     return rt.storage / 'flow-artifacts' / run_id / activation / 'development-verification.json'
 
 
+def require_bound_source(rt, run):
+    source = run['graph']['development']['source']
+    binding = bind_workspace(rt.store, run['workspace'], require_origin=False)
+    if source != dict(binding=binding.identity, branch=binding.branch, head=binding.head):
+        raise Blocked('当前 Git 分支、HEAD 或工作树绑定与启动时的候选不同。')
+
+
 def verify_candidate(rt, run_id, activation, node):
     rt.check_operator()
     run = rt.flow.get('run', run_id)
+    require_bound_source(rt, run)
     root = rt.store.workspace(run['workspace'])['path']
     spec = verification_spec(node)
     contract_hash = digest(canonical(spec))
@@ -166,6 +174,7 @@ def verify_candidate(rt, run_id, activation, node):
         report, = verify(config, candidate, scratch / 'artifacts', run_id, activation['round'],
                          identity['candidate_sha256'], contract_hash, deny_network=True)
     rt.check_operator()
+    require_bound_source(rt, run)
     if identity != current_candidate(root):
         raise Blocked('测试期间工作区发生变化，测试结果不能用于交付。')
     # No argv, full filesystem paths, credentials or candidate-controlled stdout in public results.
@@ -218,6 +227,7 @@ def delivery_gate(rt, run_id, activation, node):
     definition = rt.flow.get('definition', run['definition_id'])
     if digest(canonical({key: value for key, value in definition.items() if key != 'id'})) != run['definition_id']:
         raise Blocked('冻结研发工作流身份无法核验。')
+    require_bound_source(rt, run)
     root = rt.store.workspace(run['workspace'])['path']
     identity = current_candidate(root)
     verification = role_activation(rt, run, activation, node['verification_node'])
@@ -261,6 +271,7 @@ def delivery_gate(rt, run_id, activation, node):
         verdict = proposed
     except Blocked as refusal:
         feedback = ' '.join(part for part in (feedback, str(refusal)) if part)
+    require_bound_source(rt, run)
     if identity != current_candidate(root):
         raise Blocked('独立交付检查期间候选发生变化。')
     return dict(answer=feedback, result=dict(identity, gate_verdict=verdict, feedback=feedback,
