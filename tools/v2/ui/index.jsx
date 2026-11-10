@@ -8,6 +8,7 @@ import './style.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
+import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
 const copy=value=>JSON.parse(JSON.stringify(value));
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -75,6 +76,8 @@ function App(){
  const [sideView,setSideView]=useState('');
  const [transferred,setTransferred]=useState(false);
  const transferTicket=useRef(null),fileChoice=useRef(null),transferInput=useRef(null);
+ const [summaryFile,setSummaryFile]=useState(null),[summaryError,setSummaryError]=useState('');
+ const summaryAction=useRef(null),summaryInput=useRef(null),summaryOpener=useRef(null),summarySource=useRef(null);
  const filesOpen=sideView==='files',nativeOpen=sideView==='native';
  const workspaceEpoch=useRef(0),workspacePicker=useRef(null),filesOpener=useRef(null),nativeOpener=useRef(null);
  const [theme,setTheme]=useState(()=>localStorage.getItem('devflower-v2-theme')||'system');
@@ -90,7 +93,7 @@ function App(){
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){cancelTransfer();setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
+ function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
  function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){setPast(p=>[...p.slice(-49),copy(docRef.current)]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -134,18 +137,18 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){cancelTransfer();const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
- function editDraft(){setViewMode('draft');setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function showRun(id,w=workspaceRef.current,environment){cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function editDraft(){clearRunSummary();setViewMode('draft');setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
-  try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');if(ended(response.state))refreshRuns();return ended(response.state)}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
+  try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');if(ended(response.state))refreshRuns();return ended(response.state)}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
  useEffect(()=>{if(!activeRun)return;let closed=false,timer;const read=async()=>{const finished=await rereadRun();if(!closed&&!finished)timer=setTimeout(read,900)};read();return()=>{closed=true;clearTimeout(timer)}},[activeRun?.id,activeRun?.epoch]);
  async function cancelRun(){const value=runRef.current;if(!value||cancelBusy.current)return;cancelBusy.current=value;setCancelling(true);setError('');try{
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
-  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
+  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}}
  async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
   try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
-   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
+   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
   }catch(e){if(!e.uncertain&&e.status&&e.status<500&&inWorkspace(w,epoch)){
     // Even an explicit HTTP error can follow durable reservation (e.g. worker
     // publication refusal). Only a successful scoped list proving absence may
@@ -189,6 +192,62 @@ function App(){
   addEventListener('pagehide',cancelTransfer);
   return ()=>{removeEventListener('pagehide',cancelTransfer);cancelTransfer()};
  },[]);
+ function clearRunSummary(){summaryAction.current=null;setSummaryFile(null);setSummaryError('')}
+ useEffect(()=>{
+  const clear=()=>{summaryAction.current=null};
+  addEventListener('pagehide',clear);
+  return ()=>{removeEventListener('pagehide',clear);clear()};
+ },[]);
+ function beginRunSummary(kind){
+  clearRunSummary();
+  const action={kind,workspace:workspaceRef.current?.id,epoch:workspaceEpoch.current,run:runRef.current};
+  summaryAction.current=action;
+  return action;
+ }
+ function currentRunSummary(action){
+  return summaryAction.current===action&&workspaceRef.current?.id===action.workspace&&
+   workspaceEpoch.current===action.epoch&&runRef.current===action.run;
+ }
+ async function exportRunSummary(){
+  const action=beginRunSummary('export');
+  const metadata=()=>selectedRunMetadata(summarySource.current,action.workspace,action.run?.id);
+  const source=metadata();
+  if(!source)return;
+  try{
+   const bytes=await readRunSummary(action.workspace,source,token);
+   if(!currentRunSummary(action))return;
+   if(!same(metadata(),source))throw Error();
+   downloadRunSummary(bytes);
+  }catch{
+   if(currentRunSummary(action))setSummaryError('当前运行记录已变化，请重新读取后再导出。');
+  }finally{
+   if(currentRunSummary(action))summaryAction.current=null;
+  }
+ }
+ function chooseRunSummary(){
+  beginRunSummary('choose');
+  summaryInput.current.value='';
+  summaryInput.current.click();
+ }
+ async function viewRunSummary(event){
+  const choice=summaryAction.current,file=event.currentTarget.files?.[0];
+  event.currentTarget.value='';
+  if(choice?.kind!=='choose'||!currentRunSummary(choice))return;
+  if(!file){clearRunSummary();return}
+  const action=beginRunSummary('read');
+  try{
+   const snapshot=await openRunSummary(file);
+   if(currentRunSummary(action))setSummaryFile({snapshot});
+  }catch{
+   if(currentRunSummary(action))setSummaryFile({snapshot:null});
+  }finally{
+   if(currentRunSummary(action))summaryAction.current=null;
+  }
+ }
+ function closeRunSummary(){
+  clearRunSummary();
+  requestAnimationFrame(()=>summaryOpener.current?.focus());
+ }
  function beginTransfer(){
   const currentWorkspace=workspaceRef.current;
   if(!currentWorkspace||busy||launchBusy.current||viewMode!=='draft')return null;
@@ -332,6 +391,7 @@ function App(){
  function addAgent(){const id=uid('n');change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:{x:100+d.nodes.length*300,y:160},provider:'',model:'',effort:'',initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));setSelected(id);setEdge(null)}
  function connect(source,destination){if(!canConnect(docRef.current,source,destination)){setError('本期仅支持无环顺序链；请先删除重复、分支或反向连线');return}change(d=>d.edges.push({id:uid('e'),source,target:destination}));setNotice('已连接两个 Agent · 运行时使用独立新会话')}
  const readOnly=viewMode==='run',shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
+ const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
  const rfNodes=shown.nodes.map(n=>({id:n.id,type:'agent',position:n.position,selected:n.id===selected,draggable:!readOnly,connectable:!readOnly,data:{node:n,activation:readOnly?{...(activation(n.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null},...(measurements.has(n.id)?{measured:measurements.get(n.id)}:{})}));
@@ -347,6 +407,9 @@ function App(){
     <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
     <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
    </div>}
+   <Button ref={summaryOpener} className="run-summary-open" onClick={chooseRunSummary}>查看运行摘要文件</Button>
+   <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
+    onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
    <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(()=>openDraft(row),'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}{workspace&&!drafts.length&&<p className="muted small empty-list">还没有已保存的工作流。<br/>从空白画布开始。</p>}</nav>
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
@@ -359,9 +422,10 @@ function App(){
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<Button onClick={guard(rereadRun)}>重新读取</Button>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
+   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button><p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
+   {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
@@ -393,6 +457,7 @@ function App(){
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles}/>}
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
+  {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}
   {folder&&<div className="scrim"><section className="dialog folder-dialog" role="dialog" aria-modal="true" aria-label="打开工作空间"><header><h2>打开工作空间</h2><button aria-label="关闭文件夹选择" onClick={hideFolder}><X size={18}/></button></header><p>选择本机允许范围内的文件夹。打开和保存不会启动 Agent。</p><div className="folder-address"><input autoFocus aria-label="文件夹路径" disabled={Boolean(folder.loading)} value={folderPath} onChange={e=>{folderEpoch.current++;setFolderPath(e.target.value);setFolder(f=>f?{...f,loading:false}:f)}} onKeyDown={e=>{if(e.key==='Enter')browse(folderPath)}}/><Button onClick={()=>browse(folderPath)}>前往</Button></div>{folderError&&<p role="alert" className="error-text">{folderError}</p>}<div className="folder-roots">{folder.roots.map(root=><button key={root} onClick={()=>browse(root)}>{root}</button>)}</div><div className="folder-list">{folder.parent&&<button onClick={()=>browse(folder.parent)}>← 返回上级</button>}{folder.entries.map(entry=><button key={entry.path} onClick={()=>browse(entry.path)}><FolderOpen size={16}/>{entry.name}</button>)}{!folder.entries.length&&<p className="muted">此目录没有可浏览的子文件夹</p>}</div><footer><Button onClick={hideFolder}>取消</Button><Button className="primary" disabled={!folder.path||folder.loading||folderPath!==folder.path||!!busy} onClick={()=>navigate(()=>openWorkspacePath(folder.path),'切换工作空间')}>打开此文件夹</Button></footer></section></div>}
   {pending&&<div className="scrim confirm-scrim"><section className="dialog" role="dialog" aria-modal="true" aria-label="未保存的草稿"><h2>保存后再{pending.title}？</h2><p>当前工作流有未保存的修改。空白和不完整草稿也可以保存。</p>{error&&<p role="alert" className="error-text">{error}</p>}<footer><Button autoFocus onClick={closePending}>{pending.title==='关闭工作空间'?'取消关闭':'取消切换'}</Button><Button disabled={!!busy} onClick={guard(async()=>{const operation=pendingRef.current;if(!operation)return;closePending(operation.transfer);await operation.action()})}>放弃修改</Button><Button className="primary" disabled={!!busy} onClick={guard(saveAndContinue)}>保存并继续</Button></footer></section></div>}
  </div>

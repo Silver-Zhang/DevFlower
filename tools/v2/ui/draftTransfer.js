@@ -7,7 +7,7 @@ const INVALID_STRING = /[\u0000\ud800-\udfff]/u;
 const INVALID_FORMAT = '工作流文件格式或编码无效。';
 const INVALID_DIGEST = '工作流文件内容校验失败。';
 
-function canonical(value) {
+export function canonical(value) {
  if (value === null || typeof value === 'boolean') return JSON.stringify(value);
  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
  if (typeof value === 'string' && !INVALID_STRING.test(value)) return JSON.stringify(value);
@@ -18,7 +18,7 @@ function canonical(value) {
  throw new Error(INVALID_FORMAT);
 }
 
-async function sha256(bytes) {
+export async function sha256(bytes) {
  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
  return Array.from(hash, value => value.toString(16).padStart(2, '0')).join('');
 }

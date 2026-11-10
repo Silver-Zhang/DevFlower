@@ -16,6 +16,7 @@ from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_para
 from .native_sessions import NativeHistoryError, request_parameters
 from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, action_parameters, list_parameters
 from .project_files import read_project
+from .run_summary import RunSummaryError, read_run_summary, request_parameters as run_summary_parameters
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -62,6 +63,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                 if post and path == '/api/v2/drafts/validate':
                     workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
                     return self.reply(200, validate_archive(store, workspace, raw))
+                if not post and path == '/api/v2/run-summary':
+                    workspace, run = run_summary_parameters(urlsplit(self.path).query, self.headers)
+                    return self.reply(200, read_run_summary(store, workspace, run))
                 if not post and path == '/api/v2/native-session-activity':
                     params = activity_parameters(urlsplit(self.path).query)
                     if native_activity is None:
@@ -174,7 +178,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 self.reply(200, result)
-            except (NativeHistoryError, DraftTransferError) as exc:
+            except (NativeHistoryError, DraftTransferError, RunSummaryError) as exc:
                 self.reply(exc.status, {'code': exc.code, 'error': str(exc)})
             except Conflict as exc:
                 self.reply(409, {'error': str(exc)})

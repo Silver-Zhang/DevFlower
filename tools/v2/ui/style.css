@@ -190,3 +190,22 @@
  border-bottom: 1px solid var(--studio-line);
 }
 .draft-transfer small { font-size: 11px; }
+
+.run-summary-open { margin-top: 10px; }
+.run-summary-file {
+ width: 470px;
+ max-width: calc(100vw - 24px);
+ max-height: calc(100dvh - 24px);
+ padding: 20px;
+ border: 1px solid var(--studio-line-strong);
+ border-radius: 12px;
+ background: var(--studio-bg);
+ color: var(--studio-text);
+ box-shadow: var(--studio-shadow);
+}
+.run-summary-file::backdrop { background: #0005; }
+.run-summary-file h2 { margin: 0 0 12px; }
+.run-summary-file p { margin: 6px 0; }
+.run-summary-file dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; }
+.run-summary-file dd { margin: 0; overflow-wrap: anywhere; }
+.run-summary-file footer { display: flex; justify-content: flex-end; margin-top: 16px; }
