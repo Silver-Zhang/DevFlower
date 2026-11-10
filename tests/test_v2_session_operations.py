@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from orchestration.store import process_identity
 from studio.graph import Invalid
 from studio.server import Conflict
+from v2.claude_session_profile import discover_cli, environment_identity, startup_environment
 from v2.native_history_config import HistoryConfig
 from v2.native_sessions import NativeSessions
 from v2.session_identity import SessionRefused, StorageRootIdentity
@@ -103,17 +104,39 @@ class SessionOperationsTests(unittest.TestCase):
             check()
         self.assertEqual(set(locks.iterdir()), {coordination})
 
-    def test_explicit_relay_must_be_the_approved_endpoint_and_model(self):
+    def test_claude_native_defaults_and_generic_legacy_relay(self):
         path = self.base / 'writer.json'
-        value = {'version': 1, 'claude': {'model': 'deepseek-flash', 'effort': 'low',
-                                           'anthropic_base_url': 'https://api.deepseek.com/anthropic'}}
-        path.write_text(json.dumps(value))
+        path.write_text(json.dumps({'version': 1, 'claude': True}))
         path.chmod(0o600)
-        self.assertEqual(load_write_profiles(path), {'claude': value['claude']})
-        value['claude']['anthropic_base_url'] = 'https://synthetic.invalid/anthropic'
-        path.write_text(json.dumps(value))
+        self.assertEqual(load_write_profiles(path), {'claude': {}})
+        legacy = {'model': 'fixture-model', 'effort': 'low',
+                  'anthropic_base_url': 'https://relay.example.invalid/anthropic'}
+        path.write_text(json.dumps({'version': 1, 'claude': legacy}))
+        self.assertEqual(load_write_profiles(path), {'claude': legacy})
+        path.write_text(json.dumps({'version': 1, 'claude': {**legacy, 'home': str(self.home), 'managed': True}}))
         with self.assertRaises(Invalid):
             load_write_profiles(path)
+
+    def test_unverified_claude_cli_version_refuses_before_profile_use(self):
+        with patch('v2.claude_session_profile.shutil.which', return_value='/usr/bin/true'):
+            with self.assertRaisesRegex(Invalid, '2.1.319'):
+                discover_cli()
+
+    def test_startup_environment_allowlist_and_legacy_conflict(self):
+        source = {'ANTHROPIC_API_KEY': 'synthetic-api-key', 'ANTHROPIC_MODEL': 'fixture-model',
+                  'ANTHROPIC_BASE_URL': 'https://relay.example.invalid/anthropic',
+                  'SSH_AUTH_SOCK': '/tmp/not-a-cli-auth-input', 'LD_PRELOAD': '/tmp/not-forwarded.so',
+                  'OPENAI_API_KEY': 'not-claude', 'CLAUDE_CONFIG_DIR': '/tmp/not-an-approved-profile'}
+        snapshot = startup_environment(source)
+        self.assertEqual(set(snapshot), {'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'})
+        self.assertNotIn(source['ANTHROPIC_API_KEY'], environment_identity(snapshot))
+        with self.assertRaises(Invalid):
+            startup_environment(source, 'https://different.example.invalid')
+        with self.assertRaises(Invalid):
+            startup_environment({}, source['ANTHROPIC_BASE_URL'])
+        self.assertEqual(startup_environment(source, source['ANTHROPIC_BASE_URL']), snapshot)
+        source['ANTHROPIC_API_KEY'] = 'rotated-fixture-key'
+        self.assertNotEqual(environment_identity(snapshot), environment_identity(startup_environment(source)))
 
 
 if __name__ == '__main__':

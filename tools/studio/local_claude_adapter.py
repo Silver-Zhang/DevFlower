@@ -1,21 +1,59 @@
 """Claude local CLI: same canonical HOME/session, no credential overlays."""
 from pathlib import Path
 import json
+import os
 import uuid
 from orchestration.adapters import CLI,native_errors
 from orchestration.common import Blocked,canonical,digest
 from orchestration.privacy import credentials,redact
 from orchestration.process import execute
 from .native_local import native_environment
+from .session_sources import opened
 from .agent_sessions import safe_text
 
 
 def chat_only_args():
     """Native authentication with customizations, hooks and tools disabled."""
-    return ['--safe-mode', '--restricted', '--disable-slash-commands', '--tools', '',
+    settings = {
+        'disableAllHooks': True,
+        'permissions': {'defaultMode': 'plan', 'disableAutoMode': 'disable', 'disableBypassPermissionsMode': 'disable'},
+        'env': {'CLAUDE_CODE_MAX_RETRIES': '0', 'DISABLE_AUTOUPDATER': '1', 'DISABLE_UPDATES': '1'},
+    }
+    return ['--safe-mode', '--disable-slash-commands', '--no-chrome', '--tools', '',
             '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-            '--setting-sources', '',
-            '--settings', '{"disableAllHooks":true,"permissions":{"defaultMode":"plan","disableAutoMode":"disable","disableBypassPermissionsMode":"disable"}}']
+            '--setting-sources', 'user', '--settings', json.dumps(settings, separators=(',', ':'))]
+
+
+def claude_secrets(binding, environment):
+    """Known native Claude credentials used only for in-memory redaction."""
+    secret = credentials(binding['home'], [path for path, _ in binding.get('readonly_files', [])])
+    configs = [environment]
+    if binding.get('chat_only') is True:
+        try:
+            with opened(Path(binding['config_root']) / 'settings.json') as fd:
+                raw = os.read(fd, 200001)
+            settings = json.loads(raw) if len(raw) <= 200000 else None
+            if isinstance(settings, dict) and isinstance(settings.get('env'), dict):
+                configs.append(settings['env'])
+        except (OSError, ValueError, Blocked, RecursionError):
+            pass
+    for values in configs:
+        for name in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'):
+            value = values.get(name)
+            if isinstance(value, str) and value:
+                secret.add(value)
+        endpoint = values.get('ANTHROPIC_BASE_URL')
+        if isinstance(endpoint, str) and endpoint:
+            secret.add(endpoint)
+        headers = values.get('ANTHROPIC_CUSTOM_HEADERS')
+        if isinstance(headers, str):
+            for header in headers.splitlines():
+                value = header.partition(':')[2].strip()
+                if value:
+                    secret.add(value)
+                    if value.lower().startswith(('bearer ', 'basic ')):
+                        secret.add(value.split(maxsplit=1)[-1])
+    return secret
 
 
 class LocalClaude:
@@ -32,11 +70,16 @@ class LocalClaude:
         if sid and not isinstance(sid,str):raise Blocked('原生恢复需要明确 UUID')
         requested=sid or b.get('new_session_id') or str(uuid.uuid4())
         chat_only=b.get('chat_only') is True
+        if chat_only and sid:
+            raise Blocked('共享 Claude HOME 续聊需要独立进程权限边界。')
         tools=chat_only_args() if chat_only else ['--tools','Read,Glob,Grep','--strict-mcp-config',
             '--mcp-config','{"mcpServers":{}}','--setting-sources','user']
-        args=[b['executable'],'-p','--output-format','json','--permission-mode','plan',
-              *tools,'--model',b['model'],'--effort',b['effort'],
-              '--resume' if sid else '--session-id',requested]
+        args=[b['executable'],'-p','--output-format','json','--permission-mode','plan',*tools]
+        for key in ('model', 'effort'):
+            value = b[key]
+            if value is not None or not chat_only:
+                args += ['--' + key, value]
+        args += ['--resume' if sid else '--session-id', requested]
         if output_schema:
             schema=json.loads(Path(output_schema).read_text());schema.pop('$schema',None)
             args+=['--json-schema',json.dumps(schema)]
@@ -45,6 +88,7 @@ class LocalClaude:
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
         if store and callable(getattr(store,'check_before_spawn',None)):
             store.check_before_spawn()
+        before = claude_secrets(b, self.credential_env) if chat_only else set()
         process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
             cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
             env_extra=dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0', **self.credential_env),
@@ -52,9 +96,7 @@ class LocalClaude:
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:
-            secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
-            if 'ANTHROPIC_AUTH_TOKEN' in self.credential_env:
-                secret.add(self.credential_env['ANTHROPIC_AUTH_TOKEN'])
+            secret = before | claude_secrets(b, self.credential_env)
             detail=safe_text(redact('; '.join(native_errors('claude',out))[:1200],secret))
             if process.get('timeout'):
                 limit=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
@@ -70,9 +112,7 @@ class LocalClaude:
             if store:store.finish(key,'AGENT_FAILED',process=process,error_category='native-local')
             raise Blocked(reason+((': '+detail) if detail else '')) from None
         if result['session_id']!=requested:raise Blocked('原生 CLI 返回了不同的会话身份')
-        secret=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
-        if 'ANTHROPIC_AUTH_TOKEN' in self.credential_env:
-            secret.add(self.credential_env['ANTHROPIC_AUTH_TOKEN'])
+        secret = before | claude_secrets(b, self.credential_env)
         result['report']=redact(result['report'],secret)
         if store:store.finish(key,'AGENT_COMPLETED',actual_session=requested,transport={'mode':'native-local'})
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,

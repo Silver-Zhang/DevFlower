@@ -54,12 +54,12 @@
 | S07 | 长会话分页与窗口搜索 | `tools/studio/agent_sessions.py` | `tools/v2/native_session_pages.py` | C | P1 | 定位连续可见历史而不扫描越权 |
 | S08 | 用户回答、Markdown 与代码块阅读 | `tools/studio/workbench_ui/ConversationView.jsx` | `tools/v2/ui/NativeMessages.jsx` | C | P1 | Markdown、代码、工具消息清晰区分 |
 | S09 | 公开工具活动与摘要 | `tools/studio/tool_activity.py` | `tools/v2/native_session_activity.py` | C | P1 | 工具活动隐藏私有输入并保留状态 |
-| S10 | 新建独立原生会话 | `tools/studio/session_center.py`、`local_codex_adapter.py`、`local_claude_adapter.py` | `tools/v2/session_operations.py` | C | P0 | Codex 与 Claude 使用单独批准的原生配置创建，发送意图先落盘，原生回执和记录核验后按实际 UUID 重开 |
+| S10 | 新建独立原生会话 | `tools/studio/session_center.py`、`local_codex_adapter.py`、`local_claude_adapter.py` | `tools/v2/session_operations.py` | C | P0 | Codex 与 Claude 使用单独批准的原生配置创建。Claude 2.1.319 采用其用户级认证、服务地址及原生模型默认。发送意图先落盘，按已核验的实际 UUID 重开 |
 | S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py` | P | P1 | 本地别名按工作空间与会话持久化；Provider 原生命名写入口待实现 |
 | S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | `tools/v2/native_session_views.py` | C | P1 | 单条可逆整理；Codex 0.163.0 工作流整组入回收站按预览成员与历史版本原子提交，忙碌或来源变化整组拒绝 |
-| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | P | P0 | Codex 核对原配置、目录、UUID 与历史，原生锁下续聊；Claude 共享 HOME 续聊关闭 |
-| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | V2 会话界面显示关闭原因 | M | P1 | Codex TUI 用户 Shell 读取保护存储，Claude 共享 HOME 可并发写同 UUID；同一 PTY 的浏览器/本地接管待验证隔离机制 |
-| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/runtime.py` | P | P0 | Codex 参与方以共同 UUID Gate 和原生线程锁串行化；未知回执不重发；Claude 外部客户端未加入此锁 |
+| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | P | P0 | Codex 核对原配置、目录、UUID 与历史，原生锁下续聊。Claude 共享 HOME 续聊关闭，当前主机缺少独立权限域 |
+| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | V2 会话界面显示关闭原因 | M | P1 | 两种生产 PTY 入口关闭。Codex 隔离 TUI 已通过本机协议诊断，产品鉴权、响应过滤及同一 PTY 接管仍待验证。Claude 共享 HOME 可并发写同 UUID |
+| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/runtime.py` | P | P0 | Codex 参与方使用共同 UUID 租约及原生线程锁。Claude 受管请求复用 UUID 租约，外部 CLI 可绕过。未知回执不重发 |
 
 #### 会话中心候选证据
 
@@ -79,7 +79,15 @@
 | S12a | 单条隐藏、归档、回收及恢复 | CODE_PRESENT、INTEGRATED、TESTED。已有 V2 浏览器夹具覆盖可逆分类与视图版本冲突。 |
 | S12b | 工作流整组回收 | CODE_PRESENT、INTEGRATED、TESTED。实际 Codex CLI 搭配本机响应夹具验证已核实分组、锁占用拒绝和整组提交；回收后可按单条恢复。 |
 
-启动时同时传入私有权限 `0600` 的 `--native-history-config` 和 `--native-session-writes`。历史配置 `{"version":1,"discover_defaults":true}` 批准浏览默认根；写入配置 `{"version":1,"codex":true}` 单独批准 Codex 独立写入。需要 Claude 的 DeepSeek Flash 时，在写入配置中加入 `"claude":{"model":"deepseek-flash","effort":"low","anthropic_base_url":"https://api.deepseek.com/anthropic"}`，从本机批准的来源提供启动环境 `ANTHROPIC_AUTH_TOKEN`。V2 只把密钥传给已配置的 Claude 子进程，操作记录保存凭据摘要。Claude 原生 CLI 使用纯对话参数。
+启动时同时传入私有权限 `0600` 的 `--native-history-config` 和 `--native-session-writes`。历史配置 `{"version":1,"discover_defaults":true}` 批准浏览默认根。写入配置 `{"version":1,"codex":true,"claude":true}` 分别批准两种独立写入。Claude 写入目前核验了原生 CLI 2.1.319、默认 HOME 及其用户级设置。选择 `"claude":true` 时，CLI 按自己的优先级使用原生登录、服务地址、模型和强度。可选的 `"claude":{"model":"sonnet","effort":"low"}` 传递原生参数。显式启动环境仅传递已列出的 Claude/Anthropic 调用变量，状态库保存环境摘要。旧配置的 `anthropic_base_url` 仅在它与已设置的 `ANTHROPIC_BASE_URL` 一致时兼容。使用 CLI 用户级设置管理地址的旧配置应移除此字段。Claude 纯对话保持禁用 Hooks、MCP、Chrome 与工具，并排除项目和本地设置。 [Claude Code 环境变量](https://code.claude.com/docs/en/env-vars)
+
+#### CLI-native 安全收尾
+
+| 层级 | 本轮范围 |
+|---|---|
+| CODE_PRESENT / INTEGRATED | Claude 新建接入原生用户配置和受限启动环境。已核验 CLI 映像、版本、实际进程及 cwd。V2 新建 UUID 在启动前持有现有生产租约，受管冲突拒绝在 CLI 启动之前。 |
+| TESTED | 实际 Claude 2.1.319 搭配本机合成服务，核对原生设置及凭据脱敏。同 UUID 受管竞争仅首个进程访问服务。原生进程异常退出后，重新打开状态库仍需恢复核验，同意图和同目标均无第二次调用。直接 CLI 对照的同 UUID 重叠续聊均触达本机服务。 |
+| ACCEPTED | 本轮独立验收待进行。当前主机没有可核验的独立 Claude 写入权限域。Codex 隔离前端与定型请求转发已在真实 TUI 的本机合成诊断中验证，仍缺产品鉴权、响应过滤及浏览器与本机连接的同一 PTY 生命周期验证。两种生产 PTY 与 Claude 共享 HOME 续聊保持关闭。参见 [CLI-native 决策](CLI_NATIVE.md)。 |
 
 在工作空间中打开原生会话，点击「新建会话」。Codex 先刷新并选择模型、强度；发送完成后打开已核验的原生记录。点击「继续会话」发送到同一 Codex UUID。只有来源与原目录能核实的记录才允许续聊。响应不完整时使用「核验本次发送」查询同一意图。工作流模式的「整组移入回收站」先显示全组预览，确认时再次校验成员、原生协调锁、转录版本与 DevFlower 分类。Codex 协调机制使用已核对的 [0.163.0 写锁协议](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/rollout/src/writer_lock.rs)。
 

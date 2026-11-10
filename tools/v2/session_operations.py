@@ -4,9 +4,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
-import subprocess
-from tempfile import TemporaryDirectory
 from threading import BoundedSemaphore, Thread
 import time
 import uuid
@@ -16,7 +13,7 @@ from orchestration.process import group_alive
 from orchestration.store import process_identity
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
-from studio.local_claude_adapter import LocalClaude
+from studio.local_claude_adapter import LocalClaude, claude_secrets
 from studio.local_codex_adapter import LocalCodex
 from studio.model_registration import profile_identity
 from studio.native_codex_image import binary_digest
@@ -25,6 +22,7 @@ from studio.native_local import native_busy
 from studio.server import Conflict
 from studio.session_sources import UUID
 
+from .claude_session_profile import discover_cli, environment_identity, legacy_endpoint_valid, startup_environment
 from .native_session_links import claim_key, verified_workflow
 from .native_history_config import CONFIG_BYTES, private_bytes, unique_pairs
 from .native_session_views import verify_bytes
@@ -39,7 +37,6 @@ STEP = 'native-session-step'
 INTENT = re.compile(r'[A-Za-z0-9_-]{16,96}')
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}')
 PROVIDERS = ('codex', 'claude')
-DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/anthropic'
 ACTIVE = {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
 REASON_UNKNOWN = '原生结果待核验。已保留本次请求记录，未自动重发。'
 
@@ -54,13 +51,14 @@ def load_write_profiles(path):
                 or type(value.get('version')) is not int or value['version'] != 1
                 or 'codex' in value and value['codex'] is not True):
             raise ValueError()
-        claude = value.get('claude')
-        if 'claude' in value and (not isinstance(claude, dict) or set(claude) not in ({'model', 'effort'}, {'model', 'effort', 'anthropic_base_url'})
-                or not isinstance(claude['model'], str) or not MODEL.fullmatch(claude['model'])
-                or claude['effort'] not in ('low', 'medium', 'high', 'max', 'xhigh')
-                or 'anthropic_base_url' in claude and (claude['anthropic_base_url'] != DEEPSEEK_ENDPOINT
-                    or claude['model'] != 'deepseek-flash')):
-            raise ValueError()
+        if 'claude' in value:
+            claude = {} if value['claude'] is True else value['claude']
+            if (not isinstance(claude, dict) or set(claude) - {'model', 'effort', 'anthropic_base_url'}
+                    or 'model' in claude and (not isinstance(claude['model'], str) or not MODEL.fullmatch(claude['model']))
+                    or 'effort' in claude and claude['effort'] not in ('low', 'medium', 'high', 'max', 'xhigh')
+                    or 'anthropic_base_url' in claude and not legacy_endpoint_valid(claude['anthropic_base_url'])):
+                raise ValueError()
+            value['claude'] = claude
         return {key: value[key] for key in PROVIDERS if key in value}
     except (OSError, ValueError, TypeError, Blocked):
         raise Invalid('原生写入配置无效。请核对启动配置与私有权限。') from None
@@ -170,36 +168,18 @@ class SessionOperations:
             else:
                 if os.environ.get('CLAUDE_CONFIG_DIR'):
                     raise Invalid('Claude 原生写入仅支持默认 HOME 配置。')
-                executable = shutil.which('claude')
-                if not executable:
-                    raise Invalid('未找到 Claude Code。')
-                executable = str(Path(executable).resolve(strict=True))
-                fd = os.open(executable, os.O_RDONLY | os.O_NOFOLLOW)
-                try:
-                    image = binary_digest(fd)
-                finally:
-                    os.close(fd)
-                from orchestration.common import cli_probe_env
-                try:
-                    with TemporaryDirectory(prefix='df-claude-capability-') as scratch:
-                        help_result = subprocess.run([executable, '--help'], env=cli_probe_env(scratch),
-                                                     capture_output=True, timeout=12, check=False)
-                except subprocess.SubprocessError:
-                    raise Invalid('Claude Code 启动能力无法核验。') from None
-                if help_result.returncode or any(flag not in help_result.stdout for flag in (
-                        b'--safe-mode', b'--restricted', b'--disable-slash-commands', b'--tools', b'--strict-mcp-config')):
-                    raise Invalid('Claude Code 缺少禁用本机扩展和工具的必要能力。')
-                if options.get('anthropic_base_url'):
-                    secret = os.environ.get('ANTHROPIC_AUTH_TOKEN', '')
-                    if not 16 <= len(secret) <= 8192 or any(char.isspace() for char in secret):
-                        raise Invalid('启动 Claude DeepSeek 配置需要有效的 ANTHROPIC_AUTH_TOKEN 环境变量。')
-                    self.claude_env = {'ANTHROPIC_BASE_URL': DEEPSEEK_ENDPOINT, 'ANTHROPIC_AUTH_TOKEN': secret}
-                    binding['relay_credential_sha256'] = digest(secret.encode())
-                    reader.literals = (*reader.literals, secret)
-                binding.update(options, executable=executable, _executable_sha256=image,
+                self.claude_env = startup_environment(os.environ, options.get('anthropic_base_url'))
+                binding.update(discover_cli(), model=options.get('model'), effort=options.get('effort'),
+                               cli_environment_sha256=environment_identity(self.claude_env),
                                role='reviewer', chat_only=True, readonly_files=[])
+                self.remember_claude_secrets(binding)
             self.profiles[provider] = (source, binding)
         self.reader.managed_records = self.managed_records
+
+    def remember_claude_secrets(self, binding):
+        literals = claude_secrets(binding, self.claude_env)
+        with self.reader.guard:
+            self.reader.literals = tuple(sorted(set(self.reader.literals) | literals, key=len, reverse=True))
 
     def status(self):
         return list(self.profiles)
@@ -271,6 +251,7 @@ class SessionOperations:
             binding = dict(self.codex.binding(workspace, dict(provider=provider, model=model, effort=effort)), **approved)
         else:
             binding = dict(approved, direct_environment_sha256=profile_identity(approved))
+            self.remember_claude_secrets(binding)
         cwd_identity = StorageRootIdentity.capture(cwd)
         if digest(canonical([cwd, cwd_identity.device, cwd_identity.inode])) != workspace:
             raise SessionRefused('LOCATOR_REFUSED')
@@ -367,7 +348,8 @@ class SessionOperations:
         self.require_scope(binding)
         if binding['provider'] == 'codex':
             self.codex.require_account(binding)
-        elif profile_identity(binding) != binding['direct_environment_sha256']:
+        elif (profile_identity(binding) != binding['direct_environment_sha256']
+              or environment_identity(self.claude_env) != binding['cli_environment_sha256']):
             raise SessionRefused('ROOT_CHANGED')
 
     def check_resume(self, row, locator, record):
@@ -434,8 +416,11 @@ class SessionOperations:
                 limits = dict(step_timeout_seconds=300, max_log_bytes=2_000_000)
                 adapter = LocalCodex(binding, limits) if provider == 'codex' else LocalClaude(
                     binding, limits, credential_env=self.claude_env)
-                result = adapter.start(
-                    prompt, binding['cwd'], artifacts, None, journal, row['id'])
+                try:
+                    result = adapter.start(prompt, binding['cwd'], artifacts, None, journal, row['id'])
+                finally:
+                    if provider == 'claude':
+                        self.remember_claude_secrets(binding)
                 final = self.store.db.get(KIND, row['id'])
                 process = result.get('process')
                 step = self.store.db.get(STEP, final['process_step'])

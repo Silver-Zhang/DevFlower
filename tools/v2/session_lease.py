@@ -1,5 +1,5 @@
 """Kernel-backed session gates and the persistent fixture lease protocol."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import fcntl
 import json
@@ -575,7 +575,13 @@ def production_session_gate(binding, locator, *, target=None):
         if (any(os.fstat(fd).st_uid != os.geteuid() for fd in (root_fd, home_fd))
                 or mount_table().get(root_mount, (None, None, None))[2] not in LOCAL_FILESYSTEMS):
             raise SessionRefused('PROFILE_REFUSED')
-        with session_lease(dict(binding, session_id=sid)):
+        with ExitStack() as held:
+            try:
+                held.enter_context(session_lease(dict(binding, session_id=sid)))
+            except Blocked as error:
+                if str(error) == 'live lease held':
+                    raise SessionRefused('LEASE_HELD') from None
+                raise
             if StorageRootIdentity.capture(root).fields() != binding['root_identity']:
                 raise SessionRefused('ROOT_CHANGED')
             yield
@@ -592,7 +598,6 @@ def codex_presentation_guard(config_root, session_ids):
     removal. Holding it makes an absent per-UUID lock meaningful, while any
     existing per-UUID lock is checked without waiting for its current writer.
     """
-    from contextlib import ExitStack
     from studio.session_sources import UUID
 
     session_ids = tuple(sorted(set(session_ids)))
