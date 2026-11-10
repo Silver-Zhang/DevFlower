@@ -12,6 +12,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from v2.agent_records import AgentRecords
 from v2.documents import check_chain, validate_draft
+from v2.runtime import V2Runtime
 from v2.store import DraftStore
 
 
@@ -87,6 +88,23 @@ class AgentRecordTests(unittest.TestCase):
         for extra in ({'model': 'override'}, {'permission': 'read'}, {'agent_revision': None}):
             with self.subTest(extra=extra), self.assertRaises(Invalid):
                 validate_draft(dict(doc, nodes=[dict(node, **extra)]))
+
+    def test_direct_run_reuses_intent_without_creating_canvas_draft(self):
+        with patch('v2.runtime.CodexProvider', return_value=None):
+            runtime = V2Runtime(self.store)
+        config = configuration(self.cwd)
+        record = runtime.agents.save(self.first, None, None, config)
+        binding = {'provider': 'claude', 'model': None, 'effort': 'high'}
+        with (patch('v2.runtime.freeze_agent', return_value=(record, binding)),
+              patch.object(runtime, 'spawn') as spawn):
+            first = runtime.launch_agent(self.first, record['id'], record['revision'], 'fixture-direct-launch', 'task')
+            runtime.agents.save(self.first, record['id'], record['revision'], dict(config, role='Changed'))
+            again = runtime.launch_agent(self.first, record['id'], record['revision'], 'fixture-direct-launch', 'task')
+            self.assertEqual(first['run']['id'], again['run']['id'])
+            spawn.assert_called_once_with(first['run']['id'])
+            with self.assertRaises(Conflict):
+                runtime.launch_agent(self.first, record['id'], record['revision'], 'different-direct-intent', 'task')
+        self.assertEqual(self.store.drafts(self.first), [])
 
 
 if __name__ == '__main__':

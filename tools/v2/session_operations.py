@@ -23,7 +23,8 @@ from studio.server import Conflict
 from studio.session_sources import UUID
 
 from .claude_session_profile import discover_cli, environment_identity, legacy_endpoint_valid, startup_environment
-from .native_session_links import claim_key, verified_workflow
+from .native_session_links import claim_key, claude_workflow_history, verified_workflow
+from .native_writer_state import require_native_writer_idle
 from .native_history_config import CONFIG_BYTES, private_bytes, unique_pairs
 from .native_session_views import verify_bytes
 from .native_sessions import HANDLE, REVISION, prove_file
@@ -37,7 +38,6 @@ STEP = 'native-session-step'
 INTENT = re.compile(r'[A-Za-z0-9_-]{16,96}')
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}')
 PROVIDERS = ('codex', 'claude')
-ACTIVE = {'RESERVED', 'STARTING', 'RUNNING', 'RECOVERY_REQUIRED'}
 REASON_UNKNOWN = '原生结果待核验。已保留本次请求记录，未自动重发。'
 
 
@@ -112,6 +112,7 @@ class OperationJournal:
             if not row['target'] and self.writer_sid is None:
                 self.writer_gates.enter_context(production_session_gate(row['binding'], None, target=sid))
                 self.writer_sid = sid
+                require_native_writer_idle(self.operations.store, row['binding'], sid, ignore_operation=row['id'])
             if self.writer_sid is not None and self.writer_sid != sid:
                 raise SessionRefused('LOCATOR_REFUSED')
             self.operations.bind_observed(row, sid)
@@ -250,6 +251,15 @@ class SessionOperations:
                 if latest is None:
                     latest = row
                 created |= row.get('handle') is None and prior.get('new_session_id') == locator.native_uuid
+        workflows, uncertain = claude_workflow_history(self.store, db, binding, locator)
+        if uncertain:
+            return 'RECOVERY_REQUIRED'
+        for row in workflows:
+            if any(row['binding'].get(key) != binding.get(key) for key in scope):
+                continue
+            created |= row['is_creation']
+            if latest is None or row['created'] > latest.get('created', 0):
+                latest = row
         if not created:
             return 'EXTERNAL_SESSION'
         if (latest.get('relative') != str(record.ref.relative) or latest.get('native_after_sha256') != record.ref.sha
@@ -287,13 +297,15 @@ class SessionOperations:
                     row['can_request_continue'] = eligible
                 elif claude:
                     state = 'unverified'
-                    if eligible and claude_binding is not None:
+                    if record and record.cwd_evidence and record.source.profile == claude[0].profile and claude_binding is not None:
                         try:
                             locator = record.index.resolve(workspace, row['handle'])
-                            state = self.claude_history_state(claude_binding, locator, record, db)
+                            scope = dict(claude_binding, cwd=locator.original_cwd,
+                                         cwd_identity=record.cwd_evidence[-1][1].fields())
+                            state = self.claude_history_state(scope, locator, record, db)
                         except (OSError, ValueError, Blocked):
                             pass
-                    row.update(claude_session_state=state, can_request_continue=state == 'managed')
+                    row.update(claude_session_state=state, can_request_continue=eligible and state == 'managed')
 
     def prepare_binding(self, workspace, provider, handle, revision, model=None, effort=None):
         if provider not in self.profiles:
@@ -375,19 +387,9 @@ class SessionOperations:
         sid = binding.get('session_id') or binding.get('new_session_id')
         if not sid:
             return
-        for kind in (KIND, 'native-session-pty'):
-            for row in self.store.db.list(kind):
-                if row['id'] == ignore and kind == owner_kind:
-                    continue
-                prior = row.get('binding', {})
-                if (row.get('observed_session', row.get('target')) == sid
-                        and prior.get('provider') == binding['provider'] and prior.get('config_root') == binding['config_root']
-                        and row['state'] in ACTIVE):
-                    if row['state'] == 'RESERVED' and (row.get('owner') != self.owner or kind == owner_kind
-                            and ignore is not None):
-                        continue
-                    raise SessionRefused('RECOVERY_REQUIRED' if row['state'] == 'RECOVERY_REQUIRED'
-                                         or row.get('owner') != self.owner else 'LEASE_HELD')
+        require_native_writer_idle(self.store, binding, sid,
+            ignore_operation=ignore if owner_kind == KIND else None,
+            ignore_pty=ignore if owner_kind == 'native-session-pty' else None)
         if binding['provider'] == 'codex':
             try:
                 self.store.db.get('native-session-claim', claim_key(binding['config_root'], sid))

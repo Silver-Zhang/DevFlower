@@ -1,0 +1,104 @@
+"""Bind a saved Agent revision to V2's native execution boundary."""
+from pathlib import Path
+import re
+import uuid
+
+from studio.graph import Invalid
+from studio.native_local import native_busy
+
+from .native_history_config import SourceSpec, startup_seed
+from .native_sessions import prove_file, source_for
+from .session_identity import SessionRefused, StorageRootIdentity
+
+LEAF = {'codex': 'sessions', 'claude': 'projects'}
+
+
+def freeze_agent(runtime, workspace, node):
+    row = runtime.agents.get(workspace, node['agent_id'], node['agent_revision'])
+    config = row['config']
+    provider = config['provider']
+    if not config['round_prompt'].strip():
+        raise Invalid('请在 Agent 配置填写每轮提示词。')
+    permission = config['permission']
+    if (config['subagents'] != 'disabled' or permission not in ('none', 'workspace-read', 'workspace-write')
+            or permission != 'none' and provider != 'codex'
+            or config['max_budget_usd'] is not None and provider != 'claude'):
+        raise Invalid('所选 Provider 的工具权限、子 Agent 或预算尚未开放。')
+    approved = runtime.agents.session_operations
+    if provider == 'claude' and (approved is None or provider not in approved.profiles):
+        raise Invalid('启动 Claude Agent 需要本机明确启用 Claude 原生写入。')
+    cwd = runtime.agents.directory(workspace, config['cwd'])
+    adapter = runtime.cli_providers.adapter(provider)
+    binding = adapter.binding(workspace, config)
+    if provider == 'claude':
+        permitted = approved.profiles['claude'][1]
+        if any(binding[key] != permitted[key] for key in ('home', 'config_root', '_executable_sha256', 'root_identity',
+                                                         'cli_environment_sha256')):
+            raise SessionRefused('ROOT_CHANGED')
+    root = Path(binding['config_root'])
+    binding.update(agent_config_id=row['id'], agent_config_revision=row['revision'], cwd=str(cwd),
+                   cwd_identity=StorageRootIdentity.capture(cwd).fields(),
+                   root_identity=StorageRootIdentity.capture(root).fields(),
+                   runtime_profile='default-' + provider, local_lock_root=str(root / '.devflower-writer-locks'),
+                   execution_mode=config['mode'])
+    if config['session']['kind'] == 'existing':
+        if approved is None:
+            raise Invalid('绑定已有会话需要已启用的原生会话写入。')
+        listing = approved.reader.listing(workspace)
+        locator, record = runtime.agents.verify_session(workspace, config, listing['revision'])
+        binding.update(session_id=locator.native_uuid, resume_proof=dict(
+            relative=str(record.ref.relative), sha256=record.ref.sha, history_identity=locator.root_identity.fields()))
+    elif provider == 'claude':
+        binding['new_session_id'] = str(uuid.uuid4())
+    if provider == 'codex':
+        binding['v2_agent_skills'] = []
+    if config['skills']:
+        if provider != 'codex':
+            raise Invalid('Claude Skills 当前仅支持发现，未开放选定后启动。')
+        catalog = runtime.agents.skills(workspace, provider, str(cwd), authority=True)
+        indexed = {row['id']: row for row in catalog['skills']}
+        if not set(config['skills']) <= indexed.keys():
+            raise Invalid('选定 Skills 已变化，请重新发现并保存。')
+        binding['v2_agent_skills'] = [{key: indexed[ident][key] for key in ('id', 'name', 'path', 'sha256')}
+                                     for ident in config['skills']]
+    return row, binding
+
+
+def history_source(store, binding):
+    provider = binding['provider']
+    root = Path(binding['config_root']) / LEAF[provider]
+    spec = SourceSpec('default-' + provider, provider, Path(binding['home']), root, '默认来源')
+    return source_for(spec, startup_seed(store.state))
+
+
+def require_agent_scope(runtime, binding):
+    workspace, cwd = binding['project'], binding['cwd']
+    runtime.agents.directory(workspace, cwd)
+    if (StorageRootIdentity.capture(cwd).fields() != binding['cwd_identity']
+            or StorageRootIdentity.capture(binding['config_root']).fields() != binding['root_identity']):
+        raise SessionRefused('ROOT_CHANGED')
+
+
+def require_agent_history(runtime, binding):
+    proof = binding.get('resume_proof')
+    if proof is None:
+        return
+    source = history_source(runtime.store, binding)
+    if source.profile.identity.fields() != proof['history_identity']:
+        raise SessionRefused('ROOT_CHANGED')
+    _, ref, _ = prove_file(source, binding['project'], binding['cwd'], binding['session_id'], proof['relative'])
+    if ref.sha != proof['sha256']:
+        raise SessionRefused('MANAGED_HISTORY_CHANGED' if binding['provider'] == 'claude' else 'LOCATOR_REFUSED')
+    if binding['provider'] == 'codex' and native_busy(binding, binding['session_id']):
+        raise SessionRefused('EXTERNAL_BUSY')
+
+
+def prove_claude_history(store, binding, sid):
+    root = Path(binding['config_root']) / LEAF['claude']
+    folder = re.sub('[^a-zA-Z0-9]', '-', binding['cwd'])
+    relative = Path(folder) / (sid + '.jsonl')
+    source = history_source(store, binding)
+    if source.profile.root != root:
+        raise SessionRefused('ROOT_CHANGED')
+    _, ref, _ = prove_file(source, binding['project'], binding['cwd'], sid, relative)
+    return {'relative': str(ref.relative), 'sha256': ref.sha, 'history_identity': source.profile.identity.fields()}

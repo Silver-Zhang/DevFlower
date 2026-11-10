@@ -312,6 +312,8 @@ class WorkflowSessionTrash:
                 continue
             record = snapshot.reads[handle]
             locator = record.index.resolve(workspace, handle)
+            if locator.provider != 'codex':
+                raise NativeHistoryError('NATIVE_VIEW_CONFLICT', message='包含 Claude 的工作流请逐条整理会话。')
             actual[locator.native_uuid] = link['run']
             raw = db.execute('SELECT data FROM records WHERE kind=? AND id=?',
                              (KIND, view_id(workspace, handle))).fetchone()

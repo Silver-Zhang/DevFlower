@@ -31,14 +31,16 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     token = secrets.token_urlsafe(32)
     catalog = CopilotCatalog() if copilot_catalog is None else copilot_catalog
     if native_sessions is not None and runtime is not None:
-        native_sessions.workflow_links = bool(runtime.provider or store.db.list('node-session'))
+        native_sessions.workflow_links = bool(runtime.provider or 'claude' in getattr(session_operations, 'profiles', {})
+                                              or store.db.list('node-session'))
     native_views = NativeSessionViews(native_sessions) if native_sessions is not None else None
     workflow_trash = (WorkflowSessionTrash(native_views) if native_views and native_sessions.workflow_links
                       and getattr(runtime.provider, 'version', None) == CODEX_COORDINATION_VERSION else None)
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
     terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
-    agents = AgentRecords(store, getattr(runtime, 'cli_providers', None), session_operations)
+    agents = getattr(runtime, 'agents', None) or AgentRecords(store)
+    agents.session_operations = session_operations
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -252,8 +254,13 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = agents.save(data['workspace'], data['id'], data['expected'], data['config'], data['session_revision'])
                 elif post and path == '/api/v2/agents/remove' and not query and set(data) == {'workspace', 'id', 'expected'}:
                     result = agents.remove(data['workspace'], data['id'], data['expected'])
+                elif post and path == '/api/v2/agents/launch' and runtime and not query and set(data) == {
+                        'workspace', 'id', 'revision', 'intent_key', 'task'}:
+                    result = runtime.launch_agent(data['workspace'], data['id'], data['revision'], data['intent_key'], data['task'])
                 elif not post and path == '/api/v2/agent-skills' and set(query) == {'workspace', 'provider', 'cwd'}:
                     result = agents.skills(query['workspace'], query['provider'], query['cwd'])
+                elif not post and path == '/api/v2/agent-sessions' and set(query) == {'workspace', 'provider', 'cwd'}:
+                    result = agents.sessions(query['workspace'], query['provider'], query['cwd'])
                 elif not post and path == '/api/v2/runs' and runtime:
                     result = runtime.runs(query.get('workspace'))
                 elif not post and path == '/api/v2/run' and runtime:

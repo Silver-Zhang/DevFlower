@@ -336,6 +336,11 @@ def exec_args(binding,provider_args,*,schema=None,scope_options=()):
     features=dict(FEATURES)
     if binding.get('admission_probe') or binding.get('no_tools'):
         features.update(shell_tool=False,code_mode_host=False,unified_exec=False)
+    if 'v2_agent_skills' in binding:
+        features['worktrees'] = False
+        if not scope_options:
+            features['default_mode_request_user_input'] = False
+        args += ['-c', 'notify=[]', '-c', 'project_doc_max_bytes=0']
     for key,value in features.items():args+=['-c','features.'+key+'='+_toml(value)]
     args+=scope_options
     if not isinstance(binding.get('model'),str) or not binding['model'] or binding['model']=='unknown':raise Blocked('原生模型身份不明确')

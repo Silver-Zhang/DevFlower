@@ -139,7 +139,10 @@ class LocalClaude:
         if result['session_id']!=requested:raise Blocked('原生 CLI 返回了不同的会话身份')
         secret = before | claude_secrets(b, self.credential_env)
         result['report']=redact(result['report'],secret)
-        if store:store.finish(key,'AGENT_COMPLETED',actual_session=requested,transport={'mode':'native-local'})
+        if store:
+            terminal = {'claude_terminal': {'type': 'result', 'subtype': 'success', 'session_id': requested}
+                        } if 'agent_permission_mode' in b else {}
+            store.finish(key, 'AGENT_COMPLETED', actual_session=requested, transport={'mode': 'native-local'}, **terminal)
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,
             home=b['home'],cwd=cwd,provider='claude',
             permission_mode=('native-' + b.get('agent_permission_mode', 'plan') + '/no-tools') if chat_only else 'native-plan/read-tools',

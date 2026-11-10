@@ -1,5 +1,6 @@
 """Workspace-scoped Agent configuration. Saving an Agent never launches a CLI."""
 import json
+from itertools import islice
 from pathlib import Path
 import re
 import secrets
@@ -9,6 +10,7 @@ from orchestration.privacy import credentials, redact
 from studio.agent_extensions import skill_files, skill_header
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
+from studio.model_registration import profile_identity
 from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.server import Conflict
@@ -16,6 +18,7 @@ from studio.session_sources import opened
 
 from .cli_providers import EFFORT, model_id
 from .native_sessions import HANDLE, REVISION
+from .session_identity import StorageRootIdentity
 
 KIND = 'agent-config'
 KEY = re.compile(r'[0-9a-f]{32}')
@@ -104,14 +107,44 @@ class AgentRecords:
         if operations is None or not matches(REVISION, revision):
             raise Invalid('请从当前工作空间的原生会话列表选择已有会话。')
         locator, record = operations.resolve(workspace, config['session']['handle'], revision)
+        self.require_session_scope(workspace, config, locator, record)
+        return locator, record
+
+    def require_session_scope(self, workspace, config, locator, record):
+        operations = self.session_operations
         provider = config['provider']
         profile = operations.profiles.get(provider)
         if (not profile or locator.provider != provider or locator.original_cwd != config['cwd']
                 or record.source.profile != profile[0].profile):
             raise Conflict('已有会话的 Provider、配置根或原工作目录与 Agent 不一致。')
         if provider == 'claude':
-            operations.prepare_binding(workspace, provider, config['session']['handle'], revision)
-        return locator, record
+            binding = dict(profile[1], project=workspace, cwd=config['cwd'],
+                           cwd_identity=StorageRootIdentity.capture(config['cwd']).fields(),
+                           direct_environment_sha256=profile_identity(profile[1]))
+            operations.require_claude_history(binding, locator, record)
+
+    def sessions(self, workspace, provider, cwd):
+        self.directory(workspace, cwd)
+        operations = self.session_operations
+        if operations is None or provider not in operations.profiles:
+            raise Invalid('此 Provider 尚未启用原生会话绑定。')
+        reader = operations.reader
+        listing = reader.listing(workspace)
+        with reader.guard:
+            snapshot = reader._snapshot(workspace, listing['revision'])
+        rows = []
+        for item in listing['sessions']:
+            handle = item['handle']
+            record = snapshot.reads.get(handle)
+            if record is None or item['provider'] != provider:
+                continue
+            try:
+                locator = record.index.resolve(workspace, handle)
+                self.require_session_scope(workspace, {'provider': provider, 'cwd': cwd}, locator, record)
+            except (ValueError, Conflict, Blocked, OSError):
+                continue
+            rows.append({key: item[key] for key in ('handle', 'provider', 'updated_at')})
+        return {'sessions': rows, 'revision': listing['revision']}
 
     def save(self, workspace, key, expected, value, session_revision=None):
         config = validate_agent(value)
@@ -197,7 +230,7 @@ class AgentRecords:
             for root, _ in roots:
                 try:
                     with opened(root, directory=True):
-                        candidates.extend(folder / 'SKILL.md' for folder in sorted(root.iterdir())[:100])
+                        candidates.extend(folder / 'SKILL.md' for folder in sorted(islice(root.iterdir(), 100)))
                 except (OSError, Blocked):
                     continue
         rows, seen = [], set()

@@ -72,8 +72,8 @@ def read_completion(rt,run,node,definition,steps):
     binding=definition['bindings'][node['node']]
     if (not isinstance(value.get('receipt'),dict) or not isinstance(value.get('output'),dict)
         or not isinstance(binding,dict) or not isinstance(node.get('process_result'),dict)
-        or not isinstance(node.get('native_terminal_events'),list)
-        or any(not isinstance(event,dict) for event in node['native_terminal_events'])):raise ValueError('completion evidence types')
+        or binding.get('provider') == 'codex' and (not isinstance(node.get('native_terminal_events'),list)
+        or any(not isinstance(event,dict) for event in node['native_terminal_events']))):raise ValueError('completion evidence types')
     receipt=copy.deepcopy(value['receipt']);output=value['output']
     if receipt.get('native_turn_id')=='unknown':receipt['native_turn_id']=None
     if (not isinstance(output,dict) or set(output)!={'answer','summary','result','evidence','issues','next','artifacts'}

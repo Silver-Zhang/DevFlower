@@ -21,7 +21,7 @@ function Field({label, children}) {
  return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onClose, visible}) {
+export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onRun, onClose, visible}) {
  const [rows, setRows] = useState([]);
  const [providers, setProviders] = useState([]);
  const [record, setRecord] = useState(null);
@@ -32,6 +32,8 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const [notice, setNotice] = useState('');
  const [busy, setBusy] = useState(false);
  const [deleteAsk, setDeleteAsk] = useState(false);
+ const [directTask, setDirectTask] = useState('');
+ const [pendingRun, setPendingRun] = useState(null);
  const alive = useRef(true);
  const running = useRef(false);
  const close = useRef(null);
@@ -57,6 +59,13 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  function choose(row) {
   setRecord(row); setConfig(row?.config || fresh(workspace)); setSessions(null); setSkills(null);
   newId.current = row?.id || crypto.randomUUID().replaceAll('-', '');
+  setDirectTask('');
+  let pending = null;
+  if (row) {
+   try {pending = JSON.parse(sessionStorage.getItem(runKey(row.id)));}
+   catch {}
+  }
+  setPendingRun(pending);
   setError(''); setNotice(''); setDeleteAsk(false);
  }
  function change(fields) {setConfig(old => ({...old, ...fields}));}
@@ -70,7 +79,8 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   if (alive.current) setProviders(result.providers);
  }
  async function loadSessions() {
-  const result = await api('native-sessions?workspace=' + workspace.id);
+  const result = await api('agent-sessions?' + new URLSearchParams({
+   workspace: workspace.id, provider: config.provider, cwd: config.cwd}));
   if (alive.current) setSessions(result);
  }
  async function loadSkills() {
@@ -98,11 +108,32 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
    setRows(items => items.filter(item => item.id !== record.id)); setRecord(null); setConfig(null); setDeleteAsk(false);
   });
  }
+ function runKey(id) {return 'df-agent-launch:' + workspace.id + ':' + id;}
+ async function launch() {
+  await action(async () => {
+   const data = pendingRun || {workspace: workspace.id, id: record.id, revision: record.revision,
+    intent_key: crypto.randomUUID(), task: directTask};
+   const key = runKey(record.id);
+   sessionStorage.setItem(key, JSON.stringify(data));
+   setPendingRun(data);
+   try {
+    const result = await api('agents/launch', data);
+    sessionStorage.removeItem(key);
+    if (alive.current) {setPendingRun(null); onRun(result.run.id);}
+   } catch (failure) {
+    if (!failure.uncertain && failure.status && failure.status < 500) {
+     sessionStorage.removeItem(key);
+     if (alive.current) setPendingRun(null);
+    }
+    throw failure;
+   }
+  });
+ }
  const provider = providers.find(row => row.provider === config?.provider);
  const isDirty = Boolean(config && (!record || JSON.stringify(config) !== JSON.stringify(record.config)));
  const model = provider?.models.find(item => item.id === config?.model);
  const efforts = model?.efforts?.length ? model.efforts : provider?.efforts ?? [];
- const sessionRows = sessions?.sessions.filter(row => row.provider === config?.provider && row.can_request_continue) ?? [];
+ const sessionRows = sessions?.sessions ?? [];
  const modelValue = config?.model_source === 'manual' ? 'manual' : config?.model ?? '';
  const editText = (label, key, rows) => <Field label={label}>{rows ? <textarea aria-label={label} rows={rows}
   value={config[key]} onChange={event => change({[key]: event.target.value})}/> : <input aria-label={label}
@@ -212,8 +243,12 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      </details>
      {error && <p className="error-text" role="alert">{error}</p>}
      {notice && <p className="field-note" role="status">{notice}</p>}
+     {record && <Field label="本次 Agent 运行输入"><input aria-label="本次 Agent 运行输入" disabled={busy || !!pendingRun}
+      value={pendingRun?.task ?? directTask} onChange={event => setDirectTask(event.target.value)}/></Field>}
      <footer>
       <button type="submit" className="primary" disabled={busy || !config.name.trim() || !config.role.trim()}>保存 Agent</button>
+      <button type="button" disabled={busy || !record || isDirty && !pendingRun} onClick={launch}>
+       {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>
       <button type="button" disabled={busy || isDirty || !record} onClick={() => onBind(record)}>
        {selectedNode ? '用于当前节点' : '添加到工作流'}</button>
       {record && (deleteAsk ? <>

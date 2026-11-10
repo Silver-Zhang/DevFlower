@@ -83,6 +83,8 @@ class CliProviderTests(unittest.TestCase):
         self.assertIn('features.shell_tool=false', argv)
         with self.assertRaises(Blocked):
             codex.command(binding, config={}, session_id='--last', resume=True)
+        with self.assertRaises(Blocked):
+            codex.command(dict(binding, v2_agent_scope='workspace-write'), config={})
         self.assertIsInstance(codex.transport(binding, {}), LocalCodex)
 
         claude = ClaudeCLI(self.store)

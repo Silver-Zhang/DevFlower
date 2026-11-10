@@ -454,7 +454,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
          if (next.has(id)) next.delete(id); else next.add(id);
          return next;
         })}>{name}</button></h3>
-        {workflowTrash && id !== 'unlinked' && collection === 'current' && <button disabled={groupBusy || mutating}
+        {workflowTrash && id !== 'unlinked' && collection === 'current' && group.every(row => row.provider === 'codex') && <button disabled={groupBusy || mutating}
          onClick={() => groupAction(id)}>整组移入回收站</button>}
        </div> : <h3>{name}</h3>}
        {(!workflowGrouping || !collapsed.has(id)) && <ul>{group.map(row => <li key={row.handle}>

@@ -74,11 +74,14 @@ class CodexCLI:
                     probe = cli_read(image.path, image.fd, ['exec', '--help'], scratch, cli_probe_env(scratch))
             ask = native.version == CODEX_COORDINATION_VERSION and probe.returncode == 0 and all(
                 flag in probe.stdout for flag in (b'--json', b'--model', b'--ignore-user-config', b'--strict-config'))
+            scoped = ask and os.access('/usr/bin/bwrap', os.X_OK)
             row['modes'] = {
-                'Ask': mode(ask, ['exec', '--json'], '仅对话，禁止模型工具。'),
+                'Ask': mode(ask, ['exec', '--json'], '可选择仅对话，或允许模型读取当前工作区。'),
                 'Plan': mode(False, [], '此 Codex 工作流尚未核验原生 Plan 入口。'),
-                'Agent': mode(False, ['exec', '--sandbox', 'workspace-write'], '工作区工具隔离尚未启用。'),
+                'Agent': mode(scoped, ['exec', '-c', 'default_permissions=<scoped-profile>'],
+                              '使用原生工作区沙箱执行模型工具。请选择工作区读写权限。'),
             }
+            row['permissions'] = ['none', 'workspace-read', 'workspace-write'] if scoped else ['none']
             catalog, defaults = native.discover(agent_defaults=True)
             known = credentials(native.home)
             for item in catalog['models']:
@@ -110,16 +113,34 @@ class CodexCLI:
         return row
 
     def binding(self, workspace, agent):
-        if not self.provider or self.provider.version != CODEX_COORDINATION_VERSION or agent['mode'] != 'Ask':
-            raise Invalid('当前 Codex Agent 仅开放已核验的 Ask 对话。')
-        if not model_id(agent['model']):
+        access = {('Ask', 'none'): None, ('Ask', 'workspace-read'): 'read', ('Agent', 'workspace-write'): 'workspace-write'}
+        mode_permission = agent['mode'], agent['permission']
+        if not self.provider or self.provider.version != CODEX_COORDINATION_VERSION or mode_permission not in access:
+            raise Invalid('Codex 支持 Ask（仅对话或读取工作区）以及 Agent（工作区读写）。')
+        scope = access[mode_permission]
+        if scope and not os.access('/usr/bin/bwrap', os.X_OK):
+            raise Invalid('本机 Bubblewrap 不可用，未开放工作区工具。')
+        model, effort = agent['model'], agent['effort']
+        if model is None or effort is None:
+            row = self.provider.store.db.get(CATALOG, self.provider_id)
+            default = (row.get('default_model') or {}).get('id')
+            model = model or default
+            effort = effort or (row.get('default_effort') if model == default else next(
+                (item['default_effort'] for item in row['models'] if item['id'] == model), None))
+        if not model_id(model):
             raise Invalid('Codex 需要选择目录模型或输入明确的自定义模型。')
-        node = dict(provider=self.provider_id, model=agent['model'], effort=agent['effort'], timeout=agent['timeout'])
-        return self.provider.binding(workspace, node, manual_model=agent.get('model_source') == 'manual')
+        node = dict(provider=self.provider_id, model=model, effort=effort, timeout=agent['timeout'])
+        binding = self.provider.binding(workspace, node, manual_model=agent.get('model_source') in ('manual', 'native_default'))
+        if scope:
+            binding.update(v2_agent_scope=scope, no_tools=False,
+                           role='implementer' if scope == 'workspace-write' else 'reviewer')
+        return binding
 
     def command(self, binding, *, config=None, session_id=None, resume=False, output_schema=None):
         if resume != (session_id is not None):
             raise Invalid('Codex 新建会话的 UUID 由 CLI 返回；续聊需要明确 UUID。')
+        if binding.get('v2_agent_scope'):
+            raise Blocked('工作区工具命令必须经实际沙箱与 CLI 映像核验后构建。')
         args = exec_args(binding, provider_overrides(config), schema=output_schema)
         return resume_exec_args(args, session_id) if resume else args
 
@@ -230,6 +251,14 @@ class ClaudeCLI:
             raise Invalid('Claude 模型格式无效。')
         if effort is not None and effort not in profile['efforts']:
             raise Invalid('当前 Claude CLI 未提供所选推理强度。')
+        if model is not None and effort is not None and agent.get('model_source') == 'catalog':
+            try:
+                catalog = self.store.db.get(CATALOG, self.provider_id)
+            except Invalid:
+                catalog = {}
+            known = next((item['efforts'] for item in catalog.get('models', []) if item['id'] == model), [])
+            if known and effort not in known:
+                raise Invalid('Claude 原生目录未报告所选模型与推理强度组合。')
         if budget is not None and (not profile['native_budget'] or not isinstance(budget, str)
                                    or not re.fullmatch(r'[0-9]{1,4}(?:\.[0-9]{1,4})?', budget) or float(budget) <= 0):
             raise Invalid('Claude 原生费用上限无效。')
@@ -239,6 +268,7 @@ class ClaudeCLI:
         binding.update(project=workspace, model=model, effort=effort, session_id=None,
                        timeout_seconds=agent['timeout'], execution_mode=agent['mode'],
                        agent_permission_mode=native, max_budget_usd=budget,
+                       conversation_format='text',
                        cli_environment_sha256=environment_identity(env),
                        root_identity=StorageRootIdentity.capture(binding['config_root']).fields())
         binding['direct_environment_sha256'] = profile_identity(binding)
