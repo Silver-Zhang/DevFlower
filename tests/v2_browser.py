@@ -38,7 +38,7 @@ def redact_trace(path):
     return summary
 
 
-def main():
+def main(driver=None):
     p = argparse.ArgumentParser()
     p.add_argument('--artifacts', required=True)
     p.add_argument('--chromium', required=True)
@@ -74,7 +74,7 @@ def main():
             raise RuntimeError('Launcher exited without a usable local URL')
         env = dict(os.environ, V2_URL=url, V2_WORKSPACES=str(spaces), CHROMIUM=args.chromium,
                    PLAYWRIGHT_MODULE=args.playwright_module)
-        command = ['node', str(Path(__file__).with_suffix('.cjs')), str(out)]
+        command = ['node', str(driver or Path(__file__).with_suffix('.cjs')), str(out)]
         result = subprocess.run(command, cwd=root, env=env, timeout=240)
         print(json.dumps({'browser_exit': result.returncode, 'artifacts': str(out)}), flush=True)
         return result.returncode

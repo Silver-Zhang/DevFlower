@@ -42,6 +42,14 @@ class DesignerRecoveryTests(unittest.TestCase):
     def node(self, key, kind, **config):
         return dict(id=key, name=key, kind=kind, position=dict(x=0, y=0), config_version=1, config=config)
 
+    def add_agent(self):
+        self.runtime.provider = SyntheticProvider(self.store)
+        self.document['nodes'].insert(1, dict(id='Agent', name='Agent', position=dict(x=0, y=0),
+                                           provider='codex', model='fixture', effort='low', round_prompt='fixture'))
+        self.document['edges'] = [dict(id='handoff', source='Start', target='Agent'),
+                                  dict(id='result', source='Agent', target='Finish')]
+        self.draft = self.store.save(self.workspace, self.draft['id'], self.draft['revision'], self.document)
+
     def parked_run(self, *, agent=False):
         process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         self.addCleanup(self.stop, process)
@@ -54,11 +62,11 @@ class DesignerRecoveryTests(unittest.TestCase):
             self.store.db.change('run', run, dict(state='RUNNING'), states={'QUEUED'})
             key = digest(canonical([run, 'Start', []]))
             self.store.db.put('activation', key, dict(id=key, run=run, node='Start', kind='start', name='Start',
-                state='STARTING', iteration=0, iteration_path=[], round=1, attempt=1))
+                state='STARTING', inputs=[], iteration=0, iteration_path=[], round=1, attempt=1))
             if agent:
                 key = digest(canonical([run, 'Agent', []]))
                 self.store.db.put('activation', key, dict(id=key, run=run, node='Agent', kind='agent', name='Agent',
-                    state='STARTING', iteration=0, iteration_path=[], round=1, attempt=1))
+                    state='STARTING', inputs=[], iteration=0, iteration_path=[], round=1, attempt=1))
 
         self.payload = dict(workspace=self.workspace, draft_id=self.draft['id'], revision=self.draft['revision'],
                             intent_key='typed-recovery-fixture', task='old task')
@@ -115,6 +123,7 @@ class DesignerRecoveryTests(unittest.TestCase):
         self.assertEqual(value['state'], 'COMPLETED')
         self.assertEqual(value['run']['output']['result'], {'marker': 'original frozen data'})
         self.assertEqual(value['run']['actual_calls'], 0)
+        self.assertEqual(value['provider_outcome'], 'not_sent')
         self.assertEqual(len(self.store.db.list('run')), 1)
         self.assertEqual(len(self.store.db.list('activation')), 2)
         events = value['events']
@@ -148,12 +157,7 @@ class DesignerRecoveryTests(unittest.TestCase):
         self.assertEqual(len([e for e in self.store.db.events(run) if e['kind'] == 'worker-entered']), 1)
 
     def test_receipt_recovery_materializes_exact_agent_without_settling_downstream(self):
-        self.runtime.provider = SyntheticProvider(self.store)
-        self.document['nodes'].insert(1, dict(id='Agent', name='Agent', position=dict(x=0, y=0),
-                                           provider='codex', model='fixture', effort='low', round_prompt='fixture'))
-        self.document['edges'] = [dict(id='handoff', source='Start', target='Agent'),
-                                  dict(id='result', source='Agent', target='Finish')]
-        self.draft = self.store.save(self.workspace, self.draft['id'], self.draft['revision'], self.document)
+        self.add_agent()
         run, old = self.parked_run(agent=True)
         self.stop(old)
         row = self.store.db.get('run', run)
@@ -175,6 +179,25 @@ class DesignerRecoveryTests(unittest.TestCase):
         self.assertEqual(len(self.store.db.list('native-step')), 1)
         self.assertTrue(any(event['kind'] == 'node-completion-recovered' and event['activation'] == key
                             for event in self.store.db.events(run)))
+
+    def test_sent_unknown_agent_stops_owned_process_and_never_replays(self):
+        self.add_agent()
+        run, old = self.parked_run(agent=True)
+        self.stop(old)
+        key = digest(canonical([run, 'Agent', []]))
+        source = self.sent(self.store.db.get('run', run), self.store.db.get('activation', key))
+        with patch.object(self.runtime, 'spawn') as spawn:
+            self.assertEqual(self.runtime.launch(**self.payload)['run']['id'], run)
+            with self.assertRaises(Blocked):
+                resume(self.runtime, self.workspace, run)
+            result = self.runtime.cancel(self.workspace, run)
+            with self.assertRaises(Blocked):
+                resume(self.runtime, self.workspace, run)
+        spawn.assert_not_called()
+        self.assertEqual(result['state'], 'RECOVERY_REQUIRED')
+        self.assertEqual(result['provider_outcome'], 'unknown')
+        self.assertEqual(len(self.store.db.list('native-step')), 1)
+        self.assertEqual(self.store.db.get('activation', key)['input_sent_sha256'], source['input_sent_sha256'])
 
     def test_cancel_dead_safe_checkpoint_persists_without_worker_replacement(self):
         run, old = self.parked_run()

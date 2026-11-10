@@ -218,7 +218,8 @@ def _unconfirmed_effect(nodes, steps):
         node = by_id.get(step.get('activation'))
         if node is None or node['kind'] != 'agent':
             return True
-        if step['kind'] == 'PROCESS':
+        kind = step.get('kind')
+        if kind == 'PROCESS':
             record = step.get('data', {}).get('process')
             if step.get('status') != 'EXITED' or observe(record, group=True) != 'dead':
                 return True
@@ -227,7 +228,7 @@ def _unconfirmed_effect(nodes, steps):
             # replay that activation even if its worker died in this window.
             # A durable no-send failure can be retained, never retried.
             if (node['state'] not in ('FAILED', 'CANCELLED')
-                    or step['kind'] == 'PROCESS' or node.get('input_sent_sha256')):
+                    or kind == 'PROCESS' or node.get('input_sent_sha256')):
                 return True
     return False
 
@@ -235,12 +236,18 @@ def _unconfirmed_effect(nodes, steps):
 def _designer_state(run, worker, nodes, steps, outcomes):
     state,reason=run['state'],run.get('reason')
     result='failed' if 'failed' in outcomes else 'completed_partial' if 'completed' in outcomes else 'not_sent'
+    if (worker != 'alive' or state in END) and _unconfirmed_effect(nodes, steps):
+        return 'RECOVERY_REQUIRED','unknown','请求或原生进程尚未核验；不能继续调度或重发。',False
     if state=='COMPLETED':
         # Typed graphs can legitimately skip agents, execute none, or activate
         # the same agent in several rounds. Only the scheduler settles the run.
-        if _unconfirmed_effect(nodes, steps):
-            return 'RECOVERY_REQUIRED','unknown','运行终态与原生进程证据不一致。',False
-        return state,'completed',reason,False
+        if (not isinstance(run.get('output'),dict) or any(node['state'] not in END for node in nodes)
+                or not any(node['kind']=='result' and node['state']=='COMPLETED' and not node['iteration_path']
+                           for node in nodes)):
+            return 'RECOVERY_REQUIRED','unknown','运行终态与输出激活的证据不一致。',False
+        failed_agent = any(node['kind']=='agent' and node['state'] in ('FAILED','CANCELLED') for node in nodes)
+        provider = ('completed_partial' if failed_agent else 'completed') if 'completed' in outcomes else result
+        return state,provider,reason,False
     if state=='CANCELLED' or state=='FAILED' and not run.get('worker_generation'):
         return state,result,reason,False
     if worker=='alive' and state not in END:
@@ -252,14 +259,12 @@ def _designer_state(run, worker, nodes, steps, outcomes):
     if state=='FAILED' and not unbound_resume:
         return state,result,reason,False
     if worker=='dead' or unbound_resume:
-        if _unconfirmed_effect(nodes, steps):
-            return 'RECOVERY_REQUIRED','unknown','请求或原生进程尚未核验；不能继续调度或重发。',False
         if run.get('cancel_requested'):
             return 'CANCELLED',result,'原运行器已停止，取消标记已保留。',False
         if state == 'RECOVERY_REQUIRED' and run.get('launch_state') != 'STARTED' and not unbound_resume:
             return state,'unknown',reason,False
         waiting=any(n['state']=='WAITING_CONFIRMATION' for n in nodes)
-        return ('WAITING' if waiting else 'RECOVERY_REQUIRED',result,
+        return ('WAITING_CONFIRMATION' if waiting else 'RECOVERY_REQUIRED',result,
                 '原运行器已停止。可以从已核验的检查点继续；已完成节点不会重发。',True)
     if state=='RECOVERY_REQUIRED' or worker=='unknown' or time.time()-run['created_at']>3:
         return 'RECOVERY_REQUIRED','unknown','原运行器完整身份未确认；未接管或重发。',False
@@ -320,7 +325,8 @@ def finalize_cancelled_checkpoint(rt, run, rows, events):
     from . import worker_facts
     with rt.flow.tx() as db:
         current = worker_facts._read_record(db, 'run', run['id'])
-        if current != run or not current.get('cancel_requested') or current['state'] in END:
+        if (current != run or not current.get('cancel_requested')
+                or current['state'] in ('COMPLETED','FAILED','CANCELLED')):
             return
         at = time.time()
         for node in snapshot['nodes']:

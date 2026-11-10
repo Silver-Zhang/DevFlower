@@ -16,9 +16,9 @@
 | 会话中心 | 15 | 12 | 3 | 0 | 80.0% |
 | Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
-| Workflow Runtime | 15 | 7 | 0 | 8 | 46.7% |
+| Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
 | 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **43** | **16** | **28** | **49.4%** |
+| **合计** | **87** | **49** | **18** | **20** | **56.3%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -179,7 +179,7 @@ Phase 3 收尾候选的证据按类型记录。
 
 草稿继续使用 V2 文档和归档版本 1。旧节点隐式为 Agent。新版节点携带类型及版本化配置，边携带端口身份和可选交接定义。开始节点无入边，输出节点无出边。汇合节点允许多个上游，其余输入端口最多接收一条边。分支按稳定端口身份连接。草稿检查可报告缺少的字段与连线，草稿保存检查拒绝损坏的结构。
 
-顺序 Agent 链沿用现有冻结及授权流程。新增节点和非默认交接只具备设计、校验与持久化能力，运行请求在登记启动前被拒绝。Condition、Router、Merge、Loop、Human Approval 等执行能力在 Runtime 表中单独追踪。
+Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有冻结及授权流程。类型化节点和非默认交接的执行覆盖及限制见下方 Workflow Runtime。
 
 `WORKFLOW_DESIGNER_ACCEPTED` 以同一候选的独立 Chromium 操作验收、UI 评分和完整 [V2 CI](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 为准。
 
@@ -187,21 +187,21 @@ Phase 3 收尾候选的证据按类型记录。
 
 | ID | 用户能力 / 功能要求 | V1 来源 | V2 对照 | 现状 | 优先级 | 最小验收证据 |
 |---|---|---|---|---|---|---|
-| R01 | 真实顺序 Agent 执行 | `tools/studio/workbench_scheduler.py` | `tools/v2/runtime.py` | C | P0 | 两节点实际执行，非模拟回执 |
-| R02 | 只读并发与汇合 | `tools/studio/workbench_scheduler.py` | — | M | P0 | 并发只读，汇合只触发一次 |
-| R03 | 条件判断分支 | `tools/studio/workbench_graph.py` | — | M | P0 | true/false/null/缺字段明确处理 |
-| R04 | 多路 Router 与 fallback | `tools/studio/routing.py` | — | M | P1 | 不同标签正确选路，超时明确 |
-| R05 | 有界 Loop 与修订闭环 | `tools/studio/workbench_scheduler.py` | — | M | P0 | 达到轮数/预算停止，不假成功 |
-| R06 | Human Approval | `tools/studio/workbench_scheduler.py` | — | M | P1 | 审批与模型输出身份分离 |
-| R07 | 验证与交付执行节点 | `tools/studio/workbench_graph.py` | — | M | P1 | 失败 Gate 禁止交付 |
-| R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行 |
-| R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 初始/每轮/上游/输出要求有来源 |
-| R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | — | M | P0 | 选择字段或产物引用，类型错误拒绝 |
-| R11 | 运行事件持久化与投影 | `tools/studio/workbench_store.py` | `tools/v2/store.py` | C | P0 | run、activation、handoff 与事件一致 |
-| R12 | 取消与确认状态 | `tools/studio/workbench_runtime.py` | `tools/v2/recovery.py` | C | P0 | 取消不误伤别的任务，不盲目重发 |
-| R13 | 暂停、继续与安全重试 | `tools/studio/workbench_scheduler.py` | — | M | P0 | 暂停不启新节点，未知外部操作不重试 |
-| R14 | worker 崩溃与 UNKNOWN 恢复 | `tools/studio/workbench_failures.py` | `tools/v2/worker_facts.py` | C | P0 | 进程身份和回执矛盾时待核验 |
-| R15 | 启动幂等和授权约束 | `tools/studio/workbench_runtime.py` | `tools/v2/runtime.py` | C | P0 | 同 intent 不重复产生 run |
+| R01 | 真实顺序 Agent 执行 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/runtime.py` | C | P0 | Start → 两个真实 CLI Agent → Output，逐激活核验请求和回执 |
+| R02 | 只读并发与汇合 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py` | C | P0 | 两个独立只读进程同时存活；ALL / ANY / SELECTED 按稳定边序、分支选择和失败证据只触发一次 |
+| R03 | 条件判断分支 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py` | C | P0 | 复合表达式区分 null、缺失字段和类型错误；未选分支没有请求 |
+| R04 | 多路 Router 与 fallback | `tools/studio/routing.py` | `tools/v2/designer_graph.py` | C | P1 | 规则按冻结顺序求值；默认路由明确，无匹配且无默认时失败 |
+| R05 | 有界 Loop 与修订闭环 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/definitions.py` | C | P0 | 子图轮次、退出原因与每轮激活可追溯；运行时间和展开预算受限 |
+| R06 | Human Approval | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/runtime.py` | C | P1 | 本机单审核者按激活审批；拒绝、超时和恢复保留决定及调度边界 |
+| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/project_files.py` | P | P1 | Validation 有通过和失败端口，Tool 支持授权文件只读。Tool 写入、命令执行与自动交付保持待实现 |
+| R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行，循环子图与 Agent 版本同样冻结 |
+| R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 运行可读初始化、每轮、上游、实际发送文本和原生回执 |
+| R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | P | P0 | 支持公开输出、回答、摘要、结构化结果和仅顺序约束；任意字段合同与产物引用待实现 |
+| R11 | 运行事件持久化与投影 | `tools/studio/workbench_store.py` | `tools/v2/store.py`、`tools/v2/designer_scheduler.py` | C | P0 | 节点状态、循环轮次、审批、交接与激活身份可核验 |
+| R12 | 取消与确认状态 | `tools/studio/workbench_runtime.py` | `tools/v2/recovery.py` | C | P0 | 取消约束于本运行，自有进程身份核验失败时保留待核验 |
+| R13 | 暂停、继续与安全恢复 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/recovery.py` | C | P0 | 暂停拦截新调度；继续使用原运行；外部结果不明时停止并保留证据 |
+| R14 | worker 崩溃与 UNKNOWN 恢复 | `tools/studio/workbench_failures.py` | `tools/v2/worker_facts.py`、`tools/v2/recovery.py` | C | P0 | 已核验结果恢复到同一激活。缺少证据时保持待核验，只有安全检查点能显式继续 |
+| R15 | 启动幂等和授权约束 | `tools/studio/workbench_runtime.py` | `tools/v2/runtime.py` | C | P0 | 相同启动意图读回同一运行，同 UUID 的生产写入路径共用 V2 租约 |
 
 ### 运行监控与研发自动化
 
