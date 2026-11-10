@@ -14,11 +14,11 @@
 |---|---:|---:|---:|---:|---:|
 | 工作空间 | 12 | 7 | 2 | 3 | 58.3% |
 | 会话中心 | 15 | 12 | 3 | 0 | 80.0% |
-| Agent 与 Provider | 15 | 3 | 2 | 10 | 20.0% |
+| Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 7 | 0 | 8 | 46.7% |
 | 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **40** | **11** | **36** | **46.0%** |
+| **合计** | **87** | **43** | **16** | **28** | **49.4%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -118,20 +118,33 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | ID | 用户能力 / 功能要求 | V1 来源 | V2 对照 | 现状 | 优先级 | 最小验收证据 |
 |---|---|---|---|---|---|---|
 | A01 | Codex 真目录发现及认证 | `tools/studio/model_catalog.py` | `tools/v2/provider.py` | C | P0 | 模型/effort 来源真实，目录不等于推理成功 |
-| A02 | Claude Code 执行能力与模型目录 | `tools/studio/local_claude_adapter.py` | — | M | P0 | 用真实 Claude CLI 完成隔离测试回合 |
+| A02 | Claude Code 执行能力与模型目录 | `tools/studio/local_claude_adapter.py` | `tools/v2/cli_providers.py`、`tools/v2/claude_native_catalog.py` | C | P0 | 原生初始化给出模型与推理强度，受管进程使用本机配置 |
 | A03 | Copilot 模型目录与身份 | `tools/studio/copilot_adapter.py` | `tools/v2/copilot_catalog.py` | P | P1 | 目录与认证来源可证，不等于执行 |
 | A04 | Copilot 可执行 Agent 适配 | `tools/studio/copilot_adapter.py` | — | M | P2 | 仅真实支持的模式可执行 |
-| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | — | M | P1 | 独立 HOME/认证目录与环境不混淆 |
-| A06 | Agent 身份、职责、背景和目标 | `tools/studio/workbench_ui/index.jsx` | — | M | P0 | 字段独立保存、重开一致 |
-| A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | — | M | P0 | 执行配置按 Provider 实际能力验证 |
-| A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | — | M | P0 | 不可复用时明确拒绝，不克隆历史 |
-| A09 | 模型与推理强度配置 | `tools/studio/workbench_ui/ModelSelector.jsx` | `tools/v2/ui/index.jsx` | C | P1 | 保存、修改、启动三处一致 |
+| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/cli_providers.py` | P | P1 | 每种 CLI 使用本机默认 Profile，多 HOME 选择待接入 |
+| A06 | Agent 身份、职责、背景和目标 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/agent_records.py`、`tools/v2/ui/AgentManager.jsx` | C | P0 | 角色模板与 Provider 分离，版本按工作区保存和重开 |
+| A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | `tools/v2/cli_providers.py` | P | P0 | Codex Ask/Agent、Claude Ask/Plan 各自映射到真实参数 |
+| A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | `tools/v2/agent_execution.py` | C | P0 | 核验原生来源、工作目录、UUID 及写租约，外部 Claude 保持只读 |
+| A09 | 模型与推理强度配置 | `tools/studio/workbench_ui/ModelSelector.jsx` | `tools/v2/cli_providers.py`、`tools/v2/ui/AgentManager.jsx` | C | P1 | CLI 目录、用户默认、手工模型及逐模型推理强度独立显示 |
 | A10 | 初始化、每轮、输出交接 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/definitions.py` | C | P0 | 真实回合各部分独立可追溯 |
-| A11 | 结构化输出合同和字段选择 | `tools/studio/data_contracts.py` | — | M | P1 | schema 无效时报错而非成功 |
-| A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | — | M | P0 | 读写范围强制，权限不得由 Prompt 改变 |
-| A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | — | M | P1 | 选择生效且不修改私有源 Skills |
+| A11 | 结构化输出合同和字段选择 | `tools/studio/data_contracts.py` | `tools/v2/runtime.py` | P | P1 | Codex 沿用结构化回执，Claude 交接真实可见文本，自定义 schema 和字段选择待接入 |
+| A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | `tools/v2/codex_agent_scope.py` | P | P0 | Codex 工作区读写由原生沙箱强制，Claude 仅对话或计划 |
+| A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | `tools/v2/agent_records.py`、`tools/v2/codex_agent_scope.py` | P | P1 | Codex 原生选择与内容复核，Claude 仅发现 |
 | A14 | 子 Agent 与托管子任务 | `tools/studio/managed_children.py` | — | M | P2 | 深度、数量、授权和回执正确 |
-| A15 | 超时、预算与能力错误 | `tools/studio/workbench_runtime.py` | `tools/v2/provider.py` | P | P0 | 超时与 token/费用边界清楚，真实失败可恢复 |
+| A15 | 超时、预算与能力错误 | `tools/studio/workbench_runtime.py` | `tools/v2/cli_providers.py`、`tools/v2/runtime.py` | P | P0 | 两者支持超时与调用次数约束，Claude 支持原生美元预算 |
+
+#### Phase 3 候选证据
+
+功能候选 `d7f3c1d8b4f7f861d8c73ac3cb3655a45cd247b5`，tree `adcb4821d530bb671644cb157c8a2c521a83191a`。
+
+| 层级 | 证据与范围 |
+|---|---|
+| CODE_PRESENT / INTEGRATED | 工作区 Agent 配置、原生 Provider 目录、独立启动和工作流引用共用 V2 运行器。启动冻结配置版本，已有会话复用原生 UUID 和写租约。独立发送、工作流与 PTY 互查未确认写入。 |
+| TESTED | 合成测试覆盖配置版本、Adapter 契约、进程归属原子发布和跨入口未知状态。实际 CLI 搭配本机合成服务通过 Codex 工作区读写及越界反例、精确原生 Skill、实际请求交接和部分扫描下的会话关联。 |
+| 真实模型服务 | A 使用本机配置的 Codex 和 Claude Code / DeepSeek Flash 完成两节点工作流。核对冻结版本、实际输入哈希、上游标记、原生 UUID 和两条 Session Center 关联。两种 Provider 均从 Agent 入口继续同一已绑定 UUID，重复启动意图返回原运行。 |
+| 独立 QA | C 在固定候选复验 Chromium 配置与直接启动、原生 CLI 工作流、会话续用、权限、Skill 选择和丢失响应后的重放。CLI 及 OS 检查使用一次性工作区和本机合成服务。 |
+
+阶段覆盖与发布门槛分开记录。Claude 工具与选定 Skills、Codex Plan、原生子 Agent、逐命令批准和多 Profile 仍有明确限制。完整 CI 以同一集成提交的 [V2 工作流](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 为准。模式与原生参数见 [Agent Manager 执行映射](CLI_NATIVE.md#agent-manager-执行映射)。
 
 ### 工作流设计器
 

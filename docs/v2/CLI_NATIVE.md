@@ -28,6 +28,23 @@ V2 写配置需同时启用 `codex` 和 `codex_terminal`。用户在已核验会
 
 浏览器与本机连接复用同一 PTY 和键盘代次。关闭视图只断开连接，显式停止才结束对应前端和后端。会话 API 和 PTY 共用写租约，未确认的操作保留恢复状态。
 
+## Agent Manager 执行映射
+
+Agent 配置按工作区保存。角色模板填充身份内容，执行权限由单独的配置与启动确认决定。可从 Agent Manager 直接运行，也可把同一配置版本添加到画布。启动会冻结 Agent 版本、Provider、工作目录和会话身份。运行详情分别显示身份、提示词、上游交接与实际发送的可见请求。
+
+| CLI 与模式 | 原生入口 | 执行边界 |
+|---|---|---|
+| Codex Ask | `exec --json` | 仅对话，或通过已核验权限配置读取批准目录。 |
+| Codex Agent | `exec --json -c default_permissions=…` | Bubblewrap 建立批准目录的读写范围。原生命令工具的网络、额外目录和后端认证环境不可用。 |
+| Codex Plan | 未启用 | 当前工作流入口尚无已核验的原生 Plan 映射。 |
+| Claude Ask | `-p --permission-mode manual --permission-prompts none --tools ''` | 仅对话，使用 Claude 本机认证、模型和服务配置。 |
+| Claude Plan | `-p --permission-mode plan --permission-prompts none --tools ''` | 原生 Plan 权限模式下生成计划，文件与命令工具关闭。 |
+| Claude Agent | 未启用 | Claude 文件和命令工具的工作区隔离尚未通过验收。 |
+
+Claude 启动沿用私有配置中的原生写入批准。Codex 目录取自 `model/list`，Claude 取自无用户消息的原生初始化。界面分别标出 CLI 目录、原生配置、默认值和手工模型。Claude 可传递原生 `--max-budget-usd`，两种 CLI 的运行均受 V2 调用次数和超时约束。
+
+Codex 使用原生 Skills 目录及精确文件引用，启动前核验所选内容和来源。Claude 提供工作区与用户级 Skills 的发现，所选 Skills 的启动仍受安全模式限制。原生子 Agent、单条命令审批及其他 Provider 的执行入口尚未开放。
+
 ## 验证与发布门槛
 
 固定候选后分别记录合成测试、真实 CLI、真实 Provider、操作系统隔离与独立 QA 证据。Claude 的对照测试应同时覆盖两次受管请求和外部直接续聊。Codex 测试应复现真实 TUI 输入、受保护标记不可读、工作区授权读写、跨会话拒绝、关闭视图与显式停止，以及浏览器和本机端在同一 PTY 上的输入互斥。安全路径缺少对应证据时，该能力保持关闭。模块状态以功能追踪矩阵为准。
