@@ -59,9 +59,10 @@ def claude_secrets(binding, environment):
 
 
 class LocalClaude:
-    def __init__(self, binding, limits, *, credential_env=None):
+    def __init__(self, binding, limits, *, credential_env=None, managed_resume=False):
         self.b, self.limits = binding, limits
         self.credential_env = credential_env or {}
+        self.managed_resume = managed_resume
 
     def start(self,prompt,cwd,artifacts,output_schema=None,store=None,run=None,session=None):
         cwd=str(cwd)
@@ -72,8 +73,9 @@ class LocalClaude:
         if sid and not isinstance(sid,str):raise Blocked('原生恢复需要明确 UUID')
         requested=sid or b.get('new_session_id') or str(uuid.uuid4())
         chat_only=b.get('chat_only') is True
-        if chat_only and sid:
-            raise Blocked('共享 Claude HOME 续聊需要独立进程权限边界。')
+        if chat_only and sid and (not self.managed_resume or sid != b.get('session_id')
+                or not callable(getattr(store, 'check_before_spawn', None))):
+            raise Blocked('Claude 续聊需要已核验的 DevFlower 会话及执行前复核。')
         tools=chat_only_args() if chat_only else ['--tools','Read,Glob,Grep','--strict-mcp-config',
             '--mcp-config','{"mcpServers":{}}','--setting-sources','user']
         args=[b['executable'],'-p','--output-format','json','--permission-mode','plan',*tools]

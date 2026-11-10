@@ -115,7 +115,8 @@ export function NativeComposer({api, workspace, providers, scope, catalog, refre
     </div>
     <button type="button" disabled={working || !!intent} onClick={refreshModels}>刷新 Codex 模型目录</button>
    </>}
-   <p className="muted small">{scope ? '发送时由 Codex 对原会话加锁并继续最新原生记录。' :
+   <p className="muted small">{scope ? provider === 'claude' ? '发送前核验受管历史，并在 DevFlower 租约内继续原会话。' :
+    '发送时由 Codex 对原会话加锁并继续最新原生记录。' :
     '发送会在启动时批准的本机配置下创建会话，并使用当前工作空间作为原目录。'}本入口为纯对话。</p>
    <label className="field"><span>消息</span><textarea aria-label="消息" rows={4} maxLength={20000} value={prompt} disabled={!!intent}
     onChange={event => setPrompt(event.target.value)}/></label>

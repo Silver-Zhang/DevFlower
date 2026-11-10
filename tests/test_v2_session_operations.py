@@ -92,6 +92,32 @@ class SessionOperationsTests(unittest.TestCase):
             process.terminate()
             process.wait(timeout=3)
 
+    def test_claude_managed_eligibility_tracks_latest_completed_exact_history(self):
+        sid = str(uuid.uuid4())
+        locator = SimpleNamespace(workspace_id=self.workspace, native_uuid=sid)
+        binding = dict(provider='claude', project=self.workspace, cwd=str(self.cwd), home=str(self.home),
+                       config_root=str(self.home / '.claude'), runtime_profile='default-claude', root_identity=[1, 2, 3],
+                       cwd_identity=[4, 5, 6], cli_version='fixture', _executable_sha256='image',
+                       direct_environment_sha256='profile', cli_environment_sha256='env')
+        record = SimpleNamespace(ref=SimpleNamespace(relative=Path('project') / (sid + '.jsonl'), sha='original'))
+        base = dict(workspace=self.workspace, provider='claude', observed_session=sid, target=sid,
+                    state='COMPLETED', receipt={'session_id': sid}, relative=str(record.ref.relative),
+                    native_after_sha256='original')
+        def status(config=binding):
+            with self.store.db.tx(read=True) as db:
+                return self.operations.claude_history_state(config, locator, record, db)
+
+        self.assertEqual(status(), 'EXTERNAL_SESSION')
+        self.store.db.put(KIND, 'new', dict(base, handle=None, binding=dict(binding, new_session_id=sid)))
+        self.assertEqual(status(), 'managed')
+        self.assertEqual(status(dict(binding, cli_environment_sha256='other')), 'MANAGED_HISTORY_CHANGED')
+        self.store.db.put(KIND, 'resume', dict(base, handle='opaque', binding=binding, native_after_sha256='latest'))
+        self.assertEqual(status(), 'MANAGED_HISTORY_CHANGED')
+        record.ref.sha = 'latest'
+        self.assertEqual(status(), 'managed')
+        self.store.db.put(KIND, 'unknown', dict(base, binding=binding, state='RECOVERY_REQUIRED'))
+        self.assertEqual(status(), 'RECOVERY_REQUIRED')
+
     def test_native_group_guard_observes_missing_uuid_under_coordination(self):
         root = self.home / '.codex'
         locks = root / 'thread-writer-locks'

@@ -29,6 +29,8 @@ MESSAGES = {
     'EXTERNAL_UNKNOWN': '无法核实会话写入状态。',
     'OWNER_UNKNOWN': '无法核实当前持锁进程身份。',
     'RECOVERY_REQUIRED': '之前的会话操作待人工核验。',
+    'EXTERNAL_SESSION': '此 Claude 会话没有 DevFlower 已核验的新建记录，只能查看。',
+    'MANAGED_HISTORY_CHANGED': '受管 Claude 会话的原生历史或配置已变化，只能查看。',
     'INTENT_EXISTS': '此操作已登记，需核验原记录。',
 }
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,95}')

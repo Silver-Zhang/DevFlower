@@ -221,18 +221,74 @@ class SessionOperations:
             self.reader._snapshot(workspace, revision)
         return locator, record
 
+    def claude_history_state(self, binding, locator, record, db):
+        """Reconcile an exact current record against V2's completed creation and last receipt."""
+        scope = ('provider', 'project', 'cwd', 'cwd_identity', 'home', 'config_root', 'root_identity',
+                 'runtime_profile', 'cli_version', '_executable_sha256')
+        latest = None
+        created = False
+        rows = db.execute("""
+            SELECT data FROM records WHERE kind=? AND json_extract(data,'$.workspace')=?
+            AND json_extract(data,'$.provider')='claude'
+            AND coalesce(json_extract(data,'$.observed_session'),json_extract(data,'$.target'))=?
+            ORDER BY rowid DESC
+        """, (KIND, locator.workspace_id, locator.native_uuid))
+        for (raw,) in rows:
+            row = json.loads(raw)
+            prior = row.get('binding', {})
+            if any(prior.get(key) != binding.get(key) for key in scope):
+                continue
+            if row['state'] == 'RECOVERY_REQUIRED' or row['state'] == 'RUNNING' and row['owner'] != self.owner:
+                return 'RECOVERY_REQUIRED'
+            if (row['state'] == 'COMPLETED' and row.get('observed_session') == locator.native_uuid
+                    and row.get('receipt', {}).get('session_id') == locator.native_uuid):
+                if latest is None:
+                    latest = row
+                created |= row.get('handle') is None and prior.get('new_session_id') == locator.native_uuid
+        if not created:
+            return 'EXTERNAL_SESSION'
+        if (latest.get('relative') != str(record.ref.relative) or latest.get('native_after_sha256') != record.ref.sha
+                or any(latest['binding'].get(key) != binding.get(key) for key in (
+                    'cli_environment_sha256', 'direct_environment_sha256'))):
+            return 'MANAGED_HISTORY_CHANGED'
+        return 'managed'
+
+    def require_claude_history(self, binding, locator, record):
+        with self.store.db.tx(read=True) as db:
+            state = self.claude_history_state(binding, locator, record, db)
+        if state != 'managed':
+            raise SessionRefused(state)
+
     def add_continue_eligibility(self, listing):
-        profile = self.profiles.get('codex')
-        if profile is None:
-            return
         workspace, revision = listing['workspace'], listing['revision']
         with self.reader.guard:
             snapshot = self.reader._snapshot(workspace, revision)
+        claude = self.profiles.get('claude')
+        claude_binding = None
+        if claude:
+            try:
+                cwd = self.store.workspace(workspace)['path']
+                claude_binding = dict(claude[1], project=workspace, cwd=cwd,
+                    cwd_identity=snapshot.workspace_identity.fields(), direct_environment_sha256=profile_identity(claude[1]))
+            except (OSError, ValueError, Blocked):
+                pass
+        with self.store.db.tx(read=True) as db:
             for row in listing['sessions']:
+                profile = self.profiles.get(row['provider'])
                 record = snapshot.reads.get(row['handle'])
-                row['can_request_continue'] = bool(record and record.source.profile == profile[0].profile
-                    and record.cwd_evidence and record.cwd_evidence[0][0] == Path('.')
-                    and len(record.cwd_evidence) == 1)
+                eligible = bool(profile and record and record.source.profile == profile[0].profile
+                    and len(record.cwd_evidence) == 1 and record.cwd_evidence[0][0] == Path('.'))
+                if row['provider'] == 'codex':
+                    row['can_request_continue'] = eligible
+                elif claude:
+                    state = 'unverified'
+                    if eligible and claude_binding is not None:
+                        try:
+                            locator = record.index.resolve(workspace, row['handle'])
+                            state = self.claude_history_state(claude_binding, locator, record, db)
+                        except (OSError, ValueError, Blocked):
+                            pass
+                    row.update(claude_session_state=state, can_request_continue=state == 'managed')
 
     def prepare_binding(self, workspace, provider, handle, revision, model=None, effort=None):
         if provider not in self.profiles:
@@ -241,8 +297,6 @@ class SessionOperations:
         cwd = self.store.workspace(workspace)['path']
         locator, record = self.resolve(workspace, handle, revision) if handle else (None, None)
         if locator is not None:
-            if provider == 'claude':
-                raise Blocked('当前共享 Claude HOME 的外部客户端可同时写入同一会话，续聊和终端接管暂不可用。')
             if (locator.provider != provider or locator.profile_id != source.profile.id
                     or locator.root_identity != source.profile.identity or locator.original_cwd != cwd
                     or record.source.profile.root != source.profile.root or len(record.cwd_evidence) != 1):
@@ -257,6 +311,8 @@ class SessionOperations:
             raise SessionRefused('LOCATOR_REFUSED')
         binding.update(cwd=cwd, cwd_identity=cwd_identity.fields(), project=workspace,
                        session_id=locator.native_uuid if locator else None, conversation_format='text')
+        if provider == 'claude' and locator is not None:
+            self.require_claude_history(binding, locator, record)
         return binding, locator, record
 
     def send(self, data):
@@ -363,6 +419,9 @@ class SessionOperations:
                 raise SessionRefused('LOCATOR_REFUSED')
             verify_bytes(view, record.ref)
         self.reader.require_proof(proof)
+        if binding['provider'] == 'claude':
+            self.require_claude_history(binding, locator, record)
+            return
         with metadata_guard(self.store.state, timeout=20) as remaining:
             with CodexRPC(binding['executable'], binding['home'], binding['config_root'], binding['cwd'],
                           timeout=remaining) as rpc:
@@ -415,7 +474,7 @@ class SessionOperations:
                 artifacts.mkdir(mode=0o700, parents=True, exist_ok=False)
                 limits = dict(step_timeout_seconds=300, max_log_bytes=2_000_000)
                 adapter = LocalCodex(binding, limits) if provider == 'codex' else LocalClaude(
-                    binding, limits, credential_env=self.claude_env)
+                    binding, limits, credential_env=self.claude_env, managed_resume=locator is not None)
                 try:
                     result = adapter.start(prompt, binding['cwd'], artifacts, None, journal, row['id'])
                 finally:

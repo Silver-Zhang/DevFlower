@@ -13,12 +13,12 @@
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
 | 工作空间 | 12 | 7 | 2 | 3 | 58.3% |
-| 会话中心 | 15 | 11 | 3 | 1 | 73.3% |
+| 会话中心 | 15 | 12 | 2 | 1 | 80.0% |
 | Agent 与 Provider | 15 | 3 | 2 | 10 | 20.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 7 | 0 | 8 | 46.7% |
 | 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **39** | **11** | **37** | **44.8%** |
+| **合计** | **87** | **40** | **10** | **37** | **46.0%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -57,7 +57,7 @@
 | S10 | 新建独立原生会话 | `tools/studio/session_center.py`、`local_codex_adapter.py`、`local_claude_adapter.py` | `tools/v2/session_operations.py` | C | P0 | Codex 与 Claude 使用单独批准的原生配置创建。Claude 2.1.319 采用其用户级认证、服务地址及原生模型默认。发送意图先落盘，按已核验的实际 UUID 重开 |
 | S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py` | P | P1 | 本地别名按工作空间与会话持久化；Provider 原生命名写入口待实现 |
 | S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | `tools/v2/native_session_views.py` | C | P1 | 单条可逆整理；Codex 0.163.0 工作流整组入回收站按预览成员与历史版本原子提交，忙碌或来源变化整组拒绝 |
-| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | P | P0 | Codex 核对原配置、目录、UUID 与历史，原生锁下续聊。Claude 共享 HOME 续聊关闭，当前主机缺少独立权限域 |
+| S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | C | P0 | Codex 使用原生锁。Claude 只续聊本产品已核验创建且最新历史、配置、工作区和 UUID 一致的会话。单写协调范围为参与 DevFlower 租约的写者 |
 | S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | V2 会话界面显示关闭原因 | M | P1 | 两种生产 PTY 入口关闭。Codex 隔离 TUI 已通过本机协议诊断，产品鉴权、响应过滤及同一 PTY 接管仍待验证。Claude 共享 HOME 可并发写同 UUID |
 | S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/runtime.py` | P | P0 | Codex 参与方使用共同 UUID 租约及原生线程锁。Claude 受管请求复用 UUID 租约，外部 CLI 可绕过。未知回执不重发 |
 
@@ -94,6 +94,10 @@
 在工作空间中打开原生会话，点击「新建会话」。Codex 先刷新并选择模型、强度；发送完成后打开已核验的原生记录。点击「继续会话」发送到同一 Codex UUID。只有来源与原目录能核实的记录才允许续聊。响应不完整时使用「核验本次发送」查询同一意图。工作流模式的「整组移入回收站」先显示全组预览，确认时再次校验成员、原生协调锁、转录版本与 DevFlower 分类。Codex 协调机制使用已核对的 [0.163.0 写锁协议](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/rollout/src/writer_lock.rs)。
 
 API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提交 `workspace`、`provider`、`handle`、`revision`、`intent_key`、`prompt`，Codex 另带 `model`、`effort`。新建的 `handle` 和 `revision` 为 `null`。`GET /api/v2/session-operation?workspace=…&intent_key=…` 只查询。批量回收用 `POST /api/v2/workflow-session-trash`，提交 `workspace`、`revision`、`group` 获取预览，确认时增加预览返回的 `expected`。
+
+#### 受管 Claude 续聊
+
+授权边界调整为参与 V2 租约的写者。受管资格来自 V2 已核验的新建记录及最近一次完成回执。配置、工作区、原生 UUID、文件位置及转录摘要都须匹配，执行前在同一写租约内再次核验。外部创建记录、变更记录和结果待核验记录保持只读。独立的直接 Claude CLI 可以绕过 DevFlower 租约。真实 Claude CLI 与本机合成服务的自验覆盖同 UUID 续聊、并发拒绝、同工作区外部记录拒绝和异常退出后的恢复状态。独立验收待进行。
 
 ### Agent 与 Provider
 

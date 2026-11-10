@@ -339,7 +339,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
   if (!workflowGroups.has(id)) workflowGroups.set(id, row.workflow?.workflow || '未关联工作流');
  }
  const groups = workflowGrouping ? [...workflowGroups] : activityGrouping ? ACTIVITY_GROUPS : Object.entries(PROVIDERS);
- const canContinue = Boolean(reading?.result && reading.row.can_request_continue && writeProviders.includes('codex'));
+ const canContinue = Boolean(reading?.result && reading.row.can_request_continue && writeProviders.includes(reading.row.provider));
  const pendingSend = writeProviders.length > 0 && Boolean(sessionStorage.getItem('devflower-v2-session-intent:' + workspace.id));
 
  async function groupAction(group, expected) {
@@ -481,9 +481,16 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
     {reading.result && writeProviders.includes(reading.row.provider) && <div className="native-view-actions">
      <button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
      <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
-      ? '共享 Claude HOME 允许外部并发写入。续聊和终端接管暂不可用。'
+      ? 'Claude 终端接管暂不可用。'
       : 'Codex 交互终端的用户 Shell 可访问原生存储。终端接管暂不可用。'}</small>
     </div>}
+    {reading.result && reading.row.claude_session_state && <p className="muted small">{{
+     managed: 'DevFlower 受管会话。单写保证适用于参与租约的 DevFlower 操作。',
+     EXTERNAL_SESSION: '外部 Claude 会话，仅可查看。',
+     MANAGED_HISTORY_CHANGED: '受管会话的历史或配置已变化，仅可查看。',
+     RECOVERY_REQUIRED: '上一项原生操作待核验，仅可查看。',
+     unverified: 'Claude 会话来源未核验，仅可查看。'
+    }[reading.row.claude_session_state]}</p>}
     {selectedOutsideFilter && <p role="status" className="muted small">当前阅读的会话不在筛选结果中。</p>}
     {reading.loading && <p className="muted" role="status">正在读取已核验的会话…</p>}
     {reading.error && <p className="error-text" role="alert">{reading.error}</p>}
