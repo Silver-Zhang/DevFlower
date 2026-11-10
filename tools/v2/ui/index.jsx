@@ -922,7 +922,7 @@ function App(){
   {!readOnly&&(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
    {n?<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
-     bodyChoices={drafts.filter(row=>row.id!==saved?.id)} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
+     bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<div className="session-note"><p>此节点引用已保存的 Agent 配置版本。</p>
      <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
      <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></div>:n.kind==='agent'?<>

@@ -50,11 +50,15 @@ def graph_issues(document):
         if kind == 'tool':
             config = node['config']
             try:
-                if config.get('tool') != 'read-file' or config.get('permission') != 'workspace-read':
-                    raise Invalid('仅支持固定工作区文件的只读预览。')
-                from .project_files import checked_path
-                if not checked_path(config.get('path', '')).parts:
-                    raise Invalid('请指定固定的工作区相对文件路径。')
+                from .development_graph import TOOLS, tool_options
+                if config.get('tool') in TOOLS:
+                    tool_options(node)
+                else:
+                    if config.get('tool') != 'read-file' or config.get('permission') != 'workspace-read':
+                        raise Invalid('仅支持固定工作区文件的只读预览。')
+                    from .project_files import checked_path
+                    if not checked_path(config.get('path', '')).parts:
+                        raise Invalid('请指定固定的工作区相对文件路径。')
             except (Blocked, Invalid, ValueError) as failure:
                 issues.append(dict(node_id=node['id'], code='RUNTIME_TOOL_UNAVAILABLE',
                                    message=node['name'] + '：' + str(failure)))

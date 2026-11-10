@@ -17,7 +17,8 @@ const kinds={'run-authorized':'授权本次运行','worker-bound':'绑定运行�
  'route-selected':'选择路由','validation-decided':'验证结果','human-confirmation-required':'等待人工审批',
  'human-decision':'记录人工决定','human-approved':'人工批准','human-rejected':'人工拒绝',
  'human-timeout':'审批超时','loop-round-started':'开始新一轮','loop-round-completed':'本轮完成',
- 'loop-completed':'循环结束','cancel-requested':'请求取消','run-finished':'运行结束',
+ 'loop-completed':'循环结束','loop-limit-reached':'达到研发循环上限',
+ 'development-verified':'记录实际测试结果','delivery-gate-decided':'记录独立交付 Gate','cancel-requested':'请求取消','run-finished':'运行结束',
  'native-tool-activity':'记录原生工具活动','event-oversized':'记录超过安全读取上限'};
 
 function download(value){

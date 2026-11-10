@@ -163,7 +163,8 @@ class DesignerScheduler(Scheduler):
                                             {'decision': updates['decision'], 'port': updates['selected_port']}
                                             if 'decision' in updates else {}),
                                          **{key: updates[key] for key in ('loop_round', 'loop_exit', 'merge_policy',
-                                            'merge_activations') if key in updates}))
+                                            'merge_activations', 'gate_verdict', 'verification_sha256',
+                                            'candidate_sha256', 'passed') if key in updates}))
 
     def ready(self, row, node, inputs, expected):
         now = time.time()
@@ -324,6 +325,11 @@ class DesignerScheduler(Scheduler):
             if results and (results[-1]['decision']['matched'] or round_number == node['max_rounds']):
                 exit_reason = 'condition' if results[-1]['decision']['matched'] else 'limit'
                 output = public_data(dict(row['loop_seed'], loop={'rounds': results, 'exit': exit_reason}))
+                if node.get('development') and exit_reason=='limit':
+                    reason = '研发循环已达轮次上限，交付 Gate 未给出 ACCEPT。'
+                    self.transition(row, 'FAILED', event_kind='loop-limit-reached', output=output,
+                                    loop_exit=exit_reason, reason=reason, finished_at=time.time())
+                    raise Blocked(reason)
                 self.transition(row, 'COMPLETED', event_kind='loop-completed', output=output,
                                 loop_exit=exit_reason, finished_at=time.time())
                 return
@@ -380,12 +386,7 @@ class DesignerScheduler(Scheduler):
                 if node.get('input_instructions'):
                     output['instructions'] = node['input_instructions']
             elif node['kind'] == 'tool':
-                from pathlib import Path
-                from orchestration.privacy import credentials, redact
-                from .project_files import read_project
-                value = read_project(self.rt.store, self.workspace, node['path'], preview=True)
-                text = redact(value['text'], credentials(Path.home()))
-                output = {'answer': text, 'result': {'text': text, 'path': value['path'], 'readonly': True}}
+                output, event_kind, evidence = self.execute_tool(node, row)
             elif node['kind'] == 'result':
                 output = output_node(node, input_value(inputs, seed))
                 if node.get('output_instructions'):
@@ -409,6 +410,27 @@ class DesignerScheduler(Scheduler):
             stopped = self.db.get('run', self.run).get('cancel_requested')
             state = 'RECOVERY_REQUIRED' if uncertain else 'CANCELLED' if stopped else 'FAILED'
             self.transition(current, state, reason=safe_text(str(failure)), finished_at=time.time())
+
+    def execute_tool(self, node, row):
+        kind = node.get('tool_type')
+        if kind in ('verify-json','delivery-gate'):
+            from .development_evidence import delivery_gate, verify_candidate
+            if kind=='verify-json':
+                output = verify_candidate(self.rt,self.run,row,node)
+                event = 'development-verified'
+            else:
+                output = delivery_gate(self.rt,self.run,row,node)
+                event = 'delivery-gate-decided'
+            result = output['result']
+            evidence = {key:result[key] for key in ('gate_verdict','verification_sha256','candidate_sha256','passed')
+                        if key in result}
+            return output, event, evidence
+        from pathlib import Path
+        from orchestration.privacy import credentials, redact
+        from .project_files import read_project
+        value = read_project(self.rt.store, self.workspace, node['path'], preview=True)
+        text = redact(value['text'], credentials(Path.home()))
+        return {'answer':text, 'result':{'text':text,'path':value['path'],'readonly':True}}, None, {}
 
     def combine_outputs(self, results):
         return {'answer': '\n\n'.join(str(result.get('answer', '')) for result in results),

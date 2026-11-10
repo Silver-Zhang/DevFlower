@@ -5,6 +5,7 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.workbench_graph import validate_graph
 from .canvas_structure import SCHEMA_PATH, json_input, node_kind, validation_expression
+from .development_graph import TOOLS, freeze_source, layout as development_layout, tool_options
 from .designer_graph import edge_spec, is_designer_graph
 from .documents import validate_draft, check_chain
 
@@ -49,7 +50,17 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
         bindings[path] = provider.binding(workspace, node)
         return node
 
+    development = development_layout(doc)
     graph = normalize_graph(doc, bind, designer=designer)
+    if development:
+        source, entry_sha = freeze_source(store,workspace,doc,development,configured,bindings)
+        loop = next(node for node in graph['nodes'] if node['id']==development['loop'])
+        loop['development'] = True
+        verifier = next(node for node in loop['body']['nodes'] if node['id']==development['verification_node'])
+        verifier['entry_sha256'] = entry_sha
+        for edge in loop['body']['edges']:
+            edge['transfer'] = 'envelope'
+        graph['development'] = dict(development,source=source)
     manifest = source_manifest()
     value = dict(version=1, workspace=workspace, execution_environment_id=store.environment['id'],
                  draft_id=draft['id'], draft_revision=draft['revision'], draft_document=doc,
@@ -72,6 +83,8 @@ def graph_budget(nodes):
             calls += rounds * child_calls
             seconds += rounds * child_seconds
             activations += rounds * child_count
+        elif kind=='tool' and node.get('tool_type')=='verify-json':
+            seconds += 20
         elif kind in ('agent', 'human'):
             calls += kind == 'agent'
             seconds += node['timeout']
@@ -119,7 +132,9 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
                               policy=config.get('policy', 'single-reviewer'), timeout=config.get('timeout', 300)))
             continue
         if kind == 'tool':
-            nodes.append(dict(id=n['id'], name=n['name'], kind='tool', path=n['config']['path']))
+            tool = n['config']['tool']
+            options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS else {'path':n['config']['path']}
+            nodes.append(dict(id=n['id'], name=n['name'], kind='tool', **options))
             continue
         spec = bind(n, prefix)
         nodes.append(dict(id=n['id'], kind='agent', name=n['name'], mode=spec.get('mode', 'Ask'),

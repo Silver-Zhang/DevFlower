@@ -44,9 +44,21 @@ export function defaultConfig(kind) {
  ]));
 }
 
+export const developmentExit={field:'result.gate_verdict',op:'equals',value:'ACCEPT'};
+export const developmentRoles=['developer_node','tester_node','reviewer_node','verification_node'];
+
 export function runtimeBlock(node){
  const kind=nodeKind(node),config=node.config||{};
  if(kind==='tool'){
+  if(config.tool==='verify-json'){
+   if(!config.path?.endsWith('.py')||config.permission!=='workspace-read')return '确定性 JSON 测试需要只读的工作区 Python 入口。';
+   try{JSON.parse(config.expected_json)}catch{return '请填写有效的期望 JSON。'}
+   return '';
+  }
+  if(config.tool==='delivery-gate'){
+   return config.permission==='none'&&developmentRoles.every(key=>/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(config[key]||''))?
+    '':'交付 Gate 需要填写同一轮的四个角色节点 ID，权限选择未授予。';
+  }
   if(config.tool!=='read-file'||config.permission!=='workspace-read')return '仅支持固定工作区文件的只读预览。';
   if(!config.path?.trim())return '请指定固定的工作区相对文件路径。';
  }
@@ -85,8 +97,8 @@ export function draftConfigIssue(node) {
   if(rules.some(rule=>!rule.label.trim()||!rule.test.field.trim()))return '请填写路由分支名称与字段';
  }
  if(kind==='tool'&&config.tool){
-  const permitted=config.tool==='read-file'?['workspace-read','workspace-write']:['workspace-write'];
-  if(!permitted.includes(config.permission))return '选择与工具一致的工作区权限';
+  const issue=runtimeBlock(node);
+  if(issue)return issue;
  }
  return '';
 }

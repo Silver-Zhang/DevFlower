@@ -36,7 +36,8 @@ EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace',
                 'iteration', 'attempt', 'edge', 'handoff_id', 'source', 'target_activation', 'target_node',
                 'source_round', 'target_round', 'content_sha256', 'source_content_sha256', 'received_at',
                 'fields', 'port', 'loop_round', 'loop_exit', 'merge_policy', 'merge_activations', 'groups',
-                'action', 'reason', 'error_class', 'decision', 'actor', 'input_sent_sha256', 'input_sent_bytes')
+                'action', 'reason', 'error_class', 'decision', 'actor', 'input_sent_sha256', 'input_sent_bytes',
+                'gate_verdict', 'verification_sha256', 'candidate_sha256', 'passed')
 INPUT_FIELDS = ('edge', 'source', 'iteration', 'iteration_path', 'activation', 'source_name', 'target_name',
                 'source_round', 'target_round', 'target_activation', 'target_node', 'content_sha256',
                 'source_content_sha256', 'fields', 'handoff_id', 'received_at', 'content', 'truncation')

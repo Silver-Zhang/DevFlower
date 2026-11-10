@@ -44,7 +44,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
     inspector = RunInspector(store)
     assistant = Assistant(store, session_operations, runtime)
-    git_platform = GitPlatform(store)
+    git_platform = GitPlatform(store,runtime)
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
 

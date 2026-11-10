@@ -312,10 +312,12 @@ class V2Runtime:
         if not is_designer_graph(document):
             result['message'] = '配置检查不调用模型；启动时仍会核验当前账户、CLI 能力与权限。'
         if not result['issues']:
+            configured, bindings = {}, {}
             for path, node in agents:
                 try:
                     if 'agent_id' in node:
-                        _, binding = freeze_agent(self, workspace, node)
+                        configured[path], binding = freeze_agent(self, workspace, node)
+                        bindings[path] = binding
                         if '/' in path and binding.get('session_id'):
                             raise Invalid('循环 Agent 必须使用新会话。')
                     else:
@@ -323,6 +325,13 @@ class V2Runtime:
                         self.provider.binding(workspace,node)
                 except (Invalid, Blocked, SessionRefused, Conflict) as exc:
                     result['issues'].append(dict(node_id=path,message=str(exc)))
+            if not result['issues']:
+                from .development_graph import freeze_source, layout
+                if development := layout(document):
+                    try:
+                        freeze_source(self.store,workspace,document,development,configured,bindings)
+                    except (Invalid, Blocked, SessionRefused, Conflict) as exc:
+                        result['issues'].append(dict(node_id=development['loop'],message=str(exc)))
         result['execution_available'] = not result['issues']
         return result
 

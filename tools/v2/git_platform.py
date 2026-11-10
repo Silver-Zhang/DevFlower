@@ -82,8 +82,9 @@ def get_row(tx, kind, key):
 
 
 class GitPlatform:
-    def __init__(self, store):
+    def __init__(self, store, runtime=None):
         self.store = store
+        self.runtime = runtime
         self.inspector = RunInspector(store)
         self.secrets = {value for key in ('GH_TOKEN','GITHUB_TOKEN','GITLAB_TOKEN','DEVFLOWER_GITLAB_TOKEN','GL_TOKEN')
                         if (value:=os.environ.get(key)) and len(value)>=8}
@@ -208,13 +209,54 @@ class GitPlatform:
                 (TASK,binding.workspace,adapter.platform,adapter.repository,LIST)).fetchall()
         return [self.public_review(json.loads(raw)) for (raw,) in rows]
 
+    def delivery(self, scope):
+        if self.runtime is None:
+            return DELIVERY
+        with self.store.db.tx(read=True) as tx:
+            raw = tx.execute("""SELECT data FROM records WHERE kind='run'
+                AND json_extract(data,'$.workspace')=? AND json_type(data,'$.graph.development')='object'
+                ORDER BY rowid DESC LIMIT 1""",(scope.workspace,)).fetchone()
+            if raw is None:
+                return DELIVERY
+            run = json.loads(raw[0])
+            definition = get_row(tx,'definition',run['definition_id'])
+            development = run['graph']['development']
+            from .designer_scheduler import activation_key
+            loop = get_row(tx,'activation',activation_key(run['id'],development['loop'],[]))
+            round_number = loop.get('loop_round') if loop else None
+            gate = get_row(tx,'activation',activation_key(run['id'],development['loop']+'/'+development['gate'],
+                                                        [round_number])) if round_number else None
+        result = (gate or {}).get('output',{}).get('result',{})
+        facts = self.inspector.clean(take(result,('gate_verdict','candidate_sha256','git_head','verification_sha256','feedback')))
+        value = dict(DELIVERY, run=run['id'], gate=facts, gate_activation=gate['id'] if gate else None)
+        if run['state']!='COMPLETED' or facts.get('gate_verdict')!='ACCEPT':
+            return dict(value,state='GATE_NOT_ACCEPTED',reason='此研发运行未记录已完成的 ACCEPT。请核对测试、审核和循环结果。')
+        expected = {'binding':scope.identity,'branch':scope.branch,'head':scope.head}
+        if (development.get('source')!=expected or not scope.branch or facts.get('git_head')!=scope.head
+                or not definition or definition.get('graph')!=run['graph']
+                or run.get('output',{}).get('result')!=result):
+            return dict(value,state='CANDIDATE_CHANGED',reason='当前分支、候选或冻结运行身份与 Gate 不一致。')
+        try:
+            from .development_evidence import delivery_gate
+            from .recovery import frozen_node
+            verified_run = self.runtime.snapshot(scope.workspace,run['id'])
+            if verified_run['state']!='COMPLETED' or verified_run['run'].get('output',{}).get('result')!=result:
+                raise Blocked('研发运行尚未完成核验。')
+            checked = delivery_gate(self.runtime,run['id'],gate,frozen_node(definition,gate['node']))
+            if checked['result']!=result:
+                raise Blocked('交付 Gate 证据已变化。')
+        except (Blocked,Invalid,OSError,ValueError,KeyError,TypeError):
+            return dict(value,state='CANDIDATE_CHANGED',reason='当前候选或独立 Gate 证据无法重新核验。')
+        return dict(value,state='LOCAL_GATE_ACCEPTED',
+                    reason='当前本机候选通过独立 Gate。远端发布仍需要固定交付目标及明确的人工授权。')
+
     def read(self, route, workspace, binding=None, **params):
         scope, adapter = self.bind(workspace)
         if route!='repository' and binding!=scope.identity:
             raise Conflict('工作空间 Git 绑定已变化。请重新读取仓库。')
         result = dict(workspace=workspace,platform=adapter.platform,repository=adapter.repository,binding=scope.identity)
         if route=='repository':
-            result.update(remote=self.repository(adapter),local=dict(branch=self.public_text(scope.branch) if scope.branch else None,head=scope.head),delivery=DELIVERY)
+            result.update(remote=self.repository(adapter),local=dict(branch=self.public_text(scope.branch) if scope.branch else None,head=scope.head),delivery=self.delivery(scope))
         elif route=='branches':
             result.update(items=self.branches(adapter,scope.branch),limit=LIST)
         elif route in ('issues','changes'):
@@ -227,7 +269,7 @@ class GitPlatform:
         elif route=='change':
             result.update(item=self.change(adapter,params['number']),delivery=DELIVERY)
         elif route=='reviews':
-            result.update(items=self.reviews(scope,adapter),delivery=DELIVERY)
+            result.update(items=self.reviews(scope,adapter),delivery=self.delivery(scope))
         else:
             sha = params['sha']
             self.target(adapter,params['target_type'],params['target'],sha)

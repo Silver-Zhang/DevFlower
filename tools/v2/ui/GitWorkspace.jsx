@@ -23,6 +23,7 @@ function CheckStatus({row}){
 
 export function GitWorkspace({api,workspace,onClose}){
  const storageKey='devflower-v2-git-review:'+workspace.id;
+ const [delivery,setDelivery]=useState(null);
  const [repo,setRepo]=useState(null),[tab,setTab]=useState('repository'),[items,setItems]=useState([]);
  const [selected,setSelected]=useState(null),[checks,setChecks]=useState(null),[jobs,setJobs]=useState(null),[log,setLog]=useState(null);
  const [approval,setApproval]=useState(null),[pending,setPending]=useState(()=>{
@@ -49,12 +50,12 @@ export function GitWorkspace({api,workspace,onClose}){
  }
  function openTab(next){
   setTab(next);setItems([]);clearDetail();
-  if(next==='repository')request(()=>read(next),setRepo);
-  else request(()=>read(next),result=>setItems(result.items));
+  if(next==='repository')request(()=>read(next),result=>{setRepo(result);setDelivery(result.delivery)});
+  else request(()=>read(next),result=>{setItems(result.items);if(result.delivery)setDelivery(result.delivery)});
  }
  useEffect(()=>{
   close.current?.focus();
-  request(()=>read('repository'),setRepo);
+  request(()=>read('repository'),result=>{setRepo(result);setDelivery(result.delivery)});
   return()=>{epoch.current++}
  },[]);
  function choose(item){
@@ -112,7 +113,12 @@ export function GitWorkspace({api,workspace,onClose}){
     <p className="field-note">{repo.delivery.reason}</p>
    </section>}
    {tab==='reviews'&&<section className="git-reviews" aria-label="本机审核任务">
-    <h3>审核与交付</h3><p className="field-note">{repo?.delivery.reason}</p>
+    <h3>审核与交付</h3><p className="field-note">{delivery?.reason}</p>
+    {delivery?.gate?.gate_verdict&&<article aria-label="研发交付 Gate">
+     <strong>{delivery.gate.gate_verdict}</strong><p>{delivery.gate.feedback}</p>
+     <p>候选 <Commit value={delivery.gate.candidate_sha256}/></p>
+     <p>Git HEAD <Commit value={delivery.gate.git_head}/></p>
+    </article>}
     {!items.length&&!busy&&<p>当前仓库尚无本机审核任务。</p>}
     {items.map(item=><article key={item.id}>
      <strong>{changeName} #{item.change} · {item.title}</strong><p>{reviewLabel[item.state]||item.state}</p>

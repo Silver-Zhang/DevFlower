@@ -120,7 +120,8 @@ def check_chain(document):
     from .designer_graph import graph_issues, is_designer_graph
     doc = validate_draft(document)
     if is_designer_graph(doc):
-        return {'issues': graph_issues(doc), 'execution_available': False,
+        from .development_graph import issues as development_issues
+        return {'issues': graph_issues(doc)+development_issues(doc), 'execution_available': False,
                 'message': '检查结构、端口与节点配置。检查不会调用模型。'}
     issues = []
     if not doc['nodes']:

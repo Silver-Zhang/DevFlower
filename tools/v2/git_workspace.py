@@ -21,7 +21,7 @@ ENV = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8', LC_ALL='C', GIT_CONFIG_NOSYSTEM
 @dataclass(frozen=True, slots=True)
 class GitWorkspace:
     workspace: str
-    origin: str
+    origin: str | None
     head: str | None
     branch: str | None
     identity: str
@@ -72,7 +72,7 @@ def origin_values(root, fd):
     return value[:-1].split('\0')
 
 
-def bind_workspace(store, workspace):
+def bind_workspace(store, workspace, *, require_origin=True):
     info = store.workspace(workspace)
     root = Path(info['path'])
     try:
@@ -119,7 +119,8 @@ def bind_workspace(store, workspace):
                             raise Blocked('工作树单独覆盖了 origin。')
                 except FileNotFoundError:
                     pass
-                if len(origins) != 1 or not origins[0] or len(origins[0]) > 600:
+                if (require_origin and len(origins)!=1 or len(origins)>1
+                        or origins and (not origins[0] or len(origins[0])>600)):
                     raise Blocked('请在此 Git 仓库配置一个明确的 origin URL。')
                 actual = git_read(root, ['rev-parse','--show-toplevel']).removesuffix('\n')
                 if actual != str(root):
@@ -136,6 +137,6 @@ def bind_workspace(store, workspace):
                         or linked and text_metadata(rootfd,'.git') != link or store.workspace(workspace) != info):
                     raise Blocked('工作空间 Git 绑定在读取期间变化。')
                 fingerprint = digest(canonical([workspace, common_identity.fields(), git_identity.fields(), digest(raw)]))
-                return GitWorkspace(workspace, origins[0], head, branch, fingerprint)
+                return GitWorkspace(workspace, origins[0] if origins else None, head, branch, fingerprint)
     except (OSError, UnicodeError, Refused, subprocess.SubprocessError):
         raise Blocked('请打开含本机 Git 元数据的仓库根目录。') from None

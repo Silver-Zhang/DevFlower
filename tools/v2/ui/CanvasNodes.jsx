@@ -2,7 +2,7 @@ import React,{useLayoutEffect} from 'react';
 import {Handle,Position,useUpdateNodeInternals} from '@xyflow/react';
 import {CheckCheck,FileCheck2,Flag,GitBranch,GitMerge,Repeat2,Settings2,Terminal,UserCheck,Workflow} from 'lucide-react';
 import {PredicateEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
-import {canvasTypes,draftConfigIssue,emptyPredicate,nodeKind,nodeType,ports,runtimeBlock} from './canvasModel.mjs';
+import {canvasTypes,developmentExit,developmentRoles,draftConfigIssue,emptyPredicate,nodeKind,nodeType,ports,runtimeBlock} from './canvasModel.mjs';
 
 const predicateLimits={field:200,value:2000};
 const icons={start:Flag,agent:Workflow,condition:GitBranch,router:GitBranch,merge:GitMerge,loop:Repeat2,
@@ -88,16 +88,34 @@ function CompoundPredicate({value,onChange,Field,depth=0}){
  </>;
 }
 
-export function TypedNodeConfig({node,onChange,connected,bodyChoices,Field}){
+export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,Field}){
  const type=nodeType(node);
  return <>
   <p className="session-note">{runtimeBlock(node)||'此节点由工作流调度器按已保存配置执行。'}</p>
   {Object.entries(type.fields).map(([key,field])=>{
+   const tool=nodeKind(node)==='tool'?node.config.tool:null;
+   if(developmentRoles.includes(key)&&tool!=='delivery-gate'||key==='expected_json'&&tool!=='verify-json'||
+      key==='path'&&tool==='delivery-gate')return null;
    const value=node.config[key]??field.default??'';
+   if(developmentRoles.includes(key)){
+    const verification=key==='verification_node';
+    const candidates=siblingNodes.filter(item=>verification?item.config?.tool==='verify-json':nodeKind(item)==='agent');
+    const used=new Set(developmentRoles.filter(role=>role!==key).map(role=>node.config[role]));
+    return <Field key={key} label={field.label.replace(' ID','')}><select value={value}
+     onChange={event=>onChange({[key]:event.target.value})}>
+     <option value="">选择同一流程的节点</option>
+     {value&&!candidates.some(item=>item.id===value)&&<option value={value}>先前节点已不可用</option>}
+     {candidates.map(item=><option key={item.id} value={item.id} disabled={used.has(item.id)}>
+      {item.name||item.id}（{item.id}）</option>)}
+    </select></Field>;
+   }
    if(field.type==='graph')return <div key={key}>
     <Field label={field.label} note="先单独保存子工作流。这里固定一份图，后续编辑原草稿不会改变此循环。">
      <select value="" onChange={event=>{const draft=bodyChoices.find(row=>row.id===event.target.value);
-      if(draft)onChange({[key]:structuredClone(draft.graph)})}}>
+      if(draft){
+       const development=draft.graph.nodes.some(item=>item.config?.tool==='delivery-gate');
+       onChange({[key]:structuredClone(draft.graph),...(development?{exit_condition:developmentExit}:{})});
+      }}}>
       <option value="">{value?'替换已固定子工作流':'选择已保存工作流'}</option>
       {bodyChoices.map(row=><option key={row.id} value={row.id}>{row.graph.name}</option>)}
      </select>
@@ -109,13 +127,19 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,Field}){
     <legend>{field.label}</legend>
     <CompoundPredicate Field={Field} value={value||emptyPredicate} onChange={test=>onChange({[key]:test})}/>
    </fieldset>;
-   if(field.type==='choice')return <Field key={key} label={field.label}><select value={value} onChange={e=>onChange({[key]:e.target.value})}>
+   if(field.type==='choice')return <Field key={key} label={field.label}><select value={value} onChange={e=>{
+    const chosen=e.target.value;
+    onChange({[key]:chosen,...(key==='tool'&&chosen==='verify-json'?{permission:'workspace-read'}:
+     key==='tool'&&chosen==='delivery-gate'?{permission:'none'}:{})});
+   }}>
     {Object.entries(field.options).map(([option,label])=><option key={option} value={option}>{label}</option>)}
    </select></Field>;
    if(field.type==='integer')return <Field key={key} label={field.label}><input type="number" min={field.min} max={field.max} value={value}
     onChange={e=>{if(e.target.value!=='')onChange({[key]:Math.max(field.min,Math.min(field.max,Math.trunc(Number(e.target.value))))})}}/></Field>;
-   return <Field key={key} label={field.label}><textarea placeholder={nodeKind(node)==='validation'?'{"field":"result.ok","op":"equals","value":true}':undefined} maxLength={20000} rows={3} value={value} onChange={e=>onChange({[key]:e.target.value})}/></Field>;
+   return <Field key={key} label={key==='path'&&tool==='verify-json'?'工作区 Python 测试入口':field.label}><textarea placeholder={nodeKind(node)==='validation'?'{"field":"result.ok","op":"equals","value":true}':undefined} maxLength={20000} rows={3} value={value} onChange={e=>onChange({[key]:e.target.value})}/></Field>;
   })}
+  {node.config.tool==='verify-json'&&<p className="field-note">启动时固定测试入口。验证器在隔离候选上运行该脚本并比较实际 JSON 输出。</p>}
+  {node.config.tool==='delivery-gate'&&<p className="field-note">开发、测试、确定性测试与独立审核必须来自同一轮。只有 ACCEPT 会结束研发循环。</p>}
   {nodeKind(node)==='approval'&&<p className="field-note">等待期间停止启动后续节点。只有本机用户可批准。拒绝或超时会结束运行。</p>}
   {nodeKind(node)==='merge'&&<p className="field-note">ALL 等待全部输入。ANY 按已保存的连线顺序选择成功输入，较早的输入仍在执行时会等待。</p>}
   {nodeKind(node)==='router'&&<RouterRules node={node} onChange={onChange} connected={connected} Field={Field}/>}
