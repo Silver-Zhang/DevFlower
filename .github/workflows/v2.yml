@@ -1,7 +1,7 @@
 name: V2 workflow regression
 on:
   push:
-    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader', 'v2/parity-session-views', 'v2/parity-session-pages', 'v2/parity-session-list', 'v2/parity-session-markdown', 'v2/parity-session-activity', 'v2/parity-draft-transfer', 'v2/parity-run-list-order', 'v2/parity-run-summary', 'v2/parity-launch-event', 'v2/parity-provider-catalog', 'v2/parity-worker-facts']
+    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader', 'v2/parity-session-views', 'v2/parity-session-pages', 'v2/parity-session-list', 'v2/parity-session-markdown', 'v2/parity-session-activity', 'v2/parity-draft-transfer', 'v2/parity-run-list-order', 'v2/parity-run-summary', 'v2/parity-launch-event', 'v2/parity-provider-catalog', 'v2/parity-worker-facts', 'v2/parity-workspaces-pass1']
   workflow_dispatch:
 permissions:
   contents: read
