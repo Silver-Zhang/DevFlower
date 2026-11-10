@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import resource
 import selectors
 import signal
 import subprocess
@@ -42,7 +43,7 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
@@ -53,13 +54,15 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                         input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout,
                         readonly_paths, readonly_dirs, hidden_paths, on_stderr, pass_fds=pass_fds,
-                        process_attest=process_attest, **spawn_options)
+                        process_attest=process_attest, deny_network=deny_network, **spawn_options)
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
+    if deny_network and (backend != 'bwrap' or not isolate):
+        raise Blocked('network isolation requires Bubblewrap')
     spawn_options = {'pass_fds': pass_fds}
     if executable_fd is not None:
         from studio.native_codex_image import SEALS
@@ -71,6 +74,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
     home.mkdir(parents=True, exist_ok=True)
     env = clean_env(home)
     env.update(env_extra or {})
+    if deny_network:
+        env = {key: value for key, value in env.items() if not key.lower().endswith('_proxy')}
     env['TMPDIR'] = scratch
     parent = os.getpid()
     if (readonly_files or readonly_dirs or hidden_paths) and (backend != 'bwrap' or not isolate):
@@ -108,13 +113,18 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
         wrapped = ['/usr/bin/bwrap', '--die-with-parent', '--unshare-user', '--unshare-pid',
                    '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev',
                    '--tmpfs', '/tmp']
+        if deny_network:
+            wrapped.append('--unshare-net')
         runtime = [p for p in sandbox.runtime_paths() if not p.startswith(('/proc/', '/dev/'))]
         paths = sorted(set(runtime + list(read)), key=lambda p: (len(Path(p).parts), str(p)))
         for p in paths:
             if Path(p).exists():
                 wrapped += ['--ro-bind', str(Path(p).resolve()), str(p)]
         for p in [str(home), scratch, *write]:
-            wrapped += ['--bind', str(Path(p).resolve()), str(p)]
+            if deny_network:
+                wrapped += ['--size', '16777216', '--tmpfs', str(p)]
+            else:
+                wrapped += ['--bind', str(Path(p).resolve()), str(p)]
         for p in readonly_paths:
             if Path(p).is_symlink():
                 raise Blocked('protected native metadata cannot be a symlink')
@@ -141,6 +151,9 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
         # No orphan starts if controller dies in the spawn-to-record window.
         if sandbox.LIBC.prctl(1, signal.SIGKILL, 0, 0, 0) or os.getppid() != parent:
             os._exit(125)
+        if deny_network:
+            resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024 * 1024,) * 2)
         if isolate and backend == 'landlock':
             sandbox.enforce(sandbox.runtime_paths() + list(read), ['/dev/null', str(home), scratch] + list(write))
 

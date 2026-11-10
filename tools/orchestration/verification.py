@@ -44,7 +44,7 @@ def counts(path, format):
     return totals(root)
 
 
-def verify(config, candidate, artifacts, run, round_number, candidate_hash, acceptance_hash, store=None):
+def verify(config, candidate, artifacts, run, round_number, candidate_hash, acceptance_hash, store=None, *, deny_network=False):
     artifacts = Path(artifacts)
     artifacts.mkdir(parents=True, exist_ok=False)
     reports = []
@@ -67,7 +67,7 @@ def verify(config, candidate, artifacts, run, round_number, candidate_hash, acce
                 write=[],
                 timeout=config['policy']['limits']['step_timeout_seconds'], cap=config['policy']['limits']['max_log_bytes'],
                 store=store, run=run, backend=config.get('verification_isolation', 'landlock'),
-                context={**binding, 'verification_operation_id': operation})
+                context={**binding, 'verification_operation_id': operation}, deny_network=deny_network)
             # Exit is observed before validation, and is never a PASS signal.
             if store:
                 store.finish(operation, 'EXECUTED', process_operation_id=process['operation_id'])
