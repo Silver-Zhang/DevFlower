@@ -172,3 +172,61 @@ class AssistantTests(unittest.TestCase):
         self.assertIn('fixture upstream missing',preview['prompt'])
         self.assertEqual(self.operations.calls,[])
         self.assertEqual(len(self.store.db.list('run')),1)
+
+    def test_diagnosis_keeps_completed_red_round_after_later_acceptance(self):
+        from test_v2_development_runtime import DevelopmentRuntimeTests, development_document
+        from v2.designer_scheduler import activation_key
+
+        self.initialize()
+        DevelopmentRuntimeTests.initial(self)
+        draft = self.store.save(self.workspace,None,None,development_document(self.saved,rounds=3))
+        for agent in self.saved:
+            self.store.db.put('agent-config',agent['id'],agent)
+        with patch.object(self.rt,'spawn'), patch('v2.runtime.freeze_agent',
+                 side_effect=lambda rt,workspace,node: DevelopmentRuntimeTests.bind(self,node)):
+            run = self.rt.launch(self.workspace,draft['id'],draft['revision'],'assistant-development-fixture')['run']['id']
+        outputs = [('RepairLoop/Verify',[1],{'passed':False},'development-verified','actual red test'),
+                   ('RepairLoop/Gate',[1],{'gate_verdict':'REJECT'},'delivery-gate-decided','repair first round'),
+                   ('RepairLoop/Gate',[2],{'gate_verdict':'ACCEPT_WITH_LIMITATIONS'},'delivery-gate-decided','unresolved review'),
+                   ('RepairLoop/Verify',[3],{'passed':True},'development-verified','actual green test'),
+                   ('RepairLoop/Gate',[3],{'gate_verdict':'ACCEPT'},'delivery-gate-decided','approved repair')]
+        source = activation_key(run,'RepairLoop/Reviewer',[1])
+        for node,path,facts,kind,feedback in outputs:
+            ident = activation_key(run,node,path)
+            upstream = node.replace('/Gate','/Reviewer').replace('/Verify','/Tester')
+            self.store.db.put('activation',ident,dict(id=ident,run=run,kind='tool',node=node,name=node,state='STARTING',
+                              iteration_path=path,inputs=[dict(edge='fixture-handoff',source=upstream,
+                              activation=activation_key(run,upstream,path),target_activation=ident,
+                              handoff_id='f'*64,source_round=path,target_round=path,content='large input '*4000)]))
+            self.store.db.change('activation',ident,dict(facts,state='COMPLETED',
+                output={'answer':'large private output '*2000,'result':dict(facts,feedback=feedback+' '+str(self.store.state))}),
+                event=dict(kind=kind,**facts))
+        finish = activation_key(run,'Finish',[])
+        output = {'answer':'accepted','result':{'gate_verdict':'ACCEPT'}}
+        self.store.db.put('activation',finish,dict(id=finish,run=run,kind='result',node='Finish',name='Finish',
+                          state='COMPLETED',iteration_path=[],output=output))
+        self.store.db.change('run',run,dict(state='COMPLETED',output=output))
+        for _ in range(104):
+            self.store.db.event(run,'later-status',state='COMPLETED')
+
+        code, diagnosis = self.request('assistant/diagnosis?'+urlencode(dict(workspace=self.workspace,run=run)))
+        self.assertEqual((code,diagnosis['state']),(200,'COMPLETED'))
+        problems = {(row['node'],tuple(row['iteration_path'])):row for row in diagnosis['nodes']}
+        self.assertEqual({key:row['diagnostic_outcome'] for key,row in problems.items()},
+                         {('RepairLoop/Verify',(1,)):'VERIFICATION_FAILED',('RepairLoop/Gate',(1,)):'REJECT',
+                          ('RepairLoop/Gate',(2,)):'ACCEPT_WITH_LIMITATIONS'})
+        first = problems['RepairLoop/Gate',(1,)]
+        self.assertEqual(first['state'],'COMPLETED')
+        self.assertEqual(first['reason'],'repair first round [已隐藏]')
+        self.assertEqual(first['upstream'][0]['activation'],source)
+        self.assertEqual(first['upstream'][0]['handoff_id'],'f'*64)
+        self.assertEqual(first['upstream'][0]['target_round'],[1])
+        self.assertEqual(first['upstream'][0]['target_activation'],first['activation'])
+        self.assertTrue(first['inputs_paged'])
+        self.assertNotIn('large input',json.dumps(diagnosis))
+        event = next(event for event in diagnosis['recent_error_events'] if event['seq']==first['event_seq'])
+        self.assertEqual((event['scope'],event['activation'],event['iteration_path'],event['gate_verdict']),
+                         ('activation',first['activation'],[1],'REJECT'))
+        self.assertEqual(len(diagnosis['recent_error_events']),3)
+        self.assertEqual(self.operations.calls,[])
+        self.assertEqual(len(self.store.db.list('run')),1)

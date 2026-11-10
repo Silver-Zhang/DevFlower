@@ -8,6 +8,7 @@ const uid=()=>crypto.randomUUID().replaceAll('-','');
 const active=new Set(['SUBMITTING','RESERVED','RUNNING']);
 const labels={SUBMITTING:'正在登记本次发送',RESERVED:'等待原生执行',RUNNING:'正在回答',
  COMPLETED:'已收到原生回执',NOT_SENT:'未发送',RECOVERY_REQUIRED:'发送结果待核验'};
+const outcomes={VERIFICATION_FAILED:'校验失败',REJECT:'Gate 拒绝',ACCEPT_WITH_LIMITATIONS:'Gate 有条件接受'};
 const route=(name,query)=>'assistant/'+name+(query?'?'+new URLSearchParams(query):'');
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 
@@ -22,7 +23,8 @@ function Diagnosis({value}){
   </details>}
   {value.nodes.map(row=><article key={row.activation}>
    <strong>{row.node} · {row.state}{row.iteration_path.length?' · 第 '+row.iteration_path.join('/')+' 轮':''}</strong>
-   {row.reason&&<p>{row.reason}</p>}<p>{row.advice}</p>
+   {row.diagnostic_outcome&&<p>{outcomes[row.diagnostic_outcome]}{row.event_seq!=null&&' · 事件 #'+row.event_seq}</p>}
+   {row.reason&&<p>{row.reason}{row.feedback_truncated&&' …'}</p>}<p>{row.advice}</p>
    {row.upstream.length>0&&<details><summary>实际记录的上游交接</summary><pre>{JSON.stringify(row.upstream,null,2)}</pre></details>}
    {row.inputs_paged&&<p>大输入可在运行检查器中分段查看。</p>}
   </article>)}

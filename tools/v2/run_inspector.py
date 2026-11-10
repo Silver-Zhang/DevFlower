@@ -31,7 +31,8 @@ NODE_FIELDS = ('id', 'run', 'node', 'name', 'kind', 'state', 'iteration', 'itera
                'request_id', 'session_binding_id', 'observed_session', 'native_turn_id', 'actual_request_sha256',
                'input_sent_sha256', 'input_sent_bytes', 'input_sent_at', 'input_sent_operation_id',
                'initialization_included', 'receipt_verified', 'terminal_failure_verified', 'recovery_evidence',
-               'provider_outcome', 'provider', 'model', 'effort', 'error_class', 'error_category', 'visible_error', 'output_instructions')
+               'provider_outcome', 'provider', 'model', 'effort', 'error_class', 'error_category', 'visible_error',
+               'output_instructions', 'passed', 'gate_verdict')
 EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace', 'node', 'activation', 'iteration_path',
                 'iteration', 'attempt', 'edge', 'handoff_id', 'source', 'target_activation', 'target_node',
                 'source_round', 'target_round', 'content_sha256', 'source_content_sha256', 'received_at',
@@ -282,6 +283,20 @@ class RunInspector:
                 events.append(item)
         return dict(run=run, activation=activation, events=events,
                     after=rows[min(len(rows), EVENT_PAGE)-1][0] if rows else after, more=len(rows)>EVENT_PAGE)
+
+    def development_problem_events(self, workspace, run):
+        self.store.workspace(workspace)
+        with self.store.db.tx(read=True) as tx:
+            self.authorize(tx, workspace, run)
+            nodes = self.activation_rows(tx, run)
+            rows = tx.execute("""SELECT seq,data FROM events WHERE run=?
+                              AND length(CAST(data AS BLOB))<=? AND json_extract(data,'$.state')='COMPLETED'
+                              AND ((json_extract(data,'$.kind')='development-verified' AND json_type(data,'$.passed')='false')
+                                OR (json_extract(data,'$.kind')='delivery-gate-decided' AND
+                                    json_extract(data,'$.gate_verdict') IN ('REJECT','ACCEPT_WITH_LIMITATIONS')))
+                              ORDER BY seq DESC LIMIT 12""", (run, EVENT_BYTES)).fetchall()
+        items = [self.event(dict(json.loads(raw), seq=seq), run, nodes) for seq,raw in reversed(rows)]
+        return [item for item in items if item['scope']=='activation']
 
     def payload(self, workspace, run, activation, field, offset=0, sha256=None, edge=None):
         self.store.workspace(workspace)

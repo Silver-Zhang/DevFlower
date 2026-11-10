@@ -11,12 +11,19 @@ from studio.server import Conflict
 
 from .documents import validate_draft
 from .project_files import read_project
-from .run_inspector import IDENT, RUN, RunInspector
+from .run_inspector import IDENT, RUN, RunInspector, take
 from .session_identity import SessionRefused
 
 CHAT = 'assistant-conversation'
 TURN = 'assistant-turn'
 ACTIVE = {'SUBMITTING', 'RESERVED', 'RUNNING'}
+PROBLEM_STATES = {'FAILED','SKIPPED','RECOVERY_REQUIRED','CANCELLED'}
+GATE_PROBLEMS = {'REJECT','ACCEPT_WITH_LIMITATIONS'}
+DIAGNOSTIC_ADVICE = {
+    'VERIFICATION_FAILED': '在运行检查器中核对这一轮的真实测试结果及候选，再将失败条件用于修复。',
+    'REJECT': '查看同轮独立审核及实际交接，把记录的拒绝原因用于下一轮修复。',
+    'ACCEPT_WITH_LIMITATIONS': '查看同轮审核保留项。交付需要新的证据和无保留的 ACCEPT。',
+}
 MAX_TURNS = 32
 MAX_FILES = 3
 MAX_PROMPT = 54000
@@ -133,19 +140,41 @@ class Assistant:
     def diagnosis(self, workspace, run):
         if self.runtime is None:
             raise Invalid('当前服务没有运行诊断。')
-        value = self.inspector.snapshot(self.runtime.snapshot(workspace, run))
-        nodes = value['nodes']
-        recent_errors = [event for event in value['events'] if event.get('state') in ('FAILED','SKIPPED','RECOVERY_REQUIRED','CANCELLED')
+        snapshot = self.runtime.snapshot(workspace, run)
+        value = self.inspector.snapshot(snapshot)
+        recent_errors = [event for event in value['events'] if event.get('state') in PROBLEM_STATES
                          or event['kind'] in ('worker-error','human-rejected','human-timeout','control-stop-unconfirmed')]
-        events = [{key:event[key] for key in ('seq','kind','scope','node','activation','iteration_path') if key in event}
-                  for event in recent_errors[-12:]]
+        is_development = bool(value['definition'].get('graph', {}).get('development'))
+        development_events = self.inspector.development_problem_events(workspace, run) if is_development else []
+        by_activation = {event['activation']:event['seq'] for event in development_events}
+        all_events = {event['seq']:event for event in recent_errors+development_events}
+        events = [take(all_events[seq], ('seq','kind','scope','node','activation','iteration_path','passed','gate_verdict'))
+                  for seq in sorted(all_events)[-12:]]
+        raw_nodes = {row['id']:row for row in snapshot['nodes']}
         problems = []
-        for row in nodes:
-            if row['state'] not in ('FAILED','SKIPPED','RECOVERY_REQUIRED','CANCELLED'):
+        for row in value['nodes']:
+            outcome = None
+            if is_development and row['kind']=='tool' and row['state']=='COMPLETED':
+                if row.get('passed') is False:
+                    outcome = 'VERIFICATION_FAILED'
+                elif isinstance(row.get('gate_verdict'), str) and row['gate_verdict'] in GATE_PROBLEMS:
+                    outcome = row['gate_verdict']
+            if not outcome and row['state'] not in PROBLEM_STATES:
                 continue
-            inputs = [dict(edge=item.get('edge'), source=item.get('source'), activation=item.get('activation'),
-                           content_sha256=item.get('content_sha256')) for item in row.get('inputs', [])[:8]]
-            if row['state']=='RECOVERY_REQUIRED':
+            source = raw_nodes[row['id']] if outcome else row
+            inputs = self.inspector.clean([take(item, ('edge','source','activation','content_sha256','handoff_id',
+                                                       'target_activation','source_round','target_round'))
+                                           for item in source.get('inputs', [])[:8]])
+            reason = row.get('reason') or row.get('visible_error')
+            facts = {}
+            if outcome:
+                result = take(source.get('output'), ('result',)).get('result')
+                feedback = take(result, ('feedback',)).get('feedback')
+                if isinstance(feedback, str):
+                    reason, facts['feedback_truncated'] = clipped(self.inspector.text(feedback), 1400)
+                facts.update(diagnostic_outcome=outcome, event_seq=by_activation.get(row['id']))
+                advice = DIAGNOSTIC_ADVICE[outcome]
+            elif row['state']=='RECOVERY_REQUIRED':
                 advice = '核对本次原生请求和回执。Provider 结果待核验时保留原运行，避免重发。'
             elif row['state']=='SKIPPED':
                 advice = '核对冻结画布的上游分支和实际交接，确认该节点是否应当运行。'
@@ -158,8 +187,9 @@ class Assistant:
             else:
                 advice = '检查此节点的上游输入、已保存 Agent 配置和 Provider 能力。'
             problems.append(dict(node=row['node'], activation=row['id'], iteration_path=row.get('iteration_path',[]),
-                                 state=row['state'], reason=row.get('reason') or row.get('visible_error'),
-                                 upstream=inputs, inputs_paged='inputs' in row.get('paged_fields',{}), advice=advice))
+                                 state=row['state'], reason=reason, upstream=inputs, advice=advice,
+                                 inputs_paged='inputs' in row.get('paged_fields',{}), **facts))
+        problems.sort(key=lambda row:('diagnostic_outcome' not in row,row.get('event_seq') or 0))
         output = value['run'].get('output')
         preview, truncated = clipped(str(output.get('answer', '')), 1000) if isinstance(output,dict) else ('',False)
         return dict(workspace=workspace, run=run, state=value['state'], reason=value['run'].get('reason'),
