@@ -245,8 +245,11 @@ def delivery_gate(rt, run_id, activation, node):
                 run_id, verification['id'], activation['round'], contract_hash)):
         raise Blocked('测试证据与当前候选、轮次或冻结测试不匹配。')
     steps = [row for row in rt.flow.list('native-step') if row.get('run') == run_id]
-    completions = [read_completion(rt, run, role_activation(rt, run, activation, node[key]), definition, steps)
-                   for key in ('developer_node', 'tester_node', 'reviewer_node')]
+    try:
+        completions = [read_completion(rt, run, role_activation(rt, run, activation, node[key]), definition, steps)
+                       for key in ('developer_node', 'tester_node', 'reviewer_node')]
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise Blocked('开发、测试或审核缺少可核验的原生进程和请求回执。') from exc
     receipts = [completion['receipt'] for completion in completions]
     if len({receipt['session_id'] for receipt in receipts}) != 3:
         raise Blocked('开发、测试和独立审查必须使用不同的真实会话。')
