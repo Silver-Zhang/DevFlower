@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 import test_v2_execution as execution
 import test_v2_execution_http as http
+from studio.workbench_store import WorkbenchStore
 from v2.run_inspector import EVENT_PAGE, EXPORT_BYTES, PAYLOAD_PAGE
 
 
@@ -34,7 +35,8 @@ class RunInspectorTests(unittest.TestCase):
         for row in rows:
             row.update(state='FAILED', started_at=time.time(), reason='approval denied', name=row['node'])
             if row['id'] == self.activation:
-                row.update(output={'answer': self.marker * 6000, 'env': self.secret},
+                row.update(provider='codex', model='fixture-model', effort='low',
+                           output={'answer': self.marker * 6000, 'env': self.secret},
                            actual_request='authorized text ' + self.secret, actual_request_sha256='5'*64,
                            input_sent_sha256='5'*64, input_sent_bytes=12,
                            native_tool_activity=[{'command': 'cat ' + self.private, 'output': 'test stdout',
@@ -114,6 +116,8 @@ class RunInspectorTests(unittest.TestCase):
             self.assertNotIn(self.private, encoded)
             self.assertNotIn('raw_stderr', encoded)
             self.assertNotIn('sensitive-binary', encoded)
+            node = next(row for row in data.get('activations', data.get('nodes', [])) if row['id']==self.activation)
+            self.assertEqual((node['provider'], node['model'], node['effort']), ('codex', 'fixture-model', 'low'))
         _, value = self.inspector('export')
         self.assertEqual(value['definition']['id'], value['run']['definition_id'])
         self.assertEqual(value['format'], 'devflower.v2.run-detail')
@@ -122,3 +126,14 @@ class RunInspectorTests(unittest.TestCase):
         self.assertFalse(value['coverage']['causal_associations_complete'])
         self.assertEqual(value['coverage']['omitted_activation_payloads'], 1)
         self.assertEqual(len(self.store.db.events(self.run)), before)
+
+    def test_exact_event_annotation_only_in_v2(self):
+        shared = WorkbenchStore(self.root / 'legacy.sqlite', scoped_drafts=True)
+        for db in (shared, self.store.db):
+            db.put('activation', 'item', dict(id='item', run='fixture', node='Loop/Agent', iteration_path=[2]))
+            db.change('activation', 'item', {'state': 'RUNNING'}, event={'kind':'node-running'})
+        legacy, = shared.events('fixture')
+        current, = self.store.db.events('fixture')
+        self.assertNotIn('activation', legacy)
+        self.assertNotIn('iteration_path', legacy)
+        self.assertEqual((current['activation'], current['iteration_path'], current['state']), ('item',[2],'RUNNING'))

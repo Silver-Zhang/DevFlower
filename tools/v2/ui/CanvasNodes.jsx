@@ -36,7 +36,7 @@ export function CanvasNodeCard({id,data,selected}){
   </div>
   <footer>
    <span>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
-   <span title={issue||undefined}>{data.activation?.input_sent_sha256?'已写入 CLI':issue||(agent?(n.agent_id?'固定版本':'独立会话'):'草稿')}</span>
+   <span title={issue||undefined}>{data.activation?data.activation.input_sent_sha256?'已写入 CLI':'冻结运行':issue||(agent?(n.agent_id?'固定版本':'独立会话'):'草稿')}</span>
   </footer>
  </article>;
 }

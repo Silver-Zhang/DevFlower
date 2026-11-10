@@ -11,10 +11,11 @@ from .server import Conflict
 
 
 class WorkbenchStore:
-    def __init__(self, path, *, scoped_drafts=False):
+    def __init__(self, path, *, scoped_drafts=False, annotate_events=False):
         # The workspace API requires explicit ownership. The default retains
         # the offline legacy store's unscoped revision/CAS compatibility.
         self.scoped_drafts = scoped_drafts
+        self.annotate_events = annotate_events
         self.path = Path(path)
         for p in (self.path, *(Path(str(self.path)+suffix) for suffix in ('-wal','-shm','-journal'))):
             try:
@@ -32,7 +33,7 @@ class WorkbenchStore:
             db.executescript('''CREATE TABLE IF NOT EXISTS records(kind TEXT,id TEXT,data TEXT,PRIMARY KEY(kind,id));
               CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run TEXT,data TEXT);
               CREATE TABLE IF NOT EXISTS drafts(id TEXT,revision TEXT,data TEXT,PRIMARY KEY(id,revision));''')
-            if scoped_drafts:
+            if annotate_events:
                 db.execute('CREATE INDEX IF NOT EXISTS events_run_seq ON events(run,seq)')
         self.path.chmod(0o600)
 
@@ -72,13 +73,13 @@ class WorkbenchStore:
             if states is not None and data['state'] not in states: raise Conflict('状态已变化，请刷新')
             data.update(changes)
             at = time.time() if event else None
-            if self.scoped_drafts and kind == 'run' and event and event.get('kind') == 'run-started':
+            if self.annotate_events and kind == 'run' and event and event.get('kind') == 'run-started':
                 data.setdefault('started_at', at)
             db.execute('UPDATE records SET data=? WHERE kind=? AND id=?', (canonical(data).decode(), kind, key))
             if event:
                 value = dict(event, at=at, run=data.get('run', key), node=data.get('node'),
                              iteration=data.get('iteration', 0), attempt=data.get('attempt', 1))
-                if self.scoped_drafts:
+                if self.annotate_events:
                     value.setdefault('state', data.get('state'))
                     if kind == 'activation':
                         value.update(activation=key, iteration_path=data.get('iteration_path', []))

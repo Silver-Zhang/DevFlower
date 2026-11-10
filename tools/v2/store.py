@@ -42,7 +42,7 @@ class DraftStore:
             raise Invalid('请明确允许浏览的测试工作空间根目录')
         if any(root == self.state or root.is_relative_to(self.state) or self.state.is_relative_to(root) for root in self.roots):
             raise Invalid('V2 状态目录与工作空间根目录必须分离')
-        self.db = WorkbenchStore(self.state / 'v2.sqlite', scoped_drafts=True)
+        self.db = WorkbenchStore(self.state / 'v2.sqlite', scoped_drafts=True, annotate_events=True)
         with self.db.tx() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS launch_intents(
                 workspace TEXT, intent_key TEXT, payload_sha TEXT, run_id TEXT UNIQUE,

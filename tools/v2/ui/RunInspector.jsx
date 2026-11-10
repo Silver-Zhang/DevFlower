@@ -145,7 +145,7 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
   </div>)}
   {tab==='events'&&scope&&<EventFeed key={run.id+':'+(activation?.id||'all')} api={api} {...scope} activation={activation?.id} live={live}/>}
   {tab==='logs'&&<div className="run-inspector-logs">
-   {activation?<><p className="field-note">公开日志按 CLI 已记录的工具活动和诊断展示。</p>
+   {activation?<><p className="field-note">公开日志展示 CLI 已记录的诊断和最近保留的 40 条工具活动。</p>
     {activation.visible_error&&<pre aria-label="节点公开诊断">{activation.visible_error}</pre>}
     {activation.reason&&<p>{activation.reason}</p>}
     {activation.native_tool_activity?.length>0&&<pre aria-label="原生工具日志">{readable(activation.native_tool_activity)}</pre>}

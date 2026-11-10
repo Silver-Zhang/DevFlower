@@ -72,7 +72,7 @@ function RunEvidence({activation,node,trusted,onTransition}){const a=activation;
  {a?.reason&&<p className="error-text">{a.reason}</p>}
  <h3>本次实际可见请求</h3><p className="field-note">包括 DevFlower 加入的格式要求与实际上游内容；这是本机发送文本，不代表服务端全部上下文。</p><pre aria-label="实际可见请求">{a?.actual_request??'尚无持久化请求'}</pre>
  <h3>发送与回执</h3><p>{a?.input_sent_sha256?'请求字节已写入自有 CLI 进程':'尚无请求写入证据'}；{a?.receipt_verified?'原生终结回执已关联核验':a?.terminal_failure_verified?'原生终结失败已关联核验':'终结结果未确认'}。</p>
- <p className="field-note">请求：{node.model} / {node.effort}。实际模型：{a?.receipt?.resolved_model||'unknown'}；实际强度：{a?.receipt?.resolved_effort||'unknown'}。未报告的字段保持 unknown。</p>
+ <p className="field-note">请求：{a?.provider||node.provider||'unknown'} · {a?.model||node.model||'unknown'} / {a?.effort||node.effort||'unknown'}。实际模型：{a?.receipt?.resolved_model||'unknown'}；实际强度：{a?.receipt?.resolved_effort||'unknown'}。未报告的字段保持 unknown。</p>
  <details><summary>初始化、每轮与输出要求</summary><h3>初始化</h3><pre>{node.initial_prompt||'（空）'}</pre><h3>每轮</h3><pre>{node.round_prompt||'（空）'}</pre><h3>输出与交接</h3><pre>{node.output_prompt||'（空）'}</pre><h3>实际输入分节</h3><pre>{a?.request_sections?readable(a.request_sections):'尚无记录'}</pre></details>
  <details><summary>身份、请求哈希与 Provider 回执</summary><pre aria-label="Provider 回执">{readable(a?{activation:a.id,session_binding:a.session_binding_id,native_session:a.observed_session||'unknown',native_turn:a.native_turn_id||'unknown',request:a.request_id,request_sha256:a.actual_request_sha256,input_sent_sha256:a.input_sent_sha256,input_sent_bytes:a.input_sent_bytes,input_sent_operation:a.input_sent_operation_id,receipt:a.receipt||a.failure_receipt||'unknown'}:{state:'PENDING'})}</pre></details>
  </div>}
