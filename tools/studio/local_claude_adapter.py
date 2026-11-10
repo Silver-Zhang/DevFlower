@@ -1,4 +1,5 @@
 """Claude local CLI: same canonical HOME/session, no credential overlays."""
+from contextlib import nullcontext
 from pathlib import Path
 import json
 import os
@@ -7,6 +8,7 @@ from orchestration.adapters import CLI,native_errors
 from orchestration.common import Blocked,canonical,digest
 from orchestration.privacy import credentials,redact
 from orchestration.process import execute
+from .native_codex_image import sealed_executable
 from .native_local import native_environment
 from .session_sources import opened
 from .agent_sessions import safe_text
@@ -89,10 +91,14 @@ class LocalClaude:
         if store and callable(getattr(store,'check_before_spawn',None)):
             store.check_before_spawn()
         before = claude_secrets(b, self.credential_env) if chat_only else set()
-        process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
-            cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
-            env_extra=dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0', **self.credential_env),
-            context={'provider':'claude','agent_role':b['role'],'transport':'native-local'})
+        image = (sealed_executable(b['executable'], 'devflower-claude', expected_sha256=b['_executable_sha256'])
+                 if chat_only else nullcontext((None, None)))
+        with image as (executable_fd, _):
+            spawn_options = {} if executable_fd is None else {'executable_fd': executable_fd}
+            process,out,err=execute(args,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
+                cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
+                env_extra=dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0', **self.credential_env),
+                context={'provider':'claude','agent_role':b['role'],'transport':'native-local'}, **spawn_options)
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:

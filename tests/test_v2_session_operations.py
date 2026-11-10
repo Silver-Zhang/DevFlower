@@ -2,6 +2,7 @@
 import fcntl
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -13,8 +14,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
+from orchestration.common import Blocked, digest
+from orchestration.process import execute
 from orchestration.store import process_identity
 from studio.graph import Invalid
+from studio.local_claude_adapter import LocalClaude
+from studio.native_codex_image import sealed_executable
 from studio.server import Conflict
 from v2.claude_session_profile import discover_cli, environment_identity, startup_environment
 from v2.native_history_config import HistoryConfig
@@ -116,6 +121,62 @@ class SessionOperationsTests(unittest.TestCase):
         path.write_text(json.dumps({'version': 1, 'claude': {**legacy, 'home': str(self.home), 'managed': True}}))
         with self.assertRaises(Invalid):
             load_write_profiles(path)
+
+    def test_native_spawn_uses_sealed_bytes_after_path_and_inode_replacement(self):
+        executable = self.base / 'operator-cli'
+        approved = Path('/usr/bin/true').read_bytes()
+        attacker = Path('/usr/bin/env').read_bytes()
+        synthetic_secret = 'fixture-credential-must-not-reach-replacement'
+        environment = {'ANTHROPIC_AUTH_TOKEN': synthetic_secret}
+
+        for atomic in (True, False):
+            with self.subTest(atomic=atomic):
+                executable.write_bytes(approved)
+                executable.chmod(0o700)
+                old_inode = executable.stat().st_ino
+
+                class SwapAfterApproval:
+                    def intent(self, _run, kind, _data):
+                        assert kind == 'PROCESS'
+                        if atomic:
+                            replacement = executable.with_name('replacement')
+                            replacement.write_bytes(attacker)
+                            replacement.chmod(0o700)
+                            replacement.replace(executable)
+                        else:
+                            executable.write_bytes(attacker)
+                        return 'fixture'
+
+                    def finish(self, *_args, **_updates):
+                        pass
+
+                    def get(self, _run):
+                        return {'data': {}}
+
+                with sealed_executable(executable, 'devflower-test', expected_sha256=digest(approved)) as (fd, _):
+                    process, out, err = execute([str(executable)], self.cwd, self.home, timeout=5,
+                        isolate=False, backend='native-local', env_extra=environment, executable_fd=fd,
+                        store=SwapAfterApproval())
+                self.assertEqual(executable.stat().st_ino == old_inode, not atomic)
+                self.assertEqual(process['exit'], 0)
+                self.assertEqual((out, err), (b'', b''))
+                process, out, _ = execute([str(executable)], self.cwd, self.home, timeout=5,
+                    isolate=False, backend='native-local', env_extra=environment)
+                self.assertEqual(process['exit'], 0)
+                self.assertIn(synthetic_secret.encode(), out)
+
+    def test_replacement_before_claude_snapshot_never_reaches_transport(self):
+        executable = self.base / 'changed-cli'
+        shutil.copy('/usr/bin/env', executable)
+        binding = dict(executable=str(executable), home=str(self.home), config_root=str(self.home / '.claude'),
+                       role='reviewer', project=self.workspace, chat_only=True, model=None, effort=None,
+                       _executable_sha256=digest(Path('/usr/bin/true').read_bytes()))
+        adapter = LocalClaude(binding, {'step_timeout_seconds': 5, 'max_log_bytes': 4096},
+                              credential_env={'ANTHROPIC_AUTH_TOKEN': 'fixture-secret'})
+        with patch('studio.local_claude_adapter.execute') as transport:
+            with self.assertRaisesRegex(Blocked, '未启动'):
+                adapter.start('synthetic only', self.cwd, self.base)
+            transport.assert_not_called()
 
     def test_unverified_claude_cli_version_refuses_before_profile_use(self):
         with patch('v2.claude_session_profile.shutil.which', return_value='/usr/bin/true'):

@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import stat
 import struct
+from contextlib import contextmanager
 from functools import lru_cache
 
 from orchestration.common import Blocked
@@ -154,6 +155,52 @@ def static_elf(fd):
     if not executable:raise Blocked('原生CLI入口不受支持')
 
 
+def seal_binary(source, label, *, expected_sha256=None):
+    """Copy the verified executable bytes into a descriptor that cannot be modified."""
+    before = os.fstat(source)
+    if not before.st_mode & 0o111:
+        raise Blocked('原生CLI不可执行')
+    image_sha256 = binary_digest(source)
+    if expected_sha256 is not None and image_sha256 != expected_sha256:
+        raise Blocked('原生CLI在兼容性预检后变化；未启动程序')
+    fd = os.memfd_create(label, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    try:
+        offset = 0
+        while offset < before.st_size:
+            chunk = os.pread(source, min(1048576, before.st_size - offset), offset)
+            if not chunk:
+                raise Blocked('原生CLI在复制时变化')
+            remaining = memoryview(chunk)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise Blocked('无法固定原生CLI')
+                remaining = remaining[written:]
+            offset += len(chunk)
+        os.fchmod(fd, 0o500)
+        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, SEALS)
+        after = os.fstat(source)
+        def stamp(meta):
+            return meta.st_dev, meta.st_ino, meta.st_mode, meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns
+        if stamp(before) != stamp(after) or binary_digest(fd) != image_sha256:
+            raise Blocked('原生CLI在复制时变化；未启动程序')
+        return fd, image_sha256
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextmanager
+def sealed_executable(path, label, *, expected_sha256=None):
+    """Open without symlinks and keep an executable snapshot through launch."""
+    with opened(path) as source:
+        fd, image_sha256 = seal_binary(source, label, expected_sha256=expected_sha256)
+    try:
+        yield fd, image_sha256
+    finally:
+        os.close(fd)
+
+
 class NativeImage:
     def __init__(self, executable, *, expected_sha256=None):
         self.fd=None;self.closed=True
@@ -163,31 +210,10 @@ class NativeImage:
             resolved=resolve(executable)
             self.path=resolved['path'];self.origin=resolved['source']
             with opened(self.path) as source:
-                before=os.fstat(source)
-                if not before.st_mode&0o111:raise Blocked('原生CLI不可执行')
                 static_elf(source)
-                digest=binary_digest(source)
-                if expected_sha256 is not None and digest!=expected_sha256:
-                    raise Blocked('原生CLI在兼容性预检后变化；未启动程序')
-                fd=os.memfd_create('devflower-codex',os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
-                self.fd=fd;offset=0
-                while offset<before.st_size:
-                    chunk=os.pread(source,min(1048576,before.st_size-offset),offset)
-                    if not chunk:raise Blocked('原生CLI在复制时变化')
-                    view=memoryview(chunk)
-                    while view:
-                        written=os.write(fd,view)
-                        if written<=0:raise Blocked('无法固定原生CLI')
-                        view=view[written:]
-                    offset+=len(chunk)
-                os.fchmod(fd,0o500)
-                fcntl.fcntl(fd,fcntl.F_ADD_SEALS,SEALS)
-                after=os.fstat(source)
-                stamp=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
-                if stamp(before)!=stamp(after) or binary_digest(fd)!=digest:
-                    raise Blocked('原生CLI在复制时变化；未启动程序')
-                static_elf(fd)
-                self.sha256=digest;self.closed=False;self.validate()
+                self.fd,self.sha256=seal_binary(source,'devflower-codex',expected_sha256=expected_sha256)
+                static_elf(self.fd)
+                self.closed=False;self.validate()
         except BaseException as exc:
             self.close()
             if isinstance(exc,(Blocked,KeyboardInterrupt,SystemExit)):raise
