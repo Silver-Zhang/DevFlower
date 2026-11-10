@@ -30,7 +30,31 @@ async function api(route,data){return page.evaluate(async({route,data})=>{const 
   await page.getByRole('button',{name:'编辑草稿',exact:true}).click();let sent;const refuse=async route=>{sent=route.request().postDataJSON();const response=await route.fetch();assert.equal(response.status(),200);await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'synthetic refusal after durable reservation'})})};await page.route('**/api/v2/launch',refuse);await (await launchButton()).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('HTTP 409'));assert.equal(await page.getByRole('button',{name:'核验本次启动',exact:true}).count(),1);await page.unroute('**/api/v2/launch',refuse);let retry;const observe=r=>{if(r.url().endsWith('/api/v2/launch'))retry=r.postDataJSON()};page.on('request',observe);await page.getByRole('button',{name:'核验本次启动',exact:true}).click();await complete();assert.deepEqual(retry,sent);page.off('request',observe);
  });
  await test('one-inflight-run-read-and-terminal-never-regresses',async()=>{
-  let release,entered=0;const held=new Promise(r=>release=r);const delay=async route=>{entered++;const response=await route.fetch();await held;await route.fulfill({response})};await page.route('**/api/v2/run?*',delay);await page.getByLabel('运行历史',{exact:true}).locator('button.workflow-link').first().click();await until(()=>entered===1);await sleep(1200);await page.getByRole('button',{name:'重新读取',exact:true}).click();assert.equal(entered,1,'Polling/manual read share one in-flight request');release();await complete();await sleep(1100);assert.equal(entered,1,'Completed run stops automatic polling');await page.unroute('**/api/v2/run?*',delay);
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const latest=(await api('runs?workspace='+workspace)).sort((a,b)=>b.created_at-a.created_at)[0].id;
+  // The receipt projection can become COMPLETED before the worker commits the run state.
+  await until(async()=>{
+   const snapshot=await api('run?workspace='+workspace+'&id='+latest);
+   return snapshot.state==='COMPLETED'&&snapshot.run.persisted_state==='COMPLETED';
+  });
+  let release,entered=0;const held=new Promise(r=>release=r);
+  const delay=async route=>{
+   entered++;
+   const response=await route.fetch();
+   const snapshot=await response.json();
+   assert.equal(snapshot.run.id,latest);
+   assert.equal(snapshot.run.persisted_state,'COMPLETED');
+   await held;
+   await route.fulfill({response});
+  };
+  await page.route('**/api/v2/run?*',delay);
+  await page.getByLabel('运行历史',{exact:true}).locator('button.workflow-link').first().click();
+  await until(()=>entered===1);await sleep(1200);
+  await page.getByRole('button',{name:'重新读取',exact:true}).click();
+  assert.equal(entered,1,'Polling/manual read share one in-flight request');
+  release();await complete();await sleep(1100);
+  assert.equal(entered,1,'Durably completed run stops automatic polling');
+  await page.unroute('**/api/v2/run?*',delay);
  });
  await test('actual-truncated-handoff-and-downstream-request',async()=>{
   await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await node('Agent A');await page.getByLabel('Agent 名称',{exact:true}).fill('Long source');await page.getByLabel('关闭检查器',{exact:true}).click();await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await page.getByLabel('Provider',{exact:true}).selectOption('codex');await page.getByLabel('请求模型',{exact:true}).selectOption('fixture-model');await page.getByLabel('请求强度',{exact:true}).selectOption('low');await page.getByLabel('每轮提示词',{exact:true}).fill('use actual upstream');await node('Long source');await page.getByLabel('下游 Agent',{exact:true}).selectOption({label:'Agent B'});await page.getByRole('button',{name:'连接 Agent',exact:true}).click();await page.getByLabel('关闭检查器',{exact:true}).click();await (await launchButton()).click();await complete();await page.locator('.react-flow__edge').click();const content=await page.getByLabel('实际交接内容',{exact:true}).innerText();const input=JSON.parse(content);assert.equal(input.truncated,true);assert.equal(input.budget,16000);assert.equal(input.text.length,16000);await node('Agent B');const request=await page.getByLabel('实际可见请求',{exact:true}).innerText();assert(request.includes('"truncated": true'));assert(request.includes(JSON.stringify(input.text).slice(1,-1)),'Actual visible request contains the exact encoded transferred text');await page.screenshot({path:path.join(out,'downstream-actual-request.png')});for(const viewport of [{width:1440,height:900},{width:1280,height:800},{width:989,height:535}]){await page.setViewportSize(viewport);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.getByRole('button',{name:'编辑草稿',exact:true}).click({trial:true});await page.screenshot({path:path.join(out,'run-layout-'+viewport.width+'.png')})}

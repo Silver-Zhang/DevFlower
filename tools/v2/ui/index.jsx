@@ -723,7 +723,7 @@ function App(){
   return {id:item.id,type:'handoff',source,target,sourceHandle,targetHandle,selected:edgeSelection.includes(item.id),
    markerEnd:{type:MarkerType.ArrowClosed},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
    ariaLabel:shownNodes.get(source).name+' '+output+' → '+shownNodes.get(target).name+' '+input,
-   data:{issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
+   data:{hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
