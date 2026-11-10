@@ -54,6 +54,15 @@ class LocalCodex:
         executable=self.b.get('executable')
         if not isinstance(executable,(str,Path)) or not str(executable).strip():
             raise Blocked('原生 CLI 绑定不完整，无法核验读取边界；未启动程序。')
+        if self.b.get('v2_agent_scope'):
+            from v2.codex_agent_scope import prepare_agent_scope
+            started=time.monotonic()
+            budget=min(self.limits['step_timeout_seconds'],self.b.get('timeout_seconds',300))
+            with prepare_agent_scope(self.b,str(cwd)) as scope:
+                remaining=budget-(time.monotonic()-started)
+                if remaining<=0:raise Blocked('原生隔离核验用尽本次预算，未发送请求。')
+                scoped=LocalCodex(self.b,dict(self.limits,step_timeout_seconds=remaining))
+                return scoped._start_new(prompt,cwd,artifacts,output_schema,store,run,session=session,agent_scope=scope)
         if self.b.get('shared_conversation') is True:
             return self._start_shared(prompt,cwd,artifacts,output_schema,store,run,session)
         # #57: never reuse the host-wide native read-only tool path. Ask/Plan
@@ -336,7 +345,7 @@ class LocalCodex:
             raw_report_sha256=digest(canonical(report)),provider='codex',home=b['home'],cwd=cwd,
             transport={'mode':'native-narrow-read' if _read_scope is not None else 'native-shared-conversation','workspace_tools':'bounded-read-list' if _read_scope is not None else 'disabled','interactive_requests':'bounded-client-tools' if _read_scope is not None else 'unsupported-stop'},adapter_version='native-shared-conversation/1',usage={})
 
-    def _start_new(self,prompt,cwd,artifacts,output_schema,store,run,session=None,managed_pack=None):
+    def _start_new(self,prompt,cwd,artifacts,output_schema,store,run,session=None,managed_pack=None,agent_scope=None):
         # A new thread has no earlier turn to race. Existing threads remain on
         # the guarded RPC path: exec cannot atomically compare the prior turn.
         from orchestration.adapters import CLI,native_errors
@@ -371,26 +380,31 @@ class LocalCodex:
         # never copied, and unknown credential-bearing provider fields fail closed.
         from .native_codex_rpc import metadata_guard
         gate=b.get('_metadata_guard')
+        inventory=None
         with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext(remaining()) as wait:
-            with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),wait,30),cancelled) as probe:
+            image_options={'executable_image':agent_scope.image} if agent_scope else {}
+            with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),wait,30),cancelled,**image_options) as probe:
                 config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
+                if 'v2_agent_skills' in b:
+                    inventory=probe.request('skills/list',dict(cwds=[cwd],forceReload=True))
         provider_args=provider_overrides(config)
         # Probe fixtures are created under protected storage. Serialize their
         # complete lifetime with metadata preflights, never the real request.
         read_only=b['role']!='implementer' or bool(b.get('admission_probe'))
         from .native_capability_cache import identity as capability_identity,run as cached_capability
         protected=b.get('native_protected',[])
+        capability_executable=agent_scope.executable if agent_scope else b['executable']
         scope=gate if ordinary and gate and isinstance(protected,list) and gate in protected else None
         def cache_key():
             return capability_identity(b['executable'],scope,artifacts,ordinary,bool(b.get('no_tools')),not read_only,deadline,cancelled)
         def capabilities():
             with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext():
                 if b.get('no_tools'):
-                    exec_ok=require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,no_tools=True,ordinary_profile=ordinary)
+                    exec_ok=require_exec_capability(capability_executable,artifacts,timeout=remaining(),cancelled=cancelled,no_tools=True,ordinary_profile=ordinary)
                 else:
-                    exec_ok=require_exec_capability(b['executable'],artifacts,timeout=remaining(),cancelled=cancelled,ordinary_profile=ordinary)
+                    exec_ok=require_exec_capability(capability_executable,artifacts,timeout=remaining(),cancelled=cancelled,ordinary_profile=ordinary)
                 capability=require_native_write_capability if ordinary else require_sandbox_capability
-                write_ok=capability(b['executable'],artifacts,not read_only,timeout=remaining(),cancelled=cancelled)
+                write_ok=capability(capability_executable,artifacts,not read_only,timeout=remaining(),cancelled=cancelled)
                 return exec_ok is True and write_ok is True
         cached_capability(cache_key(),cache_key,deadline,cancelled,capabilities)
         if direct_environment_identity(b)!=environment:raise Blocked('原生模型配置在预检期间变化；未发送请求')
@@ -400,7 +414,13 @@ class LocalCodex:
             with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext():
                 check_protected_hardlinks_isolated(b.get('native_protected',[]))
         remaining()
-        argv=exec_args(b,provider_args,schema=output_schema)
+        scope_options={'scope_options':agent_scope.options} if agent_scope else {}
+        argv=exec_args(b,provider_args,schema=output_schema,**scope_options)
+        if agent_scope:
+            argv[0]=agent_scope.executable
+        if 'v2_agent_skills' in b:
+            from v2.codex_agent_scope import agent_skill_options
+            argv[-1:-1]=agent_skill_options(b,cwd,inventory)
         observe_stderr=writer_conflict_observer()
         child_managed=False
         if getattr(store,'_managed_child_token',None) is not None:
@@ -478,6 +498,8 @@ class LocalCodex:
                 managed_context=ManagedContext(store,b,cwd,deadline);store._managed_context=managed_context
                 index=-2 if sid else -1
                 argv[index:index]=managed_mcp_args(managed_context)
+            if agent_scope:
+                agent_scope.verify()
             process,out,err=execute(argv,cwd,b['home'],timeout=remaining(),cap=self.limits['max_log_bytes'],
                 input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
                 env_extra=native_environment(b),context={'provider':'codex','transport':'native-exec'},on_stdout=observe,on_stderr=observe_stderr)

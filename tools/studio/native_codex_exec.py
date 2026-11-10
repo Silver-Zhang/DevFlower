@@ -319,14 +319,15 @@ def managed_mcp_args(context):
             '-c','mcp_servers.devflower_managed.startup_timeout_sec='+str(min(remaining,10)),
             '-c','mcp_servers.devflower_managed.tool_timeout_sec='+str(remaining)]
 
-def exec_args(binding,provider_args,*,schema=None):
+def exec_args(binding,provider_args,*,schema=None,scope_options=()):
     read_only=binding['role']!='implementer' or bool(binding.get('admission_probe'))
     ordinary=binding.get('native_interaction')=='ordinary'
     args=[binding['executable'],'exec','--ignore-user-config','--ignore-rules','--strict-config','--json','--skip-git-repo-check',
           '-c','approval_policy="never"']
     if ordinary:
         if not binding.get('native_protected'):raise Blocked('原生权威和认证保护路径未绑定；未启动会话')
-        args+=permission_profile_args(binding['native_protected'],not read_only)
+        if not scope_options:
+            args+=permission_profile_args(binding['native_protected'],not read_only)
     else:
         args+=['-c','sandbox_mode='+_toml('read-only' if read_only else 'workspace-write'),
                '-c','sandbox_workspace_write.exclude_slash_tmp=true','-c','sandbox_workspace_write.exclude_tmpdir_env_var=true',
@@ -336,6 +337,7 @@ def exec_args(binding,provider_args,*,schema=None):
     if binding.get('admission_probe') or binding.get('no_tools'):
         features.update(shell_tool=False,code_mode_host=False,unified_exec=False)
     for key,value in features.items():args+=['-c','features.'+key+'='+_toml(value)]
+    args+=scope_options
     if not isinstance(binding.get('model'),str) or not binding['model'] or binding['model']=='unknown':raise Blocked('原生模型身份不明确')
     if not isinstance(binding.get('effort'),str) or not binding['effort'] or binding['effort']=='unknown':raise Blocked('原生推理强度不明确')
     args+=['--model',binding['model'],'-c','model_reasoning_effort='+_toml(binding['effort'])]
