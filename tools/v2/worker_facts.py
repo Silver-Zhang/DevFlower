@@ -12,6 +12,7 @@ IDENTITY_FIELDS = ('host', 'boot_id', 'pid', 'start', 'pgid', 'sid')
 INTERNAL_FIELDS = (
     'worker_lifecycle_version', 'worker_authorized_seq', 'worker_bound_seq',
     'worker_entered_seq', 'worker_entered_at',
+    'worker_resume_seq', 'worker_resume_at', 'worker_previous_owner',
 )
 
 
@@ -41,9 +42,11 @@ def _matches(saved, observed):
             and all(saved[key] == observed[key] for key in IDENTITY_FIELDS))
 
 
-def _event(row, kind, cause, payload, at):
+def _event(row, kind, cause, payload, at, *, initial=False):
     run_id = row['id']
-    event_id = digest(f'devflower.v2.{kind}.v1\0{run_id}'.encode('ascii'))
+    generation = 0 if initial else row.get('worker_generation', 0)
+    identity = run_id if generation == 0 else f'{run_id}\0{generation}'
+    event_id = digest(f'devflower.v2.{kind}.v1\0{identity}'.encode('ascii'))
     return dict(kind=kind, event_version=1, event_id=event_id, run=run_id,
                 definition_id=row['definition_id'], aggregate_kind='run', aggregate_id=run_id,
                 cause=cause, payload=payload, at=at)
@@ -87,13 +90,8 @@ def _read_fact(db, seq, expected):
     return expected
 
 
-def _authorized_run(db, run_id):
-    _require(isinstance(run_id, str) and re.fullmatch(r'[0-9a-f]{32}', run_id))
-    row = _read_record(db, 'run', run_id)
-    _require(versioned(row) and row.get('id') == row.get('run') == run_id
-             and row.get('state') == 'QUEUED' and _time(row.get('created_at')))
-    _require('worker_entered_seq' not in row and 'worker_entered_at' not in row)
-
+def _original_authority(db, row):
+    run_id = row['id']
     definition_id = row.get('definition_id')
     _require(isinstance(definition_id, str) and re.fullmatch(r'[0-9a-f]{64}', definition_id))
     definition = _read_record(db, 'definition', definition_id)
@@ -102,6 +100,7 @@ def _authorized_run(db, run_id):
     workspace, intent = row['workspace'], row.get('launch_intent')
     _require(isinstance(workspace, str) and isinstance(intent, str))
     _require(canonical([row[key] for key in fields]) == canonical([definition[key] for key in fields]))
+    _require(row.get('designer_runtime') == definition.get('designer_runtime'))
     _require(digest(canonical({k: v for k, v in definition.items() if k != 'id'})) == definition_id)
     payload_sha = digest(canonical(dict(workspace=workspace, draft_id=row['draft_id'],
                                         revision=row['draft_revision'], task=row['task'])))
@@ -111,8 +110,66 @@ def _authorized_run(db, run_id):
     _require(reservation is not None and reservation[:4] == (payload_sha, run_id, definition_id, 'RESERVED')
              and _time(reservation[4]))
     expected = _event(row, 'run-authorized', dict(kind='launch_intent', reservation_run_id=run_id),
-                      dict(state='QUEUED', created_at=row['created_at']), reservation[4])
-    return row, _read_fact(db, row.get('worker_authorized_seq'), expected)
+                      dict(state='QUEUED', created_at=row['created_at']), reservation[4], initial=True)
+    return _read_fact(db, row.get('worker_authorized_seq'), expected)
+
+
+def _resume_event(row, original):
+    return _event(row, 'worker-resume-authorized', _cause(original), dict(
+        generation=row['worker_generation'], previous_worker=row['worker_previous_owner']), row['worker_resume_at'])
+
+
+def _worker_authority(db, row, original):
+    generation = row.get('worker_generation', 0)
+    _require(type(generation) is int and generation >= 0)
+    if generation == 0:
+        return original
+    _require(row.get('designer_runtime') == 1 and _time(row.get('worker_resume_at'))
+             and 'worker_previous_owner' in row)
+    return _read_fact(db, row.get('worker_resume_seq'), _resume_event(row, original))
+
+
+def _authorized_run(db, run_id):
+    _require(isinstance(run_id, str) and re.fullmatch(r'[0-9a-f]{32}', run_id))
+    row = _read_record(db, 'run', run_id)
+    _require(versioned(row) and row.get('id') == row.get('run') == run_id
+             and row.get('state') == 'QUEUED' and _time(row.get('created_at')))
+    _require('worker_entered_seq' not in row and 'worker_entered_at' not in row)
+    return row, _worker_authority(db, row, _original_authority(db, row))
+
+
+def reserve_resume(flow, expected, changes):
+    """Reserve one new generation and publish verified checkpoint repairs together."""
+    with flow.tx() as db:
+        run_id = expected['id']
+        row = _read_record(db, 'run', run_id)
+        _require(row == expected and versioned(row) and row.get('designer_runtime') == 1
+                 and not row.get('cancel_requested'))
+        original = _original_authority(db, row)
+        authorized = _worker_authority(db, row, original)
+        previous_worker = row.get('worker')
+        if previous_worker:
+            bound = _bound(db, row, authorized, previous_worker)
+            if 'worker_entered_seq' in row or 'worker_entered_at' in row:
+                at = row.get('worker_entered_at')
+                _require(_time(at))
+                _read_fact(db, row.get('worker_entered_seq'), _event(
+                    row, 'worker-entered', _cause(bound), dict(worker_entered_at=at), at))
+        for source, update, event in changes:
+            key = source['id']
+            _require(source.get('run') == run_id and _read_record(db, 'activation', key) == source)
+            db.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",
+                       (canonical(dict(source, **update)).decode(), key))
+            _insert_event(db, dict(kind=event, run=run_id, node=source['node'], activation=key,
+                                   state=update['state'], iteration_path=source['iteration_path'], at=time.time()))
+        for key in ('worker', 'worker_bound_seq', 'worker_entered_seq', 'worker_entered_at',
+                    'worker_published_at', 'reason', 'finished_at'):
+            row.pop(key, None)
+        row.update(state='QUEUED', launch_state='RESUME_RESERVED',
+                   worker_generation=row.get('worker_generation', 0) + 1,
+                   worker_resume_at=time.time(), worker_previous_owner=previous_worker)
+        row['worker_resume_seq'] = _insert_event(db, _resume_event(row, original))
+        _save_run(db, row)
 
 
 def _unpublished(row):

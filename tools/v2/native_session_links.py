@@ -9,7 +9,7 @@ from studio.graph import Invalid
 from studio.session_sources import UUID, scan
 
 from .native_sessions import FILE_BYTES, LINE_BYTES
-from .recovery import read_completion
+from .recovery import frozen_node, read_completion
 
 
 def claim_key(config_root, sid, provider='codex'):
@@ -34,13 +34,26 @@ def workflow_use(store, db, chat, config_root, sid, provider, *, creation=False)
         raise ValueError()
     activation = activations[0]
     workspace = store.workspace(run['workspace'])
-    frozen = definition['bindings'][chat['node']]
+    chat_key_fields = [run['id'], chat['node']]
+    if definition.get('designer_runtime') == 1:
+        from .runtime import activation_binding
+        iterations = activation['iteration_path']
+        if (run.get('designer_runtime') != 1 or chat.get('activation') != activation['id']
+                or not isinstance(iterations, list) or len(iterations) != chat['node'].count('/')
+                or any(type(value) is not int or value < 1 for value in iterations)
+                or activation['id'] != digest(canonical([*chat_key_fields, iterations]))):
+            raise ValueError()
+        if iterations:
+            chat_key_fields.append(iterations)
+        frozen = activation_binding(definition, activation)
+    else:
+        frozen = definition['bindings'][chat['node']]
     actual = chat['binding']
     cwd = frozen.get('cwd', workspace['path'])
     if (digest(canonical({key: value for key, value in definition.items() if key != 'id'})) != run['definition_id']
             or definition['id'] != run['definition_id'] or definition['workspace'] != workspace['id']
             or run['draft_id'] != definition['draft_id'] or chat['workspace'] != workspace['id']
-            or chat['id'] != digest(canonical([run['id'], chat['node']]))
+            or chat['id'] != digest(canonical(chat_key_fields))
             or chat['native_session_id'] != sid
             or activation['run'] != run['id'] or activation['node'] != chat['node']
             or activation['chat_key'] != chat['id'] or activation['observed_session'] != sid
@@ -63,7 +76,9 @@ def workflow_use(store, db, chat, config_root, sid, provider, *, creation=False)
     process = next(step for step in steps if step['id'] == receipt['process']['operation_id'])
     if receipt['session_id'] != sid or process['data']['cwd'] != cwd:
         raise ValueError()
-    node = next(node for node in definition['graph']['nodes'] if node['id'] == chat['node'] and node['kind'] == 'agent')
+    node = frozen_node(definition, chat['node'])
+    if node['kind'] != 'agent':
+        raise ValueError()
     return run, definition, node, activation, receipt, frozen, cwd
 
 
@@ -87,7 +102,7 @@ def verified_workflow(store, config_root, sid, provider='codex'):
         return dict(workspace=run['workspace'], cwd=cwd, home=frozen['home'],
                     group=digest(canonical(['v2-workflow-session-group', run['workspace'], definition['draft_id']])),
                     workflow=safe_text(definition['draft_document']['name'])[:160], agent=safe_text(node['name'])[:160],
-                    run=run['id'], activation=activation['id'], node=node['id'], history=history)
+                    run=run['id'], activation=activation['id'], node=activation['node'], history=history)
     except (OSError, ValueError, TypeError, KeyError, StopIteration, Blocked, Invalid):
         raise SessionRefused('RECOVERY_REQUIRED') from None
 

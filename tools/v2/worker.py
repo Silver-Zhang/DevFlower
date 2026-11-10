@@ -1,4 +1,4 @@
-"""Detached, one-owner V2 scheduler worker; never resumes an ambiguous run."""
+"""Detached, one-owner V2 scheduler worker with a durable entry handshake."""
 import argparse
 import os
 from pathlib import Path
@@ -37,7 +37,12 @@ def main():
         except Blocked:
             return 1
         rt = V2Runtime(store, a.codex_cli, worker_run=a.run)
-        Scheduler(rt, a.run, executor=rt.native_turn).run_graph()
+        if row.get('designer_runtime') == 1:
+            from v2.designer_scheduler import DesignerScheduler
+            scheduler = DesignerScheduler
+        else:
+            scheduler = Scheduler
+        scheduler(rt, a.run, executor=rt.native_turn).run_graph()
     return 0
 
 

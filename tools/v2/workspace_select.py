@@ -25,7 +25,7 @@ STATE_FILES = SIDECARS | {MAIN, JOURNAL, 'v2-service.lock', '.native-metadata-pr
 
 
 def state_file_allowed(name):
-    return name in STATE_FILES or re.fullmatch(r'[0-9a-f]{32}\.worker\.lock|recovery-[0-9a-f]{64}\.json', name)
+    return name in STATE_FILES or re.fullmatch(r'[0-9a-f]{32}\.(?:worker|resume)\.lock|recovery-[0-9a-f]{64}\.json', name)
 
 
 class WorkspaceDatabaseConflict(Conflict):
