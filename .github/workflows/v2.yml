@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_drafts v2_canvas_structure v2_designer_runtime v2_designer_recovery v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination v2_session_identity v2_session_lease v2_native_writer_state v2_session_operations v2_codex_terminals v2_cli_providers v2_claude_native_catalog v2_agent_records v2_codex_agent_scope v2_codex_agent_plan v2_claude_agent_scope v2_native_sessions v2_native_session_views v2_native_session_pages v2_native_session_activity v2_draft_transfer v2_run_summary v2_launch_event v2_provider_catalog v2_worker_facts; do
+          for suite in v2_drafts v2_run_inspector v2_canvas_structure v2_designer_runtime v2_designer_recovery v2_project_files v2_execution v2_execution_http v2_recovery v2_process_recovery v2_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination v2_session_identity v2_session_lease v2_native_writer_state v2_session_operations v2_codex_terminals v2_cli_providers v2_claude_native_catalog v2_agent_records v2_codex_agent_scope v2_codex_agent_plan v2_claude_agent_scope v2_native_sessions v2_native_session_views v2_native_session_pages v2_native_session_activity v2_draft_transfer v2_run_summary v2_launch_event v2_provider_catalog v2_worker_facts; do
             if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/v2-evidence/$suite.log" 2>&1; then
               printf '%s exit=0\n' "$suite"
             else
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for suite in v2_browser v2_designer_runtime_browser v2_execution_browser v2_recovery_browser v2_native_sessions_browser v2_native_session_views_browser v2_native_session_pages_browser v2_native_session_list_browser v2_native_session_markdown_browser v2_native_session_activity_browser v2_native_session_send_browser v2_draft_transfer_browser v2_run_summary_browser v2_provider_catalog_browser; do
+          for suite in v2_browser v2_run_inspector_browser v2_designer_runtime_browser v2_execution_browser v2_recovery_browser v2_native_sessions_browser v2_native_session_views_browser v2_native_session_pages_browser v2_native_session_list_browser v2_native_session_markdown_browser v2_native_session_activity_browser v2_native_session_send_browser v2_draft_transfer_browser v2_run_summary_browser v2_provider_catalog_browser; do
             if python3 -B "tests/$suite.py" --artifacts "$RUNNER_TEMP/v2-evidence/$suite" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE"; then
               :
             else

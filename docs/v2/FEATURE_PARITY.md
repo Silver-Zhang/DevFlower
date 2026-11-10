@@ -17,8 +17,8 @@
 | Agent 与 Provider | 15 | 6 | 7 | 2 | 40.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
-| 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **49** | **18** | **20** | **56.3%** |
+| 运行监控与研发自动化 | 15 | 5 | 2 | 8 | 33.3% |
+| **合计** | **87** | **50** | **17** | **20** | **57.5%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -209,8 +209,8 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 |---|---|---|---|---|---|---|
 | O01 | 真实节点状态与画布显示 | `tools/studio/workbench_ui/RuntimeOverview.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 状态来源运行事实，不是动画猜测 |
 | O02 | 运行列表与历史详情 | `tools/studio/workbench_ui/RunJournal.jsx` | `tools/v2/run_summary.py` | C | P0 | 刷新只读、不重发 |
-| O03 | 逐事件日志与完整追踪 | `tools/studio/run_journal.py` | `tools/v2/run_summary.py` | P | P1 | 事件序列、失败原因和导出一致 |
-| O04 | 节点实际请求和回执检查器 | `tools/studio/workbench_ui/trace_views.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 已发送请求与回执身份可对应 |
+| O03 | 逐事件日志与完整追踪 | `tools/studio/run_journal.py` | `tools/v2/run_inspector.py`、`tools/v2/ui/RunInspector.jsx` | C | P1 | 分页按运行与激活隔离，日志与详情导出提供公开数据哈希及缺项标记 |
+| O04 | 节点实际请求和回执检查器 | `tools/studio/workbench_ui/trace_views.jsx` | `tools/v2/ui/RunInspector.jsx`、`tools/v2/ui/index.jsx` | C | P0 | 已发送请求、回执、轮次、耗时与激活身份可对应；长公开数据按哈希分页 |
 | O05 | 点击连线查看真实交接 | `tools/studio/workbench_ui/HandoffEdge.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 实际边/源/目的 activation 一致 |
 | O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | — | M | P1 | 独立会话问答，不冒充运行 |
 | O07 | AI 配置工作流提案和预览 | `tools/studio/configuration_assistant.py` | — | M | P1 | 提案可人工预览应用，不能代授权 |
@@ -222,6 +222,13 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx` | `tools/v2/ui/style.css` | P | P1 | 模块级操作与 1280/1440/窄屏评分 |
 | O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | — | M | P1 | 真实日志和键盘接管，不启动第二写者 |
 | O15 | 完整自举研发场景验证 | `#132` | — | M | P0 | 真实 Codex 开发-测试-Claude 审核-修复闭环 |
+
+#### Phase 6 Batch 1 运行检查器证据
+
+C 独立验收通过 `92c3fa2a40b7f7e625ec9984af8ba371d7695216`，tree `2c25f21000c9b3a14496d3f2942cc59858be0274`。UI 定向评分 81/100。真实 Codex 与 Claude Code 运行验证了实际请求、原生回执、交接边及导出的运行身份。实时状态、超长字段、多页事件、跨工作区拒绝、脱敏和无重放另用合成夹具验证。真实付费 Provider 故障与真实模型循环轮次的浏览器比对未纳入该候选证据。
+
+运行详情按公开字段投影，历史事件在缺少确切关联时明确标示。原有运行摘要继续作为独立的轻量导出。详情导出记录快照时点、缺项和载荷上限，公开视图哈希与实际发送哈希分别呈现。
+
 
 ## 迁移与实施规则
 
