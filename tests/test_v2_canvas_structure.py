@@ -61,7 +61,7 @@ class CanvasStructureTests(TestCase):
         with self.assertRaises(Conflict):
             self.store.save(self.workspace, first['id'], first['revision'], doc)
         issues = check_chain(doc)['issues']
-        self.assertTrue(any(item.get('code') == 'RUNTIME_NODE_UNAVAILABLE' for item in issues))
+        self.assertTrue(any(item.get('code') == 'RUNTIME_TOOL_UNAVAILABLE' for item in issues))
         self.assertTrue(any(item.get('code') == 'RUNTIME_GRAPH_UNCONNECTED' for item in issues))
 
     def test_typed_invalid_versions_ports_graph_and_permissions_are_rejected(self):
@@ -110,7 +110,7 @@ class CanvasStructureTests(TestCase):
         self.start_server(runtime)
         ref = dict(id='Agent', name='Unresolved fixture', position=dict(x=0, y=0), agent_id='1'*32, agent_revision='2'*64)
         values = [
-            graph([node('Tool', 'tool'), ref]),
+            graph([node('Tool', 'tool', tool='command', permission='workspace-write'), ref]),
             graph([node('A', 'agent'), node('B', 'agent')], [edge('e1', 'A', 'B', transfer={'mode':'result','max_chars':16000})]),
         ]
         with patch.object(runtime, 'spawn', Mock(side_effect=AssertionError('never spawn'))) as spawn:
@@ -125,7 +125,7 @@ class CanvasStructureTests(TestCase):
                 code, result = self.request('launch', dict(workspace=self.workspace, draft_id=row['id'], revision=row['revision'],
                     intent_key=f'phase4-refuse-intent-{index}', task=''))
                 self.assertEqual(code, 400)
-                self.assertIn('已保存配置版本' if index else '执行尚未接入', result['error'])
+                self.assertIn('已保存配置版本' if index else '仅支持固定工作区文件', result['error'])
             spawn.assert_not_called()
         for kind in ('run', 'activation', 'definition', 'native-step'):
             self.assertEqual(self.store.db.list(kind), [])

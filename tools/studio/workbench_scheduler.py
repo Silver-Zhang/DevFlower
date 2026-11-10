@@ -41,6 +41,12 @@ def writes(node):
     if node['kind']=='delivery':return True
     return node['kind']=='agent' and node.get('permission','workspace-write' if node.get('mode')=='Agent' else 'read')=='workspace-write'
 
+def merge_output(inputs):
+    answers = [str(item['content'].get('answer', item['content'])) if isinstance(item['content'], dict)
+               else str(item['content']) for item in inputs]
+    return {'answer': '\n\n'.join(answers), 'result': {'inputs': inputs}, 'sources': inputs}
+
+
 def has_delivery(graph):
     return any(n['kind']=='delivery' or n['kind']=='loop' and has_delivery(n['body']) for n in graph['nodes'])
 
@@ -306,7 +312,7 @@ class Scheduler:
                 decision=dict(field=test.get('field','result.accepted'),op=test.get('op','equals'),matched=matched,missing=missing,reason='字段缺失或为空，按配置走 ELSE' if missing else '字段比较满足条件' if matched else '字段比较不满足条件')
                 output=dict(upstream,condition=matched,condition_reason=decision['reason'])
                 self.db.change('activation',key,{'condition_decision':decision},event={'kind':'condition-decided','decision':decision})
-            elif kind == 'merge': output = {'answer': '\n\n'.join(str(x['content'].get('answer', x['content'])) if isinstance(x['content'], dict) else str(x['content']) for x in inputs), 'result': {'inputs': inputs}, 'sources': inputs}
+            elif kind == 'merge': output = merge_output(inputs)
             elif kind in ('result', 'output'): output = upstream
             elif kind == 'human':
                 answer = self.db.get('activation', key).get('human_answer')

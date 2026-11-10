@@ -9,7 +9,9 @@ from .canvas_structure import (EDGE_EXTENSION, ID, TRANSFER_MODES, TYPES, config
                                fields, node_kind, number, text, validate_config)
 
 MAX_BYTES = 400000
-def validate_draft(document):
+def validate_draft(document, *, depth=0):
+    if depth > 2:
+        raise Invalid('循环子流程最多嵌套两层。')
     fields(document, {'version', 'name', 'nodes', 'edges', 'viewport'}, {'version', 'name', 'nodes', 'edges'})
     if type(document['version']) is not int or document['version'] != 1:
         raise Invalid('请选择 V2 草稿格式 version 1；旧工作流不会自动迁移')
@@ -58,6 +60,8 @@ def validate_draft(document):
             number(value, -100000, 100000)
         if kind != 'agent':
             validate_config(node)
+            if kind == 'loop' and 'body' in node['config']:
+                validate_draft(node['config']['body'], depth=depth + 1)
             continue
         if reference:
             if any(not isinstance(node.get(key), str) or not re.fullmatch(r'[0-9a-f]{' + str(length) + '}', node[key])

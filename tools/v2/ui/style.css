@@ -368,3 +368,8 @@
  .v2-app > .inspector { z-index:8;top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:54dvh;border:1px solid var(--studio-line-strong);border-radius:10px; }
  .inspector-content { min-height:0; }
 }
+
+.run-summary:has(.approval-wait){max-height:min(280px,40vh)}
+.approval-wait{padding:10px 0 0;margin-top:8px;border-top:1px solid var(--studio-line);overflow-wrap:anywhere}
+.approval-wait h3{margin:0;font-size:13px}
+.approval-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}

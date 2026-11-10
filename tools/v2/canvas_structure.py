@@ -167,6 +167,9 @@ def validate_config(node):
             text(value, 20000, setting['label'])
         elif setting['type'] == 'predicate':
             validate_expression(value)
+        elif setting['type'] == 'graph':
+            if not isinstance(value, dict):
+                raise Invalid('循环子流程需要一个 V2 草稿对象。')
         elif setting['type'] == 'integer':
             if type(value) is not int:
                 raise Invalid(setting['label'] + '需要整数。')
@@ -202,6 +205,9 @@ def config_issues(node):
                     if problem := predicate_issue(test):
                         issues.append((key, problem))
                         break
+        elif setting['type'] == 'graph':
+            if setting.get('required') and not config.get(key):
+                issues.append((key, '请选择已保存的循环子流程。'))
         elif setting.get('required') and not config.get(key, '').strip():
             issues.append((key, '请填写' + setting['label'] + '。'))
     if kind == 'start' and config.get('initial_data', '').strip():
@@ -234,36 +240,4 @@ def config_issues(node):
         scopes = ('workspace-read', 'workspace-write') if config['tool'] == 'read-file' else ('workspace-write',)
         if config.get('permission', 'none') not in scopes:
             issues.append(('permission', '选择与工具一致的工作区权限。'))
-    return issues
-
-
-def port_issues(document):
-    connected_in, connected_out = {}, set()
-    for edge in document['edges']:
-        source, source_port, target, target_port = endpoints(edge)
-        connected_out.add((source, source_port))
-        connected_in[(target, target_port)] = connected_in.get((target, target_port), 0) + 1
-    issues = []
-    for node in document['nodes']:
-        kind = node_kind(node)
-        if kind == 'agent':
-            continue
-        ident = node['id']
-        inputs, outputs = node_ports(node)
-        for port, label in inputs.items():
-            if connected_in.get((ident, port), 0) < (2 if kind == 'merge' else 1):
-                issues.append(dict(node_id=ident, message=node['name'] + '：输入端口“' + label + '”缺少上游连线。'))
-        for port, label in outputs.items():
-            if (ident, port) not in connected_out:
-                issues.append(dict(node_id=ident, message=node['name'] + '：输出端口“' + label + '”尚未连接。'))
-    return issues
-
-
-def runtime_issues(document):
-    issues = [dict(node_id=node['id'], code='PHASE5_NODE', message=node['name'] + '：' + TYPES[node_kind(node)]['label'] +
-                   '已可编辑；执行由 Phase 5 接入。')
-              for node in document['nodes'] if node_kind(node) != 'agent']
-    for edge in document['edges']:
-        if edge.get('transfer', DEFAULT_TRANSFER) != DEFAULT_TRANSFER:
-            issues.append(dict(edge_id=edge['id'], code='PHASE5_TRANSFER', message='自定义交接已可编辑；执行由 Phase 5 接入。'))
     return issues

@@ -1,6 +1,7 @@
 """Typed graph dispatch over the V2 run, activation and event records."""
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import time
 
 from orchestration.common import Blocked, canonical, digest
@@ -8,9 +9,9 @@ from orchestration.process import group_alive
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
 from studio.workbench_data import public_data
-from studio.workbench_scheduler import Scheduler, writes
+from studio.workbench_scheduler import Scheduler, merge_output, writes
 
-from .designer_graph import handoff, input_value, output_node, select_branch
+from .designer_graph import condition, handoff, input_value, output_node, select_branch
 
 TERMINAL = {'COMPLETED', 'FAILED', 'SKIPPED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 PENDING = {'PENDING', 'READY', 'WAITING'}
@@ -20,13 +21,44 @@ def activation_key(run, path, iteration_path):
     return digest(canonical([run, path, iteration_path]))
 
 
+def choose_inputs(incoming, upstream, strategy=None):
+    def eligible(edge):
+        row = upstream[edge['source']]
+        port = edge.get('source_port')
+        return row['state'] == 'COMPLETED' and row.get('selected_port', port) == port
+
+    if strategy == 'any':
+        for edge in incoming:
+            row = upstream[edge['source']]
+            if row['state'] not in TERMINAL:
+                return [row['node']], [], None
+            if eligible(edge):
+                return [], [edge], None
+        return [], [], 'ANY 汇合没有成功的上游输入。'
+
+    waiting = [upstream[edge['source']]['node'] for edge in incoming
+               if upstream[edge['source']]['state'] not in TERMINAL]
+    if waiting:
+        return waiting, [], None
+    chosen = [edge for edge in incoming if eligible(edge)]
+    if any(upstream[edge['source']]['state'] in ('FAILED', 'CANCELLED') for edge in incoming):
+        return [], [], '上游未成功完成。'
+    if strategy == 'all' and len(chosen) != len(incoming):
+        return [], [], 'ALL 汇合缺少已选中的上游输入。'
+    if incoming and not chosen:
+        return [], [], '此分支未被选中。'
+    return [], chosen, None
+
+
 class DesignerScheduler(Scheduler):
     def run_graph(self):
         try:
             self.rt.check_operator()
             run = self.controls()
+            self.workspace = run.get('workspace')
             resumed = run.get('worker_generation', 0) > 0
-            self.db.change('run', self.run, {'state': 'RUNNING'},
+            initial_state = 'PAUSED' if run.get('paused') else 'WAITING_CONFIRMATION' if run.get('waiting_approval') else 'RUNNING'
+            self.db.change('run', self.run, {'state': initial_state},
                            event={'kind': 'designer-worker-reentered' if resumed else 'run-started'})
             self.active = {}
             with ThreadPoolExecutor(max_workers=2, thread_name_prefix='df-v2-agent') as self.pool:
@@ -34,16 +66,26 @@ class DesignerScheduler(Scheduler):
                 while True:
                     control = self.controls()
                     self.collect()
-                    if not control.get('paused'):
+                    if control.get('stop_reason'):
+                        raise Blocked(control['stop_reason'])
+                    if control.get('waiting_approval'):
+                        self.advance_approval(control['waiting_approval'])
+                    elif not control.get('paused'):
                         done, output = self.tick(run['graph'], '', [], seed)
                         if done:
                             if output is None:
                                 raise Blocked('没有可达的成功输出。')
                             break
                     time.sleep(.05)
-            self.finish_run('COMPLETED', output=output)
+            failures = [row['id'] for row in self.db.list('activation')
+                        if row['run'] == self.run and row['state'] == 'FAILED']
+            self.finish_run('COMPLETED', output=output, partial_failures=failures)
         except (Blocked, Invalid, OSError, ValueError, KeyError) as failure:
             self.finish_failure(failure)
+        except Exception as failure:
+            from studio.workbench_failures import abort_unexpected
+            abort_unexpected(self.rt, self.run, failure)
+            raise
 
     def finish_run(self, state, **data):
         with self.db.tx() as tx:
@@ -68,13 +110,15 @@ class DesignerScheduler(Scheduler):
                     self.transition(row, 'RECOVERY_REQUIRED', reason='原生效果待核验。')
                 else:
                     self.transition(row, 'CANCELLED' if state == 'CANCELLED' else 'SKIPPED', reason='运行已停止调度。')
-        self.finish_run(state, reason=safe_text(str(failure)))
+        self.finish_run(state, reason=safe_text(str(failure)), waiting_approval=None)
 
     def collect(self):
         for key, (future, _) in list(self.active.items()):
             if future.done():
                 future.result()
                 del self.active[key]
+                if self.db.get('activation', key)['state'] == 'RECOVERY_REQUIRED':
+                    raise Blocked('存在未确认的 Provider 效果，已停止后续调度。')
 
     def graph_rows(self, graph, prefix, iteration_path):
         iteration = iteration_path[-1] if iteration_path else 0
@@ -117,7 +161,28 @@ class DesignerScheduler(Scheduler):
                               event=dict(kind=event_kind or name, state=state, activation=row['id'],
                                          iteration_path=row['iteration_path'], **(
                                             {'decision': updates['decision'], 'port': updates['selected_port']}
-                                            if 'decision' in updates else {})))
+                                            if 'decision' in updates else {}),
+                                         **{key: updates[key] for key in ('loop_round', 'loop_exit', 'merge_policy',
+                                            'merge_activations') if key in updates}))
+
+    def ready(self, row, node, inputs, expected):
+        now = time.time()
+        with self.db.tx() as tx:
+            current = json.loads(tx.execute("SELECT data FROM records WHERE kind='activation' AND id=?",
+                                            (row['id'],)).fetchone()[0])
+            if current['state'] not in ('PENDING', 'WAITING') or current['id'] != row['id']:
+                raise Blocked('激活状态已变化，未重复准备交接。')
+            current.update(state='READY', waiting=[], inputs=inputs, expected=expected, received=len(inputs))
+            tx.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",
+                       (canonical(current).decode(), row['id']))
+            event = dict(run=self.run, node=row['node'], activation=row['id'], iteration_path=row['iteration_path'], at=now)
+            tx.execute('INSERT INTO events(run,data) VALUES(?,?)', (self.run, canonical(dict(
+                event, kind='node-ready', state='READY')).decode()))
+            for item in inputs:
+                data = dict(event, **item, kind='handoff-ready' if node['kind'] == 'agent' else 'handoff-received')
+                data['activation'] = item['activation']
+                tx.execute('INSERT INTO events(run,data) VALUES(?,?)', (self.run, canonical(data).decode()))
+        return current
 
     def tick(self, graph, prefix, iteration_path, seed):
         nodes = {n['id']: n for n in graph['nodes']}
@@ -133,43 +198,154 @@ class DesignerScheduler(Scheduler):
             state = row['state']
             if state in TERMINAL:
                 continue
+            if state == 'RUNNING' and node['kind'] == 'loop':
+                self.advance_loop(node, row, prefix)
+                continue
+            if state == 'WAITING_CONFIRMATION' and node['kind'] == 'human':
+                continue
             if state in ('RUNNING', 'STARTING'):
                 if row['id'] not in self.active:
                     raise Blocked('执行中的激活缺少当前所有权；不会重发。')
                 continue
             if state not in PENDING:
                 raise Blocked('当前激活状态无法安全调度。')
-            incoming = [edge for edge in graph['edges'] if edge['target'] == ident]
-            waiting = [rows[edge['source']]['node'] for edge in incoming if rows[edge['source']]['state'] not in TERMINAL]
-            if waiting:
-                if state != 'WAITING' or waiting != row.get('waiting'):
-                    self.transition(row, 'WAITING', waiting=waiting, expected=len(incoming))
-                continue
-            eligible = [edge for edge in incoming if rows[edge['source']]['state'] == 'COMPLETED'
-                        and rows[edge['source']].get('selected_port', edge.get('source_port')) == edge.get('source_port')]
-            failed = [edge for edge in incoming if rows[edge['source']]['state'] in ('FAILED', 'CANCELLED')]
-            if failed or incoming and not eligible:
-                reason = '上游未成功完成。' if failed else '此分支未被选中。'
-                self.transition(row, 'SKIPPED', reason=reason)
-                continue
+            if state != 'READY':
+                incoming = [edge for edge in graph['edges'] if edge['target'] == ident]
+                waiting, eligible, reason = choose_inputs(incoming, rows, node.get('strategy'))
+                if waiting:
+                    if state != 'WAITING' or waiting != row.get('waiting'):
+                        self.transition(row, 'WAITING', waiting=waiting, expected=len(incoming))
+                    continue
+                if reason:
+                    self.transition(row, 'SKIPPED', reason=reason, finished_at=time.time())
+                    continue
+                try:
+                    inputs = self.inputs(row, eligible, rows)
+                except (Invalid, ValueError) as failure:
+                    self.transition(row, 'FAILED', reason=safe_text(str(failure)), finished_at=time.time())
+                    continue
+                row = self.ready(row, node, inputs, len(incoming))
             if node['kind'] == 'agent' and not self.can_dispatch(node):
                 continue
-            try:
-                inputs = self.inputs(row, eligible, rows)
-            except (Invalid, ValueError) as failure:
-                self.transition(row, 'FAILED', reason=safe_text(str(failure)), finished_at=time.time())
-                continue
-            if state != 'READY':
-                row = self.transition(row, 'READY', waiting=[], inputs=inputs, expected=len(incoming), received=len(inputs))
-            started = self.transition(row, 'STARTING', started_at=time.time())
-            for item in inputs:
-                self.db.event(self.run, 'handoff-ready' if node['kind'] == 'agent' else 'handoff-received',
-                              node=started['node'], **item)
-            if node['kind'] == 'agent':
+            inputs = row['inputs']
+            if node['kind'] == 'human':
+                self.begin(row, approval=node)
+                return False, None
+            started = self.begin(row)
+            if not started:
+                return False, None
+            if node['kind'] == 'loop':
+                self.transition(started, 'RUNNING', loop_round=0, loop_seed=input_value(inputs, seed), loop_results=[])
+            elif node['kind'] == 'agent':
                 self.active[row['id']] = (self.pool.submit(self.execute, node, started, inputs, prefix, seed), node)
             else:
                 self.execute(node, started, inputs, prefix, seed)
         return False, None
+
+    def begin(self, row, approval=None):
+        with self.db.tx() as tx:
+            run = self.record(tx, 'run', self.run)
+            if any(run.get(key) for key in ('paused', 'waiting_approval', 'cancel_requested', 'stop_reason')):
+                return None
+            for key in self.active:
+                if self.record(tx, 'activation', key)['state'] == 'RECOVERY_REQUIRED':
+                    raise Blocked('存在未确认的 Provider 效果，已停止后续调度。')
+            current = self.record(tx, 'activation', row['id'])
+            if current != row or row['state'] != 'READY':
+                raise Blocked('激活状态已变化，未重复调度。')
+            now = time.time()
+            current.update(state='STARTING', started_at=now)
+            event = 'node-starting'
+            if approval is not None:
+                current.update(state='WAITING_CONFIRMATION', question=approval['question'], policy=approval['policy'],
+                               approval_deadline=now + approval['timeout'])
+                run.update(state='WAITING_CONFIRMATION', waiting_approval=row['id'])
+                self.write(tx, 'run', run)
+                event = 'human-confirmation-required'
+            self.write(tx, 'activation', current)
+            self.control_event(tx, current, event, now)
+        return current
+
+    @staticmethod
+    def record(tx, kind, key):
+        return json.loads(tx.execute('SELECT data FROM records WHERE kind=? AND id=?', (kind, key)).fetchone()[0])
+
+    @staticmethod
+    def write(tx, kind, row):
+        tx.execute('UPDATE records SET data=? WHERE kind=? AND id=?', (canonical(row).decode(), kind, row['id']))
+
+    def control_event(self, tx, row, kind, now, **details):
+        tx.execute('INSERT INTO events(run,data) VALUES(?,?)', (self.run, canonical(dict(
+            kind=kind, run=self.run, node=row['node'], activation=row['id'], iteration_path=row['iteration_path'],
+            state=row['state'], at=now, **details)).decode()))
+
+    def advance_approval(self, key):
+        failure = None
+        with self.db.tx() as tx:
+            run = self.record(tx, 'run', self.run)
+            row = self.record(tx, 'activation', key)
+            if run.get('cancel_requested'):
+                return
+            if run.get('waiting_approval') != key or row['state'] != 'WAITING_CONFIRMATION':
+                raise Blocked('审批检查点与运行身份不同。')
+            decision = row.get('approval_decision')
+            now = time.time()
+            if not decision and now < row['approval_deadline']:
+                return
+            if decision and (not isinstance(decision, dict) or decision.get('decision') not in ('approve', 'reject')
+                             or (decision.get('actor'), decision.get('run'), decision.get('activation')) != (
+                                 f'local-user:{os.geteuid()}', self.run, key)
+                             or decision.get('definition_id') != run['definition_id']
+                             or decision.get('workspace') != run['workspace']
+                             or type(decision.get('at')) not in (float, int)
+                             or not row['started_at'] <= decision['at'] < row['approval_deadline']):
+                raise Blocked('持久审批记录与本机操作或激活身份不同。')
+            if decision and decision['decision'] == 'approve':
+                # Only persisted, authenticated human decisions can unblock a run.
+                output = input_value(row['inputs'], {'answer': '', 'result': {}})
+                row.update(state='COMPLETED', output=public_data(output), selected_port='approved', finished_at=now)
+                event = 'human-approved'
+            else:
+                failure = '用户拒绝审批，已停止后续调度。' if decision else '人工审批已超时，已停止后续调度。'
+                row.update(state='FAILED', reason=failure, finished_at=now)
+                run['stop_reason'] = failure
+                event = 'human-rejected' if decision else 'human-timeout'
+            run.update(waiting_approval=None, state='PAUSED' if run.get('paused') else 'RUNNING')
+            self.write(tx, 'activation', row)
+            self.write(tx, 'run', run)
+            self.control_event(tx, row, event, now, approval_decision=decision)
+        if failure:
+            raise Blocked(failure)
+
+    def advance_loop(self, node, row, prefix):
+        results = row['loop_results']
+        round_number = row['loop_round']
+        if round_number == len(results):
+            if results and (results[-1]['decision']['matched'] or round_number == node['max_rounds']):
+                exit_reason = 'condition' if results[-1]['decision']['matched'] else 'limit'
+                output = public_data(dict(row['loop_seed'], loop={'rounds': results, 'exit': exit_reason}))
+                self.transition(row, 'COMPLETED', event_kind='loop-completed', output=output,
+                                loop_exit=exit_reason, finished_at=time.time())
+                return
+            round_number += 1
+            row = self.transition(row, 'RUNNING', event_kind='loop-round-started', loop_round=round_number)
+        if round_number != len(results) + 1 or round_number > node['max_rounds']:
+            raise Blocked('循环检查点轮次无效。')
+        path = [*row['iteration_path'], round_number]
+        done, output = self.tick(node['body'], prefix + node['id'] + '/', path, row['loop_seed'])
+        if not done:
+            return
+        try:
+            if output is None:
+                raise Invalid('循环子图没有成功输出。')
+            decision = condition(output, node['until'])
+        except Invalid as failure:
+            self.transition(row, 'FAILED', reason=safe_text(str(failure)), finished_at=time.time())
+            return
+        record = dict(round=round_number, iteration_path=path, decision=decision,
+                      input_sha256=digest(canonical(row['loop_seed'])), output_sha256=digest(canonical(output)))
+        self.transition(row, 'RUNNING', event_kind='loop-round-completed', loop_seed=output,
+                        loop_results=[*results, record], loop_round=round_number)
 
     def can_dispatch(self, node):
         return len(self.active) < 2 and not any(writes(other) for _, other in self.active.values()) and (
@@ -198,11 +374,26 @@ class DesignerScheduler(Scheduler):
             if node['kind'] == 'agent':
                 output = self.executor(node, row['id'], inputs, prefix, row['iteration'])
             elif node['kind'] == 'start':
-                output = dict(seed, result=node['initial_data']) if 'initial_data' in node else dict(seed)
+                output = dict(seed)
+                if 'initial_data' in node:
+                    output['initial_data' if row['iteration_path'] else 'result'] = node['initial_data']
                 if node.get('input_instructions'):
                     output['instructions'] = node['input_instructions']
+            elif node['kind'] == 'tool':
+                from pathlib import Path
+                from orchestration.privacy import credentials, redact
+                from .project_files import read_project
+                value = read_project(self.rt.store, self.workspace, node['path'], preview=True)
+                text = redact(value['text'], credentials(Path.home()))
+                output = {'answer': text, 'result': {'text': text, 'path': value['path'], 'readonly': True}}
             elif node['kind'] == 'result':
                 output = output_node(node, input_value(inputs, seed))
+                if node.get('output_instructions'):
+                    evidence['output_instructions'] = safe_text(node['output_instructions'])
+            elif node['kind'] == 'merge':
+                output = merge_output([item for item in inputs if item['fields'] != 'none'])
+                evidence = dict(merge_policy=node['strategy'], merge_activations=[item['activation'] for item in inputs])
+                event_kind = 'merge-completed'
             elif node['kind'] in ('condition', 'router', 'validation'):
                 output = input_value(inputs, seed)
                 port, decision, event_kind = select_branch(node, output)

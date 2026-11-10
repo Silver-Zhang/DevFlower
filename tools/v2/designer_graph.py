@@ -1,16 +1,25 @@
 """Normalize V2 canvas documents for the typed scheduler."""
+from orchestration.common import Blocked
 from studio.graph import Invalid
 from studio.workbench_graph import field, predicate, transfer
 from studio.workbench_data import public_data, public_field
 
 from .canvas_structure import DEFAULT_TRANSFER, config_issues, node_kind, node_ports
 
-SUPPORTED = {'start', 'agent', 'output', 'condition', 'router', 'validation'}
+SUPPORTED = {'start', 'agent', 'output', 'condition', 'router', 'validation', 'merge', 'loop', 'approval', 'tool'}
 
 
 def is_designer_graph(document):
     return (any(node_kind(node) != 'agent' for node in document['nodes'])
             or any(edge.get('transfer', DEFAULT_TRANSFER) != DEFAULT_TRANSFER for edge in document['edges']))
+
+
+def document_nodes(document, prefix=''):
+    for node in document['nodes']:
+        path = prefix + node['id']
+        yield path, node
+        if node_kind(node) == 'loop' and node['config'].get('body'):
+            yield from document_nodes(node['config']['body'], path + '/')
 
 
 def graph_issues(document):
@@ -32,6 +41,23 @@ def graph_issues(document):
                 issues.append(dict(node_id=node['id'], message=node['name'] + '：请完成 Provider、模型和提示词配置。'))
         issues.extend(dict(node_id=node['id'], field=field, message=node['name'] + '：' + problem)
                       for field, problem in config_issues(node))
+        if kind == 'loop' and (body := node['config'].get('body')):
+            for issue in graph_issues(body):
+                path = node['id'] + '/' + issue['node_id'] if issue.get('node_id') else node['id']
+                issues.append(dict(issue, node_id=path, message=node['name'] + ' / ' + issue['message']))
+        if kind == 'approval' and node['config'].get('policy', 'single-reviewer') != 'single-reviewer':
+            issues.append(dict(node_id=node['id'], message=node['name'] + '：当前仅支持本机单审核者，无法核验多人审批。'))
+        if kind == 'tool':
+            config = node['config']
+            try:
+                if config.get('tool') != 'read-file' or config.get('permission') != 'workspace-read':
+                    raise Invalid('仅支持固定工作区文件的只读预览。')
+                from .project_files import checked_path
+                if not checked_path(config.get('path', '')).parts:
+                    raise Invalid('请指定固定的工作区相对文件路径。')
+            except (Blocked, Invalid, ValueError) as failure:
+                issues.append(dict(node_id=node['id'], code='RUNTIME_TOOL_UNAVAILABLE',
+                                   message=node['name'] + '：' + str(failure)))
     explicit = any(node_kind(node) != 'agent' for node in nodes)
     incoming = {node['id']: [] for node in nodes}
     outgoing = {node['id']: [] for node in nodes}
@@ -40,10 +66,13 @@ def graph_issues(document):
         outgoing[edge['source']].append(edge['target'])
     for node in nodes:
         kind = node_kind(node)
-        if kind not in ('condition', 'router', 'validation'):
+        if kind == 'merge' and len(incoming[node['id']]) < 2:
+            issues.append(dict(node_id=node['id'], message=node['name'] + '：汇合需要至少两个上游端口连接。'))
+        if kind not in ('condition', 'router', 'validation', 'approval'):
             continue
         connected = {edge.get('source_port', 'out') for edge in edges if edge['source'] == node['id']}
-        required = set(node_ports(node)[1]) - ({'fallback'} if kind == 'router' else set())
+        optional = {'router': {'fallback'}, 'approval': {'rejected'}}.get(kind, set())
+        required = set(node_ports(node)[1]) - optional
         for port in sorted(required - connected):
             issues.append(dict(node_id=node['id'], message=node['name'] + '：请连接分支“' + node_ports(node)[1][port] + '”。'))
     starts = [node['id'] for node in nodes if node_kind(node) == 'start'] if explicit else [
@@ -123,9 +152,9 @@ def condition(value, expression):
     details = []
     def evaluate(test):
         if 'all' in test:
-            return all([evaluate(item) for item in test['all']])
+            return all(evaluate(item) for item in test['all'])
         if 'any' in test:
-            return any([evaluate(item) for item in test['any']])
+            return any(evaluate(item) for item in test['any'])
         if 'not' in test:
             return not evaluate(test['not'])
         path = public_field(test['field'])

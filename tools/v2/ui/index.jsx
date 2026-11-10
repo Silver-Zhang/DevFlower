@@ -20,7 +20,7 @@ import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from '.
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
-import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeKinds, transferModes} from './canvasModel.mjs';
+import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeBlock, transferModes} from './canvasModel.mjs';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}});
@@ -51,11 +51,26 @@ const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
 const stateLabel=state=>({QUEUED:'等待启动',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
-function ControlEvidence({activation,trusted}){
+function ControlEvidence({activation,trusted,nested,definition}){
+ const [chosen,setChosen]=useState('');
+ const child=nested.find(row=>row.id===chosen);
+ const childNode=child?.node.split('/').reduce((parent,id)=>parent?.body?.nodes.find(node=>node.id===id),{body:definition?.graph});
+
  const state=trusted?(activation?.state||'PENDING'):'UNKNOWN';
  return <div className="inspector-content run-evidence">
   <div className="session-note">冻结运行 · {stateLabel(state)}</div>
   {activation?.reason&&<p className="error-text">{activation.reason}</p>}
+  {activation?.decision&&<details><summary>分支判定 · {activation.selected_port}</summary><pre>{readable(activation.decision)}</pre></details>}
+  {activation?.loop_results&&<details open><summary>循环轮次 · {activation.loop_results.length}{activation.loop_exit?' · '+(activation.loop_exit==='limit'?'达到上限':'退出条件命中'):''}</summary>
+   <pre>{readable(activation.loop_results)}</pre></details>}
+  {nested.length>0&&<Field label="子节点与轮次"><select value={child?.id||''} onChange={event=>setChosen(event.target.value)}>
+   <option value="">选择激活记录</option>
+   {nested.map(row=><option key={row.id} value={row.id}>{row.name} · {row.iteration_path.join('.')} · {stateLabel(row.state)}</option>)}
+  </select></Field>}
+  {child&&(child.kind==='agent'?<RunEvidence activation={child} node={childNode||{}} trusted={trusted}/>:
+   <details open><summary>{child.name} · 轮次 {child.iteration_path.join('.')}</summary>
+    <pre>{readable({activation:child.id,state:child.state,inputs:child.inputs,output:child.output,reason:child.reason,approval:child.approval_decision})}</pre>
+   </details>)}
   <h3>持久化输出</h3><pre aria-label="节点输出">{activation?.output?readable(activation.output):'尚无输出'}</pre>
   <details><summary>输入来源与激活身份</summary><pre>{readable(activation?{activation:activation.id,
    inputs:activation.inputs||[],iteration_path:activation.iteration_path}:null)}</pre></details>
@@ -211,6 +226,18 @@ function App(){
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
   if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}}
+ async function controlRun(action,extra={}){
+  const value=runRef.current;
+  if(!value||cancelBusy.current)return;
+  cancelBusy.current=value;setCancelling(true);setError('');
+  try{
+   const result=await api(action,{workspace:value.workspace,run_id:value.id,...extra});
+   if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){
+    runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');
+    refreshRuns();
+   }
+  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}
+ }
  async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
   try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
    const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
@@ -717,7 +744,9 @@ function App(){
  const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const phased=doc.nodes.some(node=>!runtimeKinds.has(nodeKind(node)));
+ const launchBlock=doc.nodes.map(runtimeBlock).find(Boolean);
+ const approval=runSnapshot?.nodes.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
+ const typedActive=runTrusted&&runSnapshot?.run?.designer_runtime===1&&['RUNNING','WAITING_CONFIRMATION','PAUSED'].includes(runSnapshot.state);
  const inlineAgent=doc.nodes.some(node=>nodeKind(node)==='agent'&&!node.agent_id);
  const rfNodes=shown.nodes.map(node=>{
   const value=readOnly?{...(activation(node.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
@@ -757,7 +786,7 @@ function App(){
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
-  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(phased||!doc.nodes.length||!status?.provider_available&&inlineAgent))} title={phased&&!launchAttempt?'当前草稿含尚未接入执行的节点。':status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
+  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))} title={launchBlock&&!launchAttempt?launchBlock:status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
    {workspace&&!readOnly&&<div className="draft-transfer">
     <Button disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
     <Button disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
@@ -766,9 +795,22 @@ function App(){
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
    <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
-   {!readOnly&&phased&&<p className="phase5-note">当前图可以编辑、保存和导出。含尚未接入执行的节点。</p>}
+   {!readOnly&&launchBlock&&<p className="phase5-note">{launchBlock} 当前图仍可编辑、保存和导出。</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
-   {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
+   {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
+   {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
+   {completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
+   {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
+    {runSnapshot.nodes.filter(row=>runSnapshot.run.partial_failures.includes(row.id)).map(row=><p key={row.id}>{row.name} · {row.reason}</p>)}</details>}
+   {approval&&<section className="approval-wait" aria-label="待人工审批"><h3>{approval.name}</h3><p>{approval.question}</p>
+    <p className="field-note">截止 {new Date(approval.approval_deadline*1000).toLocaleTimeString()}。等待期间不会启动后续节点。</p>
+    <details><summary>待审批输入</summary><pre>{readable(approval.inputs)}</pre></details>
+    {approval.approval_decision?<p role="status">已记录决定，正在核验。</p>:<div className="approval-actions">
+     <Button className="primary" disabled={!typedActive||cancelling} onClick={guard(()=>controlRun('approval',{activation:approval.id,decision:'approve'}))}>批准</Button>
+     <Button disabled={!typedActive||cancelling} onClick={guard(()=>controlRun('approval',{activation:approval.id,decision:'reject'}))}>拒绝</Button>
+    </div>}
+   </section>}
+   <details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
@@ -802,14 +844,14 @@ function App(){
      onChoose={kind=>addNode(kind,nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
     {!shown.nodes.length&&<div className="canvas-empty"><span className="empty-icon"><Workflow size={30}/></span><h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1><p>{readOnly?'仅查询持久化结果，不启动或重发请求。':workspace?'从节点库选择类型，或先添加一个 Agent。':'打开一个工作空间，创建并保存你的 Agent 工作流。'}</p>{!readOnly&&<><Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>addNode():showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button><small>空白或未配置完成的工作流也可以保存</small></>}</div>}
    </div>
-   {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>顺序链配置已填写，尚未验证 Provider 可用性。</p>}</section>}
+   {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id.split('/')[0]);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}</section>}
    <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
   </main>
   {(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
-   {n?readOnly?nodeKind(n)!=='agent'?<ControlEvidence activation={activation(n.id)} trusted={runTrusted}/>:<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
+   {n?readOnly?nodeKind(n)!=='agent'?<ControlEvidence key={n.id} activation={activation(n.id)} trusted={runTrusted} definition={runSnapshot?.definition} nested={(runSnapshot?.nodes||[]).filter(row=>row.node.startsWith(n.id+'/'))}/>:<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
     onTransition={completedPlans.some(a=>a.node===n.id)?()=>openPlanApproval(activation(n.id)):null}/>:<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
-     connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
+     bodyChoices={drafts.filter(row=>row.id!==saved?.id)} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<div className="session-note"><p>此节点引用已保存的 Agent 配置版本。</p>
      <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
      <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></div>:n.kind==='agent'?<>
@@ -837,7 +879,7 @@ function App(){
     enabled={Boolean(status?.native_history_available)} writeProviders={status?.native_session_writes}
     workflowLinks={status?.native_workflow_links} workflowTrash={status?.native_workflow_trash}
     terminalAvailable={status?.native_codex_terminal} catalog={catalog} refreshCatalog={discover}
-    onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node);closeNative()}}
+    onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node.split('/')[0]);closeNative()}}
     isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
   {workspace&&agentPanel&&<AgentManager key={workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}

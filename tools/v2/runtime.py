@@ -35,7 +35,7 @@ from .agent_execution import freeze_agent, prove_agent_history, require_agent_hi
 from .native_writer_state import require_native_writer_idle
 from .definitions import compile_definition, source_manifest, ROOT
 from .canvas_structure import node_kind
-from .designer_graph import is_designer_graph
+from .designer_graph import document_nodes, is_designer_graph
 from .documents import check_chain
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
@@ -302,21 +302,22 @@ class V2Runtime:
     def inspect(self, workspace, document):
         self.store.workspace(workspace)
         result = check_chain(document)
-        result['issues'].extend(self.agents.reference_issues(workspace, document['nodes']))
+        agents = [(path, node) for path, node in document_nodes(document) if node_kind(node) == 'agent']
+        result['issues'].extend(self.agents.reference_issues(workspace, [dict(node, id=path) for path, node in agents]))
         if not is_designer_graph(document):
             result['message'] = '配置检查不调用模型；启动时仍会核验当前账户、CLI 能力与权限。'
         if not result['issues']:
-            for node in document['nodes']:
-                if node_kind(node) != 'agent':
-                    continue
+            for path, node in agents:
                 try:
                     if 'agent_id' in node:
-                        freeze_agent(self, workspace, node)
+                        _, binding = freeze_agent(self, workspace, node)
+                        if '/' in path and binding.get('session_id'):
+                            raise Invalid('循环 Agent 必须使用新会话。')
                     else:
                         if not self.provider: raise Blocked(self.provider_error)
                         self.provider.binding(workspace,node)
                 except (Invalid, Blocked, SessionRefused, Conflict) as exc:
-                    result['issues'].append(dict(node_id=node['id'],message=str(exc)))
+                    result['issues'].append(dict(node_id=path,message=str(exc)))
         result['execution_available'] = not result['issues']
         return result
 
@@ -721,6 +722,62 @@ class V2Runtime:
     def resume(self, workspace, run_id):
         from .recovery import resume
         return resume(self, workspace, run_id)
+
+    def control_designer(self, workspace, run_id, *, paused=None, activation=None, decision=None):
+        from .recovery import observe
+        self.store.workspace(workspace)
+        if not isinstance(run_id, str) or not re.fullmatch(r'[0-9a-f]{32}', run_id):
+            raise Invalid('运行身份无效')
+        approval = activation is not None or decision is not None
+        if approval:
+            if (not isinstance(activation, str) or not re.fullmatch(r'[0-9a-f]{64}', activation)
+                    or decision not in ('approve', 'reject')):
+                raise Invalid('审批需要有效的激活身份和批准或拒绝的明确决定。')
+        elif type(paused) is not bool:
+            raise Invalid('请明确选择暂停或继续运行。')
+        with self.flow.tx() as tx:
+            raw = tx.execute("SELECT data FROM records WHERE kind='run' AND id=?", (run_id,)).fetchone()
+            if not raw:
+                raise Invalid('找不到此运行，请从当前工作空间历史选择')
+            run = json.loads(raw[0])
+            if run['workspace'] != workspace:
+                raise Conflict('运行不属于当前工作空间')
+            if run.get('designer_runtime') != 1:
+                raise Conflict('此运行没有类型化流程控制。')
+            now = time.time()
+            event = None
+            if approval:
+                raw = tx.execute("SELECT data FROM records WHERE kind='activation' AND id=?", (activation,)).fetchone()
+                row = json.loads(raw[0]) if raw else {}
+                if row.get('run') != run_id or row.get('kind') != 'human':
+                    raise Conflict('审批激活不属于当前运行。')
+                previous = row.get('approval_decision')
+                if previous:
+                    if previous['decision'] != decision:
+                        raise Conflict('此审批已有不同的持久决定。')
+                else:
+                    if (run.get('waiting_approval') != activation or run.get('cancel_requested')
+                            or row['state'] != 'WAITING_CONFIRMATION' or now >= row['approval_deadline']):
+                        raise Conflict('此审批已结束、超时或失去等待状态。')
+                    if observe(run.get('worker')) != 'alive':
+                        raise Conflict('请先从已核验的检查点恢复运行。')
+                    evidence = dict(decision=decision, actor=f'local-user:{os.geteuid()}', run=run_id,
+                                    activation=activation, workspace=workspace, definition_id=run['definition_id'], at=now)
+                    row['approval_decision'] = evidence
+                    tx.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",
+                               (canonical(row).decode(), activation))
+                    event = dict(evidence, kind='human-decision', node=row['node'], iteration_path=row['iteration_path'])
+            elif run.get('paused', False) != paused:
+                if (run['state'] not in ('RUNNING', 'PAUSED', 'WAITING_CONFIRMATION') or run.get('cancel_requested')
+                        or run.get('stop_reason') or observe(run.get('worker')) != 'alive'):
+                    raise Conflict('当前运行没有可控制的活动运行器。')
+                state = 'PAUSED' if paused else 'WAITING_CONFIRMATION' if run.get('waiting_approval') else 'RUNNING'
+                run.update(paused=paused, state=state)
+                tx.execute("UPDATE records SET data=? WHERE kind='run' AND id=?", (canonical(run).decode(), run_id))
+                event = dict(kind='run-paused' if paused else 'run-continued', run=run_id, state=state, at=now)
+            if event is not None:
+                tx.execute('INSERT INTO events(run,data) VALUES(?,?)', (run_id, canonical(event).decode()))
+        return self.snapshot(workspace, run_id)
 
     def cancel(self,workspace,run_id):
         from orchestration.store import lease

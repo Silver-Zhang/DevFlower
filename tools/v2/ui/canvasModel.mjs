@@ -39,12 +39,21 @@ export function connectionIssue(graph, edge, except=null) {
 }
 
 export function defaultConfig(kind) {
- return Object.fromEntries(Object.entries(types[kind].fields).map(([key,field])=>[
+ return Object.fromEntries(Object.entries(types[kind].fields).filter(([,field])=>field.type!=='graph').map(([key,field])=>[
   key,field.default??(field.type==='predicate'?{...emptyPredicate}:'')
  ]));
 }
 
-export const runtimeKinds=new Set(['start','agent','output','condition','router','validation']);
+export function runtimeBlock(node){
+ const kind=nodeKind(node),config=node.config||{};
+ if(kind==='tool'){
+  if(config.tool!=='read-file'||config.permission!=='workspace-read')return '仅支持固定工作区文件的只读预览。';
+  if(!config.path?.trim())return '请指定固定的工作区相对文件路径。';
+ }
+ if(kind==='approval'&&config.policy==='all-reviewers')return '当前仅支持本机单审核者。';
+ if(kind==='loop'&&!config.body)return '请为循环选择已保存的子工作流。';
+ return '';
+}
 export const defaultEdgeMode=(from,to)=>nodeKind(from)==='agent'&&nodeKind(to)==='agent'?'answer':'envelope';
 
 export function predicateIssue(test) {
@@ -65,7 +74,7 @@ export function draftConfigIssue(node) {
   if(field.type==='predicate'){
    const issue=predicateIssue(value);
    if(issue)return issue;
-  }else if(field.required&&!value?.trim())return '请填写'+field.label;
+  }else if(field.required&&(field.type==='graph'?!value:!String(value??'').trim()))return '请填写'+field.label;
  }
  if(kind==='start'&&config.initial_data?.trim()){
   try{JSON.parse(config.initial_data)}catch{return '初始数据需要有效 JSON'}

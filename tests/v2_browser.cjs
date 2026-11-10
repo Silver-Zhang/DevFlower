@@ -299,7 +299,7 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   assert.equal(await page.locator('.canvas-node').count(),10);
   await page.getByRole('button',{name:'检查',exact:true}).click();
   const checks=page.getByLabel('工作流检查结果',{exact:true});
-  await checks.getByText(/执行尚未接入/).first().waitFor();
+  await checks.getByText(/请指定固定的工作区相对文件路径/).first().waitFor();
   assert(await page.getByRole('button',{name:'保存并启动',exact:true}).isDisabled());
   await page.getByLabel('关闭检查结果',{exact:true}).click();
   await page.getByLabel('关闭检查器',{exact:true}).click();

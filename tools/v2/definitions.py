@@ -27,7 +27,59 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
     if not isinstance(task, str) or len(task) > 20000:
         raise Invalid('本次任务需要 20000 字符以内的文本')
     designer = is_designer_graph(doc)
-    bindings, nodes, configured = {}, [], {}
+    bindings, configured = {}, {}
+
+    def bind(node, prefix):
+        path = prefix + node['id']
+        if 'agent_id' in node:
+            if agent_binding is None:
+                raise Invalid('Agent 配置执行尚未启用。')
+            record, binding = agent_binding(node)
+            if prefix and binding.get('session_id'):
+                raise Invalid('循环 Agent 必须使用新会话，不能重复绑定已有原生会话。')
+            bindings[path] = binding
+            configured[path] = record
+            config = record['config']
+            if binding.get('transition_from'):
+                return dict(config, mode='Agent', permission='workspace-write', initial_prompt='',
+                            round_prompt='按本次明确确认的原生计划完成实施，并核验结果。')
+            return config
+        if provider is None:
+            raise Blocked(provider_error or '当前 Codex CLI 不可用。')
+        bindings[path] = provider.binding(workspace, node)
+        return node
+
+    graph = normalize_graph(doc, bind, designer=designer)
+    manifest = source_manifest()
+    value = dict(version=1, workspace=workspace, execution_environment_id=store.environment['id'],
+                 draft_id=draft['id'], draft_revision=draft['revision'], draft_document=doc,
+                 task=task, task_sha256=digest(task.encode()), graph=graph, graph_sha256=digest(canonical(graph)),
+                 bindings=bindings, runtime_sources=manifest, runtime_source_sha256=digest(canonical(manifest)))
+    if designer:
+        value['designer_runtime'] = 1
+    if configured:
+        value['agent_configs'] = configured
+    return dict(value, id=digest(canonical(value)))
+
+
+def graph_budget(nodes):
+    calls, seconds, activations = 0, 0, len(nodes)
+    for node in nodes:
+        kind = node['kind']
+        if kind == 'loop':
+            child_calls, child_seconds, child_count = graph_budget(node['body']['nodes'])
+            rounds = node['max_rounds']
+            calls += rounds * child_calls
+            seconds += rounds * child_seconds
+            activations += rounds * child_count
+        elif kind in ('agent', 'human'):
+            calls += kind == 'agent'
+            seconds += node['timeout']
+    return calls, seconds, activations
+
+
+def normalize_graph(doc, bind, *, designer, prefix=''):
+    nodes = []
     for n in doc['nodes']:
         kind = node_kind(n)
         if kind == 'start':
@@ -42,6 +94,9 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
             nodes.append(dict(id=n['id'], name=n['name'], kind='result', format=n['config'].get('format', 'text'),
                               output_instructions=n['config'].get('instructions', '')))
             continue
+        if kind == 'merge':
+            nodes.append(dict(id=n['id'], name=n['name'], kind='merge', strategy=n['config'].get('strategy', 'all')))
+            continue
         if kind in ('condition', 'validation'):
             expression = n['config']['expression'] if kind == 'condition' else validation_expression(n['config'])
             nodes.append(dict(id=n['id'], name=n['name'], kind=kind, expression=expression))
@@ -52,20 +107,21 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
                                          for edge in doc['edges']) else None
             nodes.append(dict(id=n['id'], name=n['name'], kind='router', routes=routes, default_route=fallback))
             continue
-        spec = n
-        if 'agent_id' in n:
-            if agent_binding is None:
-                raise Invalid('Agent 配置执行尚未启用。')
-            record, bindings[n['id']] = agent_binding(n)
-            configured[n['id']] = record
-            spec = record['config']
-            if bindings[n['id']].get('transition_from'):
-                spec = dict(spec, mode='Agent', permission='workspace-write', initial_prompt='',
-                            round_prompt='按本次明确确认的原生计划完成实施，并核验结果。')
-        else:
-            if provider is None:
-                raise Blocked(provider_error or '当前 Codex CLI 不可用。')
-            bindings[n['id']] = provider.binding(workspace, n)
+        if kind == 'loop':
+            config = n['config']
+            body = normalize_graph(config['body'], bind, designer=True, prefix=prefix + n['id'] + '/')
+            nodes.append(dict(id=n['id'], name=n['name'], kind='loop', body=body,
+                              max_rounds=config.get('max_iterations', 3), until=config['exit_condition']))
+            continue
+        if kind == 'approval':
+            config = n['config']
+            nodes.append(dict(id=n['id'], name=n['name'], kind='human', question=config['instructions'],
+                              policy=config.get('policy', 'single-reviewer'), timeout=config.get('timeout', 300)))
+            continue
+        if kind == 'tool':
+            nodes.append(dict(id=n['id'], name=n['name'], kind='tool', path=n['config']['path']))
+            continue
+        spec = bind(n, prefix)
         nodes.append(dict(id=n['id'], kind='agent', name=n['name'], mode=spec.get('mode', 'Ask'),
                            permission='workspace-write' if spec.get('permission') == 'workspace-write' else 'read',
                            initial_prompt=spec.get('initial_prompt', ''), round_prompt=spec.get('round_prompt', ''),
@@ -97,17 +153,9 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
             for edge in edges[-2:]:
                 edge.update(source_port='out', target_port='in', max_chars=16000)
         nodes = [dict(id=start, kind='start', name='输入'), *nodes, dict(id=result, kind='result', name='结果')]
+    calls, seconds, activations = graph_budget(nodes)
+    if designer and (calls > 100 or activations > 512):
+        raise Invalid('展开后最多允许 100 次 Agent 调用和 512 个节点激活。')
     graph = dict(version=3, name=doc['name'], nodes=nodes, edges=edges,
-                 budget=dict(calls=max(1, len(agents)), seconds=min(14400, sum(n['timeout'] for n in agents) + 60)))
-    if not designer:
-        graph = validate_graph(graph)
-    manifest = source_manifest()
-    value = dict(version=1, workspace=workspace, execution_environment_id=store.environment['id'],
-                 draft_id=draft['id'], draft_revision=draft['revision'], draft_document=doc,
-                 task=task, task_sha256=digest(task.encode()), graph=graph, graph_sha256=digest(canonical(graph)),
-                 bindings=bindings, runtime_sources=manifest, runtime_source_sha256=digest(canonical(manifest)))
-    if designer:
-        value['designer_runtime'] = 1
-    if configured:
-        value['agent_configs'] = configured
-    return dict(value, id=digest(canonical(value)))
+                 budget=dict(calls=max(1, calls), seconds=min(14400, seconds + 60)))
+    return graph if designer else validate_graph(graph)

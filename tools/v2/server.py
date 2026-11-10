@@ -277,6 +277,12 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'])
                 elif post and path == '/api/v2/resume' and runtime and set(data) == {'workspace', 'run_id'}:
                     result = runtime.resume(data['workspace'], data['run_id'])
+                elif post and path == '/api/v2/approval' and runtime and set(data) == {
+                        'workspace', 'run_id', 'activation', 'decision'}:
+                    result = runtime.control_designer(data['workspace'], data['run_id'],
+                                                      activation=data['activation'], decision=data['decision'])
+                elif post and path == '/api/v2/pause' and runtime and set(data) == {'workspace', 'run_id', 'paused'}:
+                    result = runtime.control_designer(data['workspace'], data['run_id'], paused=data['paused'])
                 elif post and path == '/api/v2/cancel' and runtime and set(data)=={'workspace','run_id'}:
                     result=runtime.cancel(data['workspace'],data['run_id'])
                 else:
