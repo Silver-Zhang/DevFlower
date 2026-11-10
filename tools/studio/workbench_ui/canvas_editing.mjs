@@ -1,14 +1,20 @@
 // Canonical document edits only. Selection, measurements and Runtime snapshots stay separate.
 export const cloneDocument = value => JSON.parse(JSON.stringify(value));
 
-export function selectedFragment(graph, ids) {
+export function selectedFragment(graph, ids, {includeStart = false} = {}) {
   const selected = new Set(ids);
-  const nodes = graph.nodes.filter(n => selected.has(n.id) && n.kind !== 'start');
+  const nodes = graph.nodes.filter(n => selected.has(n.id) && (includeStart || n.kind !== 'start'));
   const included = new Set(nodes.map(n => n.id));
   return cloneDocument({nodes, edges: graph.edges.filter(e => included.has(e.source) && included.has(e.target))});
 }
 
-export function pasteFragment(graph, fragment, makeId, offset = 40) {
+// A document copy never silently creates a second writer for a native UUID.
+function freshSessions(node) {
+  if (node.kind === 'agent') { node.session = 'new'; delete node.context_from; }
+  if (node.kind === 'loop') node.body.nodes.forEach(freshSessions);
+}
+
+export function pasteFragment(graph, fragment, makeId, offset = 40, prepareNode = freshSessions) {
   const next = cloneDocument(graph);
   const mapping = new Map(fragment.nodes.map(n => [n.id, makeId('n')]));
   for (const original of fragment.nodes) {
@@ -16,12 +22,7 @@ export function pasteFragment(graph, fragment, makeId, offset = 40) {
     node.id = mapping.get(original.id);
     node.name += ' 副本';
     node.position = {x: (node.position?.x || 0) + offset, y: (node.position?.y || 0) + offset};
-    // A document copy never silently creates a second writer for a native UUID.
-    const freshSessions = n => {
-      if (n.kind === 'agent') { n.session = 'new'; delete n.context_from; }
-      if (n.kind === 'loop') n.body.nodes.forEach(freshSessions);
-    };
-    freshSessions(node);
+    prepareNode(node);
     next.nodes.push(node);
   }
   for (const edge of fragment.edges) next.edges.push({...cloneDocument(edge), id: makeId('e'),

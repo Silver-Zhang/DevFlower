@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ReactFlow,ReactFlowProvider,Background,Controls,Handle,Position,MarkerType,useStore,useUpdateNodeInternals} from '@xyflow/react';
-import {FolderOpen,Plus,Save,Undo2,Redo2,X,Play,Check,Workflow,ArrowRight,Settings2,Trash2,PanelRightClose} from 'lucide-react';
+import {ReactFlow,ReactFlowProvider,Background,Controls,Handle,Position,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
+import {FolderOpen,Plus,Save,X,Play,Check,Workflow,ArrowRight,Settings2,Trash2,PanelRightClose} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
@@ -12,7 +12,12 @@ import {AgentManager} from './AgentManager.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
-const copy=value=>JSON.parse(JSON.stringify(value));
+import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../studio/workbench_ui/canvas_editing.mjs';
+import {CanvasContextMenu, ConnectedNodePicker} from '../../studio/workbench_ui/CanvasMenus.jsx';
+import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
+import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
+
+const agentKinds={agent:['Agent',Workflow]};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}});
@@ -106,6 +111,11 @@ function canConnect(doc,source,target){
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
+ const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]);
+ const [canvasMode,setCanvasMode]=useState('select'),[canvasFocused,setCanvasFocused]=useState(false),[minimap,setMinimap]=useState(false);
+ const [canvasMenu,setCanvasMenu]=useState(null),[nodePicker,setNodePicker]=useState(null),[arrangeOpen,setArrangeOpen]=useState(false);
+ const menuRef=useRef(null),canvasRef=useRef(null),clipboard=useRef(null);
+ const flow=useReactFlow();
  const [past,setPast]=useState([]),[future,setFuture]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
@@ -139,7 +149,7 @@ function App(){
   if(providerOpen||view==='providers')invalidateProviderView();
   setSidePanel(view);
  }
- function setSelected(id){invalidateProviderView();setSelectedNode(id)}
+ function setSelected(id){invalidateProviderView();setSelectedNode(id);setNodeSelection(id?[id]:[])}
  function closeProviderCatalog(){
   setSideView('');
   const epoch=providerEpoch.current;
@@ -147,8 +157,8 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
- function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){setPast(p=>[...p.slice(-49),copy(docRef.current)]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
+ function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('');resetCanvasSelection()}
+ function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
  function remember(w,row){
@@ -191,8 +201,8 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
- function editDraft(){clearRunSummary();setViewMode('draft');setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function showRun(id,w=workspaceRef.current,environment){cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function editDraft(){clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
   try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');const done=ended(response.state)&&ended(response.run.persisted_state??response.state);if(done)refreshRuns();return done}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
  useEffect(()=>{if(!activeRun)return;let closed=false,timer;const read=async()=>{const finished=await rereadRun();if(!closed&&!finished)timer=setTimeout(read,900)};read();return()=>{closed=true;clearTimeout(timer)}},[activeRun?.id,activeRun?.epoch]);
@@ -385,6 +395,7 @@ function App(){
   closePending(operation.transfer);await operation.action()
  }
  function selectWorkspace(w,rows,row=null){
+  clipboard.current=null;setCanvasFocused(false);
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
@@ -393,6 +404,7 @@ function App(){
   install(row?.graph||blank(),row);
  }
  function closeWorkspace(){
+  clipboard.current=null;setCanvasFocused(false);
   selectWorkspace(null,[]);
   remember(null);rememberRun(null);
   setNotice('已关闭工作空间');
@@ -496,23 +508,163 @@ function App(){
  function hideFolder(){folderOpen.current=false;folderEpoch.current++;setFolder(null);lastFocus.current?.focus()}
  function showFolder(){lastFocus.current=document.activeElement;folderOpen.current=true;setFolderPath(status?.roots?.[0]||'');setFolder({entries:[],roots:status?.roots||[],loading:true});browse()}
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
- function closeInspector(){setSelected(null);setEdge(null);setTimeout(()=>document.querySelector('[aria-label="工作流画布"]')?.focus(),0)}
- useEffect(()=>{const key=e=>{if(e.key==='Escape'){if(pendingRef.current){closePending();return}if(folder){hideFolder();return}if(providerOpen){closeProviderCatalog();return}if(filesOpen){closeFiles();return}if(nativeOpen){closeNative();return}closeInspector()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(workspaceRef.current&&viewMode==='draft'&&!launchBusy.current)guard(save)()}if(viewMode==='draft'&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}};addEventListener('keydown',key);return()=>removeEventListener('keydown',key)},[folder,past,future,busy,viewMode,filesOpen,nativeOpen,providerOpen]);
- function undo(){if(!past.length||busy)return;cancelTransfer();const previous=past.at(-1);setFuture(f=>[copy(docRef.current),...f]);setPast(p=>p.slice(0,-1));docRef.current=previous;setDoc(previous);setChecks(null)}
- function redo(){if(!future.length||busy)return;cancelTransfer();const next=future[0];setPast(p=>[...p,copy(docRef.current)]);setFuture(f=>f.slice(1));docRef.current=next;setDoc(next);setChecks(null)}
- function addAgent(){const id=uid('n');change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:{x:100+d.nodes.length*300,y:160},provider:'',model:'',effort:'',initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));setSelected(id);setEdge(null)}
+ function resetCanvasSelection(){setNodeSelection([]);setEdgeSelection([]);setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);dragBase.current=null}
+ function clearSelection(){setSelected(null);setEdge(null);setEdgeSelection([]);setCanvasMenu(null);setArrangeOpen(false)}
+ function closeInspector(){clearSelection();setTimeout(()=>canvasRef.current?.focus(),0)}
+ useEffect(()=>{
+  if(!canvasMenu&&!nodePicker&&!arrangeOpen)return;
+  function outside(event){
+   if(!event.target.closest('.canvas-context-menu,.connected-node-picker,.arrange-menu,[data-node-library]')){
+    setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);
+   }
+  }
+  addEventListener('pointerdown',outside);
+  return()=>removeEventListener('pointerdown',outside);
+ },[canvasMenu,nodePicker,arrangeOpen]);
+ function recordDrag(){
+  const before=dragBase.current;
+  dragBase.current=null;
+  if(before&&!same(before,docRef.current)){setPast(p=>[...p.slice(-49),before]);setFuture([])}
+ }
+ function changeNodes(changes){
+  const dimensions=changes.filter(c=>c.type==='dimensions'&&c.dimensions);
+  if(dimensions.length)setMeasurements(previous=>{
+   const next=new Map(previous);
+   for(const c of dimensions)if(c.dimensions.width>0&&c.dimensions.height>0)next.set(c.id,c.dimensions);
+   return next;
+  });
+  const selects=changes.filter(c=>c.type==='select');
+  if(selects.length)setNodeSelection(current=>applySelection(current,selects));
+  const positions=changes.filter(c=>c.type==='position'&&c.position);
+  if(!editable||!positions.length)return;
+  const next=copy(docRef.current);
+  for(const p of positions){
+   const node=next.nodes.find(n=>n.id===p.id);
+   if(node)node.position={x:coordinate(p.position.x),y:coordinate(p.position.y)};
+  }
+  edit(next,!dragBase.current&&!positions.some(p=>p.dragging));
+ }
+ function changeEdges(changes){
+  const selects=changes.filter(c=>c.type==='select');
+  if(selects.length)setEdgeSelection(current=>applySelection(current,selects));
+ }
+ function inspectNode(event,node){
+  setCanvasMenu(null);setTarget('');setEdge(null);
+  if(event.shiftKey||event.ctrlKey||event.metaKey){invalidateProviderView();setSelectedNode(null);return}
+  setSelected(node.id);setEdgeSelection([]);
+ }
+ function inspectEdge(event,value){
+  setCanvasMenu(null);setSelected(null);
+  if(event.shiftKey||event.ctrlKey||event.metaKey){setEdge(null);return}
+  setEdge(value.id);setEdgeSelection([value.id]);
+ }
+ function contextMenu(event,node){
+  if(!editable)return;
+  event.preventDefault();
+  let ids=nodeSelection;
+  if(node&&!ids.includes(node.id)){ids=[node.id];setSelected(node.id);setEdge(null);setEdgeSelection([])}
+  setNodePicker(null);
+  setCanvasMenu({isBlockMenuOpen:Boolean(node),isPaneMenuOpen:!node,menuRef,
+   position:{x:event.clientX,y:event.clientY},ids});
+ }
+ function openPicker(screen){
+  if(!editable)return;
+  setCanvasMenu(null);
+  setNodePicker({screen,position:flow.screenToFlowPosition(screen)});
+ }
+ function fitCanvas(){setCanvasMenu(null);flow.fitView({padding:.18,duration:0,maxZoom:1.25})}
+ function canvasCommand(action,ids=nodeSelection){
+  if(!editable)return;
+  setCanvasMenu(null);
+  if(action==='delete'){
+   if(ids.length||edgeSelection.length){edit(removeSelection(docRef.current,ids,edgeSelection));closeInspector()}
+   return;
+  }
+  if(['copy','duplicate','paste'].includes(action)){
+   const w=workspaceRef.current;
+   const fragment=action==='paste'?clipboard.current?.workspace===w?.id&&clipboard.current.fragment:canvasFragment(docRef.current,ids);
+   if(!fragment?.nodes.length)return;
+   if(action==='copy'){
+    clipboard.current={workspace:w.id,fragment};
+    setNotice('已复制 '+fragment.nodes.length+' 个节点');
+    return;
+   }
+   try{
+    const result=pasteCanvasFragment(docRef.current,fragment,uid);
+    edit(result.graph);
+    setSelected(result.selected.length===1?result.selected[0]:null);setNodeSelection(result.selected);
+    setEdge(null);setEdgeSelection([]);
+    if(fragment.nodes.some(node=>node.agent_id))setNotice('已粘贴节点副本；请为副本重新选择 Agent 配置。');
+   }catch(failure){setError(failure.message)}
+   return;
+  }
+  const next=arrangeSelection(docRef.current,ids,action,Object.fromEntries(measurements));
+  for(const node of next.nodes)if(ids.includes(node.id))node.position={x:coordinate(node.position.x),y:coordinate(node.position.y)};
+  edit(next);
+ }
+
+ useEffect(()=>{
+  function key(event){
+   if(event.defaultPrevented)return;
+   if(event.key==='Escape'){
+    if(canvasMenu||nodePicker||arrangeOpen){setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);canvasRef.current?.focus();return}
+    if(pendingRef.current){closePending();return}
+    if(folder){hideFolder();return}
+    if(providerOpen){closeProviderCatalog();return}
+    if(filesOpen){closeFiles();return}
+    if(nativeOpen){closeNative();return}
+    if(sideView==='agents'){closeAgents();return}
+    closeInspector();
+   }
+   const letter=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
+   if(modifier&&letter==='s'){
+    event.preventDefault();
+    if(workspaceRef.current&&viewMode==='draft'&&!launchBusy.current)guard(save)();
+    return;
+   }
+   if(!editable||folder||pending||planApproval||sideView||event.target.closest?.('input,textarea,select,[contenteditable]'))return;
+   if(modifier&&['z','y'].includes(letter)){event.preventDefault();letter==='y'||event.shiftKey?redo():undo();return}
+   if(!canvasRef.current?.contains(event.target)&&event.target!==document.body)return;
+   if(modifier&&['c','v','d','a'].includes(letter)){
+    if(letter==='c'&&window.getSelection()?.toString())return;
+    event.preventDefault();
+    if(letter==='a'){setSelected(null);setEdge(null);setEdgeSelection([]);setNodeSelection(docRef.current.nodes.map(node=>node.id))}
+    else canvasCommand({c:'copy',v:'paste',d:'duplicate'}[letter]);
+   }
+   if(['Delete','Backspace'].includes(event.key)&&(nodeSelection.length||edgeSelection.length)){event.preventDefault();canvasCommand('delete')}
+  }
+  addEventListener('keydown',key);
+  return()=>removeEventListener('keydown',key);
+ });
+ function restoreHistory(value){
+  cancelTransfer();resetCanvasSelection();setSelected(null);setEdge(null);
+  const next=copy(value);
+  if(docRef.current.viewport)next.viewport=docRef.current.viewport;else delete next.viewport;
+  docRef.current=next;setDoc(next);setChecks(null);
+ }
+ function undo(){if(!past.length||!editable)return;const current=copy(docRef.current);setFuture(f=>[current,...f]);setPast(p=>p.slice(0,-1));restoreHistory(past.at(-1))}
+ function redo(){if(!future.length||!editable)return;const current=copy(docRef.current);setPast(p=>[...p,current]);setFuture(f=>f.slice(1));restoreHistory(future[0])}
+ function addAgent(position){
+  if(!editable||docRef.current.nodes.length>=64)return;
+  const id=uid('n');
+  const point=position&&Number.isFinite(position.x)&&Number.isFinite(position.y)?
+   {x:coordinate(position.x),y:coordinate(position.y)}:{x:100+docRef.current.nodes.length*300,y:160};
+  change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:point,provider:'',model:'',effort:'',
+   initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));
+  setNodePicker(null);setSelected(id);setEdge(null);setEdgeSelection([]);
+ }
  function connect(source,destination){if(!canConnect(docRef.current,source,destination)){setError('本期仅支持无环顺序链；请先删除重复、分支或反向连线');return}change(d=>d.edges.push({id:uid('e'),source,target:destination}));setNotice('已连接两个 Agent · 运行时使用独立新会话')}
- const readOnly=viewMode==='run',shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
+ const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching),shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
  const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const rfNodes=shown.nodes.map(n=>({id:n.id,type:'agent',position:n.position,selected:n.id===selected,draggable:!readOnly,connectable:!readOnly,data:{node:n,activation:readOnly?{...(activation(n.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null},...(measurements.has(n.id)?{measured:measurements.get(n.id)}:{})}));
- const rfEdges=shown.edges.map(e=>({...e,selected:e.id===edge,markerEnd:{type:MarkerType.ArrowClosed},label:'回答 → 输入',style:{strokeWidth:2}}));
+ const rfNodes=shown.nodes.map(n=>({id:n.id,type:'agent',position:n.position,selected:nodeSelection.includes(n.id),draggable:editable&&canvasMode==='select',connectable:editable,data:{node:n,activation:readOnly?{...(activation(n.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null},...(measurements.has(n.id)?{measured:measurements.get(n.id)}:{})}));
+ const rfEdges=shown.edges.map(e=>({...e,selected:edgeSelection.includes(e.id),markerEnd:{type:MarkerType.ArrowClosed},label:'回答 → 输入',style:{strokeWidth:2}}));
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
- return <div className="v2-app">
+ return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')}>
   <header className="app-header"><a className="brand" href="/" onClick={e=>e.preventDefault()}><Workflow size={22}/> DevFlower <span>V2</span></a><span className="channel">Development</span><div className="header-spacer"/><label className="theme">外观<select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label><Button ref={workspacePicker} icon={FolderOpen} disabled={!status||!!busy} onClick={showFolder}>{workspace?workspace.name:'打开工作空间'}</Button></header>
   <aside className="navigation"><div className="section-heading"><span>工作流</span><button aria-label="新建工作流" disabled={!workspace||!!busy} onClick={()=>navigate(()=>{install(blank());remember(workspace,null)},'新建工作流')}><Plus size={17}/></button></div>
    <div className="workspace-line" title={workspace?.path}>{workspace?.path||'先打开一个工作空间'}</div>
@@ -539,21 +691,39 @@ function App(){
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
+   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button></>}</div>
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
-   <div className="canvas-region" aria-label="工作流画布" tabIndex={0}>
-    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} onNodeClick={(_,n)=>{setSelected(n.id);setEdge(null);setTarget('')}} onEdgeClick={(_,e)=>{setEdge(e.id);setSelected(null)}} onPaneClick={closeInspector}
-     onConnect={c=>{if(!readOnly)connect(c.source,c.target)}} isValidConnection={c=>!readOnly&&canConnect(docRef.current,c.source,c.target)} nodesDraggable={!readOnly} nodesConnectable={!readOnly}
-     onNodesChange={changes=>{const dimensions=changes.filter(c=>c.type==='dimensions'&&c.dimensions);if(dimensions.length)setMeasurements(previous=>{const next=new Map(previous);for(const c of dimensions)if(c.dimensions.width>0&&c.dimensions.height>0)next.set(c.id,c.dimensions);return next});const positions=changes.filter(c=>c.type==='position'&&c.position);if(!readOnly&&positions.length){const next=copy(docRef.current);for(const p of positions){const node=next.nodes.find(n=>n.id===p.id);if(node)node.position=p.position}edit(next,false)}}}
-     onNodeDragStart={()=>{dragBase.current=copy(docRef.current)}} onNodeDragStop={()=>{const before=dragBase.current;if(before&&!same(before,docRef.current)){setPast(p=>[...p.slice(-49),before]);setFuture([])}dragBase.current=null}}
-     onMoveEnd={(_,viewport)=>{if(readOnly)return;const next=copy(docRef.current);next.viewport=viewport;edit(next,false)}} defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(runSnapshot):'draft:'+generation.current} minZoom={.2} maxZoom={2} deleteKeyCode={null} colorMode={theme} proOptions={{hideAttribution:true}}>
-     <RepairHandles/><Background gap={24} size={1}/><Controls showInteractive={false}/>
+   <div ref={canvasRef} className="canvas-region" aria-label="工作流画布" tabIndex={0}>
+    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} onNodeClick={inspectNode} onEdgeClick={inspectEdge}
+     onPaneClick={closeInspector} onPaneContextMenu={event=>contextMenu(event)} onNodeContextMenu={contextMenu}
+     onConnect={c=>{if(editable)connect(c.source,c.target)}} isValidConnection={c=>editable&&canConnect(docRef.current,c.source,c.target)}
+     nodesDraggable={editable&&canvasMode==='select'} nodesConnectable={editable}
+     onNodesChange={changeNodes} onEdgesChange={changeEdges}
+     onNodeDragStart={()=>{if(editable&&!dragBase.current)dragBase.current=copy(docRef.current)}}
+     onNodeDragStop={recordDrag} onSelectionDragStart={()=>{if(editable&&!dragBase.current)dragBase.current=copy(docRef.current)}}
+     onSelectionDragStop={recordDrag} onSelectionStart={()=>{setSelectedNode(null);setEdge(null)}}
+     selectionOnDrag={editable&&canvasMode==='select'} selectionMode={SelectionMode.Partial}
+     multiSelectionKeyCode={['Shift','Control','Meta']} panOnDrag={canvasMode==='pan'||readOnly?true:[1,2]}
+     onMoveEnd={(_,viewport)=>{if(!editable)return;const next=copy(docRef.current);next.viewport={...viewport,x:coordinate(viewport.x),y:coordinate(viewport.y)};edit(next,false)}}
+     defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(runSnapshot):'draft:'+generation.current}
+     minZoom={.2} maxZoom={2} deleteKeyCode={null} colorMode={theme} proOptions={{hideAttribution:true}}>
+     <RepairHandles/><Background gap={24} size={1}/>{readOnly&&<Controls showInteractive={false}/>}
+     {minimap&&<MiniMap pannable zoomable/>}
     </ReactFlow>
+    {!readOnly&&workspace&&<EditorToolbar focused={canvasFocused} onFocus={()=>setCanvasFocused(value=>!value)}
+     mode={canvasMode} setMode={setCanvasMode} count={nodeSelection.length} disabled={!editable}
+     undo={undo} redo={redo} canUndo={Boolean(past.length)} canRedo={Boolean(future.length)} command={canvasCommand}
+     minimap={minimap} setMinimap={setMinimap} onFit={fitCanvas} zoomIn={()=>flow.zoomIn()} zoomOut={()=>flow.zoomOut()}
+     menuOpen={arrangeOpen} setMenuOpen={setArrangeOpen}/>}
+    {canvasMenu&&<CanvasContextMenu menu={canvasMenu} onAction={action=>canvasCommand(action,canvasMenu.ids)}
+     onAdd={()=>openPicker(canvasMenu.position)} onFit={fitCanvas}/>}
+    {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={agentKinds} canChoose={()=>true}
+     onChoose={()=>addAgent(nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
     {!shown.nodes.length&&<div className="canvas-empty"><span className="empty-icon"><Workflow size={30}/></span><h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1><p>{readOnly?'仅查询持久化结果，不启动或重发请求。':workspace?'添加两个独立 Agent，设置提示词，再连接 A → B。':'打开一个工作空间，创建并保存你的 Agent 工作流。'}</p>{!readOnly&&<><Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?addAgent:showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button><small>空白或未配置完成的工作流也可以保存</small></>}</div>}
    </div>
    {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id);setEdge(null)}}}>{i.message}</button></li>)}</ul>:<p>顺序链配置已填写，尚未验证 Provider 可用性。</p>}</section>}
