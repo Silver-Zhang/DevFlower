@@ -4,6 +4,7 @@ import {VisibleHistory} from './VisibleHistory.jsx';
 import {NativeActivity} from './NativeActivity.jsx';
 import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
 import {NativeComposer} from './NativeComposer.jsx';
+import {NativePty} from './NativePty.jsx';
 import {groupKeyFor} from '../../studio/workbench_ui/session_groups.mjs';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
@@ -116,7 +117,7 @@ function compareRows(a, b, order) {
  return order === 'earliest' ? a.time - b.time : b.time - a.time;
 }
 
-export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, catalog,
+export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, terminalAvailable, catalog,
  refreshCatalog, isCurrent, onClose, onWorkflow}) {
  const [list, setList] = useState(null);
  const [reading, setReading] = useState(null);
@@ -136,6 +137,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
  const [refreshCue, setRefreshCue] = useState('');
  const [notice, setNotice] = useState('');
  const [composer, setComposer] = useState(false);
+ const [terminal, setTerminal] = useState(null);
  const [collapsed, setCollapsed] = useState(() => new Set());
  const [groupDialog, setGroupDialog] = useState(null);
  const [groupError, setGroupError] = useState('');
@@ -389,7 +391,8 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
   <header className="project-panel-header">
    <div><h2>原生会话</h2><p className="muted small">{workspace.name} · {writeProviders.length ? '会话中心' : '只读 · 占用状态未核实'}</p>
     {refreshCue && <p role="status" className="muted small">{refreshCue}</p>}</div>
-   {writeProviders.length > 0 && <button onClick={() => setComposer('new')}>{pendingSend ? '核验上次发送' : '新建会话'}</button>}
+   {terminalAvailable && <button onClick={() => { setComposer(false); setTerminal('existing'); }}>已有终端</button>}
+   {writeProviders.length > 0 && <button onClick={() => { setTerminal(null); setComposer('new'); }}>{pendingSend ? '核验上次发送' : '新建会话'}</button>}
    <button aria-label="刷新原生会话" title="刷新原生会话" disabled={!enabled || loading || mutating} onClick={() => refresh(canRestore ? reading?.row.handle : null)}><RefreshCw size={16}/></button>
    <button ref={closeButton} aria-label="关闭原生会话" title="关闭原生会话" onClick={onClose}><X size={16}/></button>
   </header>
@@ -476,13 +479,15 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
      <button onClick={() => onWorkflow(reading.row.workflow)}>查看工作流节点 · {reading.row.workflow.agent}</button>
     </div>}
     {canContinue && <div className="native-view-actions">
-     <button onClick={() => setComposer('resume')}>继续会话</button>
+     <button onClick={() => { setTerminal(null); setComposer('resume'); }}>继续会话</button>
     </div>}
     {reading.result && writeProviders.includes(reading.row.provider) && <div className="native-view-actions">
-     <button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
-     <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
-      ? 'Claude 终端接管暂不可用。'
-      : 'Codex 交互终端的用户 Shell 可访问原生存储。终端接管暂不可用。'}</small>
+     {terminalAvailable && reading.row.provider === 'codex' && canContinue ?
+      <button onClick={() => { setComposer(false); setTerminal({handle: reading.row.handle, revision: list.revision}); }}>打开原生终端</button> :
+      <><button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
+       <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
+        ? 'Claude 终端接管暂不可用。' : '此 Codex 会话的终端暂未启用。'}</small></>}
+
     </div>}
     {reading.result && reading.row.claude_session_state && <p className="muted small">{{
      managed: 'DevFlower 受管会话。单写保证适用于参与租约的 DevFlower 操作。',
@@ -521,6 +526,9 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
     </NativeActivity>}
    </section>}
   </div>
+  {terminal && <NativePty key={terminal === 'existing' ? terminal : terminal.handle} api={api} workspace={workspace}
+   scope={terminal === 'existing' ? null : terminal} catalog={catalog} refreshCatalog={refreshCatalog}
+   onClose={() => setTerminal(null)}/>}
   {composer && <NativeComposer key={composer + (reading?.row.handle || '')} api={api} workspace={workspace}
    providers={writeProviders} scope={composer === 'resume' && reading ? {
     provider: reading.row.provider, handle: reading.row.handle, revision: list.revision

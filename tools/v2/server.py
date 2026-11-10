@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
+from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
 from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
 from .draft_transfer import DraftTransferError, read_request, validate_archive
@@ -35,6 +36,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                       and getattr(runtime.provider, 'version', None) == CODEX_COORDINATION_VERSION else None)
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
+    terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -71,6 +73,33 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
                 if path == '/api/v2/provider-catalog/copilot':
                     return self.reply(*catalog.request(self.path, self.headers, self.rfile, post=post))
+                if path.startswith('/api/v2/native-pty/'):
+                    if terminals is None:
+                        return self.reply(404, {'error': '当前主机或操作配置尚未启用原生终端。'})
+                    route = path.removeprefix('/api/v2/native-pty/')
+                    query = urlsplit(self.path).query
+                    if post:
+                        lengths = self.headers.get_all('Content-Length', [])
+                        size = int(lengths[0]) if len(lengths) == 1 else 0
+                        if (query or not 0 < size <= 24576 or self.headers.get('Transfer-Encoding')
+                                or self.headers.get('Content-Type', '').split(';')[0].strip().lower() != 'application/json'):
+                            raise Invalid('终端请求需要有界的 JSON 对象。')
+                        raw = self.rfile.read(size)
+                        if len(raw) != size:
+                            raise Invalid('终端请求不完整。')
+                        data = json.loads(raw, object_pairs_hook=unique_pairs)
+                        if not isinstance(data, dict):
+                            raise Invalid('终端请求需要 JSON 对象。')
+                        return self.reply(200, terminals.action(route, data))
+                    params = parse_qs(query, keep_blank_values=True, max_num_fields=3)
+                    if any(len(values) != 1 for values in params.values()):
+                        raise Invalid('终端查询身份不明确。')
+                    if route == 'list' and set(params) == {'workspace'}:
+                        return self.reply(200, terminals.listing(params['workspace'][0]))
+                    if (route == 'output' and set(params) == {'workspace', 'id', 'after'}
+                            and TERMINAL_ID.fullmatch(params['id'][0])):
+                        return self.reply(200, terminals.snapshot(params['workspace'][0], params['id'][0], int(params['after'][0])))
+                    raise Invalid('终端查询需要当前工作区和明确身份。')
                 if path in ('/api/v2/session-send', '/api/v2/session-operation', '/api/v2/workflow-session-trash'):
                     group_trash = path == '/api/v2/workflow-session-trash'
                     if group_trash and workflow_trash is None or not group_trash and session_operations is None:
@@ -163,6 +192,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                               'execution_available': None if runtime and runtime.provider else False,
                               'native_history_available': native_sessions is not None,
                               'native_session_writes': session_operations.status() if session_operations else [],
+                              'native_codex_terminal': terminals is not None,
                               'native_workflow_links': bool(native_sessions and native_sessions.workflow_links),
                               'native_workflow_trash': workflow_trash is not None,
                               'execution_check': 'native capability and permissions are checked on explicit launch',
@@ -241,6 +271,14 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
         def do_GET(self): self.dispatch()
         def do_POST(self): self.dispatch(True)
 
-    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    class Server(ThreadingHTTPServer):
+        def server_close(self):
+            try:
+                if terminals is not None:
+                    terminals.shutdown()
+            finally:
+                super().server_close()
+
+    server = Server(('127.0.0.1', port), Handler)
     server.daemon_threads = True
     return server, token

@@ -45,7 +45,8 @@ def main():
             if args.no_browser or not webbrowser.open(url):
                 print(url, flush=True)
             print('DevFlower V2 · Development · 提示词工作流；保存不启动 Agent', file=sys.stderr, flush=True)
-            server.serve_forever()
+            with server:
+                server.serve_forever()
     except KeyboardInterrupt:
         return 0
     except (Blocked, Invalid, OSError, ValueError) as exc:

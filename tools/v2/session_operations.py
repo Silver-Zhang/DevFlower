@@ -37,7 +37,7 @@ STEP = 'native-session-step'
 INTENT = re.compile(r'[A-Za-z0-9_-]{16,96}')
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}')
 PROVIDERS = ('codex', 'claude')
-ACTIVE = {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
+ACTIVE = {'RESERVED', 'STARTING', 'RUNNING', 'RECOVERY_REQUIRED'}
 REASON_UNKNOWN = '原生结果待核验。已保留本次请求记录，未自动重发。'
 
 
@@ -47,9 +47,10 @@ def load_write_profiles(path):
         with verified_directory(path.parent) as directory:
             raw = private_bytes(FileView(directory, mount_id(directory)), directory, path.name, CONFIG_BYTES)
         value = json.loads(raw, object_pairs_hook=unique_pairs)
-        if (not isinstance(value, dict) or set(value) - {'version', *PROVIDERS}
+        if (not isinstance(value, dict) or set(value) - {'version', 'codex_terminal', *PROVIDERS}
                 or type(value.get('version')) is not int or value['version'] != 1
-                or 'codex' in value and value['codex'] is not True):
+                or 'codex' in value and value['codex'] is not True
+                or 'codex_terminal' in value and (value['codex_terminal'] is not True or value.get('codex') is not True)):
             raise ValueError()
         if 'claude' in value:
             claude = {} if value['claude'] is True else value['claude']
@@ -59,7 +60,7 @@ def load_write_profiles(path):
                     or 'anthropic_base_url' in claude and not legacy_endpoint_valid(claude['anthropic_base_url'])):
                 raise ValueError()
             value['claude'] = claude
-        return {key: value[key] for key in PROVIDERS if key in value}
+        return {key: value[key] for key in (*PROVIDERS, 'codex_terminal') if key in value}
     except (OSError, ValueError, TypeError, Blocked):
         raise Invalid('原生写入配置无效。请核对启动配置与私有权限。') from None
 
@@ -148,11 +149,15 @@ class SessionOperations:
         self.store, self.reader, self.codex = store, reader, codex
         self.profiles = {}
         self.claude_env = {}
+        self.codex_terminal = profiles.get('codex_terminal') is True
         self.slots = BoundedSemaphore(4)
         self.owner = current_owner()
         from .store import private_directory
         self.artifacts = private_directory(store.state / 'session-artifacts')
-        for provider, options in profiles.items():
+        for provider in PROVIDERS:
+            if provider not in profiles:
+                continue
+            options = profiles[provider]
             source = next((source for source in reader.static if source.profile.id == 'default-' + provider), None)
             if source is None:
                 raise Invalid('原生写入需要同时明确批准对应的默认原生历史根。')

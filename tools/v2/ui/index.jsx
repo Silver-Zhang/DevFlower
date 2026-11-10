@@ -480,7 +480,8 @@ function App(){
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles}/>}
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} writeProviders={status?.native_session_writes}
-    workflowLinks={status?.native_workflow_links} workflowTrash={status?.native_workflow_trash} catalog={catalog} refreshCatalog={discover}
+    workflowLinks={status?.native_workflow_links} workflowTrash={status?.native_workflow_trash}
+    terminalAvailable={status?.native_codex_terminal} catalog={catalog} refreshCatalog={discover}
     onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node);closeNative()}}
     isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}

@@ -239,3 +239,22 @@
 .native-composer textarea { width: 100%; resize: vertical; }
 .native-composer-models { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .native-composer-actions { justify-content: flex-start; }
+
+.native-pty {
+ padding: 12px;
+ border-top: 1px solid var(--border);
+ background: var(--surface);
+ max-height: 54vh;
+ overflow: auto;
+}
+.native-pty > header, .native-pty-actions {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ flex-wrap: wrap;
+ margin: 8px 0;
+}
+.native-pty > header { justify-content: space-between; margin-top: 0; }
+.native-pty h3 { margin: 0; }
+.native-pty-actions label { margin: 0; }
+.native-pty-screen { height: clamp(140px, 28vh, 320px); overflow: hidden; background: #111318; padding: 8px; border-radius: 6px; }

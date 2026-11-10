@@ -40,6 +40,8 @@ def dimensions(cols, rows):
 
 
 class NativeTerminals:
+    record_kind = 'terminal'
+
     def __init__(self, runtime, sessions):
         self.rt, self.sessions = runtime, sessions
         self.entries, self.lock = {}, threading.RLock()
@@ -211,20 +213,20 @@ class NativeTerminals:
                 if state in ('FAILED','RECOVERY_REQUIRED'):
                     from .model_admission import ModelAdmission
                     ModelAdmission(self.rt).invalidate_verification(entry['execution_binding'],entry['cwd'],entry.get('admission_verification'))
-                self.rt.flow.change('terminal', key, {'state': state, 'exit': code, 'reason': reason,
+                self.rt.flow.change(self.record_kind, key, {'state': state, 'exit': code, 'reason': reason,
                     'finished_at': time.time(), 'output_bytes': entry['total']})
         except BaseException:
             stop(entry['process'])
             with self.lock:
                 entry['state'] = 'RECOVERY_REQUIRED'
-                self.rt.flow.change('terminal', key, {'state': 'RECOVERY_REQUIRED', 'reason': '终端连接结果未确认；未自动重发输入'})
+                self.rt.flow.change(self.record_kind, key, {'state': 'RECOVERY_REQUIRED', 'reason': '终端连接结果未确认；未自动重发输入'})
         finally:
             selector.close(); os.close(entry['master'])
             if entry.get('attach'): entry['attach'].close()
 
     def snapshot(self, workspace, key, after=0):
         with self.lock:
-            row = self.rt.flow.get('terminal', key)
+            row = self.rt.flow.get(self.record_kind, key)
             if row['workspace'] != workspace: raise Blocked('终端不属于此工作区')
             if type(after) is not int or after < 0: raise Invalid('终端输出位置无效')
             return self._snapshot_row(row, self.entries.get(key), after)
@@ -246,11 +248,15 @@ class NativeTerminals:
     def listing(self, workspace):
         self.rt.session_center.workspace(workspace)
         result=[]
-        for row in self.rt.flow.list('terminal'):
+        for row in self.rt.flow.list(self.record_kind):
             if row['workspace']!=workspace:continue
             result.append({k:v for k,v in self.snapshot(workspace,row['id']).items() if k!='output'})
             if len(result)>=20:break
         return result
+
+    @staticmethod
+    def _owner_label(owner):
+        return 'workbench' if owner == 'workbench' else 'local-terminal'
 
     def _writer(self, entry, owner, generation):
         # Old clients have generation zero. After any handoff they must refresh
@@ -281,7 +287,7 @@ class NativeTerminals:
             mutated = False; entry = None
             try:
                 with self.rt.flow.tx(timeout=remaining) as db:
-                    record = db.execute("SELECT data FROM records WHERE kind='terminal' AND id=?", (key,)).fetchone()
+                    record = db.execute("SELECT data FROM records WHERE kind=? AND id=?", (self.record_kind, key)).fetchone()
                     if not record: raise Invalid('记录不存在')
                     row = json.loads(record[0]); entry = self.entries.get(key)
                     if row['workspace'] != workspace: raise Blocked('终端不属于此工作区')
@@ -297,8 +303,8 @@ class NativeTerminals:
                         self._writer(entry, owner, generation)
                     next_generation = generation + 1
                     row.update(input_generation=next_generation,
-                               input_owner=('workbench' if owner == 'workbench' else 'local-terminal') if claim else 'unclaimed')
-                    db.execute("UPDATE records SET data=? WHERE kind='terminal' AND id=?", (canonical(row).decode(), key))
+                               input_owner=self._owner_label(owner) if claim else 'unclaimed')
+                    db.execute("UPDATE records SET data=? WHERE kind=? AND id=?", (canonical(row).decode(), self.record_kind, key))
                     mutated = True
                     if time.monotonic() >= deadline:
                         raise Blocked('终端控制等待超时；请刷新状态后再操作。')
@@ -351,15 +357,15 @@ class NativeTerminals:
                 return dict(accepted=True, duplicate=True, input_sequence=row['input_sequence'])
             if sequence != row['input_sequence'] + 1: raise Conflict('终端输入次序未确认；请重新连接，不要盲目重发')
             # Persist intent before touching the PTY; lost replies cannot replay input.
-            self.rt.flow.change('terminal',key,{'input_sequence':sequence,'last_input_sha256':sha,'input_status':'SENDING'})
+            self.rt.flow.change(self.record_kind,key,{'input_sequence':sequence,'last_input_sha256':sha,'input_status':'SENDING'})
             entry['inputs'][sequence]=sha
             try:
                 raw=text.encode();sent=os.write(entry['master'],raw)
                 if sent != len(raw):raise OSError('partial PTY input')
-                self.rt.flow.change('terminal',key,{'input_status':'SENT'})
+                self.rt.flow.change(self.record_kind,key,{'input_status':'SENT'})
             except (OSError,sqlite3.Error):
                 entry['state']='RECOVERY_REQUIRED';stop(entry['process'])
-                try:self.rt.flow.change('terminal',key,{'state':'RECOVERY_REQUIRED','input_status':'UNKNOWN'})
+                try:self.rt.flow.change(self.record_kind,key,{'state':'RECOVERY_REQUIRED','input_status':'UNKNOWN'})
                 except sqlite3.Error:pass
                 raise Blocked('终端输入结果未确认，已停止，未自动重发') from None
             if len(entry['inputs'])>128:del entry['inputs'][min(entry['inputs'])]
