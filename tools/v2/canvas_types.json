@@ -1,0 +1,40 @@
+{
+  "start": {
+    "label": "开始 / 输入", "english": "Start / Input", "inputs": {}, "outputs": {"out": "初始数据"},
+    "fields": {"instructions": {"label": "输入说明", "type": "text"}, "initial_data": {"label": "初始数据（JSON）", "type": "text", "default": "{}"}}
+  },
+  "agent": {
+    "label": "Agent", "english": "Agent", "inputs": {"in": "输入"}, "outputs": {"out": "回答"}, "fields": {}
+  },
+  "condition": {
+    "label": "条件", "english": "Condition", "inputs": {"in": "待判断"}, "outputs": {"true": "满足", "false": "不满足"},
+    "fields": {"expression": {"label": "条件表达式", "type": "predicate", "required": true}}
+  },
+  "router": {
+    "label": "路由", "english": "Router", "inputs": {"in": "待路由"}, "outputs": {"fallback": "默认分支"}, "fields": {}
+  },
+  "merge": {
+    "label": "汇合", "english": "Merge", "inputs": {"in": "多个上游"}, "outputs": {"out": "汇合结果"},
+    "fields": {"strategy": {"label": "汇合策略", "type": "choice", "default": "all", "options": {"all": "等待全部输入", "selected": "汇合已选择分支"}}}
+  },
+  "loop": {
+    "label": "循环", "english": "Loop", "inputs": {"in": "循环输入"}, "outputs": {"out": "循环结果"},
+    "fields": {"max_iterations": {"label": "最多迭代次数", "type": "integer", "default": 3, "min": 1, "max": 5}, "exit_condition": {"label": "退出条件", "type": "predicate", "required": true}}
+  },
+  "approval": {
+    "label": "人工审批", "english": "Human Approval", "inputs": {"in": "待审批"}, "outputs": {"approved": "批准", "rejected": "拒绝"},
+    "fields": {"instructions": {"label": "审批说明", "type": "text", "required": true}, "policy": {"label": "审批策略", "type": "choice", "default": "single-reviewer", "options": {"single-reviewer": "一位审核者批准", "all-reviewers": "所有审核者批准"}}}
+  },
+  "tool": {
+    "label": "工具", "english": "Tool", "inputs": {"in": "工具输入"}, "outputs": {"out": "工具结果"},
+    "fields": {"tool": {"label": "工具类型", "type": "choice", "required": true, "options": {"": "选择工具", "read-file": "读取工作区文件", "write-file": "写入工作区文件", "command": "受控命令"}}, "permission": {"label": "工具权限", "type": "choice", "default": "none", "options": {"none": "未授予权限", "workspace-read": "工作区只读", "workspace-write": "工作区读写"}}}
+  },
+  "validation": {
+    "label": "验证", "english": "Validation", "inputs": {"in": "待验证"}, "outputs": {"pass": "通过", "fail": "未通过"},
+    "fields": {"rules": {"label": "验证规则", "type": "text", "required": true}}
+  },
+  "output": {
+    "label": "输出 / 结束", "english": "Output / End", "inputs": {"in": "最终输入"}, "outputs": {},
+    "fields": {"format": {"label": "最终输出格式", "type": "choice", "default": "text", "options": {"text": "文本", "json": "JSON"}}, "instructions": {"label": "输出要求", "type": "text"}}
+  }
+}

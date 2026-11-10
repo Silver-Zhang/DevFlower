@@ -241,6 +241,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
                     result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
+                    if not runtime:
+                        result['issues'].extend(agents.reference_issues(data['workspace'], data['document']['nodes']))
                 elif post and path == '/api/v2/providers/discover' and data == {} and runtime:
                     result = runtime.catalog(refresh=True)
                 elif not post and path == '/api/v2/cli-providers' and not query and runtime:

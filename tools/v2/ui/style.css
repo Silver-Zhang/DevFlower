@@ -337,3 +337,34 @@
  .canvas-edit-tools > i { margin:0 1px; }
  .canvas-edit-tools > button,.arrange-menu > button { min-width:26px; }
 }
+
+.phase5-note { padding:4px 20px 8px;color:var(--studio-muted);font-size:11px; }
+.canvas-toolbar { flex-wrap:wrap; }
+.connected-node-picker [role=option] { text-align:left; }
+.connected-node-picker [role=option] span { display:grid;gap:1px; }
+.connected-node-picker [role=option] small { color:var(--studio-muted);font-size:10px; }
+.canvas-node { min-width:238px; }
+.canvas-node header small { letter-spacing:.15px; }
+.canvas-node footer span:last-child { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.canvas-node footer span:first-child { flex-shrink:0; }
+.canvas-node-ports { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin:9px 0; }
+.node-ports { display:grid;gap:4px; }
+.node-ports.outputs { text-align:right; }
+.node-port { position:relative;color:var(--studio-muted);font-size:11px;line-height:16px; }
+.node-port span { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.canvas-node .node-port .react-flow__handle { top:50%; }
+.canvas-node .node-port .react-flow__handle-left { left:-14px; }
+.canvas-node .node-port .react-flow__handle-right { right:-14px; }
+.canvas-node-ports.agent-ports { margin:0;height:0; }
+.agent-ports .node-port span { visibility:hidden; }
+.agent-ports .node-port { line-height:0; }
+.canvas-router,.canvas-predicate,.canvas-router fieldset { min-width:0;display:grid;gap:8px; }
+.canvas-predicate,.canvas-router fieldset { margin:0;padding:9px;border:1px solid var(--studio-line);border-radius:7px; }
+.canvas-router legend,.canvas-predicate legend { padding:0 4px;font-size:12px;color:var(--studio-muted); }
+.edge-label,.inspection-edge { position:absolute;z-index:4;pointer-events:none;padding:2px 5px;border:1px solid var(--studio-line);border-radius:4px;background:var(--studio-bg);color:var(--studio-muted);white-space:nowrap;font-size:10px; }
+.inspection-edge { color:var(--studio-error); }
+@media(max-width:620px) {
+ .phase5-note { padding-inline:10px; }
+ .v2-app > .inspector { z-index:8;top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:54dvh;border:1px solid var(--studio-line-strong);border-radius:10px; }
+ .inspector-content { min-height:0; }
+}

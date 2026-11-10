@@ -5,6 +5,7 @@ from pathlib import Path
 from orchestration.common import canonical, digest
 from studio.graph import Invalid
 from studio.workbench_graph import validate_graph
+from .canvas_structure import SCHEMA_PATH
 from .documents import validate_draft, check_chain
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def source_manifest():
     paths = [p for p in (ROOT / 'tools').rglob('*.py') if 'node_modules' not in p.parts]
-    paths += list((ROOT / 'tools/v2/static').glob('*'))
+    paths += list((ROOT / 'tools/v2/static').glob('*')) + [SCHEMA_PATH]
     if any(p.is_symlink() for p in paths):
         raise Invalid('运行源码不能使用符号链接')
     return {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in sorted(paths) if p.is_file()}
@@ -54,7 +55,8 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
     incoming = {e['target'] for e in doc['edges']}; outgoing = {e['source'] for e in doc['edges']}
     first = next(n['id'] for n in agents if n['id'] not in incoming)
     last = next(n['id'] for n in agents if n['id'] not in outgoing)
-    edges = [dict(e, transfer='answer', max_chars=16000) for e in copy.deepcopy(doc['edges'])]
+    edges = [dict(id=e['id'], source=e['source'], target=e['target'], transfer='answer', max_chars=16000)
+             for e in doc['edges']]
     edge_ids = {e['id'] for e in edges}
     def technical(prefix):
         while prefix in edge_ids: prefix += '_'

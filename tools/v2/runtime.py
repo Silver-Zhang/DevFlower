@@ -33,6 +33,7 @@ from .agent_records import AgentRecords, KEY as AGENT_ID
 from .agent_execution import freeze_agent, prove_agent_history, require_agent_history, require_agent_scope
 from .native_writer_state import require_native_writer_idle
 from .definitions import compile_definition, source_manifest, ROOT
+from .canvas_structure import runtime_issues
 from .documents import check_chain
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}
@@ -292,7 +293,9 @@ class V2Runtime:
     def inspect(self, workspace, document):
         self.store.workspace(workspace)
         result = check_chain(document)
-        result['message'] = '配置检查不调用模型；启动时仍会核验当前账户、CLI 能力与权限。'
+        result['issues'].extend(self.agents.reference_issues(workspace, document['nodes']))
+        if not runtime_issues(document):
+            result['message'] = '配置检查不调用模型；启动时仍会核验当前账户、CLI 能力与权限。'
         if not result['issues']:
             for node in document['nodes']:
                 try:
@@ -426,6 +429,11 @@ class V2Runtime:
                 version=1, name=name, edges=[], nodes=[dict(id='agent', name=name, position={'x': 120, 'y': 120},
                                                            agent_id=direct_agent, agent_revision=record['revision'])]))
         if draft['revision'] != revision: raise Conflict('草稿已变化，请重新保存后启动')
+        unsupported = runtime_issues(draft['graph'])
+        if unsupported:
+            raise Invalid(unsupported[0]['message'])
+        if any(node.get('kind') == 'agent' and 'agent_id' not in node for node in draft['graph']['nodes']):
+            raise Invalid('请在 Agent 管理为未绑定的节点选择已保存配置版本。')
         if not self.provider and any('agent_id' not in node for node in draft['graph']['nodes']):
             raise Blocked(self.provider_error)
         definition = compile_definition(self.store, self.provider, workspace, draft, task,

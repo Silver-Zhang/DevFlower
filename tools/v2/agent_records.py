@@ -102,6 +102,17 @@ class AgentRecords:
             raise Conflict('Agent 工作空间或版本已变化，请重新选择。')
         return row
 
+    def reference_issues(self, workspace, nodes):
+        issues = []
+        for node in nodes:
+            if 'agent_id' in node:
+                try:
+                    self.get(workspace, node['agent_id'], node['agent_revision'])
+                except (Invalid, Conflict):
+                    issues.append(dict(node_id=node['id'], code='AGENT_REFERENCE_UNRESOLVED',
+                        message=node['name'] + '：此 Agent 配置版本在当前工作空间不可用，请重新选择。'))
+        return issues
+
     def verify_session(self, workspace, config, revision):
         operations = self.session_operations
         if operations is None or not matches(REVISION, revision):

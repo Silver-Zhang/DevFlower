@@ -21,7 +21,7 @@ function Field({label, children}) {
  return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onRun, onClose, visible}) {
+export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onRun, onClose, onChanged, visible}) {
  const [rows, setRows] = useState([]);
  const [providers, setProviders] = useState([]);
  const [record, setRecord] = useState(null);
@@ -98,14 +98,14 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
     config, session_revision: changedSession ? sessions?.revision ?? null : null});
    if (!alive.current) return;
    setRows(items => [saved, ...items.filter(item => item.id !== saved.id)]);
-   setRecord(saved); setConfig(saved.config); setNotice('Agent 配置已保存。');
+   setRecord(saved); setConfig(saved.config); setNotice('Agent 配置已保存。'); onChanged?.();
   });
  }
  async function remove() {
   await action(async () => {
    await api('agents/remove', {workspace: workspace.id, id: record.id, expected: record.revision});
    if (!alive.current) return;
-   setRows(items => items.filter(item => item.id !== record.id)); setRecord(null); setConfig(null); setDeleteAsk(false);
+   setRows(items => items.filter(item => item.id !== record.id)); setRecord(null); setConfig(null); setDeleteAsk(false); onChanged?.();
   });
  }
  function runKey(id) {return 'df-agent-launch:' + workspace.id + ':' + id;}

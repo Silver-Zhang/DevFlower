@@ -3,14 +3,14 @@ import {Search,X,Plus,Copy,ClipboardPaste,Trash2,Scan,ArrowRight} from 'lucide-r
 
 export function ConnectedNodePicker({pending,kinds,onChoose,onClose,canChoose}){
  const [query,setQuery]=useState(''),[active,setActive]=useState(0),ref=useRef(null);
- const entries=Object.entries(kinds).filter(([kind,[name]])=>canChoose(kind)&&(name+' '+kind).toLowerCase().includes(query.toLowerCase()));
+ const entries=Object.entries(kinds).filter(([kind,[name,,alias]])=>canChoose(kind)&&(name+' '+kind+' '+(alias||'')).toLowerCase().includes(query.toLowerCase()));
  useEffect(()=>{ref.current?.focus()},[]);
  const choose=kind=>{if(kind)onChoose(kind)};
  return <div className="connected-node-picker" role="dialog" aria-label="在画布添加节点" style={{left:Math.min(Math.max(12,pending.screen.x),innerWidth-272),top:Math.min(Math.max(75,pending.screen.y),Math.max(75,innerHeight-410))}} onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();setActive(i=>(i+(e.key==='ArrowDown'?1:entries.length-1))%Math.max(1,entries.length))}else if(e.key==='Enter'){e.preventDefault();choose(entries[active]?.[0])}}}>
   <header><strong>{pending.source||pending.target?'添加并连接节点':'添加节点'}</strong><button aria-label="关闭画布节点选择器" onClick={onClose}><X size={14}/></button></header>
   <label><Search size={14}/><input ref={ref} aria-label="搜索节点类型" placeholder="搜索节点…" value={query} onChange={e=>{setQuery(e.target.value);setActive(0)}}/></label>
   {(pending.source||pending.target)&&<p><ArrowRight size={12}/>选择后建立连线 · 未执行</p>}
-  <div role="listbox" aria-label="可添加的节点">{entries.map(([kind,[label,Icon]],i)=><button role="option" aria-selected={i===active} key={kind} onMouseEnter={()=>setActive(i)} onClick={()=>choose(kind)}><Icon size={16}/><span>{label}</span><Plus size={13}/></button>)}{!entries.length&&<small>没有匹配的节点</small>}</div>
+  <div role="listbox" aria-label="可添加的节点">{entries.map(([kind,[label,Icon,alias]],i)=><button role="option" aria-selected={i===active} key={kind} onMouseEnter={()=>setActive(i)} onClick={()=>choose(kind)}><Icon size={16}/><span>{label}{alias&&alias!==label&&<small>{alias}</small>}</span><Plus size={13}/></button>)}{!entries.length&&<small>没有匹配的节点</small>}</div>
   <footer>↑↓ 选择　Enter 添加　Esc 取消</footer>
  </div>;
 }

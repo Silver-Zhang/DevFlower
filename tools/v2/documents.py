@@ -1,37 +1,21 @@
 """Bounded draft structure, deliberately independent of execution validation."""
 import copy
 import json
-import math
 import re
 
 from studio.graph import Invalid
 
+from .canvas_structure import (EDGE_EXTENSION, ID, TRANSFER_MODES, TYPES, config_issues, connection_message,
+                               fields, node_kind, number, port_issues, runtime_issues, text, validate_config)
+
 MAX_BYTES = 400000
-ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
-
-
-def fields(value, allowed, required=()):
-    if not isinstance(value, dict) or set(value) - set(allowed) or set(required) - set(value):
-        raise Invalid('草稿字段缺失或不受支持')
-
-
-def text(value, limit, label):
-    if not isinstance(value, str) or len(value) > limit or '\x00' in value:
-        raise Invalid(label + '的类型或长度无效')
-
-
-def number(value, low, high):
-    if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
-        raise Invalid('画布坐标或缩放无效')
-
-
 def validate_draft(document):
     fields(document, {'version', 'name', 'nodes', 'edges', 'viewport'}, {'version', 'name', 'nodes', 'edges'})
     if type(document['version']) is not int or document['version'] != 1:
         raise Invalid('请选择 V2 草稿格式 version 1；旧工作流不会自动迁移')
     try:
         raw = json.dumps(document, ensure_ascii=False, allow_nan=False).encode('utf-8')
-    except (ValueError, TypeError, UnicodeError):
+    except (ValueError, TypeError, UnicodeError, RecursionError):
         raise Invalid('草稿包含不支持的 JSON 数据') from None
     if len(raw) > MAX_BYTES:
         raise Invalid('草稿超过 400000 字节预算')
@@ -39,22 +23,42 @@ def validate_draft(document):
     if not document['name'].strip():
         raise Invalid('请填写工作流名称')
     if not isinstance(document['nodes'], list) or len(document['nodes']) > 64:
-        raise Invalid('草稿最多保存 64 个 Agent')
+        raise Invalid('草稿最多保存 64 个节点')
     if not isinstance(document['edges'], list) or len(document['edges']) > 128:
         raise Invalid('草稿连线数量超限')
-    nodes, edges, pairs = set(), set(), set()
+    nodes, edges, pairs = {}, set(), set()
+    typed = any(isinstance(node, dict) and 'kind' in node for node in document['nodes'])
+    typed = typed or any(isinstance(edge, dict) and EDGE_EXTENSION & edge.keys() for edge in document['edges'])
     for node in document['nodes']:
+        if not isinstance(node, dict):
+            raise Invalid('节点必须是对象。')
+        kind = node_kind(node)
+        if not isinstance(kind, str) or kind not in TYPES:
+            raise Invalid('节点类型无效或尚未支持。')
         reference = 'agent_id' in node or 'agent_revision' in node
-        config = {'agent_id', 'agent_revision'} if reference else {'provider', 'model', 'effort',
-                  'initial_prompt', 'round_prompt', 'output_prompt', 'permission', 'timeout'}
-        fields(node, {'id', 'name', 'position'} | config, {'id', 'name', 'position'})
+        required = {'id', 'name', 'position'}
+        if kind == 'agent':
+            if reference:
+                config = {'agent_id', 'agent_revision'}
+            elif 'kind' in node:
+                config = set()
+            else:
+                config = {'provider', 'model', 'effort', 'initial_prompt', 'round_prompt',
+                          'output_prompt', 'permission', 'timeout'}
+        else:
+            config = {'config_version', 'config'}
+            required |= config
+        fields(node, {'id', 'name', 'position', 'kind'} | config, required)
         if not isinstance(node['id'], str) or not ID.fullmatch(node['id']) or node['id'] in nodes:
-            raise Invalid('Agent 身份无效或重复')
-        nodes.add(node['id'])
-        text(node['name'], 160, 'Agent 名称')
+            raise Invalid('节点身份无效或重复')
+        nodes[node['id']] = node
+        text(node['name'], 160, '节点名称')
         fields(node['position'], {'x', 'y'}, {'x', 'y'})
         for value in node['position'].values():
             number(value, -100000, 100000)
+        if kind != 'agent':
+            validate_config(node)
+            continue
         if reference:
             if any(not isinstance(node.get(key), str) or not re.fullmatch(r'[0-9a-f]{' + str(length) + '}', node[key])
                    for key, length in (('agent_id', 32), ('agent_revision', 64))):
@@ -72,17 +76,32 @@ def validate_draft(document):
             raise Invalid('当前阶段仅支持只读权限')
         if 'timeout' in node and (type(node['timeout']) is not int or not 10 <= node['timeout'] <= 3600):
             raise Invalid('超时需要 10–3600 秒的整数')
+    previous = []
     for edge in document['edges']:
-        fields(edge, {'id', 'source', 'target'}, {'id', 'source', 'target'})
+        fields(edge, {'id', 'source', 'target'} | EDGE_EXTENSION, {'id', 'source', 'target'})
         if not isinstance(edge['id'], str) or not ID.fullmatch(edge['id']) or edge['id'] in edges:
             raise Invalid('连线身份无效或重复')
         edges.add(edge['id'])
         if not isinstance(edge['source'], str) or not isinstance(edge['target'], str):
-            raise Invalid('连线端点需要 Agent 身份')
-        pair = edge['source'], edge['target']
-        if pair[0] not in nodes or pair[1] not in nodes or pair[0] == pair[1] or pair in pairs:
-            raise Invalid('连线端点缺失、自连接或重复')
-        pairs.add(pair)
+            raise Invalid('连线端点需要节点身份。')
+        for name in ('source_port', 'target_port'):
+            if name in edge and (not isinstance(edge[name], str) or not ID.fullmatch(edge[name])):
+                raise Invalid('连线端口身份无效。')
+        if 'transfer' in edge:
+            transfer = edge['transfer']
+            fields(transfer, {'mode', 'max_chars'}, {'mode', 'max_chars'})
+            if (not isinstance(transfer['mode'], str) or transfer['mode'] not in TRANSFER_MODES
+                    or type(transfer['max_chars']) is not int or not 1 <= transfer['max_chars'] <= 20000):
+                raise Invalid('连线交接模式或长度上限无效。')
+        if typed:
+            if problem := connection_message(edge, nodes, previous):
+                raise Invalid(problem)
+            previous.append(edge)
+        else:
+            pair = edge['source'], edge['target']
+            if pair[0] not in nodes or pair[1] not in nodes or pair[0] == pair[1] or pair in pairs:
+                raise Invalid('连线端点缺失、自连接或重复')
+            pairs.add(pair)
     if 'viewport' in document:
         fields(document['viewport'], {'x', 'y', 'zoom'}, {'x', 'y', 'zoom'})
         number(document['viewport']['x'], -100000, 100000)
@@ -98,13 +117,23 @@ def check_chain(document):
     issues = []
     if not doc['nodes']:
         issues.append({'message': '添加至少一个 Agent 后再检查执行配置'})
+    unsupported = runtime_issues(doc)
+    for node in doc['nodes']:
+        if node.get('kind') == 'agent' and 'agent_id' not in node:
+            issues.append(dict(node_id=node['id'], code='AGENT_REFERENCE_REQUIRED',
+                               message=node['name'] + '：请在 Agent 管理选择已保存的配置版本。'))
+        for field, message in config_issues(node):
+            issues.append(dict(node_id=node['id'], field=field, message=node['name'] + '：' + message))
+    if unsupported:
+        return {'issues': issues + port_issues(doc) + unsupported, 'execution_available': False,
+                'message': '草稿可以保存；这些节点或交接尚未接入执行。检查不会调用模型。'}
     incoming = {n['id']: [] for n in doc['nodes']}
     outgoing = {n['id']: [] for n in doc['nodes']}
     for edge in doc['edges']:
         incoming[edge['target']].append(edge['source'])
         outgoing[edge['source']].append(edge['target'])
     for node in doc['nodes']:
-        if 'agent_id' not in node:
+        if 'agent_id' not in node and 'kind' not in node:
             for key, label in [('provider', 'Provider'), ('model', '模型'), ('effort', '推理强度'), ('round_prompt', '每轮提示词')]:
                 if not node.get(key, '').strip():
                     issues.append({'node_id': node['id'], 'field': key, 'message': node['name'] + '：请配置' + label})

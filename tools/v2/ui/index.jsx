@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ReactFlow,ReactFlowProvider,Background,Controls,Handle,Position,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
-import {FolderOpen,Plus,Save,X,Play,Check,Workflow,ArrowRight,Settings2,Trash2,PanelRightClose} from 'lucide-react';
+import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
+import {FolderOpen,Plus,Save,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
@@ -17,7 +17,10 @@ import {CanvasContextMenu, ConnectedNodePicker} from '../../studio/workbench_ui/
 import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
-const agentKinds={agent:['Agent',Workflow]};
+import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
+import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
+import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
+import {connectionIssue, defaultConfig, defaultTransfer, nodeKind, nodeType, ports, transferModes} from './canvasModel.mjs';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}});
@@ -43,13 +46,7 @@ const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value
 const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
 function Button({icon:Icon,children,...props}){return <button {...props}>{Icon&&<Icon size={16}/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
-function AgentCard({data,selected}){const n=data.node;return <article className={'agent-card'+(selected?' selected':'')}>
- <Handle type="target" position={Position.Left} aria-label={n.name+' 输入连接点'}/>
- <header><span className="agent-icon"><Workflow size={18}/></span><div><small>Agent</small><strong>{n.name||'未命名 Agent'}</strong></div><Settings2 size={15}/></header>
- <p>{n.agent_id?'已保存的 Agent 配置':n.model||'选择 Provider 与模型'}</p><footer><span>{data.activation?stateLabel(data.activation.state):n.agent_id?'已绑定':n.provider==='codex'?'Codex':'待配置'}</span><span>{data.activation?.input_sent_sha256?'已写入 CLI':n.agent_id?'固定版本':(n.effort||'未配置强度')+' · 独立会话'}</span></footer>
- <Handle type="source" position={Position.Right} aria-label={n.name+' 输出连接点'}/>
- </article>}
-const nodeTypes={agent:AgentCard};
+const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
 const stateLabel=state=>({QUEUED:'等待启动',PENDING:'等待上游',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
@@ -101,13 +98,6 @@ function PlanApproval({value,busy,error,onClose,onConfirm}){
 // Same controlled-measurement boundary as the existing workbench: geometry is
 // live view state, never part of the saved draft or undo history.
 function RepairHandles(){const update=useUpdateNodeInternals();const missing=useStore(s=>JSON.stringify([...s.nodeLookup.values()].filter(n=>!n.hidden&&n.measured.width>0&&n.measured.height>0&&!n.internals.handleBounds).map(n=>n.id)));useEffect(()=>{const ids=JSON.parse(missing);if(ids.length)update(ids)},[missing,update]);return null}
-function canConnect(doc,source,target){
- if(!source||!target||source===target||doc.edges.some(e=>e.source===source||e.target===target))return false;
- let current=target;const seen=new Set();
- while(current){if(current===source||seen.has(current))return false;seen.add(current);current=doc.edges.find(e=>e.source===current)?.target}
- return true;
-}
-
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
@@ -118,7 +108,8 @@ function App(){
  const flow=useReactFlow();
  const [past,setPast]=useState([]),[future,setFuture]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
- const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
+ const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
+ const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
  const [agentPanel,setAgentPanel]=useState(null);
  const [planApproval,setPlanApproval]=useState(null),[planBusy,setPlanBusy]=useState(false),[planError,setPlanError]=useState('');
@@ -157,7 +148,7 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -395,7 +386,7 @@ function App(){
   closePending(operation.transfer);await operation.action()
  }
  function selectWorkspace(w,rows,row=null){
-  clipboard.current=null;setCanvasFocused(false);
+  clipboard.current=null;setCanvasFocused(false);setAgentVersions(null);
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
@@ -404,7 +395,7 @@ function App(){
   install(row?.graph||blank(),row);
  }
  function closeWorkspace(){
-  clipboard.current=null;setCanvasFocused(false);
+  clipboard.current=null;setCanvasFocused(false);setAgentVersions(null);
   selectWorkspace(null,[]);
   remember(null);rememberRun(null);
   setNotice('已关闭工作空间');
@@ -461,15 +452,16 @@ function App(){
   }finally{planBusyRef.current=false;setPlanBusy(false)}
  }
  function bindAgent(record){
-  if(viewMode!=='draft')return;
+  if(!editable)return;
   const previous=docRef.current.nodes.find(node=>node.id===agentPanel?.node);
+  if(agentPanel?.node&&(!previous||nodeKind(previous)!=='agent')){setError('原节点已变化，请重新选择画布节点。');return}
   const id=previous?.id||uid('n');
   change(d=>{
    const node={id,name:record.config.name,agent_id:record.id,agent_revision:record.revision,
-    position:previous?.position||{x:100+d.nodes.length*300,y:160}};
+    position:previous?.position||{x:100+d.nodes.length*300,y:160},...(!previous||previous.kind?{kind:'agent'}:{})};
    if(previous)d.nodes=d.nodes.map(item=>item.id===id?node:item);else d.nodes.push(node);
   });
-  setSelected(id);setEdge(null);closeAgents();
+  setSelected(id);setEdge(null);setEdgeSelection([]);setAgentRefresh(value=>value+1);closeAgents();
  }
  async function openWorkspacePath(path,expectedWorkspace=null){
   const gen=generation.current,snapshot=copy(docRef.current);setBusy('open');
@@ -549,7 +541,7 @@ function App(){
   if(selects.length)setEdgeSelection(current=>applySelection(current,selects));
  }
  function inspectNode(event,node){
-  setCanvasMenu(null);setTarget('');setEdge(null);
+  setCanvasMenu(null);setEdge(null);
   if(event.shiftKey||event.ctrlKey||event.metaKey){invalidateProviderView();setSelectedNode(null);return}
   setSelected(node.id);setEdgeSelection([]);
  }
@@ -567,10 +559,10 @@ function App(){
   setCanvasMenu({isBlockMenuOpen:Boolean(node),isPaneMenuOpen:!node,menuRef,
    position:{x:event.clientX,y:event.clientY},ids});
  }
- function openPicker(screen){
+ function openPicker(screen,atPointer=true){
   if(!editable)return;
   setCanvasMenu(null);
-  setNodePicker({screen,position:flow.screenToFlowPosition(screen)});
+  setNodePicker({screen,position:atPointer?flow.screenToFlowPosition(screen):null});
  }
  function fitCanvas(){setCanvasMenu(null);flow.fitView({padding:.18,duration:0,maxZoom:1.25})}
  function canvasCommand(action,ids=nodeSelection){
@@ -644,24 +636,95 @@ function App(){
  }
  function undo(){if(!past.length||!editable)return;const current=copy(docRef.current);setFuture(f=>[current,...f]);setPast(p=>p.slice(0,-1));restoreHistory(past.at(-1))}
  function redo(){if(!future.length||!editable)return;const current=copy(docRef.current);setPast(p=>[...p,current]);setFuture(f=>f.slice(1));restoreHistory(future[0])}
- function addAgent(position){
+ function addNode(kind='agent',position,legacy=false){
   if(!editable||docRef.current.nodes.length>=64)return;
   const id=uid('n');
+  const index=docRef.current.nodes.length;
   const point=position&&Number.isFinite(position.x)&&Number.isFinite(position.y)?
-   {x:coordinate(position.x),y:coordinate(position.y)}:{x:100+docRef.current.nodes.length*300,y:160};
-  change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:point,provider:'',model:'',effort:'',
-   initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));
+   {x:coordinate(position.x),y:coordinate(position.y)}:legacy?{x:100+index*300,y:160}:
+   {x:100+(index%4)*300,y:100+Math.floor(index/4)*220};
+  change(d=>{
+   const common={id,name:kind==='agent'?'Agent '+String.fromCharCode(65+d.nodes.length%26):nodeKinds[kind][0],position:point};
+   if(kind!=='agent')d.nodes.push({...common,kind,config_version:1,config:defaultConfig(kind)});
+   else if(legacy)d.nodes.push({...common,provider:'',model:'',effort:'',initial_prompt:'',round_prompt:'',output_prompt:'',
+    permission:'read',timeout:300});
+   else d.nodes.push({...common,kind});
+  });
   setNodePicker(null);setSelected(id);setEdge(null);setEdgeSelection([]);
  }
- function connect(source,destination){if(!canConnect(docRef.current,source,destination)){setError('本期仅支持无环顺序链；请先删除重复、分支或反向连线');return}change(d=>d.edges.push({id:uid('e'),source,target:destination}));setNotice('已连接两个 Agent · 运行时使用独立新会话')}
+ function connect(candidate){
+  if(!editable)return;
+  const current=docRef.current,issue=connectionIssue(current,candidate);
+  if(issue){setError(issue);return}
+  if(current.edges.length>=128){setError('草稿最多保存 128 条连线。');return}
+  const {source,target,source_port,target_port}=candidate;
+  const legacy=source_port==='out'&&target_port==='in'&&current.nodes
+   .filter(node=>node.id===source||node.id===target).every(node=>nodeKind(node)==='agent');
+  change(d=>d.edges.push(legacy?{id:uid('e'),source,target}:{id:uid('e'),...candidate}));
+  setError('');setNotice('已添加草稿连线。');
+ }
+ function rfConnection(value){
+  return {source:value.source,target:value.target,source_port:value.sourceHandle??'out',target_port:value.targetHandle??'in'};
+ }
+ function explainConnection(event,state){
+  if(!editable||state.isValid||!state.fromHandle)return;
+  const node=event.target?.closest?.('.react-flow__handle');
+  const handle=state.toHandle||(node?{nodeId:node.dataset.nodeid,id:node.dataset.handleid,type:node.classList.contains('source')?'source':'target'}:null);
+  if(!handle)return;
+  if(handle.type===state.fromHandle.type){setError('请将输出端口连接到输入端口。');return}
+  const [out,input]=state.fromHandle.type==='source'?[state.fromHandle,handle]:[handle,state.fromHandle];
+  const issue=connectionIssue(docRef.current,{source:out.nodeId,target:input.nodeId,source_port:out.id,target_port:input.id});
+  if(issue)setError(issue);
+ }
+ function updateEdge(id,patch){
+  if(!editable)return;
+  const previous=docRef.current.edges.find(item=>item.id===id);
+  if(!previous)return;
+  const next={...previous,...patch},issue=connectionIssue(docRef.current,next,id);
+  if(issue){setError(issue);return}
+  if(next.transfer?.mode===defaultTransfer.mode&&next.transfer.max_chars===defaultTransfer.max_chars)delete next.transfer;
+  change(d=>{d.edges=d.edges.map(item=>item.id===id?next:item)});setError('');
+ }
+ function referenceIssue(node){
+  if(!node.agent_id||agentVersions?.workspace!==workspace?.id)return '';
+  if(agentVersions.failed)return '无法核对 Agent 配置版本。';
+  return agentVersions.revisions.get(node.agent_id)===node.agent_revision?'':'此 Agent 配置版本在当前工作空间不可用，请重新选择。';
+ }
+ useEffect(()=>{
+  if(viewMode!=='draft'||!workspace||!doc.nodes.some(node=>node.agent_id))return;
+  let alive=true;
+  const id=workspace.id;
+  setAgentVersions(null);
+  api('agents?workspace='+id).then(result=>{
+   if(alive)setAgentVersions({workspace:id,revisions:new Map(result.agents.map(row=>[row.id,row.revision]))});
+  }).catch(()=>{if(alive)setAgentVersions({workspace:id,failed:true})});
+  return()=>{alive=false};
+ },[workspace?.id,viewMode,agentRefresh,selected,doc.nodes.some(node=>node.agent_id)]);
  const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching),shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
  const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const rfNodes=shown.nodes.map(n=>({id:n.id,type:'agent',position:n.position,selected:nodeSelection.includes(n.id),draggable:editable&&canvasMode==='select',connectable:editable,data:{node:n,activation:readOnly?{...(activation(n.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null},...(measurements.has(n.id)?{measured:measurements.get(n.id)}:{})}));
- const rfEdges=shown.edges.map(e=>({...e,selected:edgeSelection.includes(e.id),markerEnd:{type:MarkerType.ArrowClosed},label:'回答 → 输入',style:{strokeWidth:2}}));
+ const phased=doc.nodes.some(node=>nodeKind(node)!=='agent')||doc.edges.some(item=>item.transfer&&
+  (item.transfer.mode!==defaultTransfer.mode||item.transfer.max_chars!==defaultTransfer.max_chars));
+ const rfNodes=shown.nodes.map(node=>{
+  const value=readOnly?{...(activation(node.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
+  return {id:node.id,type:'canvas',position:node.position,selected:nodeSelection.includes(node.id),
+   draggable:editable&&canvasMode==='select',connectable:editable,
+   data:{node,activation:value,stateLabel:value&&stateLabel(value.state),referenceIssue:!readOnly&&referenceIssue(node)},
+   ...(measurements.has(node.id)?{measured:measurements.get(node.id)}:{})};
+ });
+ const shownNodes=new Map(shown.nodes.map(node=>[node.id,node]));
+ const rfEdges=shown.edges.map(item=>{
+  const {source,target}=item,sourceHandle=item.source_port??'out',targetHandle=item.target_port??'in';
+  const output=ports(shownNodes.get(source),'outputs').find(([id])=>id===sourceHandle)?.[1]||sourceHandle;
+  const input=ports(shownNodes.get(target),'inputs').find(([id])=>id===targetHandle)?.[1]||targetHandle;
+  return {id:item.id,type:'handoff',source,target,sourceHandle,targetHandle,selected:edgeSelection.includes(item.id),
+   markerEnd:{type:MarkerType.ArrowClosed},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
+   ariaLabel:shownNodes.get(source).name+' '+output+' → '+shownNodes.get(target).name+' '+input,
+   data:{issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
+ });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')}>
@@ -683,7 +746,7 @@ function App(){
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
-  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(!doc.nodes.length||!status?.provider_available&&!doc.nodes.every(node=>node.agent_id)))} title={status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
+  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(phased||!doc.nodes.length||!status?.provider_available&&!doc.nodes.every(node=>node.agent_id)))} title={phased&&!launchAttempt?'当前草稿含 Phase 5 节点或交接，暂不可启动。':status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
    {workspace&&!readOnly&&<div className="draft-transfer">
     <Button disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
     <Button disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
@@ -691,7 +754,8 @@ function App(){
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button></>}</div>
+   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
+   {!readOnly&&phased&&<p className="phase5-note">当前图可以编辑、保存和导出。其他节点或自定义交接的执行由 Phase 5 接入。</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
@@ -699,9 +763,10 @@ function App(){
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
    <div ref={canvasRef} className="canvas-region" aria-label="工作流画布" tabIndex={0}>
-    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} onNodeClick={inspectNode} onEdgeClick={inspectEdge}
+    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodeClick={inspectNode} onEdgeClick={inspectEdge}
      onPaneClick={closeInspector} onPaneContextMenu={event=>contextMenu(event)} onNodeContextMenu={contextMenu}
-     onConnect={c=>{if(editable)connect(c.source,c.target)}} isValidConnection={c=>editable&&canConnect(docRef.current,c.source,c.target)}
+     onConnect={value=>connect(rfConnection(value))} onConnectEnd={explainConnection} onClickConnectEnd={explainConnection}
+     isValidConnection={value=>editable&&!connectionIssue(docRef.current,rfConnection(value))}
      nodesDraggable={editable&&canvasMode==='select'} nodesConnectable={editable}
      onNodesChange={changeNodes} onEdgesChange={changeEdges}
      onNodeDragStart={()=>{if(editable&&!dragBase.current)dragBase.current=copy(docRef.current)}}
@@ -722,18 +787,25 @@ function App(){
      menuOpen={arrangeOpen} setMenuOpen={setArrangeOpen}/>}
     {canvasMenu&&<CanvasContextMenu menu={canvasMenu} onAction={action=>canvasCommand(action,canvasMenu.ids)}
      onAdd={()=>openPicker(canvasMenu.position)} onFit={fitCanvas}/>}
-    {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={agentKinds} canChoose={()=>true}
-     onChoose={()=>addAgent(nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
-    {!shown.nodes.length&&<div className="canvas-empty"><span className="empty-icon"><Workflow size={30}/></span><h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1><p>{readOnly?'仅查询持久化结果，不启动或重发请求。':workspace?'添加两个独立 Agent，设置提示词，再连接 A → B。':'打开一个工作空间，创建并保存你的 Agent 工作流。'}</p>{!readOnly&&<><Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?addAgent:showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button><small>空白或未配置完成的工作流也可以保存</small></>}</div>}
+    {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={nodeKinds} canChoose={()=>true}
+     onChoose={kind=>addNode(kind,nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
+    {!shown.nodes.length&&<div className="canvas-empty"><span className="empty-icon"><Workflow size={30}/></span><h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1><p>{readOnly?'仅查询持久化结果，不启动或重发请求。':workspace?'从节点库选择类型，或先添加一个 Agent。':'打开一个工作空间，创建并保存你的 Agent 工作流。'}</p>{!readOnly&&<><Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>addNode():showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button><small>空白或未配置完成的工作流也可以保存</small></>}</div>}
    </div>
-   {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id);setEdge(null)}}}>{i.message}</button></li>)}</ul>:<p>顺序链配置已填写，尚未验证 Provider 可用性。</p>}</section>}
-   <footer className="editor-footer"><span>{shown.nodes.length} 个 Agent · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
+   {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>顺序链配置已填写，尚未验证 Provider 可用性。</p>}</section>}
+   <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
   </main>
-  {(n||e)&&<aside className="inspector" aria-label={n?'Agent 配置':'连线配置'}><header><div><small>{n?'AGENT':'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
+  {(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
    {n?readOnly?<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
-    onTransition={completedPlans.some(a=>a.node===n.id)?()=>openPlanApproval(activation(n.id)):null}/>:<div className="inspector-content"><Field label="Agent 名称"><input value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
-    {n.agent_id?<div className="session-note">此节点引用已保存的 Agent 配置版本。<Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></div>:<>
-    <div className="session-note">每个节点使用独立新会话 · 只读提示词模式</div>
+    onTransition={completedPlans.some(a=>a.node===n.id)?()=>openPlanApproval(activation(n.id)):null}/>:<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
+    {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
+     connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
+    n.agent_id?<div className="session-note"><p>此节点引用已保存的 Agent 配置版本。</p>
+     <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
+     <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></div>:n.kind==='agent'?<>
+    <div className="session-note">从 Agent 管理绑定已保存的配置。节点会保留当时选择的版本。</div>
+    <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button>
+    </>:<>
+    <div className="session-note">兼容旧草稿 · 每个节点使用独立新会话和只读提示词模式。</div>
     <Button onClick={()=>openAgents(n.id)}>使用已保存 Agent</Button>
     <Field label="Provider"><select value={n.provider||''} onChange={e=>updateNode(n.id,{provider:e.target.value})}><option value="">待配置</option><option value="codex">Codex CLI</option></select></Field>
     <Button disabled={catalogBusy||!status?.provider_available} onClick={guard(discover)}>{catalogBusy?'正在读取目录…':'刷新模型目录'}</Button>
@@ -741,9 +813,11 @@ function App(){
     <p className="field-note" aria-label="模型目录状态">{catalog?.source||'尚无真实发现目录'}{catalog?.at?' · '+new Date(catalog.at*1000).toLocaleString():''}。{catalog?.stale?'目录过期或不可用，请刷新。':''}{catalog?.error||''} {modelKnown?'所选模型与强度在目录中；启动时仍将核验。':'当前配置尚未被目录确认，原值可继续保存。'} 登录状态与目录不代表推理成功。</p>
     <Field label="初始化提示词" note="每次新运行初始化此 Agent。"><textarea rows={3} value={n.initial_prompt||''} onChange={e=>updateNode(n.id,{initial_prompt:e.target.value})}/></Field><Field label="每轮提示词"><textarea rows={4} value={n.round_prompt||''} onChange={e=>updateNode(n.id,{round_prompt:e.target.value})}/></Field><Field label="输出与交接要求"><textarea rows={3} value={n.output_prompt||''} onChange={e=>updateNode(n.id,{output_prompt:e.target.value})}/></Field>
     <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details></>}
-    <section className="connect-section"><h3>连接下游 Agent</h3><p>从节点右侧端口拖向下游左侧端口，或在这里选择。</p><select aria-label="下游 Agent" value={target} onChange={e=>setTarget(e.target.value)}><option value="">选择下游 Agent</option>{doc.nodes.filter(x=>x.id!==n.id).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><Button icon={ArrowRight} disabled={!target} onClick={()=>connect(n.id,target)}>连接 Agent</Button></section>
-    <div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div><Button className="danger" icon={Trash2} onClick={()=>{change(d=>{d.nodes=d.nodes.filter(x=>x.id!==n.id);d.edges=d.edges.filter(x=>x.source!==n.id&&x.target!==n.id)});closeInspector()}}>删除 Agent</Button>
-   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>交接最终回答</h3>{readOnly?<><p className="field-note">下列内容来自下游 activation 实际持久化输入；可能按执行定义截断或包装，私有回执不跨边。</p>{actualInputs.length?actualInputs.map((input,k)=><section key={k}><pre aria-label="实际交接内容">{readable(input.content)}</pre><p className="field-note">{activation(e.target)?.input_sent_sha256?'下游请求已有字节写入证据；详见下游实际请求。':'尚无下游请求写入证据。'}</p><details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details></section>):<p>尚无已持久化的下游输入。</p>}</>:<><p className="field-note">连接已保存在草稿。尚未运行，没有实际交接数据。</p><Button className="danger" icon={Trash2} onClick={()=>{change(d=>d.edges=d.edges.filter(x=>x.id!==e.id));closeInspector()}}>删除连线</Button></>}</div>}
+    <NodeConnections node={n} graph={doc} onConnect={connect} Field={Field}/>
+    {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}
+    <Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[n.id]));closeInspector()}}>
+     {nodeKind(n)==='agent'?'删除 Agent':'删除节点'}</Button>
+   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>{readOnly?'交接最终回答':'连线交接配置'}</h3>{readOnly?<><p className="field-note">下列内容来自下游 activation 实际持久化输入；可能按执行定义截断或包装，私有回执不跨边。</p>{actualInputs.length?actualInputs.map((input,k)=><section key={k}><pre aria-label="实际交接内容">{readable(input.content)}</pre><p className="field-note">{activation(e.target)?.input_sent_sha256?'下游请求已有字节写入证据；详见下游实际请求。':'尚无下游请求写入证据。'}</p><details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details></section>):<p>尚无已持久化的下游输入。</p>}</>:<><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></>}</div>}
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
@@ -755,7 +829,7 @@ function App(){
     onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node);closeNative()}}
     isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
   {workspace&&agentPanel&&<AgentManager key={workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
-   writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents}
+   writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}
   {planApproval&&planApproval.workspace===workspace?.id&&<PlanApproval value={planApproval} busy={planBusy}
