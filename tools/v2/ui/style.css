@@ -209,3 +209,13 @@
 .run-summary-file dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; }
 .run-summary-file dd { margin: 0; overflow-wrap: anywhere; }
 .run-summary-file footer { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+.provider-catalog-open { margin-top: 10px; }
+.provider-catalog-panel h2 { font-size: 16px; margin: 0; }
+.provider-catalog-content { min-height: 0; overflow: auto; padding: 12px; }
+.provider-catalog-content h3 { margin: 0 0 8px; }
+.provider-catalog-content dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; }
+.provider-catalog-content dd { margin: 0; overflow-wrap: anywhere; }
+.provider-catalog-content ul { padding: 0; list-style: none; }
+.provider-catalog-content li { padding: 7px 0; border-bottom: 1px solid var(--studio-line); overflow-wrap: anywhere; }
+.provider-catalog-content li span { display: block; color: var(--studio-muted); }

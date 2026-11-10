@@ -6,6 +6,7 @@ import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
+import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
@@ -69,11 +70,14 @@ function canConnect(doc,source,target){
 
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
- const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelected]=useState(null),[edge,setEdge]=useState(null);
+ const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
  const [past,setPast]=useState([]),[future,setFuture]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null),[target,setTarget]=useState('');
- const [sideView,setSideView]=useState('');
+ const [sideView,setSidePanel]=useState('');
+ const [providerGeneration,setProviderGeneration]=useState(0);
+ const providerEpoch=useRef(0),providerOpener=useRef(null);
+ const providerOpen=sideView==='providers';
  const [transferred,setTransferred]=useState(false);
  const transferTicket=useRef(null),fileChoice=useRef(null),transferInput=useRef(null);
  const [summaryFile,setSummaryFile]=useState(null),[summaryError,setSummaryError]=useState('');
@@ -91,6 +95,17 @@ function App(){
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
+ function invalidateProviderView(){setProviderGeneration(++providerEpoch.current)}
+ function setSideView(view){
+  if(providerOpen||view==='providers')invalidateProviderView();
+  setSidePanel(view);
+ }
+ function setSelected(id){invalidateProviderView();setSelectedNode(id)}
+ function closeProviderCatalog(){
+  setSideView('');
+  const epoch=providerEpoch.current;
+  requestAnimationFrame(()=>{if(providerEpoch.current===epoch)providerOpener.current?.focus()});
+ }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
  function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');setTarget('')}
@@ -312,6 +327,7 @@ function App(){
  }
  function navigate(action,title,transfer=null){
   if(busy||launchBusy.current)return;
+  if(providerOpen)setSideView('');
   clearRunSummary();
   if(!transfer)cancelTransfer();
   if(workspaceRef.current&&dirtyRef.current){const value={action,title,transfer};pendingRef.current=value;setPending(value)}else guard(action)()
@@ -387,7 +403,7 @@ function App(){
  function showFolder(){lastFocus.current=document.activeElement;folderOpen.current=true;setFolderPath(status?.roots?.[0]||'');setFolder({entries:[],roots:status?.roots||[],loading:true});browse()}
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
  function closeInspector(){setSelected(null);setEdge(null);setTimeout(()=>document.querySelector('[aria-label="工作流画布"]')?.focus(),0)}
- useEffect(()=>{const key=e=>{if(e.key==='Escape'){if(pendingRef.current){closePending();return}if(folder){hideFolder();return}if(filesOpen){closeFiles();return}if(nativeOpen){closeNative();return}closeInspector()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(workspaceRef.current&&viewMode==='draft'&&!launchBusy.current)guard(save)()}if(viewMode==='draft'&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}};addEventListener('keydown',key);return()=>removeEventListener('keydown',key)},[folder,past,future,busy,viewMode,filesOpen,nativeOpen]);
+ useEffect(()=>{const key=e=>{if(e.key==='Escape'){if(pendingRef.current){closePending();return}if(folder){hideFolder();return}if(providerOpen){closeProviderCatalog();return}if(filesOpen){closeFiles();return}if(nativeOpen){closeNative();return}closeInspector()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(workspaceRef.current&&viewMode==='draft'&&!launchBusy.current)guard(save)()}if(viewMode==='draft'&&!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}};addEventListener('keydown',key);return()=>removeEventListener('keydown',key)},[folder,past,future,busy,viewMode,filesOpen,nativeOpen,providerOpen]);
  function undo(){if(!past.length||busy)return;cancelTransfer();const previous=past.at(-1);setFuture(f=>[copy(docRef.current),...f]);setPast(p=>p.slice(0,-1));docRef.current=previous;setDoc(previous);setChecks(null)}
  function redo(){if(!future.length||busy)return;cancelTransfer();const next=future[0];setPast(p=>[...p,copy(docRef.current)]);setFuture(f=>f.slice(1));docRef.current=next;setDoc(next);setChecks(null)}
  function addAgent(){const id=uid('n');change(d=>d.nodes.push({id,name:'Agent '+String.fromCharCode(65+d.nodes.length%26),position:{x:100+d.nodes.length*300,y:160},provider:'',model:'',effort:'',initial_prompt:'',round_prompt:'',output_prompt:'',permission:'read',timeout:300}));setSelected(id);setEdge(null)}
@@ -409,6 +425,8 @@ function App(){
     <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
     <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
    </div>}
+   <Button ref={providerOpener} className="provider-catalog-open" aria-expanded={providerOpen}
+    onClick={()=>providerOpen?closeProviderCatalog():setSideView('providers')}>Provider 模型目录</Button>
    <Button ref={summaryOpener} className="run-summary-open" onClick={chooseRunSummary}>查看运行摘要文件</Button>
    <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
     onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
@@ -456,6 +474,8 @@ function App(){
     <div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div><Button className="danger" icon={Trash2} onClick={()=>{change(d=>{d.nodes=d.nodes.filter(x=>x.id!==n.id);d.edges=d.edges.filter(x=>x.source!==n.id&&x.target!==n.id)});closeInspector()}}>删除 Agent</Button>
    </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>交接最终回答</h3>{readOnly?<><p className="field-note">下列内容来自下游 activation 实际持久化输入；可能按执行定义截断或包装，私有回执不跨边。</p>{actualInputs.length?actualInputs.map((input,k)=><section key={k}><pre aria-label="实际交接内容">{readable(input.content)}</pre><p className="field-note">{activation(e.target)?.input_sent_sha256?'下游请求已有字节写入证据；详见下游实际请求。':'尚无下游请求写入证据。'}</p><details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details></section>):<p>尚无已持久化的下游输入。</p>}</>:<><p className="field-note">连接已保存在草稿。尚未运行，没有实际交接数据。</p><Button className="danger" icon={Trash2} onClick={()=>{change(d=>d.edges=d.edges.filter(x=>x.id!==e.id));closeInspector()}}>删除连线</Button></>}</div>}
   </aside>}
+  {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
+   isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles}/>}
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}

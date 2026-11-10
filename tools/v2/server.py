@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
+from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
 from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
@@ -21,8 +22,9 @@ from .run_summary import RunSummaryError, read_run_summary, request_parameters a
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_server(store, port=0, *, runtime=None, native_sessions=None):
+def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None):
     token = secrets.token_urlsafe(32)
+    catalog = CopilotCatalog() if copilot_catalog is None else copilot_catalog
     native_views = NativeSessionViews(native_sessions) if native_sessions is not None else None
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
@@ -60,6 +62,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None):
                         return self.reply(404, {'error': '入口不存在'})
                     filename, mime = files[path]
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
+                if path == '/api/v2/provider-catalog/copilot':
+                    return self.reply(*catalog.request(self.path, self.headers, self.rfile, post=post))
                 if post and path == '/api/v2/drafts/validate':
                     workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
                     return self.reply(200, validate_archive(store, workspace, raw))

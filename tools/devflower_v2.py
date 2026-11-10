@@ -9,6 +9,7 @@ from orchestration.store import lease
 from orchestration.common import Blocked
 from studio.graph import Invalid
 from v2.store import DraftStore
+from v2.copilot_catalog import CopilotCatalog
 from v2.server import create_server
 from v2.runtime import V2Runtime
 from v2.native_sessions import NativeSessions
@@ -22,6 +23,7 @@ def main():
     parser.add_argument('--no-browser', action='store_true', help='print private local URL')
     parser.add_argument('--codex-cli', help='explicit installed Codex executable; default: discover installed CLI')
     parser.add_argument('--native-history-config', help='private opt-in JSON for read-only native history')
+    parser.add_argument('--copilot-catalog-config', help='private opt-in GitHub Copilot catalog profile')
     args = parser.parse_args()
     try:
         if sys.platform != 'linux':
@@ -30,7 +32,8 @@ def main():
         with lease(store.state / 'v2-service.lock'):
             native = NativeSessions.from_path(store, args.native_history_config) if args.native_history_config else None
             runtime = V2Runtime(store,args.codex_cli)
-            server, token = create_server(store, args.port,runtime=runtime,native_sessions=native)
+            catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
+            server, token = create_server(store, args.port, runtime=runtime, native_sessions=native, copilot_catalog=catalog)
             url = 'http://127.0.0.1:' + str(server.server_port) + '/#' + token
             if args.no_browser or not webbrowser.open(url):
                 print(url, flush=True)
