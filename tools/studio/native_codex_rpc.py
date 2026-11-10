@@ -60,7 +60,7 @@ def metadata_guard(storage, timeout=30, cancelled=lambda:False):
 
 class CodexRPC:
     def __init__(self, executable, home, config_root, cwd, timeout=300, cancelled=lambda:False, cap=8_000_000,
-                 *, shared_config=None, provider_args=(), executable_image=None):
+                 *, shared_config=None, provider_args=(), executable_image=None, untrusted_project=None):
         self.home, self.config_root, self.cwd = map(Path, (home, config_root, cwd))
         self.deadline = time.monotonic() + timeout
         self.cancelled = cancelled
@@ -75,6 +75,11 @@ class CodexRPC:
                 '-c', 'features.apps=false', '-c', 'features.browser_use=false',
                 '-c', 'features.computer_use=false', '-c', 'features.code_mode_host=false',
                 '-c', 'check_for_update_on_startup=false', 'app-server', '--stdio']
+        if untrusted_project is not None:
+            from .native_codex_exec import untrusted_project_args
+            if shared_config is not None:
+                raise Blocked('原生项目权限与共享客户端不兼容')
+            argv[-2:-2]=untrusted_project_args(untrusted_project)
         if shared_config is not None:
             from .codex_narrow_read import TOOLS,PROFILE
             from .shared_codex_config import SharedConversationConfig,STORE_ALIAS

@@ -9,6 +9,7 @@ import unittest
 from orchestration.common import Blocked, canonical, digest
 from orchestration.sandbox import abi
 from studio.native_codex_exec import exec_args
+from v2.codex_terminals import backend_args
 from test_native_codex_image import compile_static
 from v2.codex_agent_scope import agent_skill_options, prepare_agent_scope, scope_options
 from v2.codex_code_mode import NAME, companion_identity, pin_code_mode_host
@@ -29,6 +30,20 @@ class CodexAgentScopeTests(unittest.TestCase):
         self.assertGreater(args.index('features.code_mode_host=false'), args.index('features.code_mode_host=true'))
         self.assertIn('"/workspace/child"="read"', scope_options(
             'devflower_agent_fixture', '/workspace/child', '/fixture/pinned', 'read')[1])
+
+    def test_development_pins_one_literal_project_key_without_changing_other_exec(self):
+        import tomllib
+        cwd = '/workspace/round.one/"数据"'
+        binding = dict(executable='/fixture/codex',role='reviewer',model='fixture',effort='low',
+                       native_interaction='ordinary',native_protected=['/fixture/store'],cwd=cwd,provider='codex')
+        self.assertFalse(any(arg.startswith('projects=') for arg in exec_args(binding,[])))
+        self.assertFalse(any(arg.startswith('projects=') for arg in backend_args(binding,[],'/fixture/pinned','p')))
+        binding['v2_development_untrusted'] = True
+        for args in (exec_args(binding,[]),backend_args(binding,[],'/fixture/pinned','p',read_only=True)):
+            [override] = [arg for arg in args if arg.startswith('projects=')]
+            self.assertEqual(tomllib.loads(override),{'projects':{cwd:{'trust_level':'untrusted'}}})
+        with self.assertRaises(Blocked):
+            exec_args(dict(binding,cwd='relative'),[])
 
     @unittest.skipUnless(abi() >= 6 and os.access('/usr/bin/cc', os.X_OK),
                          'requires Linux Landlock ABI 6 and a static C compiler')

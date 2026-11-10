@@ -319,11 +319,24 @@ def managed_mcp_args(context):
             '-c','mcp_servers.devflower_managed.startup_timeout_sec='+str(min(remaining,10)),
             '-c','mcp_servers.devflower_managed.tool_timeout_sec='+str(remaining)]
 
+def untrusted_project_args(cwd):
+    if (not isinstance(cwd,str) or not Path(cwd).is_absolute()
+            or len(cwd.encode('utf-8'))>4096 or any(ord(c)<32 or ord(c)==127 for c in cwd)):
+        raise Blocked('原生项目路径无效；未启动会话')
+    # A single TOML table preserves the exact project key. Codex can persist
+    # implicit Trusted on a writable new thread if the project has no level.
+    return ['-c','projects={'+json.dumps(cwd,ensure_ascii=False)+'={trust_level="untrusted"}}']
+
+
 def exec_args(binding,provider_args,*,schema=None,scope_options=()):
     read_only=binding['role']!='implementer' or bool(binding.get('admission_probe'))
     ordinary=binding.get('native_interaction')=='ordinary'
     args=[binding['executable'],'exec','--ignore-user-config','--ignore-rules','--strict-config','--json','--skip-git-repo-check',
           '-c','approval_policy="never"']
+    if binding.get('v2_development_untrusted') is True:
+        if not ordinary or binding.get('provider')!='codex':
+            raise Blocked('研发运行的原生项目权限无效；未启动会话')
+        args+=untrusted_project_args(binding.get('cwd'))
     if ordinary:
         if not binding.get('native_protected'):raise Blocked('原生权威和认证保护路径未绑定；未启动会话')
         if not scope_options:

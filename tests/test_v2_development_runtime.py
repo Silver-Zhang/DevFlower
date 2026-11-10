@@ -55,7 +55,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
 
     def bind(self, node):
         saved = next(row for row in self.saved if row['id']==node['agent_id'])
-        binding = {'cwd':str(self.project),'session_id':None}
+        binding = {'cwd':str(self.project),'session_id':None,'provider':saved['config']['provider']}
         if saved['config']['permission']=='workspace-write':
             binding['v2_agent_scope']='workspace-write'
         return saved,binding
@@ -69,6 +69,9 @@ class DevelopmentRuntimeTests(unittest.TestCase):
         compiled = self.compile(self.doc)
         loop = compiled['graph']['nodes'][1]
         self.assertTrue(loop['development'])
+        self.assertTrue(compiled['bindings']['RepairLoop/Developer']['v2_development_untrusted'])
+        self.assertTrue(compiled['bindings']['RepairLoop/Tester']['v2_development_untrusted'])
+        self.assertNotIn('v2_development_untrusted',compiled['bindings']['RepairLoop/Reviewer'])
         self.assertTrue(all(e['transfer']=='envelope' for e in loop['body']['edges']))
         verify = next(row for row in loop['body']['nodes'] if row['id']=='Verify')
         self.assertEqual(verify['expected_json'],{'cases':[4,10]})

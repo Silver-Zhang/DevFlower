@@ -25,7 +25,7 @@ from orchestration.process import stop
 from orchestration.sandbox import runtime_paths
 from orchestration.store import process_identity
 from studio.graph import Invalid
-from studio.native_codex_exec import FEATURES, provider_overrides
+from studio.native_codex_exec import FEATURES, provider_overrides, untrusted_project_args
 from studio.native_codex_image import NativeImage, binary_digest
 from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.native_terminals import NativeTerminals, dimensions
@@ -121,11 +121,12 @@ def backend_args(binding, provider_args, executable, profile, *, read_only=False
                  default_mode_request_user_input=False)
     if read_only:
         flags['unified_exec'] = False
+    trust_args = (untrusted_project_args(cwd) if binding.get('v2_development_untrusted') is True
+                  else ['-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"'])
     args = [executable, *provider_args,
             '-c', f'permissions.{profile}.filesystem={filesystem}',
             '-c', f'permissions.{profile}.network.enabled=false', '-c', f'default_permissions="{profile}"',
-            '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"',
-            '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', 'notify=[]',
+            *trust_args, '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', 'notify=[]',
             '-c', 'check_for_update_on_startup=false', '-c', 'skills.include_instructions=false',
             '-c', 'skills.bundled.enabled=false', '-c', 'project_doc_max_bytes=0',
             '-c', 'shell_environment_policy={inherit="none",include_only=["PATH","LANG"],'
@@ -141,8 +142,9 @@ def safe_backend_config(store, binding, image, *, disable_extensions=False):
     if Path('/etc/codex').exists():
         raise Blocked('此主机的系统 Codex 配置尚未核验终端权限。')
     with metadata_guard(store.state, timeout=20) as remaining:
+        options = {'untrusted_project': binding['cwd']} if binding.get('v2_development_untrusted') is True else {}
         with CodexRPC(binding['executable'], binding['home'], binding['config_root'], str(store.state),
-                      timeout=remaining, executable_image=image) as rpc:
+                      timeout=remaining, executable_image=image, **options) as rpc:
             config = rpc.request('config/read', {'cwd': str(store.state), 'includeLayers': False})['config']
             workspace_config = (rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False})['config']
                                 if disable_extensions else None)

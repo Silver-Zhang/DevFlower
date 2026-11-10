@@ -54,6 +54,8 @@ ROLES = [
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--artifacts',required=True)
+    parser.add_argument('--fixture-origin',default='https://github.com/devflower-disposable/gate-fixture.git',
+                        help='Optional read-only platform repository for browser verification')
     parser.add_argument('--allow-native-model-calls',action='store_true',required=True)
     options = parser.parse_args()
     out = Path(options.artifacts).resolve()
@@ -63,7 +65,7 @@ def main():
     out.mkdir(mode=0o700,parents=True,exist_ok=False)
     spaces = out/'spaces'
     project = spaces/'loop-fixture'
-    initialize_repo(project,'https://github.com/devflower-disposable/gate-fixture.git')
+    initialize_repo(project,options.fixture_origin)
     checker = project/'check.py'
     checker.write_text(CHECKER)
     git(project,'add','check.py')

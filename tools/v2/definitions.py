@@ -54,6 +54,8 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
     graph = normalize_graph(doc, bind, designer=designer)
     if development:
         source, entry_sha = freeze_source(store,workspace,doc,development,configured,bindings)
+        bindings = {path: dict(binding, v2_development_untrusted=True) if binding['provider']=='codex' else binding
+                    for path, binding in bindings.items()}
         loop = next(node for node in graph['nodes'] if node['id']==development['loop'])
         loop['development'] = True
         verifier = next(node for node in loop['body']['nodes'] if node['id']==development['verification_node'])

@@ -353,6 +353,9 @@ class V2Runtime:
         self.store.workspace(run['workspace'])
         if source_manifest() != definition['runtime_sources']:
             raise Blocked('运行源码与本次冻结候选不同；未发送任务')
+        if run['graph'].get('development'):
+            from .development_evidence import require_bound_source
+            require_bound_source(self, run)
         for binding in definition['bindings'].values():
             if binding.get('agent_config_id'):
                 self.cli_providers.adapter(binding['provider']).require_local(binding)

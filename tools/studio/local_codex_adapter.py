@@ -383,6 +383,10 @@ class LocalCodex:
         inventory=None
         with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext(remaining()) as wait:
             image_options={'executable_image':agent_scope.image} if agent_scope else {}
+            if b.get('v2_development_untrusted') is True:
+                if not ordinary or b.get('provider')!='codex' or b.get('cwd')!=cwd:
+                    raise Blocked('研发运行的原生项目权限无效；未启动会话')
+                image_options['untrusted_project']=cwd
             with CodexRPC(b['executable'],b['home'],b['config_root'],cwd,min(remaining(),wait,30),cancelled,**image_options) as probe:
                 config=probe.request('config/read',dict(cwd=cwd,includeLayers=False)).get('config')
                 if 'v2_agent_skills' in b:
