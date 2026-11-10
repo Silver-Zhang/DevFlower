@@ -4,6 +4,8 @@ import re
 import uuid
 
 from studio.graph import Invalid
+from studio.native_codex_image import NativeImage
+from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.native_local import native_busy
 
 from .native_history_config import SourceSpec, startup_seed
@@ -93,12 +95,19 @@ def require_agent_history(runtime, binding):
         raise SessionRefused('EXTERNAL_BUSY')
 
 
-def prove_claude_history(store, binding, sid):
-    root = Path(binding['config_root']) / LEAF['claude']
-    folder = re.sub('[^a-zA-Z0-9]', '-', binding['cwd'])
-    relative = Path(folder) / (sid + '.jsonl')
+def prove_agent_history(store, binding, sid):
     source = history_source(store, binding)
-    if source.profile.root != root:
-        raise SessionRefused('ROOT_CHANGED')
+    if binding['provider'] == 'claude':
+        folder = re.sub('[^a-zA-Z0-9]', '-', binding['cwd'])
+        relative = Path(folder) / (sid + '.jsonl')
+    else:
+        with metadata_guard(store.state, timeout=20) as timeout:
+            with NativeImage(binding['executable'], expected_sha256=binding['_executable_sha256']) as image:
+                with CodexRPC(image.path, binding['home'], binding['config_root'], binding['cwd'],
+                              timeout=timeout, executable_image=image) as rpc:
+                    thread = rpc.request('thread/read', {'threadId': sid, 'includeTurns': False})['thread']
+        if thread.get('id') != sid or thread.get('cwd') != binding['cwd'] or not isinstance(thread.get('path'), str):
+            raise SessionRefused('LOCATOR_REFUSED')
+        relative = Path(thread['path']).relative_to(source.profile.root)
     _, ref, _ = prove_file(source, binding['project'], binding['cwd'], sid, relative)
     return {'relative': str(ref.relative), 'sha256': ref.sha, 'history_identity': source.profile.identity.fields()}

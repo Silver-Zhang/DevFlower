@@ -79,12 +79,15 @@ def verified_workflow(store, config_root, sid, provider='codex'):
                 raise ValueError()
             chat_raw = db.execute("SELECT data FROM records WHERE kind='node-session' AND id=?", (claim['binding_id'],)).fetchone()
             chat = json.loads(chat_raw[0])
-            run, definition, node, activation, _, frozen, cwd = workflow_use(
+            run, definition, node, activation, receipt, frozen, cwd = workflow_use(
                 store, db, chat, config_root, sid, provider, creation=True)
+            history = chat.get('native_history')
+            if history is not None and receipt.get('native_history') != {'sha256': history['sha256']}:
+                raise ValueError()
         return dict(workspace=run['workspace'], cwd=cwd, home=frozen['home'],
                     group=digest(canonical(['v2-workflow-session-group', run['workspace'], definition['draft_id']])),
                     workflow=safe_text(definition['draft_document']['name'])[:160], agent=safe_text(node['name'])[:160],
-                    run=run['id'], activation=activation['id'], node=node['id'])
+                    run=run['id'], activation=activation['id'], node=node['id'], history=history)
     except (OSError, ValueError, TypeError, KeyError, StopIteration, Blocked, Invalid):
         raise SessionRefused('RECOVERY_REQUIRED') from None
 
@@ -135,7 +138,7 @@ def workflow_records(store, workspace, sources, budget):
     with store.db.tx(read=True) as db:
         rows = db.execute("SELECT data FROM records WHERE kind='node-session' AND json_extract(data,'$.workspace')=?"
                           " ORDER BY rowid DESC LIMIT 80", (workspace,)).fetchall()
-    candidates = {}
+    candidates, seen = {}, set()
     for (raw,) in rows:
         budget.time()
         chat = json.loads(raw)
@@ -146,14 +149,20 @@ def workflow_records(store, workspace, sources, budget):
         if source is None or not isinstance(sid, str) or not UUID.fullmatch(sid):
             continue
         root = source.profile.root.parent
-        if binding.get('config_root') != str(root):
+        if binding.get('config_root') != str(root) or (provider, sid) in seen:
             continue
+        seen.add((provider, sid))
         try:
             verified = verified_workflow(store, str(root), sid, provider)
         except ValueError:
             continue
         if verified['workspace'] == workspace and Path(verified['home']) / ('.' + provider) == root:
-            candidates.setdefault(provider, {})[sid] = verified
+            history = verified['history']
+            if history:
+                if history['history_identity'] == source.profile.identity.fields():
+                    yield source, verified['cwd'], sid, history['relative'], verified
+            else:
+                candidates.setdefault(provider, {})[sid] = verified
     for provider, candidates_by_sid in candidates.items():
         source = sources[provider]
         # File names narrow the search. The receipt UUID must match parsed transcript metadata.

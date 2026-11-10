@@ -1,4 +1,7 @@
 """Workspace Agent drafts keep configuration, CLI selection and execution separate."""
+from contextlib import contextmanager
+import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -12,7 +15,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from v2.agent_records import AgentRecords
 from v2.documents import check_chain, validate_draft
-from v2.runtime import V2Runtime
+from v2.runtime import V2Journal, V2Runtime
 from v2.store import DraftStore
 
 
@@ -105,6 +108,35 @@ class AgentRecordTests(unittest.TestCase):
             with self.assertRaises(Conflict):
                 runtime.launch_agent(self.first, record['id'], record['revision'], 'different-direct-intent', 'task')
         self.assertEqual(self.store.drafts(self.first), [])
+
+    def test_process_ownership_and_call_count_publish_atomically(self):
+        db = self.store.db
+        db.put('run', 'run', {'actual_calls': 0})
+        db.put('activation', 'activation', dict(node='node', chat_key='chat', state='PENDING'))
+        db.put('node-session', 'chat', {'binding': {'_executable_sha256': 'fixture'}})
+        db.put('native-step', 'step', {'kind': 'PROCESS', 'data': {'context': {'provider': 'claude'}}})
+        tx = db.tx
+        visible = []
+
+        @contextmanager
+        def observe(*args, **kwargs):
+            with tx(*args, **kwargs) as connection:
+                yield connection
+            if not kwargs.get('read'):
+                with tx(read=True) as reader:
+                    rows = {kind: json.loads(raw) for kind, raw in reader.execute(
+                        "SELECT kind,data FROM records WHERE kind IN ('native-step','activation','run')")}
+                visible.append(rows)
+
+        journal = V2Journal(SimpleNamespace(db=db, run='run'), 'activation')
+        with (patch.object(db, 'tx', observe), patch('v2.runtime.binary_digest', return_value='fixture')):
+            journal.finish('step', 'RUNNING', process={'pid': os.getpid()})
+        self.assertEqual(len(visible), 1)
+        rows = visible[0]
+        self.assertEqual(rows['native-step']['status'], 'RUNNING')
+        self.assertEqual(rows['native-step']['data']['process'], rows['activation']['process'])
+        self.assertTrue(rows['activation']['effect_uncertain'])
+        self.assertEqual(rows['run']['actual_calls'], 1)
 
 
 if __name__ == '__main__':

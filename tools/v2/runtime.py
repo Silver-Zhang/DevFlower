@@ -30,7 +30,7 @@ from . import worker_facts
 from .provider import CodexProvider, public_provider_error
 from .cli_providers import ProviderRegistry
 from .agent_records import AgentRecords, KEY as AGENT_ID
-from .agent_execution import freeze_agent, prove_claude_history, require_agent_history, require_agent_scope
+from .agent_execution import freeze_agent, prove_agent_history, require_agent_history, require_agent_scope
 from .native_writer_state import require_native_writer_idle
 from .definitions import compile_definition, source_manifest, ROOT
 from .documents import check_chain
@@ -122,10 +122,32 @@ class V2Journal(Journal):
                         raise SessionRefused('LOCATOR_REFUSED')
                 finally:
                     os.close(fd)
-            self.s.db.change('activation', self.key, {'effect_uncertain': True, 'executed_image_sha256': actual})
+            self.publish_process(key, row, actual, updates)
+            return
         super().finish(key, status, **updates)
         if status == 'AGENT_COMPLETED' and 'claude_terminal' in updates:
             self.s.db.change('activation', self.key, {'claude_terminal': updates['claude_terminal']})
+
+    def publish_process(self, key, step, image_sha256, updates):
+        """Readers see ownership and the running process as one SQLite publication."""
+        with self.s.db.tx() as db:
+            activation = json.loads(db.execute("SELECT data FROM records WHERE kind='activation' AND id=?",
+                                               (self.key,)).fetchone()[0])
+            run = json.loads(db.execute("SELECT data FROM records WHERE kind='run' AND id=?",
+                                        (self.s.run,)).fetchone()[0])
+            activation.update(state='RUNNING', process=updates['process'], effect_uncertain=True,
+                              executed_image_sha256=image_sha256)
+            data = dict(step['data'], **updates)
+            db.execute("UPDATE records SET data=? WHERE kind='native-step' AND id=?",
+                       (canonical(dict(step, status='RUNNING', data=data)).decode(), key))
+            db.execute("UPDATE records SET data=? WHERE kind='activation' AND id=?",
+                       (canonical(activation).decode(), self.key))
+            if data.get('context', {}).get('provider') in ('codex', 'claude'):
+                run['actual_calls'] = run.get('actual_calls', 0) + 1
+                db.execute("UPDATE records SET data=? WHERE kind='run' AND id=?", (canonical(run).decode(), self.s.run))
+            event = dict(kind='node-running', action='原生 Agent 已启动', at=time.time(), run=self.s.run,
+                         node=activation['node'], iteration=activation.get('iteration', 0), attempt=activation.get('attempt', 1))
+            db.execute('INSERT INTO events(run,data) VALUES(?,?)', (self.s.run, canonical(event).decode()))
 
     def input_sent(self, operation, size, sha):
         super().input_sent(operation, size, sha)
@@ -471,10 +493,11 @@ class V2Runtime:
             transport = (self.cli_providers.adapter(provider).transport(binding, limits, managed_resume=bool(binding.get('resume_proof')))
                          if configured else LocalCodex(binding, limits))
             receipt = transport.start(prompt, cwd, artifacts, schema, journal, run['id'])
-            if provider == 'claude':
-                history = prove_claude_history(self.store, binding, receipt['session_id'])
+            if configured:
+                history = prove_agent_history(self.store, binding, receipt['session_id'])
                 self.flow.change('node-session', chat_key, {'native_history': history})
                 receipt['native_history'] = {'sha256': history['sha256']}
+            if provider == 'claude':
                 receipt['report'] = dict(reply=receipt['report']['reply'], summary='', accepted=False, result_json='{}',
                                          artifacts=[], evidence=[], issues=[], next='')
             activation = self.flow.get('activation', key)
@@ -485,7 +508,7 @@ class V2Runtime:
                        'resolved_model', 'resolved_effort', 'process', 'usage', 'transport', 'raw_report_sha256')}
             visible = {k: ('unknown' if v is None else v) for k, v in visible.items()}
             visible['usage'] = public_usage(receipt.get('usage'))
-            if provider == 'claude':
+            if configured:
                 visible['native_history'] = receipt['native_history']
             output = public_data(dict(answer=report['reply'], summary=report['summary'], result=structured,
                                       evidence=report['evidence'], issues=report['issues'], next=report['next'], artifacts=[]))
