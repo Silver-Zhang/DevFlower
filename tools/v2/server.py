@@ -138,8 +138,13 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                               'provider': runtime.catalog() if runtime else None}
                 elif not post and path == '/api/v2/folders':
                     result = store.browse(query.get('path'))
-                elif post and path == '/api/v2/workspaces/open' and set(data) == {'path'}:
-                    result = store.open_workspace(data['path'])
+                elif post and path == '/api/v2/workspaces/open' and set(data) in ({'path'}, {'path', 'expected_workspace'}):
+                    if 'expected_workspace' in data:
+                        result = store.workspace(data['expected_workspace'])
+                        if result['path'] != data['path']:
+                            raise Conflict('最近工作空间与登记文件夹不一致；请重新选择')
+                    else:
+                        result = store.open_workspace(data['path'])
                 elif not post and path in ('/api/v2/project-files', '/api/v2/project-file'):
                     params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict')
                     if 'workspace' not in params or set(params) - {'workspace', 'path'} or any(

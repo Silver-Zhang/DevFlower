@@ -223,5 +223,92 @@ with sqlite3.connect(database.as_uri()+'?mode=rw', uri=True) as db:
   assert.deepEqual(observed.browserRequests.filter(request=>request.method!=='GET'),
    Array(4).fill({path:'/api/v2/workspaces/open',method:'POST'}));
  });
+ await test('recent-workspace-refuses-a-replaced-directory-by-registered-identity',async()=>{
+  const header=page.locator('.app-header button'),name=page.getByLabel('工作流名称',{exact:true});
+  const drafts=page.getByLabel('工作流列表',{exact:true}),history=page.getByLabel('运行历史',{exact:true});
+  const recent=()=>page.locator('.workspace-link').filter({hasText:/^B$/});
+  const source=await api('status'),a=source.workspaces.find(row=>row.name==='A'),b=source.workspaces.find(row=>row.name==='B');
+  assert.equal(await header.textContent(),'A');
+  const oldDraft=await api('drafts/save',{workspace:b.id,id:null,expected:null,
+   document:{version:1,name:'原 B 草稿',nodes:[],edges:[]}});
+  const oldRuns=await api('runs?workspace='+b.id);
+  assert(oldDraft.id&&oldRuns.length>0);
+  const aDrafts=await drafts.locator('button').allTextContents(),aRuns=await history.locator('button.workflow-link').allTextContents();
+  assert(aDrafts.length>0&&aRuns.length>0);
+  const location=b.path,moved=path.join(path.dirname(location),'B-original-fixture');
+  const beforeInode=fs.statSync(location).ino;
+  fs.renameSync(location,moved);fs.mkdirSync(location);
+  assert.notEqual(fs.statSync(location).ino,beforeInode);
+  const observed={parentFolderReplaced:true,oldWorkspace:b.id,oldDraft:oldDraft.id,oldRunIds:oldRuns.map(row=>row.id),realModelCalls:0};
+  try{
+   await name.fill('A 保留的未保存修改');
+   const writes=requests.length;
+   const read=page.waitForResponse(reply=>new URL(reply.url()).pathname==='/api/v2/workspaces/open');
+   await recent().click();
+   const pending=page.getByRole('dialog',{name:'未保存的草稿',exact:true});
+   await pending.getByRole('button',{name:'放弃修改',exact:true}).click();
+   const reply=await read,response=await reply.json();
+   await until(()=>header.isEnabled());
+   observed.recent={status:reply.status(),method:reply.request().method(),path:new URL(reply.url()).pathname,
+    body:reply.request().postDataJSON(),response,header:await header.textContent(),name:await name.inputValue(),
+    writes:requests.slice(writes).filter(row=>row.method!=='GET')};
+   const after=await api('status');
+   observed.registeredAfterRecent=after.workspaces.map(row=>row.id);
+   assert.equal(observed.recent.status,409);
+   assert.equal(observed.recent.method,'POST');
+   assert.equal(observed.recent.path,'/api/v2/workspaces/open');
+   assert.deepEqual(observed.recent.body,{path:location,expected_workspace:b.id});
+   assert.deepEqual(observed.recent.writes,[{path:'/api/v2/workspaces/open',method:'POST'}]);
+   assert.deepEqual(observed.registeredAfterRecent.sort(),source.workspaces.map(row=>row.id).sort());
+   assert.equal(observed.recent.header,'A');
+   assert.equal(observed.recent.name,'A 保留的未保存修改');
+   assert.deepEqual(await drafts.locator('button').allTextContents(),aDrafts);
+   assert.deepEqual(await history.locator('button.workflow-link').allTextContents(),aRuns);
+   await page.getByRole('alert').filter({hasText:'工作空间文件夹身份已变化'}).waitFor();
+   observed.invalidIds=[];
+   for(const [id,code] of [[a.id,409],['f'.repeat(64),400],[null,400]]){
+    const invalid=page.waitForResponse(reply=>new URL(reply.url()).pathname==='/api/v2/workspaces/open');
+    const result=await api('workspaces/open',{path:location,expected_workspace:id});
+    assert.equal((await invalid).status(),code);
+    assert.equal(typeof result.error,'string');
+    observed.invalidIds.push(code);
+   }
+   assert.deepEqual((await api('status')).workspaces.map(row=>row.id).sort(),source.workspaces.map(row=>row.id).sort());
+   const opened=page.waitForResponse(reply=>new URL(reply.url()).pathname==='/api/v2/workspaces/open');
+   await header.click();
+   const picker=page.getByRole('dialog',{name:'打开工作空间',exact:true});
+   await picker.getByLabel('文件夹路径',{exact:true}).fill(location);
+   await picker.getByRole('button',{name:'前往',exact:true}).click();
+   await picker.getByRole('button',{name:'打开此文件夹',exact:true}).click();
+   await pending.getByRole('button',{name:'放弃修改',exact:true}).click();
+   const openedReply=await opened,replacement=await openedReply.json();
+   assert.equal(openedReply.status(),200);
+   assert.equal(openedReply.request().method(),'POST');
+   assert.deepEqual(openedReply.request().postDataJSON(),{path:location});
+   assert.notEqual(replacement.id,b.id);assert.notEqual(replacement.id,a.id);
+   await until(async()=>await header.textContent()==='B'&&await header.isEnabled());
+   assert.equal(await name.inputValue(),'新工作流');
+   assert.equal(await drafts.locator('button').count(),0);
+   assert.equal(await history.locator('button.workflow-link').count(),0);
+   assert.deepEqual(await api('drafts?workspace='+replacement.id),[]);
+   assert.deepEqual(await api('runs?workspace='+replacement.id),[]);
+   observed.explicit={status:openedReply.status(),replacement:replacement.id};
+
+   fs.rmdirSync(location);fs.renameSync(moved,location);
+   const reopened=page.waitForResponse(reply=>{
+    const url=new URL(reply.url());
+    return url.pathname==='/api/v2/drafts'&&url.searchParams.get('workspace')===b.id;
+   });
+   await recent().last().click();
+   assert.equal((await reopened).status(),200);
+   await drafts.getByRole('button',{name:'原 B 草稿',exact:true}).waitFor();
+   await until(async()=>await history.locator('button.workflow-link').count()===oldRuns.length);
+   assert.deepEqual((await api('runs?workspace='+b.id)).map(row=>row.id),observed.oldRunIds);
+   observed.restoredOldIdentity=true;
+  }finally{
+   if(fs.existsSync(moved)){fs.rmdirSync(location);fs.renameSync(moved,location)}
+   fs.writeFileSync(path.join(out,'recent-workspace-identity.json'),JSON.stringify(observed,null,2));
+  }
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});
