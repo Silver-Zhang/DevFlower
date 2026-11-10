@@ -62,16 +62,35 @@ function RunEvidence({activation,node,trusted,onTransition}){const a=activation;
  </div>}
 function PlanApproval({value,busy,error,onClose,onConfirm}){
  const dialog=useRef(null);
+ const [verified,setVerified]=useState(null);
  useEffect(()=>{dialog.current.showModal()},[]);
+ useEffect(()=>{
+  let active=true;
+  async function verify(){
+   try{
+    const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value.text));
+    const hex=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+    if(active)setVerified(hex===value.sha);
+   }catch{if(active)setVerified(false)}
+  }
+  verify();
+  return ()=>{active=false};
+ },[value.text,value.sha]);
  return <dialog ref={dialog} className="dialog plan-approval" aria-label="确认执行原生 Plan"
   onCancel={event=>{event.preventDefault();if(!busy)onClose()}}
   onKeyDown={event=>{if(event.key==='Escape')event.stopPropagation()}}>
   <h2>执行已完成的 Codex Plan</h2>
   <p>继续使用原生会话 {value.session}。本次授权允许 Agent 读写以下工作目录。</p>
   <p className="workspace-path">{value.cwd}</p>
+  <section aria-label="本次执行的冻结计划">
+   <h3>本次执行的冻结计划</h3>
+   <pre tabIndex={0} aria-label="已核验计划正文">{value.text}</pre>
+   <p className="field-note">计划 SHA-256 <code>{value.sha}</code></p>
+  </section>
+  {verified===false&&<p role="alert" className="error-text">计划正文未通过哈希核验。请重新打开运行记录。</p>}
   {error&&<p role="alert" className="error-text">{error}</p>}
   <footer><Button autoFocus disabled={busy} onClick={onClose}>返回计划</Button>
-   <Button className="primary" disabled={busy} onClick={onConfirm}>{value.pending?'核验上次启动':'确认读写并启动 Agent'}</Button></footer>
+   <Button className="primary" disabled={busy||verified!==true} onClick={onConfirm}>{value.pending?'核验上次启动':'确认读写并启动 Agent'}</Button></footer>
  </dialog>;
 }
 // Same controlled-measurement boundary as the existing workbench: geometry is
@@ -398,13 +417,15 @@ function App(){
  function openPlanApproval(activation){
   const w=workspaceRef.current,run=runRef.current;
   const config=runSnapshot?.definition?.agent_configs?.[activation.node]?.config;
-  if(!w||!run||!config||!activation.receipt?.native_plan?.finalized)return;
+  const plan=activation.receipt?.native_plan,text=activation.output?.answer;
+  if(!w||!run||!config||!activation.receipt_verified||!plan?.finalized||
+     typeof text!=='string'||!text||!(/^[0-9a-f]{64}$/).test(plan.sha256))return;
   const key='df-plan-agent:'+w.id+':'+run.id+':'+activation.node;
   let pending=null;
   try{pending=JSON.parse(sessionStorage.getItem(key))}catch{}
   setPlanError('');
   setPlanApproval({workspace:w.id,run:run.id,node:activation.node,session:activation.receipt.session_id,
-   cwd:config.cwd,key,pending});
+   cwd:config.cwd,text,sha:plan.sha256,key,pending});
  }
  async function confirmPlan(){
   if(!planApproval||planBusyRef.current)return;

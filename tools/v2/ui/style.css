@@ -300,5 +300,9 @@
  .agent-manager nav button { width: auto; flex: 0 0 auto; margin-bottom: 0; }
  .agent-manager-pair { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
+.plan-approval { width: 620px; max-width: calc(100vw - 24px); gap: 12px; }
 .plan-approval::backdrop { background: #0005; }
 .plan-approval .workspace-path { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+.plan-approval pre { max-height: min(36dvh, 320px); margin: 8px 0; padding: 12px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; border: 1px solid var(--studio-line); border-radius: 6px; background: var(--studio-subtle-bg); font-size: 12px; }
+.plan-approval code { overflow-wrap: anywhere; }
+.plan-approval footer { flex-wrap: wrap; }
