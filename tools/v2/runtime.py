@@ -21,6 +21,7 @@ from studio.workbench_scheduler import Scheduler, Journal, REPLY
 from studio.local_codex_adapter import LocalCodex
 from studio.native_codex_image import binary_digest
 from studio.usage import public_usage
+from . import worker_facts
 from .provider import CodexProvider, public_provider_error
 from .definitions import compile_definition, source_manifest, ROOT
 from .documents import check_chain
@@ -135,7 +136,7 @@ def _append_run_authorized(db, run, reserved_at):
         cause=dict(kind='launch_intent', reservation_run_id=run_id),
         payload=dict(state='QUEUED', created_at=run['created_at']), at=reserved_at,
     )
-    db.execute('INSERT INTO events(run,data) VALUES(?,?)', (run_id, canonical(event).decode()))
+    return db.execute('INSERT INTO events(run,data) VALUES(?,?)', (run_id, canonical(event).decode())).lastrowid
 
 
 class V2Runtime:
@@ -214,7 +215,7 @@ class V2Runtime:
         run = dict(id=run_id, run=run_id, workspace=workspace, definition_id=definition['id'],
                    draft_id=draft_id, draft_revision=revision, graph=definition['graph'], graph_sha256=definition['graph_sha256'],
                    task=task, state='QUEUED', created_at=time.time(), calls=0, actual_calls=0,
-                   paused=False, cancel_requested=False, launch_intent=intent_key)
+                   paused=False, cancel_requested=False, launch_intent=intent_key, worker_lifecycle_version=1)
         with self.flow.tx() as db:
             old = db.execute('SELECT payload_sha,run_id FROM launch_intents WHERE workspace=? AND intent_key=?', (workspace, intent_key)).fetchone()
             if old:
@@ -237,34 +238,62 @@ class V2Runtime:
                 reserved_at = time.time()
                 db.execute('INSERT INTO launch_intents VALUES(?,?,?,?,?,?,?)',
                            (workspace, intent_key, payload_sha, run_id, definition_id, 'RESERVED', reserved_at))
-                _append_run_authorized(db, run, reserved_at)
+                run['worker_authorized_seq'] = _append_run_authorized(db, run, reserved_at)
+                db.execute("UPDATE records SET data=? WHERE kind='run' AND id=?", (canonical(run).decode(), run_id))
         if not old:
             self.spawn(run_id)
         return self.snapshot(workspace, run_id)
 
     def spawn(self, run):
+        row = self.flow.get('run', run)
+        versioned = worker_facts.versioned(row)
+        definition_id = row['definition_id']
         child = None; read_fd = write_fd = None
+        stage = 'before_spawn'
+        identity = None
         try:
             self.flow.change('run', run, {'launch_state': 'SPAWNING'}, states={'QUEUED'})
-            row = self.flow.get('run', run); definition = self.flow.get('definition', row['definition_id'])
+            try:
+                definition = self.flow.get('definition', definition_id)
+            except (Invalid, ValueError, RecursionError):
+                if versioned:
+                    raise Blocked(worker_facts.ERROR) from None
+                raise
             read_fd, write_fd = os.pipe()
             argv = [sys.executable, '-B', str(Path(__file__).with_name('worker.py')), '--state-dir', str(self.storage),
                     '--run', run, '--codex-cli', next(iter(definition['bindings'].values()))['executable'], '--start-fd', str(read_fd)]
             for root in self.store.roots: argv += ['--allow-root', str(root)]
             child = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True, pass_fds=(read_fd,))
+            stage = 'identity'
             os.close(read_fd); read_fd = None
             identity = process_identity(child.pid)
-            if not identity: raise Blocked('工作进程身份未确认')
-            self.flow.change('run', run, {'worker': identity, 'launch_state': 'STARTED', 'worker_published_at': time.time()})
+            if versioned:
+                if not worker_facts.complete_identity(identity):
+                    raise Blocked(worker_facts.ERROR)
+                stage = 'publication'
+                worker_facts.publish_worker(self.flow, run, definition_id, identity)
+            else:
+                if not identity: raise Blocked('工作进程身份未确认')
+                self.flow.change('run', run, {'worker': identity, 'launch_state': 'STARTED', 'worker_published_at': time.time()})
             # The child cannot instantiate a Provider or scheduler before this
             # durable ownership publication. EOF/timeout never means approval.
-            os.write(write_fd, b'GO\n')
-        except BaseException:
+            stage = 'go'
+            written = os.write(write_fd, b'GO\n')
+            if versioned and written != len(b'GO\n'):
+                raise OSError(worker_facts.ERROR)
+        except BaseException as failure:
             from studio.spawn_ownership import reap_unpublished
-            if child is not None: reap_unpublished(child, process_identity(child.pid))
-            self.flow.change('run', run, {'state': 'RECOVERY_REQUIRED' if child else 'FAILED',
-                                        'reason': '工作进程启动未确认，未自动重试', 'finished_at': time.time()})
+            if versioned:
+                try:
+                    if child is not None: reap_unpublished(child, process_identity(child.pid))
+                    worker_facts.record_launch_failure(self.flow, run, definition_id, stage, identity)
+                except Exception as followup:
+                    raise failure from followup
+            else:
+                if child is not None: reap_unpublished(child, process_identity(child.pid))
+                self.flow.change('run', run, {'state': 'RECOVERY_REQUIRED' if child else 'FAILED',
+                                            'reason': worker_facts.FAILURE_REASON, 'finished_at': time.time()})
             raise
         finally:
             for fd in (read_fd, write_fd):
@@ -348,6 +377,8 @@ class V2Runtime:
         nodes=[r for (kind,_),r in rows.items() if kind=='activation' and r.get('run')==run['id']]
         steps=[r for (kind,_),r in rows.items() if kind=='native-step' and r.get('run')==run['id']]
         value=project(self,run,definition,nodes,steps)
+        for key in worker_facts.INTERNAL_FIELDS:
+            value['run'].pop(key, None)
         value.update(definition={k:v for k,v in definition.items() if k not in ('bindings','runtime_sources')},
                      events=[e for e in events if e.get('run')==run['id']][-1000:])
         return value

@@ -47,12 +47,15 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotEqual(definition['graph_sha256'], self.draft['revision'])
 
     def test_publication_failure_keeps_intent_and_never_sends(self):
-        original = self.store.db.change
-        def publish(kind, key, changes, **options):
-            if kind == 'run' and 'worker' in changes: raise OSError('synthetic publication failure')
-            return original(kind, key, changes, **options)
-        with patch.object(self.store.db, 'change', side_effect=publish), self.assertRaises(OSError):
+        original_write = os.write
+        go = []
+        def watch_write(fd, data):
+            if data == b'GO\n': go.append(data)
+            return original_write(fd, data)
+        with patch('v2.worker_facts.publish_worker', side_effect=OSError('synthetic publication failure')), \
+                patch('v2.runtime.os.write', side_effect=watch_write), self.assertRaises(OSError):
             self.rt.launch(self.workspace, self.draft['id'], self.draft['revision'], 'synthetic-launch-key-1')
+        self.assertEqual(go, [])
         run = self.store.db.list('run')[0]
         self.assertEqual(run['state'], 'RECOVERY_REQUIRED')
         self.assertEqual(run['actual_calls'], 0)

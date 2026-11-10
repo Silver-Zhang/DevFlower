@@ -6,9 +6,11 @@ import select
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from orchestration.common import Blocked
 from orchestration.store import lease
 from orchestration.store import process_identity
 from studio.workbench_scheduler import Scheduler
+from v2 import worker_facts
 from v2.store import DraftStore
 from v2.runtime import V2Runtime
 
@@ -28,6 +30,11 @@ def main():
         if row['state'] != 'QUEUED': return 1
         own = process_identity(os.getpid())
         if not own or not row.get('worker') or any(row['worker'].get(k) != own.get(k) for k in ('host','boot_id','pid','start','pgid','sid')):
+            return 1
+        try:
+            if worker_facts.versioned(row):
+                worker_facts.enter_worker(store.db, a.run, own)
+        except Blocked:
             return 1
         rt = V2Runtime(store, a.codex_cli, worker_run=a.run)
         Scheduler(rt, a.run, executor=rt.native_turn).run_graph()
