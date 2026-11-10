@@ -392,3 +392,31 @@
 @media(max-width:620px){
  .editor:has(+.run-inspector) :is(.run-summary,.message){margin-right:16px}
 }
+
+.v2-assistant{width:min(520px,calc(100vw - 24px));display:flex;flex-direction:column;min-height:0}
+.v2-assistant h2{display:flex;align-items:center;gap:7px}
+.v2-assistant-scroll,.v2-assistant .assistant-history{flex:1;min-height:0;overflow:auto;padding:12px 16px;overscroll-behavior:contain}
+.v2-assistant .assistant-history{display:grid;align-content:start;gap:6px}
+.v2-assistant .assistant-history>button{justify-content:space-between;text-align:left;white-space:normal}
+.v2-assistant .assistant-composer{display:grid;gap:8px;border-top:1px solid var(--studio-line);padding:10px 12px;max-height:53%;overflow:auto}
+.v2-assistant .assistant-selects{display:flex;align-items:end;flex-wrap:wrap;gap:6px}
+.assistant-selects label{flex:1;min-width:105px;color:var(--studio-muted);font-size:11px}
+.assistant-selects select,.assistant-run-choice select{margin-top:3px}
+.v2-assistant .assistant-file-input{display:flex;gap:6px;margin-top:6px}
+.v2-assistant .assistant-checkbox{display:flex;align-items:center;gap:6px;margin:6px 0}
+.v2-assistant .assistant-checkbox input{width:auto}
+.v2-assistant .assistant-composer li{overflow-wrap:anywhere}
+.v2-assistant .assistant-composer li button{margin-left:6px}
+.v2-assistant-turn,.assistant-diagnosis article{margin:10px 0;padding-bottom:10px;border-bottom:1px solid var(--studio-line)}
+.v2-assistant-turn>.assistant-user{background:var(--studio-subtle-bg);padding:8px 10px;border-radius:6px;white-space:pre-wrap}
+.v2-assistant-turn p,.assistant-preview p,.assistant-diagnosis p,.assistant-proposal p{margin:4px 0}
+.v2-assistant-turn small,.assistant-feedback{color:var(--studio-muted)}
+.v2-assistant-turn img{max-width:100%}
+.v2-assistant pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace;
+ max-height:260px;overflow:auto;background:var(--studio-subtle-bg);padding:8px;border-radius:6px}
+.v2-assistant code,.v2-assistant li{overflow-wrap:anywhere}
+.assistant-preview,.assistant-proposal,.assistant-diagnosis{border:1px solid var(--studio-line);padding:10px 12px;border-radius:8px;margin:10px 0}
+.assistant-preview button+button{margin-left:6px}
+.v2-assistant .assistant-feedback{padding:5px 12px}
+.v2-assistant .assistant-feedback.error-text{color:var(--studio-error)}
+@media(max-width:620px){.v2-assistant{width:calc(100vw - 16px)}}

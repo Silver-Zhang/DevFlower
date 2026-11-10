@@ -18,6 +18,7 @@ import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
+import {Assistant} from './Assistant.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
@@ -126,6 +127,8 @@ function App(){
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
+ const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
+ const assistantOpener=useRef(null);
  const [agentPanel,setAgentPanel]=useState(null);
  const [planApproval,setPlanApproval]=useState(null),[planBusy,setPlanBusy]=useState(false),[planError,setPlanError]=useState('');
  const planBusyRef=useRef(false);
@@ -146,6 +149,7 @@ function App(){
  const [launching,setLaunching]=useState(false),[launchAttempt,setLaunchAttempt]=useState(null),[cancelling,setCancelling]=useState(false);
  const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),runListRead=useRef(0),environmentRef=useRef(null),cancelBusy=useRef(null);
  const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
+ const viewModeRef=useRef(viewMode);viewModeRef.current=viewMode;
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
@@ -417,7 +421,7 @@ function App(){
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
-  setAgentPanel(null);
+  setAgentPanel(null);setAssistantFiles([]);setAssistantRun(null);
   workspaceRef.current=w;setWorkspace(w);setDrafts(rows);setRuns([]);
   install(row?.graph||blank(),row);
  }
@@ -427,6 +431,25 @@ function App(){
   remember(null);rememberRun(null);
   setNotice('已关闭工作空间');
   requestAnimationFrame(()=>workspacePicker.current?.focus());
+ }
+ function openAssistant({file,run}={}){
+  if(file)setAssistantFiles(list=>list.includes(file)?list:[...list,file].slice(-3));
+  if(run)setAssistantRun(run);
+  setSideView('assistant');
+ }
+ function closeAssistant(){
+  setSideView('');
+  requestAnimationFrame(()=>assistantOpener.current?.focus());
+ }
+ async function applyAssistant(data){
+  const w=workspaceRef.current,epoch=workspaceEpoch.current,gen=generation.current;
+  const sameDraft=()=>w&&data.workspace===w.id&&inWorkspace(w,epoch)&&generation.current===gen&&viewModeRef.current==='draft'&&
+   same(data.draft.document,docRef.current)&&data.draft.id===(savedRef.current?.id??null)&&
+   data.draft.revision===(savedRef.current?.revision??null)&&!saving.current&&!launchBusy.current;
+  if(!sameDraft())throw Error('当前草稿已变化，提案未应用。');
+  const result=await api('assistant/apply',data);
+  if(!sameDraft())throw Error('验证期间草稿已变化，提案未应用。');
+  edit(result.document);
  }
  function closeFiles(){
   setSideView('');
@@ -645,6 +668,7 @@ function App(){
     if(providerOpen){closeProviderCatalog();return}
     if(filesOpen){closeFiles();return}
     if(nativeOpen){closeNative();return}
+    if(sideView==='assistant'){closeAssistant();return}
     if(sideView==='agents'){closeAgents();return}
     closeInspector();
    }
@@ -778,6 +802,7 @@ function App(){
    {workspace&&<div className="workspace-actions">
     <Button ref={filesOpener} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
     <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
+    <Button ref={assistantOpener} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
     <Button ref={agentOpener} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
     <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
    </div>}
@@ -803,6 +828,7 @@ function App(){
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
    <Button onClick={()=>{clearSelection();setRunInspectorOpen(true)}}>运行检查器</Button>
+   <Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
    {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
@@ -912,7 +938,12 @@ function App(){
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
-  {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles}/>}
+  {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}/>}
+  {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
+   storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
+   draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
+   files={assistantFiles} onFiles={setAssistantFiles} run={assistantRun} onRun={setAssistantRun} runs={runs}
+   onApply={applyAssistant} onClose={closeAssistant}/>}
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} writeProviders={status?.native_session_writes}
     workflowLinks={status?.native_workflow_links} workflowTrash={status?.native_workflow_trash}

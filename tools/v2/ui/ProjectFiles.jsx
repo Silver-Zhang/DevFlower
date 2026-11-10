@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, RefreshCw, X} from 'lucide-react';
 
-export function ProjectFiles({api, workspace, onClose}) {
+export function ProjectFiles({api, workspace, onClose, onAttach}) {
  const [tree, setTree] = useState(() => new Map());
  const [expanded, setExpanded] = useState(new Set());
  const [preview, setPreview] = useState(null);
@@ -106,7 +106,8 @@ export function ProjectFiles({api, workspace, onClose}) {
    <nav className="project-tree" aria-label="项目文件树">{rows('')}</nav>
    {preview && <section className="project-preview" aria-label="文件预览">
     <header><button ref={previewBack} aria-label="返回文件树" title="返回文件树" onClick={back}><ArrowLeft size={16}/></button>
-     <h3>{preview.path}</h3></header>
+     <h3>{preview.path}</h3>
+     {onAttach&&!preview.loading&&!preview.error&&<button onClick={()=>onAttach(preview.path)}>附加到助手</button>}</header>
     {preview.loading ? <p className="muted small" role="status">正在读取文件…</p> :
      preview.error ? <p className="error-text" role="alert">{preview.error}</p> :
      <pre tabIndex={0}>{preview.text || <span className="muted">空文件</span>}</pre>}
