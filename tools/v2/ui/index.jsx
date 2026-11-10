@@ -18,6 +18,7 @@ import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
+import {GitWorkspace} from './GitWorkspace.jsx';
 import {Assistant} from './Assistant.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
@@ -128,7 +129,7 @@ function App(){
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
- const assistantOpener=useRef(null);
+ const assistantOpener=useRef(null),gitOpener=useRef(null);
  const [agentPanel,setAgentPanel]=useState(null);
  const [planApproval,setPlanApproval]=useState(null),[planBusy,setPlanBusy]=useState(false),[planError,setPlanError]=useState('');
  const planBusyRef=useRef(false);
@@ -432,6 +433,10 @@ function App(){
   setNotice('已关闭工作空间');
   requestAnimationFrame(()=>workspacePicker.current?.focus());
  }
+ function closeGit(){
+  setSideView('');
+  requestAnimationFrame(()=>gitOpener.current?.focus());
+ }
  function openAssistant({file,run}={}){
   if(file)setAssistantFiles(list=>list.includes(file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
@@ -669,6 +674,7 @@ function App(){
     if(filesOpen){closeFiles();return}
     if(nativeOpen){closeNative();return}
     if(sideView==='assistant'){closeAssistant();return}
+    if(sideView==='git'){closeGit();return}
     if(sideView==='agents'){closeAgents();return}
     closeInspector();
    }
@@ -802,6 +808,7 @@ function App(){
    {workspace&&<div className="workspace-actions">
     <Button ref={filesOpener} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
     <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
+    <Button ref={gitOpener} aria-expanded={sideView==='git'} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
     <Button ref={assistantOpener} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
     <Button ref={agentOpener} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
     <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
@@ -939,6 +946,7 @@ function App(){
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}/>}
+  {workspace&&sideView==='git'&&<GitWorkspace key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} onClose={closeGit}/>}
   {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}

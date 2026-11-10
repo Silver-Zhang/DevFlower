@@ -420,3 +420,27 @@
 .v2-assistant .assistant-feedback{padding:5px 12px}
 .v2-assistant .assistant-feedback.error-text{color:var(--studio-error)}
 @media(max-width:620px){.v2-assistant{width:calc(100vw - 16px)}}
+
+.git-platform-panel{width:min(680px,calc(100vw - 24px));min-height:0}
+.git-platform-panel h2{display:flex;align-items:center;gap:8px}
+.git-tabs,.git-actions{display:flex;gap:6px;flex-wrap:wrap}
+.git-tabs{padding:8px 12px;border-bottom:1px solid var(--studio-line)}
+.git-tabs button[aria-pressed="true"],.git-records button[aria-pressed="true"]{background:var(--studio-selected)}
+.git-platform-scroll{flex:1;min-height:0;overflow:auto;padding:12px;overscroll-behavior:contain}
+.git-platform-scroll p{overflow-wrap:anywhere;margin:5px 0}
+.git-overview dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 12px}
+.git-overview dd{margin:0;overflow-wrap:anywhere}
+.git-platform-panel .git-sha{font:11px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}
+.git-work{display:grid;grid-template-columns:minmax(145px,2fr) minmax(0,3fr);gap:12px}
+.git-records,.git-ci{display:grid;align-content:start;gap:4px}
+.git-records button,.git-ci button{display:flex;justify-content:space-between;text-align:left;white-space:normal;min-width:0}
+.git-records button span,.git-ci button span{overflow-wrap:anywhere}
+.git-records small,.git-state{font-size:10px;color:var(--studio-muted);flex-shrink:0}
+.git-state.failed{color:var(--studio-error)}
+.git-detail>section,.git-reviews article,.git-review-pending{margin-top:12px;padding:8px 10px;border:1px solid var(--studio-line);border-radius:6px}
+.git-detail h3,.git-reviews strong{overflow-wrap:anywhere}
+.git-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;padding:8px;border-radius:6px;
+ background:var(--studio-subtle-bg);font:11px/1.6 ui-monospace,monospace}
+.git-actions{margin-top:8px}
+@media(max-width:620px){.git-platform-panel{width:calc(100vw - 16px)}.git-work{grid-template-columns:minmax(0,1fr)}
+ .git-records{max-height:145px;overflow:auto}}
