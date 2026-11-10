@@ -18,6 +18,7 @@ import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
+import {PayloadPages,RunInspector} from './RunInspector.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
 import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeBlock, transferModes} from './canvasModel.mjs';
@@ -48,30 +49,18 @@ function Button({icon:Icon,children,...props}){return <button {...props}>{Icon&&
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
-const stateLabel=state=>({QUEUED:'等待启动',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
+const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
-function ControlEvidence({activation,trusted,nested,definition}){
- const [chosen,setChosen]=useState('');
- const child=nested.find(row=>row.id===chosen);
- const childNode=child?.node.split('/').reduce((parent,id)=>parent?.body?.nodes.find(node=>node.id===id),{body:definition?.graph});
-
- const state=trusted?(activation?.state||'PENDING'):'UNKNOWN';
- return <div className="inspector-content run-evidence">
+function ControlEvidence({activation,trusted}){
+ const state=trusted?(activation?.state||'UNACTIVATED'):'UNKNOWN';
+ return <div className="run-evidence">
   <div className="session-note">冻结运行 · {stateLabel(state)}</div>
   {activation?.reason&&<p className="error-text">{activation.reason}</p>}
   {activation?.decision&&<details><summary>分支判定 · {activation.selected_port}</summary><pre>{readable(activation.decision)}</pre></details>}
   {activation?.loop_results&&<details open><summary>循环轮次 · {activation.loop_results.length}{activation.loop_exit?' · '+(activation.loop_exit==='limit'?'达到上限':'退出条件命中'):''}</summary>
    <pre>{readable(activation.loop_results)}</pre></details>}
-  {nested.length>0&&<Field label="子节点与轮次"><select value={child?.id||''} onChange={event=>setChosen(event.target.value)}>
-   <option value="">选择激活记录</option>
-   {nested.map(row=><option key={row.id} value={row.id}>{row.name} · {row.iteration_path.join('.')} · {stateLabel(row.state)}</option>)}
-  </select></Field>}
-  {child&&(child.kind==='agent'?<RunEvidence activation={child} node={childNode||{}} trusted={trusted}/>:
-   <details open><summary>{child.name} · 轮次 {child.iteration_path.join('.')}</summary>
-    <pre>{readable({activation:child.id,state:child.state,inputs:child.inputs,output:child.output,reason:child.reason,approval:child.approval_decision})}</pre>
-   </details>)}
-  <h3>持久化输出</h3><pre aria-label="节点输出">{activation?.output?readable(activation.output):'尚无输出'}</pre>
+  <h3>持久化输出</h3><pre aria-label="节点输出">{activation?.output?readable(activation.output):activation?.paged_fields?.output?'输出可分段读取':'尚无输出'}</pre>
   <details><summary>输入来源与激活身份</summary><pre>{readable(activation?{activation:activation.id,
    inputs:activation.inputs||[],iteration_path:activation.iteration_path}:null)}</pre></details>
  </div>;
@@ -126,6 +115,7 @@ function RepairHandles(){const update=useUpdateNodeInternals();const missing=use
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
+ const [runInspectorOpen,setRunInspectorOpen]=useState(false);
  const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]);
  const [canvasMode,setCanvasMode]=useState('select'),[canvasFocused,setCanvasFocused]=useState(false),[minimap,setMinimap]=useState(false);
  const [canvasMenu,setCanvasMenu]=useState(null),[nodePicker,setNodePicker]=useState(null),[arrangeOpen,setArrangeOpen]=useState(false);
@@ -217,8 +207,8 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
- function editDraft(){clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function showRun(id,w=workspaceRef.current,environment){setRunInspectorOpen(false);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function editDraft(){setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
   try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');const done=ended(response.state)&&ended(response.run.persisted_state??response.state);if(done)refreshRuns();return done}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
  useEffect(()=>{if(!activeRun)return;let closed=false,timer;const read=async()=>{const finished=await rereadRun();if(!closed&&!finished)timer=setTimeout(read,900)};read();return()=>{closed=true;clearTimeout(timer)}},[activeRun?.id,activeRun?.epoch]);
@@ -454,12 +444,25 @@ function App(){
   setSideView('');
   requestAnimationFrame(()=>agentOpener.current?.focus());
  }
- function openPlanApproval(activation){
+ async function openPlanApproval(activation){
   const w=workspaceRef.current,run=runRef.current;
   const config=runSnapshot?.definition?.agent_configs?.[activation.node]?.config;
-  const plan=activation.receipt?.native_plan,text=activation.output?.answer;
-  if(!w||!run||!config||!activation.receipt_verified||!plan?.finalized||
-     typeof text!=='string'||!text||!(/^[0-9a-f]{64}$/).test(plan.sha256))return;
+  const plan=activation.receipt?.native_plan;
+  if(!w||!run||!config||!activation.receipt_verified||!plan?.finalized||!(/^[0-9a-f]{64}$/).test(plan.sha256))return;
+  let text=activation.output?.answer;
+  if(!text&&activation.paged_fields?.output){
+   let offset=0,sha,payload='';
+   while(offset!==null){
+    const query=new URLSearchParams({workspace:w.id,run:run.id,activation:activation.id,field:'output',offset,
+     ...(sha?{sha256:sha}:{})});
+    const page=await api('run-inspector/payload?'+query);
+    if(runRef.current!==run||workspaceRef.current?.id!==w.id)return;
+    if(page.bytes>8_000_000||page.next_offset!==null&&page.next_offset<=offset)throw Error('计划记录超出安全读取范围。');
+    payload+=page.text;sha=page.sha256;offset=page.next_offset;
+   }
+   text=JSON.parse(payload).answer;
+  }
+  if(typeof text!=='string'||!text)return;
   const key='df-plan-agent:'+w.id+':'+run.id+':'+activation.node;
   let pending=null;
   try{pending=JSON.parse(sessionStorage.getItem(key))}catch{}
@@ -539,7 +542,7 @@ function App(){
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
  function resetCanvasSelection(){setNodeSelection([]);setEdgeSelection([]);setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);dragBase.current=null}
  function clearSelection(){setSelected(null);setEdge(null);setEdgeSelection([]);setCanvasMenu(null);setArrangeOpen(false)}
- function closeInspector(){clearSelection();setTimeout(()=>canvasRef.current?.focus(),0)}
+ function closeInspector(){setRunInspectorOpen(false);clearSelection();setTimeout(()=>canvasRef.current?.focus(),0)}
  useEffect(()=>{
   if(!canvasMenu&&!nodePicker&&!arrangeOpen)return;
   function outside(event){
@@ -741,7 +744,8 @@ function App(){
  const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching),shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
  const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
- const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
+ const edgeTarget=e&&activation(e.target);
+ const actualInputs=e?(edgeTarget?.inputs||[]).filter(i=>i.edge===e.id&&i.source===e.source&&i.target_activation===edgeTarget.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
  const launchBlock=doc.nodes.map(runtimeBlock).find(Boolean);
@@ -749,7 +753,7 @@ function App(){
  const typedActive=runTrusted&&runSnapshot?.run?.designer_runtime===1&&['RUNNING','WAITING_CONFIRMATION','PAUSED'].includes(runSnapshot.state);
  const inlineAgent=doc.nodes.some(node=>nodeKind(node)==='agent'&&!node.agent_id);
  const rfNodes=shown.nodes.map(node=>{
-  const value=readOnly?{...(activation(node.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
+  const value=readOnly?{...(activation(node.id)||{state:'UNACTIVATED'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
   return {id:node.id,type:'canvas',position:node.position,selected:nodeSelection.includes(node.id),
    draggable:editable&&canvasMode==='select',connectable:editable,
    data:{node,activation:value,stateLabel:value&&stateLabel(value.state),referenceIssue:!readOnly&&referenceIssue(node)},
@@ -798,8 +802,9 @@ function App(){
    {!readOnly&&launchBlock&&<p className="phase5-note">{launchBlock} 当前图仍可编辑、保存和导出。</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
+   <Button onClick={()=>{clearSelection();setRunInspectorOpen(true)}}>运行检查器</Button>
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
-   {completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
+   {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
     {runSnapshot.nodes.filter(row=>runSnapshot.run.partial_failures.includes(row.id)).map(row=><p key={row.id}>{row.name} · {row.reason}</p>)}</details>}
    {approval&&<section className="approval-wait" aria-label="待人工审批"><h3>{approval.name}</h3><p>{approval.question}</p>
@@ -847,9 +852,42 @@ function App(){
    {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id.split('/')[0]);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}</section>}
    <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
   </main>
-  {(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
-   {n?readOnly?nodeKind(n)!=='agent'?<ControlEvidence key={n.id} activation={activation(n.id)} trusted={runTrusted} definition={runSnapshot?.definition} nested={(runSnapshot?.nodes||[]).filter(row=>row.node.startsWith(n.id+'/'))}/>:<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
-    onTransition={completedPlans.some(a=>a.node===n.id)?()=>openPlanApproval(activation(n.id)):null}/>:<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
+  {readOnly&&(n||e||runInspectorOpen)&&<aside className="inspector run-inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):e?'连线配置':'运行检查器'}>
+   <header><div><small>运行检查器</small><h2>{n?.name||(e?'交接记录':'运行详情')}</h2></div>
+    <button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
+   <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted}
+    selection={n?{node:n.id}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
+    {current=>{
+     if(!n&&!e&&!current)return null;
+     const scoped={api,workspace:runSnapshot?.run?.workspace,run:runSnapshot?.run?.id,activation:current?.id};
+     if(e)return <div className="run-evidence">
+      <p>{shown.nodes.find(node=>node.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(node=>node.id===e.target)?.name}</p>
+      <h3>交接最终回答</h3><p className="field-note">此处显示下游激活实际记录的交接。</p>
+      {actualInputs.map((input,index)=><section key={input.handoff_id||index}>
+       <pre aria-label="实际交接内容">{readable(input.content)}</pre>
+       <p className="field-note">{current?.input_sent_sha256?'下游请求已有字节写入证据。':current?.kind==='agent'?'尚无下游请求写入证据。':'确定性节点的接收状态见事件。'}</p>
+       <details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details>
+      </section>)}
+      {!actualInputs.length&&(current?.paged_fields?.inputs?<PayloadPages {...scoped} field="inputs" edge={e.id}/>:
+       <p>尚无已持久化的下游输入。</p>)}
+     </div>;
+     const agent=current?current.kind==='agent':nodeKind(n)==='agent';
+     const spec=current?.node.split('/').reduce((parent,id)=>parent?.body?.nodes.find(node=>node.id===id),
+       {body:runSnapshot?.definition?.graph})||n;
+     return <>
+      {agent?<RunEvidence activation={current} node={{...n,...spec}} trusted={runTrusted}
+       onTransition={completedPlans.some(row=>row.id===current?.id)&&current.node===n?.id?guard(()=>openPlanApproval(current)):null}/>:
+       <ControlEvidence activation={current} trusted={runTrusted}/>}
+      {current?.started_at&&<details><summary>激活时间</summary><pre>{readable({started_at:current.started_at,finished_at:current.finished_at})}</pre></details>}
+      {agent&&current?.inputs?.length>0&&<details><summary>持久化输入</summary><pre>{readable(current.inputs)}</pre></details>}
+      {Object.keys(current?.paged_fields||{}).filter(field=>field!=='native_tool_activity').map(field=>
+       <PayloadPages key={current.id+field} {...scoped} field={field}/>)}
+     </>;
+    }}
+   </RunInspector>
+  </aside>}
+  {!readOnly&&(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
+   {n?<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
      bodyChoices={drafts.filter(row=>row.id!==saved?.id)} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<div className="session-note"><p>此节点引用已保存的 Agent 配置版本。</p>
@@ -870,7 +908,7 @@ function App(){
     {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}
     <Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[n.id]));closeInspector()}}>
      {nodeKind(n)==='agent'?'删除 Agent':'删除节点'}</Button>
-   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>{readOnly?'交接最终回答':'连线交接配置'}</h3>{readOnly?<><p className="field-note">下列内容来自下游 activation 实际持久化输入；可能按执行定义截断或包装，私有回执不跨边。</p>{actualInputs.length?actualInputs.map((input,k)=><section key={k}><pre aria-label="实际交接内容">{readable(input.content)}</pre><p className="field-note">{activation(e.target)?.input_sent_sha256?'下游请求已有字节写入证据；详见下游实际请求。':'尚无下游请求写入证据。'}</p><details><summary>交接身份与哈希</summary><pre>{readable(input)}</pre></details></section>):<p>尚无已持久化的下游输入。</p>}</>:<><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></>}</div>}
+   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>连线交接配置</h3><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></div>}
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}

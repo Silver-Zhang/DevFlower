@@ -22,6 +22,7 @@ from .project_files import read_project
 from .session_identity import SessionRefused
 from .session_lease import CODEX_COORDINATION_VERSION
 from .native_history_config import unique_pairs
+from .run_inspector import RunInspector, parameters as inspector_parameters
 from .run_summary import RunSummaryError, read_run_summary, request_parameters as run_summary_parameters
 
 STATIC = Path(__file__).parent / 'static'
@@ -39,6 +40,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
     terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
+    inspector = RunInspector(store)
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
 
@@ -130,6 +132,13 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 if post and path == '/api/v2/drafts/validate':
                     workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
                     return self.reply(200, validate_archive(store, workspace, raw))
+                if path in ('/api/v2/run-inspector/events', '/api/v2/run-inspector/payload',
+                            '/api/v2/run-inspector/export'):
+                    if post:
+                        return self.reply(405, {'error': '运行检查只接受读取请求。'})
+                    route = path.rsplit('/', 1)[1]
+                    args = inspector_parameters(urlsplit(self.path).query, self.headers, route)
+                    return self.reply(200, getattr(inspector, route)(**args))
                 if not post and path == '/api/v2/run-summary':
                     workspace, run = run_summary_parameters(urlsplit(self.path).query, self.headers)
                     return self.reply(200, read_run_summary(store, workspace, run))
@@ -268,7 +277,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif not post and path == '/api/v2/agent-sessions' and set(query) == {'workspace', 'provider', 'cwd'}:
                     result = agents.sessions(query['workspace'], query['provider'], query['cwd'])
                 elif not post and path == '/api/v2/runs' and runtime:
-                    result = runtime.runs(query.get('workspace'))
+                    result = inspector.clean(runtime.runs(query.get('workspace')))
                 elif not post and path == '/api/v2/run' and runtime:
                     result = runtime.snapshot(query.get('workspace'),query.get('id'))
                 elif post and path == '/api/v2/launch' and runtime:
@@ -287,6 +296,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result=runtime.cancel(data['workspace'],data['run_id'])
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
+                if isinstance(result, dict) and {'run', 'definition', 'nodes', 'events'} <= result.keys():
+                    result = inspector.snapshot(result)
                 self.reply(200, result)
             except (NativeHistoryError, DraftTransferError, RunSummaryError) as exc:
                 self.reply(exc.status, {'code': exc.code, 'error': str(exc)})

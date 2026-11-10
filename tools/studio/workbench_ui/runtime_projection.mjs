@@ -1,6 +1,7 @@
 // Read-only presentation of persisted evidence. Never changes Runtime decisions.
 export const STATUS = {
  DRAFT:['草稿','draft','○'],PENDING:['等待输入','pending','○'],QUEUED:['等待调度','pending','○'],
+ READY:['可运行','pending','○'],WAITING:['等待上游','waiting','◷'],CANCEL_REQUESTED:['已请求取消','waiting','◇'],
  STARTING:['准备启动','running','◷'],RUNNING:['正在运行','running','▶'],PAUSED:['调度已暂停','waiting','Ⅱ'],
  WAITING_CONFIRMATION:['等待人工确认','waiting','◇'],WAITING_INPUT:['等待输入','waiting','◷'],
  COMPLETED:['已完成','passed','✓'],PASSED:['已通过','passed','✓'],FAILED:['失败','failed','!'],

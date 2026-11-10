@@ -168,12 +168,15 @@ class V2Journal(Journal):
                 run['actual_calls'] = run.get('actual_calls', 0) + 1
                 db.execute("UPDATE records SET data=? WHERE kind='run' AND id=?", (canonical(run).decode(), self.s.run))
             event = dict(kind='node-running', action='原生 Agent 已启动', at=time.time(), run=self.s.run,
-                         node=activation['node'], iteration=activation.get('iteration', 0), attempt=activation.get('attempt', 1))
+                         node=activation['node'], activation=self.key, state='RUNNING',
+                         iteration_path=activation.get('iteration_path', []),
+                         iteration=activation.get('iteration', 0), attempt=activation.get('attempt', 1))
             db.execute('INSERT INTO events(run,data) VALUES(?,?)', (self.s.run, canonical(event).decode()))
 
     def input_sent(self, operation, size, sha):
         super().input_sent(operation, size, sha)
-        self.s.db.change('activation', self.key, {'effect_uncertain': True, 'input_sent_operation_id': operation})
+        self.s.db.change('activation', self.key, {'effect_uncertain': True, 'input_sent_operation_id': operation},
+                         event={'kind': 'native-input-sent', 'input_sent_sha256': sha, 'input_sent_bytes': size})
 
     def native_terminal_event(self, event):
         row = self.s.db.get('activation', self.key)
@@ -186,8 +189,10 @@ class V2Journal(Journal):
             **({'native_turn_id': value['native_turn_id']} if value.get('native_turn_id') else {})})
 
     def native_tool_event(self, event):
-        super().native_tool_event(event)
+        super().native_tool_event(dict(event, at=time.time()))
         activation = self.s.db.get('activation', self.key)
+        self.s.db.event(self.s.run, 'native-tool-activity', node=activation['node'], activation=self.key,
+                        iteration_path=activation.get('iteration_path', []), action=event['event'])
         binding = self.s.db.get('node-session', activation['chat_key'])['binding']
         if binding.get('v2_agent_scope') in ('read', 'workspace-write'):
             return
@@ -676,14 +681,27 @@ class V2Runtime:
         finally:
             journal.writer_gates.close()
 
-    def _records(self):
-        # One committed SQLite snapshot; a live worker may publish after this
-        # read, but a list/detail never mixes its old node with a new run row.
+    def _records(self, run_id=None, *, include_events=True):
+        # One committed SQLite snapshot. Run detail does not load another run's
+        # payloads, and its compatibility event tail is separate from the cursor.
         with self.flow.tx(read=True) as db:
-            rows={(kind,key):json.loads(raw) for kind,key,raw in db.execute(
-                "SELECT kind,id,data FROM records WHERE kind IN ('run','definition','activation','native-step')")}
-            events=[dict(json.loads(raw),seq=seq) for seq,raw in db.execute('SELECT seq,data FROM events ORDER BY seq')]
-        return rows,events
+            if run_id is None:
+                records = db.execute("SELECT kind,id,data FROM records WHERE kind IN ('run','definition','activation','native-step')")
+            else:
+                records = db.execute("""SELECT kind,id,data FROM records WHERE kind='run' AND id=?
+                    UNION ALL SELECT kind,id,data FROM records WHERE kind='definition' AND id=(
+                        SELECT json_extract(data,'$.definition_id') FROM records WHERE kind='run' AND id=?)
+                    UNION ALL SELECT kind,id,data FROM records WHERE kind IN ('activation','native-step')
+                        AND CASE WHEN json_valid(data) THEN json_extract(data,'$.run') END=?""", (run_id, run_id, run_id))
+            rows = {(kind,key): json.loads(raw) for kind,key,raw in records}
+            if not include_events:
+                return rows, []
+            if run_id is None:
+                events = db.execute('SELECT seq,data FROM events ORDER BY seq')
+            else:
+                tail = db.execute('SELECT seq,data FROM events WHERE run=? ORDER BY seq DESC LIMIT 100', (run_id,))
+                events = reversed(tail.fetchall())
+            return rows, [dict(json.loads(raw), seq=seq) for seq,raw in events]
 
     def _snapshot(self,run,rows,events):
         from .recovery import project
@@ -704,13 +722,13 @@ class V2Runtime:
     def snapshot(self,workspace,run_id):
         self.store.workspace(workspace)
         if not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{32}',run_id):raise Invalid('运行身份无效')
-        rows,events=self._records();run=rows.get(('run',run_id))
+        rows,events=self._records(run_id);run=rows.get(('run',run_id))
         if run is None:raise Invalid('找不到此运行，请从当前工作空间历史选择')
         if run['workspace']!=workspace:raise Conflict('运行不属于当前工作空间')
         return self._snapshot(run,rows,events)
 
     def runs(self,workspace):
-        self.store.workspace(workspace);rows,events=self._records();result=[]
+        self.store.workspace(workspace);rows,events=self._records(include_events=False);result=[]
         for (kind,_),run in rows.items():
             if kind!='run' or run['workspace']!=workspace:continue
             value=self._snapshot(run,rows,events);public=value['run']
