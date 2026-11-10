@@ -6,7 +6,7 @@ import re
 from studio.graph import Invalid
 
 from .canvas_structure import (EDGE_EXTENSION, ID, TRANSFER_MODES, TYPES, config_issues, connection_message,
-                               fields, node_kind, number, port_issues, runtime_issues, text, validate_config)
+                               fields, node_kind, number, text, validate_config)
 
 MAX_BYTES = 400000
 def validate_draft(document):
@@ -112,21 +112,21 @@ def validate_draft(document):
 
 
 def check_chain(document):
-    """Pure draft diagnostics. M1 does not freeze, launch or call a Provider."""
+    """Pure draft diagnostics, independent of Provider admission."""
+    from .designer_graph import graph_issues, is_designer_graph
     doc = validate_draft(document)
+    if is_designer_graph(doc):
+        return {'issues': graph_issues(doc), 'execution_available': False,
+                'message': '检查结构、端口与节点配置。检查不会调用模型。'}
     issues = []
     if not doc['nodes']:
         issues.append({'message': '添加至少一个 Agent 后再检查执行配置'})
-    unsupported = runtime_issues(doc)
     for node in doc['nodes']:
         if node.get('kind') == 'agent' and 'agent_id' not in node:
             issues.append(dict(node_id=node['id'], code='AGENT_REFERENCE_REQUIRED',
                                message=node['name'] + '：请在 Agent 管理选择已保存的配置版本。'))
         for field, message in config_issues(node):
             issues.append(dict(node_id=node['id'], field=field, message=node['name'] + '：' + message))
-    if unsupported:
-        return {'issues': issues + port_issues(doc) + unsupported, 'execution_available': False,
-                'message': '草稿可以保存；这些节点或交接尚未接入执行。检查不会调用模型。'}
     incoming = {n['id']: [] for n in doc['nodes']}
     outgoing = {n['id']: [] for n in doc['nodes']}
     for edge in doc['edges']:

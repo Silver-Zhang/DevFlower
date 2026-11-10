@@ -9,7 +9,7 @@ from studio.graph import Invalid
 SCHEMA_PATH = Path(__file__).with_name('canvas_types.json')
 TYPES = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 ROUTE_OPERATORS = {'equals', 'not_equals', 'contains', 'greater', 'less', 'exists'}
-TRANSFER_MODES = {'answer': '最终回答', 'summary': '摘要', 'result': '结构化结果', 'none': '仅控制顺序'}
+TRANSFER_MODES = {'envelope': '节点数据', 'answer': '最终回答', 'summary': '摘要', 'result': '结构化结果', 'none': '仅控制顺序'}
 DEFAULT_TRANSFER = {'mode': 'answer', 'max_chars': 16000}
 EDGE_EXTENSION = {'source_port', 'target_port', 'transfer'}
 ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
@@ -84,8 +84,61 @@ def validate_predicate(test):
         raise Invalid('判定运算符无效。')
     if isinstance(test['value'], str):
         text(test['value'], 2000, '比较值')
-    elif type(test['value']) is not bool:
+    elif test['value'] is not None and type(test['value']) is not bool:
         number(test['value'], -1e100, 1e100)
+
+
+def validate_expression(value, depth=0, budget=None):
+    if budget is None:
+        budget = [32]
+    budget[0] -= 1
+    if depth > 4 or budget[0] < 0 or not isinstance(value, dict):
+        raise Invalid('条件组合超过 4 层或 32 个判定。')
+    operators = {'all', 'any', 'not'} & value.keys()
+    if not operators:
+        validate_predicate(value)
+        return
+    if len(value) != 1:
+        raise Invalid('每组条件需要一个布尔操作符。')
+    operator, = operators
+    item = value[operator]
+    if operator == 'not':
+        validate_expression(item, depth + 1, budget)
+        return
+    if not isinstance(item, list) or not 1 <= len(item) <= 8:
+        raise Invalid('全部/任一条件需要 1–8 项。')
+    for child in item:
+        validate_expression(child, depth + 1, budget)
+
+
+def predicate_leaves(value):
+    if 'not' in value:
+        yield from predicate_leaves(value['not'])
+    elif 'all' in value or 'any' in value:
+        for item in value.get('all', value.get('any', [])):
+            yield from predicate_leaves(item)
+    else:
+        yield value
+
+
+def predicate_issue(test):
+    from studio.workbench_data import public_field
+    from studio.workbench_graph import field
+    try:
+        field({}, public_field(test['field']))
+    except Invalid as failure:
+        return str(failure)
+    if test['op'] in ('greater', 'less') and type(test['value']) not in (int, float):
+        return '数值比较需要数字比较值。'
+    if test['op'] == 'contains' and not isinstance(test['value'], str):
+        return '包含比较需要文本比较值。'
+    return None
+
+
+def validation_expression(config):
+    expression = json.loads(config['rules'], parse_constant=reject_constant)
+    validate_expression(expression)
+    return expression
 
 
 def validate_config(node):
@@ -113,7 +166,7 @@ def validate_config(node):
         if setting['type'] == 'text':
             text(value, 20000, setting['label'])
         elif setting['type'] == 'predicate':
-            validate_predicate(value)
+            validate_expression(value)
         elif setting['type'] == 'integer':
             if type(value) is not int:
                 raise Invalid(setting['label'] + '需要整数。')
@@ -126,22 +179,34 @@ def reject_constant(value):
     raise ValueError(value)
 
 
+def json_input(value):
+    def finite_float(raw):
+        result = float(raw)
+        if not math.isfinite(result):
+            raise ValueError('nonfinite JSON number')
+        return result
+    return json.loads(value, parse_constant=reject_constant, parse_float=finite_float)
+
+
 def config_issues(node):
     kind = node_kind(node)
     config = node.get('config', {})
     issues = []
     for key, setting in TYPES[kind]['fields'].items():
         if setting['type'] == 'predicate':
-            test = config.get(key)
-            if not test or not test['field'].strip():
-                issues.append((key, '请填写' + setting['label'] + '的判定字段。'))
-            elif test['op'] in ('greater', 'less') and type(test['value']) not in (int, float):
-                issues.append((key, '数值比较需要数字比较值。'))
+            expression = config.get(key)
+            if not expression:
+                issues.append((key, '请填写' + setting['label'] + '。'))
+            else:
+                for test in predicate_leaves(expression):
+                    if problem := predicate_issue(test):
+                        issues.append((key, problem))
+                        break
         elif setting.get('required') and not config.get(key, '').strip():
             issues.append((key, '请填写' + setting['label'] + '。'))
     if kind == 'start' and config.get('initial_data', '').strip():
         try:
-            json.loads(config['initial_data'], parse_constant=reject_constant)
+            json_input(config['initial_data'])
         except (ValueError, RecursionError):
             issues.append(('initial_data', '初始数据需要有效的 JSON。'))
     if kind == 'router':
@@ -153,9 +218,18 @@ def config_issues(node):
             if not rule['label'].strip() or not test['field'].strip():
                 issues.append(('rules', '请填写路由分支名称与字段。'))
                 break
-            if test['op'] in ('greater', 'less') and type(test['value']) not in (int, float):
-                issues.append(('rules', '数值比较需要数字比较值。'))
+            if problem := predicate_issue(test):
+                issues.append(('rules', problem))
                 break
+    if kind == 'validation' and config.get('rules', '').strip():
+        try:
+            expression = validation_expression(config)
+            for test in predicate_leaves(expression):
+                if problem := predicate_issue(test):
+                    issues.append(('rules', problem))
+                    break
+        except (Invalid, ValueError, RecursionError):
+            issues.append(('rules', '验证规则需要结构化 JSON 条件，例如 {"field":"result.ok","op":"equals","value":true}。'))
     if kind == 'tool' and config.get('tool'):
         scopes = ('workspace-read', 'workspace-write') if config['tool'] == 'read-file' else ('workspace-write',)
         if config.get('permission', 'none') not in scopes:

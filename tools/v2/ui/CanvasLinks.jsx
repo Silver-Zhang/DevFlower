@@ -1,6 +1,6 @@
 import React,{useState} from 'react';
 import {ArrowRight} from 'lucide-react';
-import {connectionIssue,defaultTransfer,nodeKind,ports,transferModes} from './canvasModel.mjs';
+import {connectionIssue,defaultEdgeMode,defaultTransfer,nodeKind,ports,transferModes} from './canvasModel.mjs';
 
 export function NodeConnections({node,graph,onConnect,Field}){
  const outputs=ports(node,'outputs');
@@ -29,7 +29,8 @@ export function NodeConnections({node,graph,onConnect,Field}){
 }
 
 export function EdgeDraftConfig({edge,source,target,onUpdate,Field}){
- const transfer=edge.transfer||defaultTransfer;
+ const mode=defaultEdgeMode(source,target);
+ const transfer=edge.transfer||{...defaultTransfer,mode};
  const selectedSource=edge.source_port??'out',selectedTarget=edge.target_port??'in';
  return <>
   <Field label="源输出端口"><select value={selectedSource} onChange={e=>onUpdate({source_port:e.target.value})}>
@@ -43,6 +44,6 @@ export function EdgeDraftConfig({edge,source,target,onUpdate,Field}){
   </select></Field>
   <Field label="交接字符上限"><input type="number" min="1" max="20000" value={transfer.max_chars}
    onChange={e=>{if(e.target.value!=='')onUpdate({transfer:{...transfer,max_chars:Math.min(20000,Math.max(1,Math.trunc(Number(e.target.value))))}})}}/></Field>
-  <p className="field-note">{transfer.mode==='answer'&&transfer.max_chars===16000?'当前交接采用默认的最终回答。':'自定义交接已可保存，其执行由 Phase 5 接入。'} 草稿没有实际交接数据。</p>
+  <p className="field-note">{transfer.mode===mode&&transfer.max_chars===16000?'使用当前节点类型的默认交接。':'按所选公开内容和字符上限交接。'} 草稿没有实际交接数据。</p>
  </>;
 }

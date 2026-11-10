@@ -4,14 +4,14 @@ import {ModelSelector} from './ModelSelector.jsx';
 const OPERATORS=[['equals','等于'],['not_equals','不等于'],['contains','包含'],['greater','大于'],['less','小于'],['exists','存在']];
 function PredicateField({label,children}){return <label>{label}{children}</label>}
 
-export function PredicateEditor({value,onChange,labels={},limits={},Field=PredicateField}){
+export function PredicateEditor({value,onChange,labels={},limits={},nullable=false,Field=PredicateField}){
  const edit=(key,next)=>onChange({...value,[key]:next});
- const type=typeof value.value;
+ const type=value.value===null?'null':typeof value.value;
  return <>
   <Field label={labels.field||'判定字段'}><input aria-label={labels.field||'判定字段'} value={value.field} placeholder="result.task_type" maxLength={limits.field} onChange={e=>edit('field',e.target.value)}/></Field>
   <Field label={labels.op||'运算符'}><select aria-label={labels.op||'运算符'} value={value.op} onChange={e=>edit('op',e.target.value)}>{OPERATORS.map(([id,label])=><option value={id} key={id}>{label}</option>)}</select></Field>
-  <Field label="比较值类型"><select value={type} onChange={e=>edit('value',e.target.value==='number'?0:e.target.value==='boolean'?true:'')}><option value="string">文本</option><option value="number">数字</option><option value="boolean">布尔</option></select></Field>
-  <Field label="比较值">{type==='boolean'?<select value={String(value.value)} onChange={e=>edit('value',e.target.value==='true')}><option value="true">是</option><option value="false">否</option></select>:<input value={value.value} type={type==='number'?'number':'text'} maxLength={limits.value} onChange={e=>edit('value',type==='number'?Number(e.target.value):e.target.value)}/>}</Field>
+  <Field label="比较值类型"><select value={type} onChange={e=>edit('value',e.target.value==='number'?0:e.target.value==='boolean'?true:e.target.value==='null'?null:'')}><option value="string">文本</option><option value="number">数字</option><option value="boolean">布尔</option>{nullable&&<option value="null">空值（null）</option>}</select></Field>
+  <Field label="比较值">{type==='null'?<span>null</span>:type==='boolean'?<select value={String(value.value)} onChange={e=>edit('value',e.target.value==='true')}><option value="true">是</option><option value="false">否</option></select>:<input value={value.value} type={type==='number'?'number':'text'} maxLength={limits.value} onChange={e=>edit('value',type==='number'?Number(e.target.value):e.target.value)}/>}</Field>
  </>;
 }
 

@@ -61,8 +61,8 @@ class CanvasStructureTests(TestCase):
         with self.assertRaises(Conflict):
             self.store.save(self.workspace, first['id'], first['revision'], doc)
         issues = check_chain(doc)['issues']
-        self.assertTrue(any(item.get('code') == 'PHASE5_TRANSFER' for item in issues))
-        self.assertTrue(any('尚未连接' in item['message'] for item in issues))
+        self.assertTrue(any(item.get('code') == 'RUNTIME_NODE_UNAVAILABLE' for item in issues))
+        self.assertTrue(any(item.get('code') == 'RUNTIME_GRAPH_UNCONNECTED' for item in issues))
 
     def test_typed_invalid_versions_ports_graph_and_permissions_are_rejected(self):
         rows = [node('Start', 'start'), node('A', 'agent'), node('B', 'agent'), node('C', 'condition'),
@@ -104,7 +104,7 @@ class CanvasStructureTests(TestCase):
         self.assertEqual(handoff, dict(id='e1',source='A',target='B',transfer='answer',max_chars=16000))
         self.assertEqual(self.store.db.list('run'), [])
 
-    def test_http_refuses_phase5_without_provider_and_reports_unresolved_agent_reference(self):
+    def test_http_refuses_unsupported_or_unbound_without_provider_and_reports_unresolved_reference(self):
         with patch('v2.runtime.CodexProvider', side_effect=Blocked('未找到 Codex CLI')):
             runtime = V2Runtime(self.store)
         self.start_server(runtime)
@@ -125,7 +125,7 @@ class CanvasStructureTests(TestCase):
                 code, result = self.request('launch', dict(workspace=self.workspace, draft_id=row['id'], revision=row['revision'],
                     intent_key=f'phase4-refuse-intent-{index}', task=''))
                 self.assertEqual(code, 400)
-                self.assertIn('Phase 5', result['error'])
+                self.assertIn('已保存配置版本' if index else '执行尚未接入', result['error'])
             spawn.assert_not_called()
         for kind in ('run', 'activation', 'definition', 'native-step'):
             self.assertEqual(self.store.db.list(kind), [])

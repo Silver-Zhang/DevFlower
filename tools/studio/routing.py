@@ -43,13 +43,17 @@ def validate_router(node):
     return labels|({default} if default is not None else set())
 
 
-def rule_route(value,node):
+def rule_route(value,node,*,compare=None):
     for rule in node['routes']:
         try:
-            actual=field(value,rule['test']['field'])
-            # Missing fields never satisfy not_equals; they proceed to fallback.
-            if actual is None and rule['test']['op']!='exists':continue
-            if predicate(value,rule['test']):return dict(label=rule['label'],method='rule',reason=f"{rule['test']['field']} {rule['test']['op']} 命中",fallback=False)
+            test=rule['test']
+            if compare is None:
+                actual=field(value,test['field'])
+                # Missing fields never satisfy not_equals; they proceed to fallback.
+                matched=(actual is not None or test['op']=='exists') and predicate(value,test)
+            else:
+                matched=compare(value,test)
+            if matched:return dict(label=rule['label'],method='rule',reason=f"{test['field']} {test['op']} 命中",fallback=False)
         except Invalid:
             return fallback(node,'字段类型不符，使用默认分支')
     return None

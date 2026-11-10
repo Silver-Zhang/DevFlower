@@ -275,6 +275,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     if set(data) != {'workspace','draft_id','revision','intent_key','task'}:
                         raise Invalid('启动需要明确的工作空间、草稿版本、本次任务与启动意图')
                     result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'])
+                elif post and path == '/api/v2/resume' and runtime and set(data) == {'workspace', 'run_id'}:
+                    result = runtime.resume(data['workspace'], data['run_id'])
                 elif post and path == '/api/v2/cancel' and runtime and set(data)=={'workspace','run_id'}:
                     result=runtime.cancel(data['workspace'],data['run_id'])
                 else:

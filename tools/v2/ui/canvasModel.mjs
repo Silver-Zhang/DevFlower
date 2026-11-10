@@ -3,7 +3,7 @@ import types from '../canvas_types.json';
 export const nodeKind = node => node.kind ?? 'agent';
 export const nodeType = node => types[nodeKind(node)];
 export const defaultTransfer = Object.freeze({mode:'answer',max_chars:16000});
-export const transferModes = {answer:'最终回答',summary:'摘要',result:'结构化结果',none:'仅控制顺序'};
+export const transferModes = {envelope:'节点数据',answer:'最终回答',summary:'摘要',result:'结构化结果',none:'仅控制顺序'};
 export const emptyPredicate = {field:'',op:'equals',value:true};
 
 export function ports(node, direction) {
@@ -44,6 +44,18 @@ export function defaultConfig(kind) {
  ]));
 }
 
+export const runtimeKinds=new Set(['start','agent','output','condition','router','validation']);
+export const defaultEdgeMode=(from,to)=>nodeKind(from)==='agent'&&nodeKind(to)==='agent'?'answer':'envelope';
+
+export function predicateIssue(test) {
+ if(!test)return '请填写判定字段';
+ if(test.not)return predicateIssue(test.not);
+ if(test.all||test.any)return (test.all||test.any).map(predicateIssue).find(Boolean)||'';
+ if(!test.field?.trim())return '请填写判定字段';
+ if(['greater','less'].includes(test.op)&&typeof test.value!=='number')return '数值比较需要数字比较值';
+ return '';
+}
+
 export function draftConfigIssue(node) {
  const kind=nodeKind(node);
  if(kind==='agent')return node.agent_id||node.provider&&node.model&&node.effort&&node.round_prompt?.trim()?'':'请配置 Agent';
@@ -51,8 +63,8 @@ export function draftConfigIssue(node) {
  for(const [key,field] of Object.entries(types[kind].fields)){
   const value=config[key]??field.default;
   if(field.type==='predicate'){
-   if(!value?.field.trim())return '请填写'+field.label+'的判定字段';
-   if(['greater','less'].includes(value.op)&&typeof value.value!=='number')return '数值比较需要数字比较值';
+   const issue=predicateIssue(value);
+   if(issue)return issue;
   }else if(field.required&&!value?.trim())return '请填写'+field.label;
  }
  if(kind==='start'&&config.initial_data?.trim()){

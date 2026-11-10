@@ -20,7 +20,7 @@ import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from '.
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
-import {connectionIssue, defaultConfig, defaultTransfer, nodeKind, nodeType, ports, transferModes} from './canvasModel.mjs';
+import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeKinds, transferModes} from './canvasModel.mjs';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}});
@@ -48,9 +48,19 @@ function Button({icon:Icon,children,...props}){return <button {...props}>{Icon&&
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
-const stateLabel=state=>({QUEUED:'等待启动',PENDING:'等待上游',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
+const stateLabel=state=>({QUEUED:'等待启动',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
+function ControlEvidence({activation,trusted}){
+ const state=trusted?(activation?.state||'PENDING'):'UNKNOWN';
+ return <div className="inspector-content run-evidence">
+  <div className="session-note">冻结运行 · {stateLabel(state)}</div>
+  {activation?.reason&&<p className="error-text">{activation.reason}</p>}
+  <h3>持久化输出</h3><pre aria-label="节点输出">{activation?.output?readable(activation.output):'尚无输出'}</pre>
+  <details><summary>输入来源与激活身份</summary><pre>{readable(activation?{activation:activation.id,
+   inputs:activation.inputs||[],iteration_path:activation.iteration_path}:null)}</pre></details>
+ </div>;
+}
 function RunEvidence({activation,node,trusted,onTransition}){const a=activation;return <div className="inspector-content run-evidence">
  <div className="session-note">冻结运行 · {stateLabel(trusted?(a?.state||'PENDING'):'UNKNOWN')} · 只读{!trusted?' · 以下保留上次读取记录':''}</div>
  <h3>{a?.receipt_verified?'最终回答':'已存文本（终结尚未确认）'}</h3><pre aria-label="Agent 最终回答">{a?.output?.answer??'尚无已验证的最终回答'}</pre>
@@ -682,7 +692,8 @@ function App(){
   if(!previous)return;
   const next={...previous,...patch},issue=connectionIssue(docRef.current,next,id);
   if(issue){setError(issue);return}
-  if(next.transfer?.mode===defaultTransfer.mode&&next.transfer.max_chars===defaultTransfer.max_chars)delete next.transfer;
+  const from=docRef.current.nodes.find(node=>node.id===next.source),to=docRef.current.nodes.find(node=>node.id===next.target);
+  if(next.transfer?.mode===defaultEdgeMode(from,to)&&next.transfer.max_chars===defaultTransfer.max_chars)delete next.transfer;
   change(d=>{d.edges=d.edges.map(item=>item.id===id?next:item)});setError('');
  }
  function referenceIssue(node){
@@ -706,8 +717,8 @@ function App(){
  const actualInputs=e?(activation(e.target)?.inputs||[]).filter(i=>i.edge===e.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const phased=doc.nodes.some(node=>nodeKind(node)!=='agent')||doc.edges.some(item=>item.transfer&&
-  (item.transfer.mode!==defaultTransfer.mode||item.transfer.max_chars!==defaultTransfer.max_chars));
+ const phased=doc.nodes.some(node=>!runtimeKinds.has(nodeKind(node)));
+ const inlineAgent=doc.nodes.some(node=>nodeKind(node)==='agent'&&!node.agent_id);
  const rfNodes=shown.nodes.map(node=>{
   const value=readOnly?{...(activation(node.id)||{state:'PENDING'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
   return {id:node.id,type:'canvas',position:node.position,selected:nodeSelection.includes(node.id),
@@ -746,7 +757,7 @@ function App(){
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
-  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(phased||!doc.nodes.length||!status?.provider_available&&!doc.nodes.every(node=>node.agent_id)))} title={phased&&!launchAttempt?'当前草稿含 Phase 5 节点或交接，暂不可启动。':status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
+  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(phased||!doc.nodes.length||!status?.provider_available&&inlineAgent))} title={phased&&!launchAttempt?'当前草稿含尚未接入执行的节点。':status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
    {workspace&&!readOnly&&<div className="draft-transfer">
     <Button disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
     <Button disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
@@ -755,7 +766,7 @@ function App(){
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
    <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
-   {!readOnly&&phased&&<p className="phase5-note">当前图可以编辑、保存和导出。其他节点或自定义交接的执行由 Phase 5 接入。</p>}
+   {!readOnly&&phased&&<p className="phase5-note">当前图可以编辑、保存和导出。含尚未接入执行的节点。</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{completedPlans.length===1&&!n&&<Button onClick={()=>openPlanApproval(completedPlans[0])}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
@@ -795,7 +806,7 @@ function App(){
    <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
   </main>
   {(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
-   {n?readOnly?<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
+   {n?readOnly?nodeKind(n)!=='agent'?<ControlEvidence activation={activation(n.id)} trusted={runTrusted}/>:<RunEvidence activation={activation(n.id)} node={n} trusted={runTrusted}
     onTransition={completedPlans.some(a=>a.node===n.id)?()=>openPlanApproval(activation(n.id)):null}/>:<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
      connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
