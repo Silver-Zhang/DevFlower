@@ -2,9 +2,11 @@
 from io import BytesIO
 import json
 import os
+from urllib.error import HTTPError
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+from orchestration.common import Blocked
 from studio.graph import Invalid
 from studio.server import Conflict
 from v2.git_platform_adapters import GitHubAdapter, GitLabAdapter, NoRedirect, remote_identity
@@ -89,3 +91,10 @@ class PlatformAdaptersTests(TestCase):
         self.assertIn('pytest failed',result['text'])
         self.assertNotIn('syntheticsecret',result['text'])
         self.assertIsNone(NoRedirect().redirect_request(None,None,302,None,{},'https://other.example/'))
+
+    def test_gitlab_trace_restriction_reports_authorization(self):
+        opener = Mock()
+        opener.open.side_effect = HTTPError('https://gitlab.com/', 401, 'private synthetic reply', {}, None)
+        adapter = GitLabAdapter('group/project', opener=opener)
+        with self.assertRaisesRegex(Blocked, '未授予此资源的读取权限'):
+            adapter.api('/jobs/7/trace', trace=True)

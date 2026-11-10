@@ -216,6 +216,8 @@ class GitLabAdapter:
             error.close()
             if missing and error.code == 404:
                 return None
+            if error.code in (401, 403):
+                raise Blocked('GitLab 未授予此资源的读取权限。请核对服务端配置的授权令牌和项目权限。') from None
             raise Blocked('GitLab 读取失败。请核对项目可见性、令牌权限或平台状态。') from None
         except (URLError, OSError, ValueError):
             raise Blocked('GitLab 连接或响应未确认。') from None
