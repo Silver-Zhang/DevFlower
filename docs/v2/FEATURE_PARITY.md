@@ -2,7 +2,7 @@
 
 > 状态：初版功能清单，不是完成验收。用户需求优先；V1 源码作为可复用实现来源，V2 架构与安全不变量不退化。
 
-- 核验日期：2026-11-10；V1 源码基线：`06432659432b82730c421cd137345a95244232d2`；V2 候选：`9bee63323ee4da33495b0b391590b0d150445f7f`（以当前唯一集成分支归集）。
+- 核验日期：2026-11-10；V1 源码基线：`06432659432b82730c421cd137345a95244232d2`；V2 初始静态核对：`9bee63323ee4da33495b0b391590b0d150445f7f`。
 - 依据：V1 README、docs/WORKBENCH.md、Issues #6/#9/#14/#16/#30/#64/#65/#132/#133、V1/V2 实际代码路径。
 - **C** 表示有对应代码实现入口，不表示达到 V1 全功能语义，更不表示真实账号与用户验收通过；**P** 表示部分能力；**M** 表示目标 V2 未提供。
 - 原始 V1 路径是追溯入口，不代表该 V1 功能本身已在真实环境充分验证；#编号为历史 Issue 需求来源。
@@ -101,16 +101,17 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 
 #### 最终安全候选
 
-功能树固定于 `dc5aeff3b300bedc5fb5ed8f3511962a2d1e8d99`，tree `996f9ce69e542d033d63ff390452cc1448d70ba4`。下表中的真实 CLI 自测使用一次性工作空间与本机合成 Provider。
+功能候选为 `b2e043cb9a0f9895ec5caa4bc57ea85e4639ab9f`，tree `e95b86ecf6c368f07b9412ee1195a3e778c26cc2`。验收记录单独提交。
 
 | 层级 | 证据与范围 |
 |---|---|
 | CODE_PRESENT | S13 增加 Claude 受管来源与历史核验。S14 接入 Codex 真实 TUI，复用原生输出、终端附接和键盘代次。 |
-| INTEGRATED | S15 将终端与会话发送接入同一写租约。V2 产品令牌、已核验会话、独立终端批准和 OS 沙箱均为启动条件。关闭视图保留进程，显式停止处理对应进程。 |
-| TESTED | 自测覆盖 Claude 真实 CLI 的并发、外部会话和恢复边界。Codex 真实 TUI 自测覆盖同 UUID、双端键盘接管、同一启动意图重读、API 竞争、直接 Shell 拒绝、批准工作区读写和外部文件拒绝。独立验收及完整 CI 另按最终 SHA 记录。 |
-| ACCEPTED | 等待独立验收和完整 CI。模块状态为 BLOCKED。 |
+| INTEGRATED | S15 将终端与会话发送接入同一写租约。V2 产品令牌、已核验会话、独立终端批准和 OS 沙箱均为启动条件。关闭视图保留进程，显式停止处理对应进程。单次发送的完成回执在释放租约后公布。 |
+| TESTED | B 的合成单元测试及实际 CLI 搭配本机合成 Provider 通过。A 在一次性工作空间以真实 Codex 服务和 Claude Code 的本机 DeepSeek Flash 设置分别完成新建、同 UUID 续聊和原意图查询，核对回复与原生历史。实际 Codex TUI 和原生工具通过批准目录读写、私有存储、外部路径、`..` 与符号链接反例。A 在本机终端运行产品生成的接管命令，并验证中止正在请求的真实 Codex 后端后保留恢复状态及同意图拒绝重发。 |
+| 独立 QA | C 在固定候选复验 Claude 受管写者互斥、外部历史只读、历史变化与异常恢复。Codex 复验键盘代次、实际本机输入、同进程重连、指定停止、停止后刷新重开及隔离启动故障。终端 UI 复测 80/100，单项 16、17、15、16、16。 |
+| ACCEPTED | 发布门槛以同一提交的 [V2 完整工作流](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 与固定候选独立复验记录为准。用户验收单独记录。 |
 
-启用 Codex 终端需在私有写配置中设定 `"codex":true,"codex_terminal":true`。终端目前依赖 Codex 0.163.0 与 Linux Bubblewrap。用户直接输入 `!` 命令时会收到范围拒绝，当前原生 TUI 随后结束，可重新打开原会话。见 [CLI-native 权限和生命周期](CLI_NATIVE.md)。
+启用 Codex 终端需在私有写配置中设定 `"codex":true,"codex_terminal":true`。终端目前依赖 Codex 0.163.0 与 Linux Bubblewrap。复制「本机连接」命令可查看同一 PTY，加 `--takeover` 才申请键盘，按 `Ctrl-]` 断开本机视图。用户直接输入 `!` 命令时会收到范围拒绝，当前原生 TUI 随后结束，可重新打开原会话。C 还证实，直接从外部 CLI 续聊同一受管 Claude UUID 能绕过 V2 租约，DevFlower 未检测到这次重叠。见 [CLI-native 权限和生命周期](CLI_NATIVE.md)。
 
 ### Agent 与 Provider
 
