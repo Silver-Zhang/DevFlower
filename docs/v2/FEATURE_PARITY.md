@@ -63,12 +63,14 @@
 
 #### 会话中心候选证据
 
+产品候选 `9ef55fe22e5400b96bf212868cee753780cbdb99`，tree `47990fe0be6dfe8b949f25ca35c21149fe0b40a0`。A 核对工作树与构建，B 自测和 C 独立验收分别绑定该候选。
+
 | 层级 | 已核对的范围 |
 |---|---|
 | CODE_PRESENT | S05 与 S10 有真实入口，S11 有本地别名，S12 有单条与工作流整组事务，S13 与 S15 有 Codex 路径，S14 显示具体拒绝原因。 |
 | INTEGRATED | 现有只读发现、翻页、搜索、活动、Markdown 和单条整理保留。独立发送走 V2 令牌与状态库；工作流仍只创建原生新会话。发送与工作流在收到原生 UUID 后进入同一受管锁域。 |
-| TESTED | 本地合成验证使用实际安装的 Codex 0.163.0 与本机响应夹具，覆盖新建、同 UUID 续聊、重复意图、原生历史、工作流链接、组操作与占用拒绝。单元和浏览器夹具与真实账号验收分别记录。 |
-| ACCEPTED | 待同候选独立验收。Claude 共享 HOME 续聊及两种 Provider 的终端接管仍关闭，未达到会话中心完整验收。 |
+| TESTED | B 自测通过 195 项单元测试及 7 套 Chromium 夹具。C 独立复跑 7 套针对性单元测试和 7 套合成 Chromium 场景，验证真实产品 HTTP 路径的 Codex 新建、同 UUID 续聊及 Claude Code 经 DeepSeek Flash 新建，并在 UI 读回两类真实历史。C 以实际 Codex CLI 和合成 Provider 验证单成员组的回收、恢复与拒绝条件。 |
+| ACCEPTED | C 整体结论为 BLOCKED，暂定 UI 评分 81/100。Claude 共享 HOME 续聊与两种 Provider 的终端接管关闭，真实 Provider 的 UI 发起和多成员组原子性仍未独立验证。用户验收与完整 GitHub CI 均待进行。 |
 
 | 追踪 | 范围 | 证据 |
 |---|---|---|
