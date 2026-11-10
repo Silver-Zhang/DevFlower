@@ -13,12 +13,12 @@ const urlPattern = '**/api/v2/run-summary?*';
 const endpoints = {summary:'/api/v2/run-summary', list:'/api/v2/runs', run:'/api/v2/run', status:'/api/v2/status'};
 const archiveError = '运行摘要文件格式或校验无效。';
 const changedError = '当前运行记录已变化，请重新读取后再导出。';
-const cases = [], requests = [], deliveries = [], actorChanges = [], downloadFiles = [], errors = [];
+const cases = [], requests = [], deliveries = [], deliveryOrder = [], actorChanges = [], downloadFiles = [], errors = [];
 let browser, source, offline, page, offlinePage, downloaded;
 const database = process.env.V2_SUMMARY_DB;
 const dbBytes = () => fs.readFileSync(database);
 const storeResults = complete => fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({
- complete,cases,requests,deliveries,actorChanges,downloadFiles,errors,
+ complete,cases,requests,deliveries,deliveryOrder,actorChanges,downloadFiles,errors,
 },null,2));
 
 const compact = value => Buffer.from(JSON.stringify(value));
@@ -60,9 +60,12 @@ function attach(page, actor) {
 function stored(page) {
  return page.evaluate(()=>[Object.entries(localStorage).sort(),Object.entries(sessionStorage).sort()]);
 }
+function recentWorkspace(name) {
+ return page.locator('.workspace-link').filter({hasText:new RegExp('^'+name+'$')});
+}
 async function visitWorkspace(name) {
  const response = page.waitForResponse(reply=>onEndpoint(reply,endpoints.list));
- await page.locator('.workspace-link').filter({hasText:new RegExp('^'+name+'$')}).click();
+ await recentWorkspace(name).click();
  assert.equal((await response).status(),200);
  await settled(page);
  assert.equal(await page.locator('.app-header button').textContent(),name);
@@ -92,7 +95,8 @@ with sqlite3.connect(pathlib.Path(database).as_uri()+'?mode=rw', uri=True) as db
 `,database,fixture.runs[0],state],{timeout:8000});
  actorChanges.push({actor:'fixture',state});
 }
-async function hold(label,{before=false}={}) {
+async function hold(label,{before=false,pattern=urlPattern,endpoint=endpoints.summary,
+ start=()=>named(page,'导出运行摘要').click()}={}) {
  let release, arrive, rejectArrival, claimed=false;
  const gate = new Promise(resolve=>{release=resolve});
  const reached = new Promise((resolve,reject)=>{arrive=resolve;rejectArrival=reject});
@@ -110,24 +114,25 @@ async function hold(label,{before=false}={}) {
    await route.abort().catch(()=>{});
   }
  };
- await page.route(urlPattern,handler);
+ await page.route(pattern,handler);
  let timer;
  try {
-  await named(page,'导出运行摘要').click();
+  await start();
   await Promise.race([reached,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Missing held request '+label)),8000)})]);
   return {
    async deliver() {
-    const response=page.waitForResponse(reply=>onEndpoint(reply,endpoints.summary));
+    const response=page.waitForResponse(reply=>onEndpoint(reply,endpoint));
     release();
     const reply=await response;
     assert.equal(await reply.finished(),null);
+    deliveryOrder.push(label);
     return reply;
    },
-   async close() {release();await page.unroute(urlPattern,handler);},
+   async close() {release();await page.unroute(pattern,handler);},
   };
  } catch(error) {
   release();
-  await page.unroute(urlPattern,handler);
+  await page.unroute(pattern,handler);
   throw error;
  } finally {clearTimeout(timer);}
 }
@@ -234,6 +239,32 @@ async function readOnlyArchive(page, sourceText) {
  });
 
  await watch(page,'late-workspace-aba-and-close-reopen-are-ignored',async()=>{
+  for(const [label,endpoint,pattern,start] of [
+   ['workspace','/api/v2/workspaces/open','**/api/v2/workspaces/open',()=>recentWorkspace('B').click()],
+   ['draft','/api/v2/draft','**/api/v2/draft?*',()=>page.getByLabel('工作流列表',{exact:true})
+     .getByRole('button',{name:'第一合成运行',exact:true}).click()],
+  ]){
+   const archiveReply=await hold('archive while '+label+' navigation pending');
+   try {
+    const navigation=await hold('pending '+label+' navigation',{endpoint,pattern,start});
+    try {
+     assert.equal(await page.locator('.app-header button').textContent(),'A');
+     assert.equal(await recentWorkspace('B').isDisabled(),true);
+     await noDownload(async()=>assert.equal((await archiveReply.deliver()).status(),200));
+     assert.equal(await page.getByText(changedError,{exact:true}).count(),0);
+     assert.equal(await named(page,'导出运行摘要').isDisabled(),true);
+     const nextList=label==='workspace'?page.waitForResponse(reply=>onEndpoint(reply,endpoints.list)):null;
+     assert.equal((await navigation.deliver()).status(),200);
+     if(nextList) {
+      assert.equal((await nextList).status(),200);
+      await visitWorkspace('A');
+     } else {
+      await named(page,'导出运行摘要').waitFor({state:'hidden'});
+     }
+     await chooseRun('第一合成运行');
+    } finally {await navigation.close();}
+   } finally {await archiveReply.close();}
+  }
   const action=await hold('workspace A B A');
   try {
    await visitWorkspace('B');
@@ -356,7 +387,7 @@ async function readOnlyArchive(page, sourceText) {
 
  const unexpected=requests.filter(item=>item.path==='external'||(item.method!=='GET'&&item.path!=='/api/v2/workspaces/open'));
  assert.deepEqual(unexpected,[]);
- assert.equal(requests.filter(item=>item.path===endpoints.summary).length,8);
+ assert.equal(requests.filter(item=>item.path===endpoints.summary).length,10);
  assert.equal(downloadFiles.length,2);
  assert.deepEqual(errors,[]);
  storeResults(true);

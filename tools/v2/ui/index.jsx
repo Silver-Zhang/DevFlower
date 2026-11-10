@@ -209,6 +209,7 @@ function App(){
    workspaceEpoch.current===action.epoch&&runRef.current===action.run;
  }
  async function exportRunSummary(){
+  if(busy||pendingRef.current)return;
   const action=beginRunSummary('export');
   const metadata=()=>selectedRunMetadata(summarySource.current,action.workspace,action.run?.id);
   const source=metadata();
@@ -311,6 +312,7 @@ function App(){
  }
  function navigate(action,title,transfer=null){
   if(busy||launchBusy.current)return;
+  clearRunSummary();
   if(!transfer)cancelTransfer();
   if(workspaceRef.current&&dirtyRef.current){const value={action,title,transfer};pendingRef.current=value;setPending(value)}else guard(action)()
  }
@@ -422,7 +424,7 @@ function App(){
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
    </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
+   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'顺序连接 Agent，构建你的工作流'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button icon={Plus} disabled={!workspace||!!busy||launching} onClick={addAgent}>添加 Agent</Button><button aria-label="撤销" disabled={!past.length||!!busy} onClick={undo}><Undo2 size={16}/></button><button aria-label="重做" disabled={!future.length||!!busy} onClick={redo}><Redo2 size={16}/></button></>}</div>
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button><p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
