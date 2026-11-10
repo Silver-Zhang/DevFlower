@@ -140,6 +140,28 @@ class GitPlatform:
             raise Blocked('平台未返回预期列表。')
         return [self.record(adapter,kind,row) for row in values[:LIST]]
 
+    def repository(self, adapter):
+        repo = self.record(adapter,'repository',adapter.repo())
+        if repo.get('platform')!=adapter.platform or repo.get('repository')!=adapter.repository:
+            raise Conflict('远端仓库身份与工作空间 origin 不同。')
+        return repo
+
+    def branches(self, adapter, current):
+        rows = self.list_records(adapter,'branch',adapter.branches())
+        preferred = [self.repository(adapter).get('default_branch'),current]
+        names = {row.get('name') for row in rows}
+        pinned = []
+        for ref in dict.fromkeys(preferred):
+            if ref is None or ref in names:
+                continue
+            observed = adapter.branch_info(ref)
+            if observed is not None:
+                row = self.record(adapter,'branch',observed)
+                if row.get('name')!=ref:
+                    raise Conflict('平台返回的固定分支身份不同。')
+                pinned.append(row)
+        return [*pinned,*rows][:LIST]
+
     def change(self, adapter, ident):
         row = self.record(adapter,'change',adapter.change(ident))
         try:
@@ -192,12 +214,11 @@ class GitPlatform:
             raise Conflict('工作空间 Git 绑定已变化。请重新读取仓库。')
         result = dict(workspace=workspace,platform=adapter.platform,repository=adapter.repository,binding=scope.identity)
         if route=='repository':
-            repo = self.record(adapter,'repository',adapter.repo())
-            if repo.get('platform')!=adapter.platform or repo.get('repository')!=adapter.repository:
-                raise Conflict('远端仓库身份与工作空间 origin 不同。')
-            result.update(remote=repo,local=dict(branch=self.public_text(scope.branch) if scope.branch else None,head=scope.head),delivery=DELIVERY)
-        elif route in ('branches','issues','changes'):
-            kind = {'branches':'branch','issues':'issue','changes':'change'}[route]
+            result.update(remote=self.repository(adapter),local=dict(branch=self.public_text(scope.branch) if scope.branch else None,head=scope.head),delivery=DELIVERY)
+        elif route=='branches':
+            result.update(items=self.branches(adapter,scope.branch),limit=LIST)
+        elif route in ('issues','changes'):
+            kind = {'issues':'issue','changes':'change'}[route]
             result.update(items=self.list_records(adapter,kind,getattr(adapter,route)()),limit=LIST)
         elif route=='issue':
             result['item'] = self.record(adapter,'issue',adapter.issue(params['number']))

@@ -131,6 +131,15 @@ class GitPlatformTests(unittest.TestCase):
         with self.assertRaises(Blocked):
             bind_workspace(self.store,linked)
 
+    def test_default_and_current_remote_branches_survive_bounded_first_page(self):
+        self.setup_platform()
+        values = [self.adapter.branch_info(f'work/other-{i}') for i in range(50)]
+        with patch.object(self.adapter,'branches',return_value=values):
+            code, result = self.get('branches')
+        self.assertEqual(code,200,result)
+        self.assertEqual(len(result['items']),50)
+        self.assertEqual([row['name'] for row in result['items'][:2]],['main','work/fixture'])
+
     def test_ci_trace_exact_selected_commit_job_and_project(self):
         self.setup_platform()
         scope = dict(target_type='change',target=11,sha=HEAD)
