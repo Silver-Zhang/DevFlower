@@ -109,7 +109,8 @@ def frontend_args(binding, directory, executable_reader, gateway_dir, socket_nam
                    '--bind-fd', str(directory), cwd, '--ro-bind', str(gateway_dir), '/run/df-pty',
                    '--remount-ro', '/', '--chdir', cwd, '--', FRONTEND_EXE, 'resume', binding['session_id'],
                    '--remote', 'unix:///run/df-pty/' + socket_name, '--no-alt-screen',
-                   '-c', 'check_for_update_on_startup=false']
+                   '-c', 'check_for_update_on_startup=false',
+                   '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"']
 
 
 def backend_args(binding, provider_args, executable, profile):
@@ -122,7 +123,7 @@ def backend_args(binding, provider_args, executable, profile):
             '-c', f'permissions.{profile}.filesystem={filesystem}',
             '-c', f'permissions.{profile}.network.enabled=false', '-c', f'default_permissions="{profile}"',
             '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"',
-            '-c', 'approval_policy="never"', '-c', 'web_search="disabled"',
+            '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', 'notify=[]',
             '-c', 'check_for_update_on_startup=false', '-c', 'skills.include_instructions=false',
             '-c', 'skills.bundled.enabled=false', '-c', 'project_doc_max_bytes=0',
             '-c', 'shell_environment_policy={inherit="none",include_only=["PATH","LANG"],'

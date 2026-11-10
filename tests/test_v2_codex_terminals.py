@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from orchestration.common import Blocked
 from studio.graph import Invalid
 from v2.codex_pty_gateway import CodexProtocol, Refused
-from v2.codex_terminals import CodexTerminals, guarded_workspace
+from v2.codex_terminals import CodexTerminals, backend_args, guarded_workspace
 from v2.session_identity import StorageRootIdentity
 from v2.session_lease import CODEX_COORDINATION_VERSION
 from studio.session_sources import opened
@@ -121,6 +121,13 @@ class CodexProtocolTests(unittest.TestCase):
 
 
 class CodexTerminalGateTests(unittest.TestCase):
+    def test_backend_disables_native_host_notifications_and_limits_model_environment(self):
+        argv = backend_args({'cwd': '/fixture/approved'}, [], '/fixture/private-image', 'devflower_fresh')
+        self.assertIn('notify=[]', argv)
+        self.assertIn('default_permissions="devflower_fresh"', argv)
+        self.assertIn('permissions.devflower_fresh.network.enabled=false', argv)
+        self.assertTrue(any('include_only=["PATH","LANG"]' in option for option in argv))
+
     def test_activation_requires_operator_opt_in_exact_version_and_runtime(self):
         operation = SimpleNamespace(codex_terminal=True, codex=SimpleNamespace(version=CODEX_COORDINATION_VERSION))
         with patch('v2.codex_terminals.RUNTIME', ('/usr/bin/true', '/nonexistent/fixture-bwrap')):
