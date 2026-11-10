@@ -178,7 +178,7 @@ def validate_graph(document, *, depth=0):
     return g
 
 
-def transfer(output, edge):
+def transfer(output, edge, *, with_truncation=False):
     kind = edge.get('transfer', 'result')
     public = public_data(output)
     value=public
@@ -190,9 +190,10 @@ def transfer(output, edge):
             value=value[part]
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True)
     cap = edge.get('max_chars', 16000)
-    if len(raw) > cap:
-        return {'truncated': True, 'original_chars': len(raw), 'budget': cap, 'text': raw[:cap]}
-    return value
+    truncated = len(raw) > cap
+    if truncated:
+        value = {'truncated': True, 'original_chars': len(raw), 'budget': cap, 'text': raw[:cap]}
+    return (value, truncated) if with_truncation else value
 
 
 def request_sections(node, inputs, *, first, task_context=None):

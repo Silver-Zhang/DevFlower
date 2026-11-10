@@ -112,15 +112,29 @@ def edge_spec(edge, nodes):
                 transfer=mode, max_chars=edge.get('transfer', DEFAULT_TRANSFER)['max_chars'])
 
 
-def handoff(output, edge):
+def handoff(output, edge, *, control):
     mode = edge['transfer']
     if mode == 'none':
-        return None
+        return None, {}
     if mode == 'envelope':
-        return transfer(output, dict(edge, transfer='result'))
-    if mode == 'result':
-        return transfer(output, dict(edge, transfer='field', field='result'))
-    return transfer(output, edge)
+        spec = dict(edge, transfer='result')
+    elif mode == 'result':
+        spec = dict(edge, transfer='field', field='result')
+    else:
+        spec = edge
+    content, truncated = transfer(output, spec, with_truncation=True)
+    if not truncated:
+        return content, {}
+    proof = {key: content[key] for key in ('original_chars', 'budget')}
+    if control:
+        field = 'summary' if mode == 'summary' else 'answer'
+        preview = output.get(field) if mode != 'result' else None
+        if isinstance(preview, str):
+            preview = public_data(preview)[:proof['budget']]
+        else:
+            preview = content['text']
+        return content, {'truncation': proof, 'answer_preview': preview}
+    return content, {'truncation': proof}
 
 
 def input_value(inputs, seed):
@@ -131,6 +145,8 @@ def input_value(inputs, seed):
         return {'answer': '', 'result': {'inputs': data}, 'sources': data}
     item, = data
     value = item['content']
+    if 'truncation' in item:
+        return {'answer': item.get('answer_preview', value['text']), 'result': {'truncation': item['truncation']}}
     if item['fields'] == 'envelope' and isinstance(value, dict):
         return value
     if item['fields'] == 'summary':

@@ -355,7 +355,7 @@ class DesignerScheduler(Scheduler):
         values = []
         for edge in edges:
             source = upstream[edge['source']]
-            content = handoff(source['output'], edge)
+            content, evidence = handoff(source['output'], edge, control=row['kind'] != 'agent')
             content_hash = digest(canonical(content))
             values.append(dict(edge=edge['id'], source=source['node'], iteration=source['iteration'],
                                iteration_path=source['iteration_path'], activation=source['id'],
@@ -364,7 +364,7 @@ class DesignerScheduler(Scheduler):
                                target_activation=row['id'], target_node=row['node'],
                                content_sha256=content_hash, source_content_sha256=content_hash, fields=edge['transfer'],
                                handoff_id=digest(canonical([self.run, edge['id'], source['id'], row['id']])),
-                               received_at=time.time()))
+                               received_at=time.time(), **evidence))
         return values
 
     def execute(self, node, row, inputs, prefix, seed):

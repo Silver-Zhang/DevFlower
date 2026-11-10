@@ -136,6 +136,27 @@ class DesignerRuntimeTests(TestCase):
         events = self.store.db.events(run['id'])
         self.assertEqual(sum(event['kind']=='merge-completed' for event in events), 1)
 
+    def test_long_merge_keeps_capped_raw_handoff_and_readable_output(self):
+        answers = {name: name + '\n' + 'x' * 3400 for name in ('First', 'Second')}
+        run, rows = self.schedule(self.parallel_doc('all'), lambda node, *_: {
+            'answer': answers[node['id']], 'result': {'report': 'y' * 1200}})
+        self.assertEqual(run['state'], 'COMPLETED')
+        self.assertEqual(run['output']['answer'], answers['First'] + '\n\n' + answers['Second'])
+        item, = rows['Output']['inputs']
+        self.assertEqual(len(item['content']['text']), 16000)
+        self.assertGreater(item['content']['original_chars'], 16000)
+        self.assertEqual(run['output']['result'], {'truncation': item['truncation']})
+        self.assertNotIn('text', run['output']['result']['truncation'])
+
+    def test_a_genuine_truncation_shaped_result_is_data(self):
+        value = {'truncated': True, 'original_chars': 45, 'budget': 4, 'text': 'data'}
+        import json
+        doc = graph([node('Start','start',initial_data=json.dumps(value)), node('End','output',format='json')],
+                    [edge('data','Start','End',transfer={'mode':'result','max_chars':2000})])
+        run, rows = self.schedule(doc, lambda *_: self.fail('deterministic graph must not use Provider'))
+        self.assertEqual(run['output']['result'], value)
+        self.assertNotIn('truncation', rows['End']['inputs'][0])
+
     def test_any_releases_downstream_then_retains_lower_priority_failure(self):
         started = Event()
         def executor(node, key, *_):
