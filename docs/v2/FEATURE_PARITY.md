@@ -13,12 +13,12 @@
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
 | 工作空间 | 12 | 7 | 2 | 3 | 58.3% |
-| 会话中心 | 15 | 12 | 2 | 1 | 80.0% |
+| 会话中心 | 15 | 12 | 3 | 0 | 80.0% |
 | Agent 与 Provider | 15 | 3 | 2 | 10 | 20.0% |
 | 工作流设计器 | 15 | 7 | 1 | 7 | 46.7% |
 | Workflow Runtime | 15 | 7 | 0 | 8 | 46.7% |
 | 运行监控与研发自动化 | 15 | 4 | 3 | 8 | 26.7% |
-| **合计** | **87** | **40** | **10** | **37** | **46.0%** |
+| **合计** | **87** | **40** | **11** | **36** | **46.0%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -58,8 +58,8 @@
 | S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py` | P | P1 | 本地别名按工作空间与会话持久化；Provider 原生命名写入口待实现 |
 | S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | `tools/v2/native_session_views.py` | C | P1 | 单条可逆整理；Codex 0.163.0 工作流整组入回收站按预览成员与历史版本原子提交，忙碌或来源变化整组拒绝 |
 | S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | C | P0 | Codex 使用原生锁。Claude 只续聊本产品已核验创建且最新历史、配置、工作区和 UUID 一致的会话。单写协调范围为参与 DevFlower 租约的写者 |
-| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | V2 会话界面显示关闭原因 | M | P1 | 两种生产 PTY 入口关闭。Codex 隔离 TUI 已通过本机协议诊断，产品鉴权、响应过滤及同一 PTY 接管仍待验证。Claude 共享 HOME 可并发写同 UUID |
-| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/runtime.py` | P | P0 | Codex 参与方使用共同 UUID 租约及原生线程锁。Claude 受管请求复用 UUID 租约，外部 CLI 可绕过。未知回执不重发 |
+| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | `tools/v2/codex_terminals.py`、`tools/v2/ui/NativePty.jsx` | P | P1 | 受支持的 Linux/Bubblewrap 与 Codex 0.163.0 可启用同一受管 PTY，浏览器与本机端显式接管。Claude PTY 关闭，外部 Claude 历史保持只读 |
+| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/codex_terminals.py` | P | P0 | Codex 受管 API 与 PTY 共用 UUID 租约和原生线程锁。Claude 受管入口共用 UUID 租约，外部 CLI 不参与。未知效果不重发 |
 
 #### 会话中心候选证据
 
@@ -98,6 +98,19 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 #### 受管 Claude 续聊
 
 授权边界调整为参与 V2 租约的写者。受管资格来自 V2 已核验的新建记录及最近一次完成回执。配置、工作区、原生 UUID、文件位置及转录摘要都须匹配，执行前在同一写租约内再次核验。外部创建记录、变更记录和结果待核验记录保持只读。独立的直接 Claude CLI 可以绕过 DevFlower 租约。真实 Claude CLI 与本机合成服务的自验覆盖同 UUID 续聊、并发拒绝、同工作区外部记录拒绝和异常退出后的恢复状态。独立验收待进行。
+
+#### 最终安全候选
+
+功能树固定于 `dc5aeff3b300bedc5fb5ed8f3511962a2d1e8d99`，tree `996f9ce69e542d033d63ff390452cc1448d70ba4`。下表中的真实 CLI 自测使用一次性工作空间与本机合成 Provider。
+
+| 层级 | 证据与范围 |
+|---|---|
+| CODE_PRESENT | S13 增加 Claude 受管来源与历史核验。S14 接入 Codex 真实 TUI，复用原生输出、终端附接和键盘代次。 |
+| INTEGRATED | S15 将终端与会话发送接入同一写租约。V2 产品令牌、已核验会话、独立终端批准和 OS 沙箱均为启动条件。关闭视图保留进程，显式停止处理对应进程。 |
+| TESTED | 自测覆盖 Claude 真实 CLI 的并发、外部会话和恢复边界。Codex 真实 TUI 自测覆盖同 UUID、双端键盘接管、同一启动意图重读、API 竞争、直接 Shell 拒绝、批准工作区读写和外部文件拒绝。独立验收及完整 CI 另按最终 SHA 记录。 |
+| ACCEPTED | 等待独立验收和完整 CI。模块状态为 BLOCKED。 |
+
+启用 Codex 终端需在私有写配置中设定 `"codex":true,"codex_terminal":true`。终端目前依赖 Codex 0.163.0 与 Linux Bubblewrap。用户直接输入 `!` 命令时会收到范围拒绝，当前原生 TUI 随后结束，可重新打开原会话。见 [CLI-native 权限和生命周期](CLI_NATIVE.md)。
 
 ### Agent 与 Provider
 
