@@ -126,6 +126,18 @@ def verify_completion(activation, receipt, binding):
     validate(receipt.get('report'), REPLY)
 
 
+def _append_run_authorized(db, run, reserved_at):
+    run_id = run['id']
+    event = dict(
+        kind='run-authorized', event_version=1,
+        event_id=digest(b'devflower.v2.run-authorized.v1\0' + run_id.encode('ascii')),
+        run=run_id, definition_id=run['definition_id'], aggregate_kind='run', aggregate_id=run_id,
+        cause=dict(kind='launch_intent', reservation_run_id=run_id),
+        payload=dict(state='QUEUED', created_at=run['created_at']), at=reserved_at,
+    )
+    db.execute('INSERT INTO events(run,data) VALUES(?,?)', (run_id, canonical(event).decode()))
+
+
 class V2Runtime:
     def __init__(self, store, executable=None, *, worker_run=None):
         self.store, self.flow, self.storage = store, store.db, store.state
@@ -212,12 +224,21 @@ class V2Runtime:
                 current = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (draft_id,)).fetchone()
                 if not current or json.loads(current[0])['revision'] != revision or json.loads(current[0])['workspace'] != workspace:
                     raise Conflict('草稿在启动前变化，未发起调用')
-                db.execute('INSERT OR IGNORE INTO records VALUES(?,?,?)', ('definition', definition['id'], canonical(definition).decode()))
+                definition_id = definition['id']
+                encoded = canonical(definition)
+                db.execute('INSERT OR IGNORE INTO records VALUES(?,?,?)', ('definition', definition_id, encoded.decode()))
+                # Inspect the original TEXT bytes without asking SQLite to decode corrupt text.
+                saved = db.execute("SELECT typeof(data),CAST(data AS BLOB) FROM records WHERE kind='definition' AND id=?",
+                                   (definition_id,)).fetchone()
+                content = {key: value for key, value in definition.items() if key != 'id'}
+                if saved != ('text', encoded) or definition_id != digest(canonical(content)):
+                    raise Conflict('冻结执行定义与本次启动不一致，未启动任务')
                 db.execute('INSERT INTO records VALUES(?,?,?)', ('run', run_id, canonical(run).decode()))
-                db.execute('INSERT INTO launch_intents VALUES(?,?,?,?,?,?,?)', (workspace, intent_key, payload_sha, run_id, definition['id'], 'RESERVED', time.time()))
-                old = None
+                reserved_at = time.time()
+                db.execute('INSERT INTO launch_intents VALUES(?,?,?,?,?,?,?)',
+                           (workspace, intent_key, payload_sha, run_id, definition_id, 'RESERVED', reserved_at))
+                _append_run_authorized(db, run, reserved_at)
         if not old:
-            self.flow.event(run_id, 'run-authorized', definition_id=definition['id'], intent_key=intent_key)
             self.spawn(run_id)
         return self.snapshot(workspace, run_id)
 
