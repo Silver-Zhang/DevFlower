@@ -12,11 +12,12 @@ import time
 from orchestration.common import Blocked, canonical, clean_env, digest
 from orchestration.privacy import credentials, redact
 from studio.agent_sessions import safe_text
+from studio.native_codex_exec import FEATURES, provider_overrides
 from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC
 from studio.session_sources import UUID, opened
 
-from .codex_terminals import BACKEND_SUPERVISOR, backend_args, guarded_workspace, pin_backend_image, reap
+from .codex_terminals import BACKEND_SUPERVISOR, backend_args, configured_mcp, guarded_workspace, pin_backend_image, reap
 from .codex_terminals import safe_backend_config, wait_owned
 from .session_identity import SessionRefused
 
@@ -54,6 +55,22 @@ def await_mode_settings(rpc, binding, profile, sid, expected_mode):
         return
 
 
+def require_effective_config(rpc, binding, startup_args, *, read_only):
+    config = rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False}).get('config')
+    features = config.get('features') if isinstance(config, dict) else None
+    disabled = {key for key, value in FEATURES.items() if not value}
+    disabled.update(('worktrees', 'code_mode_host', 'default_mode_request_user_input'))
+    if read_only:
+        disabled.update(('shell_tool', 'unified_exec'))
+    expected_provider = {arg for arg in startup_args[1::2] if not arg.startswith('mcp_servers.')}
+    if (not isinstance(features, dict) or any(features.get(name) is not False for name in disabled)
+            or config.get('notify') != [] or config.get('agents')
+            or config.get('sqlite_home') not in (None, binding['config_root'])
+            or any(server.get('enabled') is not False for server in configured_mcp(config).values())
+            or set(provider_overrides(config)[1::2]) != expected_provider):
+        raise Blocked('Codex App Server 未确认固定 Provider 与禁用工作区外扩展；未启动会话。')
+
+
 class CodexPlan:
     def __init__(self, binding, limits):
         self.binding, self.limits = binding, limits
@@ -85,7 +102,7 @@ class CodexPlan:
         with ExitStack() as held:
             try:
                 image = held.enter_context(NativeImage(b['executable'], expected_sha256=b['_executable_sha256']))
-                provider_args = safe_backend_config(runtime.store, b, image)
+                provider_args = safe_backend_config(runtime.store, b, image, disable_extensions=True)
                 directory = held.enter_context(opened(cwd, directory=True))
                 guarded_workspace(runtime.store, b, directory)
                 root = Path(held.enter_context(TemporaryDirectory(prefix='df-codex-plan-', dir='/tmp')))
@@ -112,6 +129,8 @@ class CodexPlan:
                     available = rpc.request('collaborationMode/list', {}).get('data', [])
                     if not any(isinstance(row, dict) and row.get('mode') == mode for row in available):
                         raise Blocked('已安装 Codex CLI 未确认请求的原生模式。')
+                    require_effective_config(rpc, b, provider_args, read_only=plan_only)
+                    runtime.provider.require_local(b)
                     journal.check_before_spawn()
                     guarded_workspace(runtime.store, b, directory)
                     common = dict(cwd=str(cwd), model=b['model'], approvalPolicy='never', permissions=profile,
@@ -132,6 +151,7 @@ class CodexPlan:
                     collaboration = native_mode(b, mode)
                     rpc._request('thread/settings/update', {'threadId': sid, 'collaborationMode': collaboration})
                     await_mode_settings(rpc, b, profile, sid, mode)
+                    runtime.provider.require_local(b)
                     verify_image()
                     guarded_workspace(runtime.store, b, directory)
                     if cancelled():

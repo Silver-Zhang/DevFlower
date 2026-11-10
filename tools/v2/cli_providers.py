@@ -319,6 +319,8 @@ class ClaudeCLI:
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             raise Invalid('Claude 启动需要明确的原生 UUID。') from None
+        if binding.get('v2_claude_scope'):
+            raise Blocked('Claude 工作区工具需要已核验的隔离运行环境。')
         return claude_args(binding, session_id, resume=resume, output_schema=output_schema)
 
     def transport(self, binding, limits, *, managed_resume=False):

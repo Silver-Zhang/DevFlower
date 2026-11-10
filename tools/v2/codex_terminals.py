@@ -135,7 +135,7 @@ def backend_args(binding, provider_args, executable, profile, *, read_only=False
     return args + ['app-server', '--listen', 'stdio://']
 
 
-def safe_backend_config(store, binding, image):
+def safe_backend_config(store, binding, image, *, disable_extensions=False):
     if os.path.lexists(Path(binding['config_root']) / '.env'):
         raise Blocked('终端尚不支持原生 Codex .env 配置。')
     if Path('/etc/codex').exists():
@@ -144,12 +144,32 @@ def safe_backend_config(store, binding, image):
         with CodexRPC(binding['executable'], binding['home'], binding['config_root'], str(store.state),
                       timeout=remaining, executable_image=image) as rpc:
             config = rpc.request('config/read', {'cwd': str(store.state), 'includeLayers': False})['config']
+            workspace_config = (rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False})['config']
+                                if disable_extensions else None)
     policy = (config.get('shell_environment_policy') or {}) if isinstance(config, dict) else None
-    if (not isinstance(config, dict) or any(config.get(key) for key in ('mcp_servers', 'hooks', 'plugins', 'agents'))
+    if (not isinstance(config, dict) or config.get('agents')
             or not isinstance(policy, dict) or policy.get('filters')
-            or config.get('sqlite_home') not in (None, binding['config_root'])):
-        raise Blocked('当前 Codex 配置含未核验的扩展或原生存储覆盖，终端保持关闭。')
-    return provider_overrides(config)
+            or config.get('sqlite_home') not in (None, binding['config_root'])
+            or not disable_extensions and any(config.get(key) for key in ('mcp_servers', 'hooks', 'plugins'))):
+        raise Blocked('当前 Codex 配置含未核验的扩展或原生存储覆盖，原生启动已停止。')
+    args = provider_overrides(config)
+    if disable_extensions:
+        if not isinstance(workspace_config, dict):
+            raise Blocked('无法核验当前工作区的 Codex 扩展配置。')
+        for name in sorted(configured_mcp(config).keys() | configured_mcp(workspace_config).keys()):
+            args += ['-c', 'mcp_servers.' + name + '.enabled=false']
+    return args
+
+
+def configured_mcp(config):
+    servers = config.get('mcp_servers')
+    if servers is None:
+        return {}
+    if (not isinstance(servers, dict) or len(servers) > 128
+            or any(not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name) or not isinstance(value, dict)
+                   for name, value in servers.items())):
+        raise Blocked('Codex MCP 配置无法逐项禁用；未启动会话。')
+    return servers
 
 
 def pin_backend_image(root, image, stack):

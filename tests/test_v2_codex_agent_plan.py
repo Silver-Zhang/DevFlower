@@ -9,12 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from orchestration.common import Blocked
 from studio.graph import Invalid
-from v2.codex_agent_plan import await_mode_settings, native_mode, scope_matches
+from studio.native_codex_exec import FEATURES
+from v2.codex_agent_plan import await_mode_settings, native_mode, require_effective_config, scope_matches
 from v2.runtime import V2Runtime
 
 
 class CodexPlanTests(unittest.TestCase):
-    binding = dict(cwd='/approved/workspace', model='fixture-model', effort='low')
+    binding = dict(cwd='/approved/workspace', config_root='/approved/profile', model='fixture-model', effort='low')
     profile = 'approved_profile'
     sid = '018f410e-d65d-7000-9000-123456789abc'
 
@@ -38,6 +39,26 @@ class CodexPlanTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(Blocked):
                 await_mode_settings(SimpleNamespace(next_event=lambda: invalid), self.binding, self.profile, self.sid, "plan")
+
+    def test_effective_workspace_config_disables_extensions_and_keeps_the_operator_provider(self):
+        features = dict.fromkeys(FEATURES, False)
+        features.update(worktrees=False, default_mode_request_user_input=False, unified_exec=False)
+        approved = dict(features=features, notify=[], mcp_servers={'project-marker': {'enabled': False}})
+        rpc = SimpleNamespace(request=Mock(return_value={'config': approved}))
+        check = lambda: require_effective_config(rpc, self.binding, ['-c', 'model_provider="openai"'], read_only=True)
+        check()
+        rpc.request.assert_called_once_with('config/read', {'cwd': self.binding['cwd'], 'includeLayers': False})
+        for changed in (
+            dict(features=dict(features, plugins=True)),
+            dict(mcp_servers={'late-new-server': {'enabled': True}}),
+            dict(mcp_servers={'missing-flag': {'command': '/bin/sh'}}),
+            dict(mcp_servers={'path.to.new.server': {'enabled': False}}),
+            dict(notify=['/bin/sh']),
+            dict(openai_base_url='https://unexpected.invalid'),
+        ):
+            rpc.request.return_value = {'config': dict(approved, **changed)}
+            with self.subTest(changed=changed), self.assertRaises(Blocked):
+                check()
 
     def test_agent_transition_has_distinct_explicit_approval_and_stable_identity(self):
         runtime = SimpleNamespace(launch=Mock(return_value={'state': 'QUEUED'}))

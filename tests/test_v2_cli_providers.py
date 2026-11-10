@@ -85,6 +85,8 @@ class CliProviderTests(unittest.TestCase):
             codex.command(binding, config={}, session_id='--last', resume=True)
         with self.assertRaises(Blocked):
             codex.command(dict(binding, v2_agent_scope='workspace-write'), config={})
+        with self.assertRaises(Blocked):
+            codex.command(dict(binding, v2_agent_plan=True), config={})
         self.assertIsInstance(codex.transport(binding, {}), LocalCodex)
 
         claude = ClaudeCLI(self.store)
@@ -98,6 +100,8 @@ class CliProviderTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--max-budget-usd') + 1], '2.5')
         self.assertNotIn('--model', argv)
         self.assertNotIn('--effort', argv)
+        with self.assertRaises(Blocked):
+            claude.command(dict(binding, v2_claude_scope=True), session_id=self.sid)
         with patch.object(claude, 'require_local'):
             self.assertIsInstance(claude.transport(binding, {}), LocalClaude)
 
