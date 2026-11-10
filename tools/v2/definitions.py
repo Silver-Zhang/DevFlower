@@ -34,6 +34,9 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
             record, bindings[n['id']] = agent_binding(n)
             configured[n['id']] = record
             spec = record['config']
+            if bindings[n['id']].get('transition_from'):
+                spec = dict(spec, mode='Agent', permission='workspace-write', initial_prompt='',
+                            round_prompt='按本次明确确认的原生计划完成实施，并核验结果。')
         else:
             if provider is None:
                 raise Invalid('当前 Codex CLI 不可用。')

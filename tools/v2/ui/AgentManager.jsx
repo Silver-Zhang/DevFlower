@@ -223,9 +223,12 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      </fieldset>
      <details className="agent-advanced"><summary>Skills、子 Agent 与预算</summary>
       <button type="button" disabled={busy} onClick={() => action(loadSkills)}>发现 Skills</button>
-      {skills && <><p className="field-note">{skills.selectable ? '选择此 Agent 使用的原生 Skills。' : '当前 Provider 仅展示 Skills 来源。'}
+      {skills && <><p className="field-note">{config.provider === 'claude' && config.mode !== 'Agent' ?
+       'Claude Skills 用于已授权读写的 Agent 模式。' :
+       skills.selectable ? '选择此 Agent 使用的原生 Skills。' : '当前 Provider 仅展示 Skills 来源。'}
        {!skills.skills.length && ' 当前没有可显示的 Skills。'}</p>
-       {skills.skills.map(item => <label className="agent-skill" key={item.id}><input type="checkbox" disabled={!skills.selectable || busy}
+       {skills.skills.map(item => <label className="agent-skill" key={item.id}><input type="checkbox"
+        disabled={!skills.selectable || busy || config.provider === 'claude' && config.mode !== 'Agent'}
         checked={config.skills.includes(item.id)} onChange={event => change({skills: event.target.checked ?
          [...config.skills, item.id] : config.skills.filter(id => id !== item.id)})}/>
         <span><strong>{item.name}</strong> <small>{item.scope === 'user' ? '用户级' : '工作区'}</small><span>{item.description}</span></span>

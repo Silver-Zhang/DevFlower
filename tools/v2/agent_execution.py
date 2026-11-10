@@ -23,7 +23,6 @@ def freeze_agent(runtime, workspace, node):
         raise Invalid('请在 Agent 配置填写每轮提示词。')
     permission = config['permission']
     if (config['subagents'] != 'disabled' or permission not in ('none', 'workspace-read', 'workspace-write')
-            or permission != 'none' and provider != 'codex'
             or config['max_budget_usd'] is not None and provider != 'claude'):
         raise Invalid('所选 Provider 的工具权限、子 Agent 或预算尚未开放。')
     approved = runtime.agents.session_operations
@@ -52,16 +51,17 @@ def freeze_agent(runtime, workspace, node):
             relative=str(record.ref.relative), sha256=record.ref.sha, history_identity=locator.root_identity.fields()))
     elif provider == 'claude':
         binding['new_session_id'] = str(uuid.uuid4())
-    if provider == 'codex':
+    if provider == 'codex' or binding.get('v2_claude_scope'):
         binding['v2_agent_skills'] = []
     if config['skills']:
-        if provider != 'codex':
-            raise Invalid('Claude Skills 当前仅支持发现，未开放选定后启动。')
+        if provider == 'claude' and not binding.get('v2_claude_scope'):
+            raise Invalid('Claude Skills 仅用于获准工作区读写的 Agent 模式。')
         catalog = runtime.agents.skills(workspace, provider, str(cwd), authority=True)
         indexed = {row['id']: row for row in catalog['skills']}
         if not set(config['skills']) <= indexed.keys():
             raise Invalid('选定 Skills 已变化，请重新发现并保存。')
-        binding['v2_agent_skills'] = [{key: indexed[ident][key] for key in ('id', 'name', 'path', 'sha256')}
+        fields = ('id', 'name', 'path', 'sha256', 'native_name') if provider == 'claude' else ('id', 'name', 'path', 'sha256')
+        binding['v2_agent_skills'] = [{key: indexed[ident][key] for key in fields}
                                      for ident in config['skills']]
     return row, binding
 

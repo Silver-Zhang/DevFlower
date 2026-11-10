@@ -257,6 +257,10 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif post and path == '/api/v2/agents/launch' and runtime and not query and set(data) == {
                         'workspace', 'id', 'revision', 'intent_key', 'task'}:
                     result = runtime.launch_agent(data['workspace'], data['id'], data['revision'], data['intent_key'], data['task'])
+                elif post and path == '/api/v2/agents/plan-transition' and runtime and not query and set(data) == {
+                        'workspace', 'run', 'node', 'intent_key', 'authorization'}:
+                    result = runtime.launch_plan_agent(data['workspace'], data['run'], data['node'],
+                                                       data['intent_key'], data['authorization'])
                 elif not post and path == '/api/v2/agent-skills' and set(query) == {'workspace', 'provider', 'cwd'}:
                     result = agents.skills(query['workspace'], query['provider'], query['cwd'])
                 elif not post and path == '/api/v2/agent-sessions' and set(query) == {'workspace', 'provider', 'cwd'}:

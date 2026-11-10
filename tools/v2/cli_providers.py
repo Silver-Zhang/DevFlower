@@ -21,6 +21,7 @@ from studio.session_sources import opened
 
 from .claude_session_profile import discover_cli, environment_identity, startup_environment
 from .claude_native_catalog import model_id, observe_native_catalog
+from .claude_agent_scope import scope_supported, scoped_environment
 from .native_history_config import unique_pairs
 from .session_identity import StorageRootIdentity
 from .session_lease import CODEX_COORDINATION_VERSION
@@ -77,12 +78,13 @@ class CodexCLI:
             scoped = ask and os.access('/usr/bin/bwrap', os.X_OK)
             row['modes'] = {
                 'Ask': mode(ask, ['exec', '--json'], '可选择仅对话，或允许模型读取当前工作区。'),
-                'Plan': mode(False, [], '此 Codex 工作流尚未核验原生 Plan 入口。'),
+                'Plan': mode(False, ['app-server', 'collaborationMode=plan'], '原生 Plan 只规划。转入 Agent 需要另行确认。'),
                 'Agent': mode(scoped, ['exec', '-c', 'default_permissions=<scoped-profile>'],
                               '使用原生工作区沙箱执行模型工具。请选择工作区读写权限。'),
             }
             row['permissions'] = ['none', 'workspace-read', 'workspace-write'] if scoped else ['none']
             catalog, defaults = native.discover(agent_defaults=True)
+            row['modes']['Plan']['enabled'] = scoped and defaults.get('plan') is True
             known = credentials(native.home)
             for item in catalog['models']:
                 name = model_id(item['id'], known)
@@ -113,11 +115,17 @@ class CodexCLI:
         return row
 
     def binding(self, workspace, agent):
-        access = {('Ask', 'none'): None, ('Ask', 'workspace-read'): 'read', ('Agent', 'workspace-write'): 'workspace-write'}
+        access = {('Ask', 'none'): None, ('Ask', 'workspace-read'): 'read', ('Plan', 'none'): None,
+                  ('Agent', 'workspace-write'): 'workspace-write'}
         mode_permission = agent['mode'], agent['permission']
         if not self.provider or self.provider.version != CODEX_COORDINATION_VERSION or mode_permission not in access:
-            raise Invalid('Codex 支持 Ask（仅对话或读取工作区）以及 Agent（工作区读写）。')
+            raise Invalid('Codex 支持 Ask、仅规划的 Plan 和获准工作区读写的 Agent。')
         scope = access[mode_permission]
+        plan = agent['mode'] == 'Plan'
+        if plan:
+            observed = self.provider.store.db.get(CATALOG, self.provider_id)
+            if not observed.get('modes', {}).get('Plan', {}).get('enabled') or agent.get('skills'):
+                raise Invalid('请核验 Codex 原生 Plan，且为本次 Plan 关闭 Skills。')
         if scope and not os.access('/usr/bin/bwrap', os.X_OK):
             raise Invalid('本机 Bubblewrap 不可用，未开放工作区工具。')
         model, effort = agent['model'], agent['effort']
@@ -134,11 +142,15 @@ class CodexCLI:
         if scope:
             binding.update(v2_agent_scope=scope, no_tools=False,
                            role='implementer' if scope == 'workspace-write' else 'reviewer')
+        if plan:
+            binding['v2_agent_plan'] = True
         return binding
 
     def command(self, binding, *, config=None, session_id=None, resume=False, output_schema=None):
         if resume != (session_id is not None):
             raise Invalid('Codex 新建会话的 UUID 由 CLI 返回；续聊需要明确 UUID。')
+        if binding.get('v2_agent_plan') or binding.get('transition_from'):
+            raise Blocked('原生 Plan 与 Agent 转入需要已核验的 Codex App Server。')
         if binding.get('v2_agent_scope'):
             raise Blocked('工作区工具命令必须经实际沙箱与 CLI 映像核验后构建。')
         args = exec_args(binding, provider_overrides(config), schema=output_schema)
@@ -150,6 +162,9 @@ class CodexCLI:
         self.provider.require_local(binding)
 
     def transport(self, binding, limits, *, managed_resume=False):
+        if binding.get('v2_agent_plan') or binding.get('transition_from'):
+            from .codex_agent_plan import CodexPlan
+            return CodexPlan(binding, limits)
         return LocalCodex(binding, limits)
 
 
@@ -185,8 +200,17 @@ class ClaudeCLI:
                             for name, value, detail in (
                                 ('Ask', 'manual', '仅对话，禁止模型工具。'),
                                 ('Plan', 'plan', '使用原生 Plan 权限模式，禁止模型工具。'))}
-            row['modes']['Agent'] = mode(False, [], '尚未核验 Claude 文件工具的工作区写入边界。')
             env = startup_environment(os.environ)
+            scoped = 'acceptEdits' in profile['permission_modes'] and scope_supported()
+            if scoped:
+                try:
+                    scoped_environment(profile, env)
+                except Blocked:
+                    scoped = False
+            row['modes']['Agent'] = mode(scoped, ['--restricted', '--permission-mode', 'acceptEdits'],
+                                        '仅在已授权工作区使用文件工具和受控 Bash。' if scoped else
+                                        '需要已核验的 Linux 隔离和本机 Claude API 认证配置。')
+            row['permissions'] = ['none', 'workspace-write'] if scoped else ['none']
             root = Path(profile['config_root'])
             settings = {}
             try:
@@ -243,9 +267,13 @@ class ClaudeCLI:
 
     def binding(self, workspace, agent):
         profile = self.profile()
-        native = {'Ask': 'manual', 'Plan': 'plan'}.get(agent['mode'])
+        modes = {('Ask', 'none'): 'manual', ('Plan', 'none'): 'plan', ('Agent', 'workspace-write'): 'acceptEdits'}
+        native = modes.get((agent['mode'], agent.get('permission', 'none')))
         if not native or native not in profile['permission_modes']:
             raise Invalid('此 Claude 工作模式尚未核验。')
+        scoped = native == 'acceptEdits'
+        if scoped and not scope_supported():
+            raise Invalid('本机 Bubblewrap 不可用，未开放 Claude 文件和命令工具。')
         model, effort, budget = agent['model'], agent['effort'], agent.get('max_budget_usd')
         if model is not None and not model_id(model):
             raise Invalid('Claude 模型格式无效。')
@@ -271,6 +299,9 @@ class ClaudeCLI:
                        conversation_format='text',
                        cli_environment_sha256=environment_identity(env),
                        root_identity=StorageRootIdentity.capture(binding['config_root']).fields())
+        if scoped:
+            binding.update(v2_claude_scope=True, _metadata_guard=str(self.store.state))
+            scoped_environment(binding, env)
         binding['direct_environment_sha256'] = profile_identity(binding)
         return binding
 

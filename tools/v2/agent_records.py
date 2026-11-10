@@ -251,8 +251,12 @@ class AgentRecords:
             except (OSError, Blocked, ValueError, Invalid, UnicodeError):
                 continue
             row = dict(id=key, name=name, description=description, scope=match[1])
+            if provider == 'claude':
+                if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', folder.name):
+                    continue
+                row['native_name'] = 'df-' + match[1] + ':' + folder.name
             if authority:
                 row.update(path=str(file), sha256=sha)
             rows.append(row)
-        return {'skills': rows, 'selectable': provider == 'codex',
+        return {'skills': rows, 'selectable': True,
                 'source': 'native_cli' if provider == 'codex' else 'native_directories'}

@@ -300,3 +300,5 @@
  .agent-manager nav button { width: auto; flex: 0 0 auto; margin-bottom: 0; }
  .agent-manager-pair { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
+.plan-approval::backdrop { background: #0005; }
+.plan-approval .workspace-path { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }

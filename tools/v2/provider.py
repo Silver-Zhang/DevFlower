@@ -89,6 +89,7 @@ class CodexProvider:
                                         self.base('metadata', 'low'), self.home, self.store.state, **options)
                     account = rpc.request('account/read', {'refreshToken': False})
                     config = rpc.request('config/read', {'cwd': str(self.store.state), 'includeLayers': False})['config'] if agent_defaults else {}
+                    modes = rpc.request('collaborationMode/list', {}).get('data', []) if agent_defaults else []
             authenticated = bool(account.get('account')) or account.get('requiresOpenaiAuth') is False
             if not authenticated:
                 raise Blocked('Codex 未报告可用登录状态，请在原生客户端完成登录；不会切换账户或发送费用探针')
@@ -100,7 +101,8 @@ class CodexProvider:
             if agent_defaults:
                 catalog_defaults = {row['id']: (row.pop('catalog_default'), row.pop('default_effort')) for row in rows}
                 defaults = {'model': config.get('model'), 'effort': config.get('model_reasoning_effort'),
-                            'catalog': catalog_defaults}
+                            'catalog': catalog_defaults, 'plan': any(
+                                isinstance(mode, dict) and mode.get('mode') == 'plan' for mode in modes)}
         except (Blocked, Invalid, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
             # Do not serialize account/config/exception payloads into browser errors.
             value = dict(previous, id='codex', error=public_provider_error(exc), attempted_at=time.time(), stale=True)

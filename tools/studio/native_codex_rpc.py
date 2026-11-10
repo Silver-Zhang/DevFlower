@@ -121,6 +121,23 @@ class CodexRPC:
         except BaseException:
             if self.owned_image is not None:self.owned_image.close()
             raise
+        self._connect()
+
+    @classmethod
+    def attach(cls, process, cwd, timeout, cancelled, cap):
+        """Connect a trusted caller's already pinned, owned stdio app-server."""
+        client = cls.__new__(cls)
+        client.process, client.cwd = process, Path(cwd)
+        client.deadline = time.monotonic() + timeout
+        client.cancelled, client.cap = cancelled, cap
+        client.bytes, client.overflow = 0, False
+        client.active_thread, client.active_turn = None, None
+        client.next_id, client.pending, client.events = 0, bytearray(), []
+        client.shared_config, client.owned_image = None, None
+        client._connect()
+        return client
+
+    def _connect(self):
         self.identity = None
         self.selector = selectors.DefaultSelector()
         try:
@@ -188,8 +205,15 @@ class CodexRPC:
                 raise Blocked('共享会话当前只接收文本与已冻结的显式上下文')
             if method not in ('initialize','thread/start','thread/resume','thread/read','thread/name/set','turn/start','thread/unsubscribe'):
                 raise Blocked('共享会话不执行此原生操作')
+        return self._request(method, params)
+
+    def _request(self, method, params, *, on_sent=None):
+        from .codex_narrow_read import PROFILE
+        shared_config = getattr(self, 'shared_config', None)
         self.next_id += 1; request_id = self.next_id
         self.send(method, params, request_id)
+        if on_sent is not None:
+            on_sent()
         while True:
             value = self.poll()
             if value is None: continue

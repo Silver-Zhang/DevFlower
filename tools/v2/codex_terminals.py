@@ -113,12 +113,14 @@ def frontend_args(binding, directory, executable_reader, gateway_dir, socket_nam
                    '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"']
 
 
-def backend_args(binding, provider_args, executable, profile):
+def backend_args(binding, provider_args, executable, profile, *, read_only=False):
     cwd = binding['cwd']
-    fields = {':root': 'deny', ':minimal': 'read', cwd: 'write', executable: 'read'}
+    fields = {':root': 'deny', ':minimal': 'read', cwd: 'read' if read_only else 'write', executable: 'read'}
     filesystem = '{' + ','.join(json.dumps(key) + '=' + json.dumps(value) for key, value in fields.items()) + '}'
-    flags = dict(FEATURES, worktrees=False, multi_agent=False, code_mode_host=False, shell_tool=True,
+    flags = dict(FEATURES, worktrees=False, multi_agent=False, code_mode_host=False, shell_tool=not read_only,
                  default_mode_request_user_input=False)
+    if read_only:
+        flags['unified_exec'] = False
     args = [executable, *provider_args,
             '-c', f'permissions.{profile}.filesystem={filesystem}',
             '-c', f'permissions.{profile}.network.enabled=false', '-c', f'default_permissions="{profile}"',
@@ -133,8 +135,7 @@ def backend_args(binding, provider_args, executable, profile):
     return args + ['app-server', '--listen', 'stdio://']
 
 
-def safe_backend_config(operations, binding, image):
-    store = operations.store
+def safe_backend_config(store, binding, image):
     if os.path.lexists(Path(binding['config_root']) / '.env'):
         raise Blocked('终端尚不支持原生 Codex .env 配置。')
     if Path('/etc/codex').exists():
@@ -292,7 +293,7 @@ class CodexTerminals(NativeTerminals):
                 self.operations.require_idle(binding, ignore=key, owner_kind=self.record_kind)
                 check_cancel()
                 image = held.enter_context(NativeImage(binding['executable'], expected_sha256=binding['_executable_sha256']))
-                approved_config = safe_backend_config(self.operations, binding, image)
+                approved_config = safe_backend_config(self.store, binding, image)
                 workspace = held.enter_context(opened(binding['cwd'], directory=True))
                 guarded_workspace(self.store, binding, workspace)
                 root = Path(held.enter_context(TemporaryDirectory(prefix='df-v2-pty-', dir='/tmp')))
