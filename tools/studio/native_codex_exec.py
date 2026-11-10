@@ -5,6 +5,7 @@ import re
 import os
 import stat
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 from orchestration.common import Blocked
@@ -340,3 +341,12 @@ def exec_args(binding,provider_args,*,schema=None):
     args+=['--model',binding['model'],'-c','model_reasoning_effort='+_toml(binding['effort'])]
     if schema is not None:args+=['--output-schema',str(schema)]
     return args+['-']
+
+
+def resume_exec_args(args, session_id):
+    try:
+        if str(uuid.UUID(session_id)) != session_id:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise Blocked('原生会话身份无效；未发送任务') from None
+    return [args[0], 'exec', 'resume', *args[2:-1], session_id, '-']

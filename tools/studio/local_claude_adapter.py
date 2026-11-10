@@ -26,6 +26,33 @@ def chat_only_args():
             '--setting-sources', 'user', '--settings', json.dumps(settings, separators=(',', ':'))]
 
 
+def claude_args(binding, requested, *, resume=False, output_schema=None):
+    chat_only = binding.get('chat_only') is True
+    tools = chat_only_args() if chat_only else ['--tools', 'Read,Glob,Grep', '--strict-mcp-config',
+        '--mcp-config', '{"mcpServers":{}}', '--setting-sources', 'user']
+    mode = binding.get('agent_permission_mode', 'plan')
+    if mode not in ('manual', 'plan') or 'agent_permission_mode' in binding and not chat_only:
+        raise Blocked('Claude 工作模式与已核验工具范围不匹配。')
+    args = [binding['executable'], '-p', '--output-format', 'json', '--permission-mode', mode, *tools]
+    if 'agent_permission_mode' in binding:
+        args += ['--permission-prompts', 'none']
+    for key in ('model', 'effort'):
+        value = binding[key]
+        if value is not None or not chat_only:
+            args += ['--' + key, value]
+    budget = binding.get('max_budget_usd')
+    if budget is not None:
+        if not chat_only or not isinstance(budget, str):
+            raise Blocked('Claude 原生费用上限无效。')
+        args += ['--max-budget-usd', budget]
+    args += ['--resume' if resume else '--session-id', requested]
+    if output_schema:
+        schema = json.loads(Path(output_schema).read_text())
+        schema.pop('$schema', None)
+        args += ['--json-schema', json.dumps(schema)]
+    return args
+
+
 def claude_secrets(binding, environment):
     """Known native Claude credentials used only for in-memory redaction."""
     secret = credentials(binding['home'], [path for path, _ in binding.get('readonly_files', [])])
@@ -76,17 +103,7 @@ class LocalClaude:
         if chat_only and sid and (not self.managed_resume or sid != b.get('session_id')
                 or not callable(getattr(store, 'check_before_spawn', None))):
             raise Blocked('Claude 续聊需要已核验的 DevFlower 会话及执行前复核。')
-        tools=chat_only_args() if chat_only else ['--tools','Read,Glob,Grep','--strict-mcp-config',
-            '--mcp-config','{"mcpServers":{}}','--setting-sources','user']
-        args=[b['executable'],'-p','--output-format','json','--permission-mode','plan',*tools]
-        for key in ('model', 'effort'):
-            value = b[key]
-            if value is not None or not chat_only:
-                args += ['--' + key, value]
-        args += ['--resume' if sid else '--session-id', requested]
-        if output_schema:
-            schema=json.loads(Path(output_schema).read_text());schema.pop('$schema',None)
-            args+=['--json-schema',json.dumps(schema)]
+        args=claude_args(b, requested, resume=bool(sid), output_schema=output_schema)
         key=store.intent(run,'AGENT_REQUEST',dict(kind='claude',project=b['project'],role=b['role'],
             requested_session=requested,requested_model=b['model'],requested_effort=b['effort'])) if store else None
         if store and callable(getattr(store,'visible_request',None)):store.visible_request(prompt)
@@ -124,6 +141,7 @@ class LocalClaude:
         result['report']=redact(result['report'],secret)
         if store:store.finish(key,'AGENT_COMPLETED',actual_session=requested,transport={'mode':'native-local'})
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,
-            home=b['home'],cwd=cwd,provider='claude',permission_mode='native-plan/no-tools' if chat_only else 'native-plan/read-tools',
+            home=b['home'],cwd=cwd,provider='claude',
+            permission_mode=('native-' + b.get('agent_permission_mode', 'plan') + '/no-tools') if chat_only else 'native-plan/read-tools',
             transport={'mode':'native-local'},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-local/1')
         return result

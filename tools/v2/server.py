@@ -239,6 +239,10 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
                 elif post and path == '/api/v2/providers/discover' and data == {} and runtime:
                     result = runtime.catalog(refresh=True)
+                elif not post and path == '/api/v2/cli-providers' and not query and runtime:
+                    result = runtime.cli_providers.listing()
+                elif post and path == '/api/v2/cli-providers/discover' and not query and set(data) == {'provider'} and runtime:
+                    result = runtime.cli_providers.discover(data['provider'])
                 elif not post and path == '/api/v2/runs' and runtime:
                     result = runtime.runs(query.get('workspace'))
                 elif not post and path == '/api/v2/run' and runtime:

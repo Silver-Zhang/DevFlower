@@ -28,6 +28,7 @@ from .session_lease import production_session_gate
 from studio.usage import public_usage
 from . import worker_facts
 from .provider import CodexProvider, public_provider_error
+from .cli_providers import ProviderRegistry
 from .definitions import compile_definition, source_manifest, ROOT
 from .documents import check_chain
 
@@ -166,6 +167,7 @@ class V2Runtime:
         except (Blocked, OSError, subprocess.SubprocessError) as exc:
             self.provider = None
             self.provider_error = public_provider_error(exc)
+        self.cli_providers = ProviderRegistry(store, self.provider, self.provider_error)
 
     def catalog(self, refresh=False):
         if not self.provider:

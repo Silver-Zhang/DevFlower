@@ -84,7 +84,7 @@ def proxy_models(profile):
     return result
 
 
-def codex_models(rpc, profile, home, cwd):
+def codex_models(rpc, profile, home, cwd, *, include_defaults=False):
     rows, cursor, seen = [], None, set()
     for _ in range(10):
         params = {'limit': 100}
@@ -97,6 +97,9 @@ def codex_models(rpc, profile, home, cwd):
             rows.append(dict(id=row['model'], name=row.get('displayName') or row['model'],
                 efforts=[e['reasoningEffort'] for e in row.get('supportedReasoningEfforts', [])],
                 source='Codex app-server model/list', effort_source='Codex model/list', inference_verified=False))
+            if include_defaults:
+                rows[-1].update(catalog_default=row.get('isDefault') is True,
+                                default_effort=row.get('defaultReasoningEffort'))
         cursor = response.get('nextCursor')
         if not cursor: break
         if not isinstance(cursor, str) or cursor in seen: raise Invalid('Codex 模型分页循环或身份无效')

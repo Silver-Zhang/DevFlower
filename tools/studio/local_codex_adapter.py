@@ -341,7 +341,7 @@ class LocalCodex:
         # the guarded RPC path: exec cannot atomically compare the prior turn.
         from orchestration.adapters import CLI,native_errors
         from orchestration.process import execute
-        from .native_codex_exec import exec_args,provider_overrides
+        from .native_codex_exec import exec_args,provider_overrides,resume_exec_args
         from .native_codex_exec_probe import require_exec_capability,require_sandbox_capability,require_native_write_capability
         from .native_local import native_environment
         from .agent_sessions import safe_text
@@ -412,10 +412,7 @@ class LocalCodex:
         if child_managed or managed_pack is not None or managed:
             argv[-1:-1]=['-c','skills.include_instructions=false','-c','skills.bundled.enabled=false']
         if sid:
-            try:
-                if str(uuid.UUID(sid))!=sid:raise ValueError()
-            except (ValueError,TypeError,AttributeError):raise Blocked('原生会话身份无效；未发送任务') from None
-            argv=[argv[0],'exec','resume',*argv[2:-1],sid,'-']
+            argv=resume_exec_args(argv,sid)
         secrets_found=credentials(b['home'],[p for p,_ in b.get('readonly_files',[])])
         op=store.intent(run,'AGENT_REQUEST',dict(kind='codex',project=b['project'],role=b['role'],
             requested_session=sid,requested_model=b['model'],requested_effort=b['effort'])) if store else None

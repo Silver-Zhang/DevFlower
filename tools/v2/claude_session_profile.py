@@ -1,5 +1,6 @@
 """Claude standalone startup profile. Claude Code applies its own config precedence."""
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
@@ -53,7 +54,7 @@ def environment_identity(values):
     return digest(canonical(values))
 
 
-def discover_cli():
+def discover_cli(*, details=False, allow_unsupported=False):
     executable = shutil.which('claude')
     if not executable:
         raise Invalid('未找到 Claude Code。')
@@ -66,10 +67,23 @@ def discover_cli():
                 env = cli_probe_env(scratch)
                 version = subprocess.run([executable, '--version'], env=env, **options)
                 if version.returncode or version.stdout.strip() != SUPPORTED_CLI:
+                    if allow_unsupported and not version.returncode and re.fullmatch(
+                            rb'[0-9]+\.[0-9]+\.[0-9]+ \(Claude Code\)', version.stdout.strip()):
+                        return {'cli_version': version.stdout.strip().decode(), 'supported': False}
                     raise Invalid('此 Claude Code 版本的原生配置与扩展隔离尚未验证。当前会话写入支持 2.1.319。')
                 help_result = subprocess.run([executable, '--help'], env=env, **options)
         except subprocess.SubprocessError:
             raise Invalid('Claude Code 启动能力无法核验。') from None
         if help_result.returncode or any(flag not in help_result.stdout for flag in REQUIRED_FLAGS):
             raise Invalid('Claude Code 缺少原生配置与扩展隔离所需的启动选项。')
-    return {'executable': executable, '_executable_sha256': sha, 'cli_version': SUPPORTED_CLI.decode()}
+    result = {'executable': executable, '_executable_sha256': sha, 'cli_version': SUPPORTED_CLI.decode()}
+    if details:
+        text = help_result.stdout.decode('utf-8', errors='replace')
+        effort = re.search(r'^\s+--effort <level>[^\n]*\n\s+\(([a-z, ]+)\)', text, re.M)
+        model = re.search(r'^\s+--model <model>[^\n]*\n([^\n]+\n[^\n]+)', text, re.M)
+        permission = re.search(r'^\s+--permission-mode <mode>[^\n]*\n((?:\s+[^\n]+\n){1,3})', text, re.M)
+        result.update(supported=True, efforts=effort[1].split(', ') if effort else [],
+                      aliases=re.findall(r"'([a-z]+)'", model[1]) if model else [],
+                      permission_modes=re.findall(r'"([a-zA-Z]+)"', permission[1]) if permission else [],
+                      native_budget='--max-budget-usd <amount>' in text)
+    return result

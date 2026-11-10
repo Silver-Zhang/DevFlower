@@ -1,4 +1,5 @@
 """One explicitly bound installed Codex Provider; metadata never starts a turn."""
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import shutil
@@ -8,7 +9,7 @@ import time
 
 from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
-from studio.native_codex_image import resolve
+from studio.native_codex_image import NativeImage, resolve
 from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.model_catalog import codex_models
 from studio.model_registration import direct_environment_identity
@@ -75,14 +76,19 @@ class CodexProvider:
         result['stale'] = bool(row.get('error') or time.time() - row.get('at', 0) > 300 or row.get('executable_sha256') != self.image['sha256'])
         return result
 
-    def discover(self):
+    def discover(self, *, agent_defaults=False):
         previous = self.cached()
+        defaults = {}
         try:
+            options = {'include_defaults': True} if agent_defaults else {}
             with metadata_guard(self.store.state):
-                with CodexRPC(self.image['path'], self.home, self.config_root, str(self.store.state), timeout=25) as rpc:
+                image = NativeImage(self.image['path'], expected_sha256=self.image['sha256']) if agent_defaults else nullcontext()
+                with image as pinned, CodexRPC(self.image['path'], self.home, self.config_root, str(self.store.state),
+                        timeout=25, **({'executable_image': pinned} if pinned is not None else {})) as rpc:
                     rows = codex_models(lambda binding, cwd, method, params: rpc.request(method, params),
-                                        self.base('metadata', 'low'), self.home, self.store.state)
+                                        self.base('metadata', 'low'), self.home, self.store.state, **options)
                     account = rpc.request('account/read', {'refreshToken': False})
+                    config = rpc.request('config/read', {'cwd': str(self.store.state), 'includeLayers': False})['config'] if agent_defaults else {}
             authenticated = bool(account.get('account')) or account.get('requiresOpenaiAuth') is False
             if not authenticated:
                 raise Blocked('Codex 未报告可用登录状态，请在原生客户端完成登录；不会切换账户或发送费用探针')
@@ -91,18 +97,24 @@ class CodexProvider:
                          at=time.time(), error=None, authenticated=True, inference_verified=False,
                          account_sha256=digest(canonical(account)), environment_sha256=direct_environment_identity(binding),
                          version=self.version, executable_sha256=self.image['sha256'])
+            if agent_defaults:
+                catalog_defaults = {row['id']: (row.pop('catalog_default'), row.pop('default_effort')) for row in rows}
+                defaults = {'model': config.get('model'), 'effort': config.get('model_reasoning_effort'),
+                            'catalog': catalog_defaults}
         except (Blocked, Invalid, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
             # Do not serialize account/config/exception payloads into browser errors.
             value = dict(previous, id='codex', error=public_provider_error(exc), attempted_at=time.time(), stale=True)
         self.store.db.put('provider-catalog', 'codex', value)
-        return self.cached()
+        return (self.cached(), defaults) if agent_defaults else self.cached()
 
-    def binding(self, workspace, node):
+    def binding(self, workspace, node, *, manual_model=False):
         row = self.store.db.get('provider-catalog', 'codex')
         if row.get('error') or time.time() - row.get('at', 0) > 300:
             raise Invalid('模型目录未发现、失败或已过期，请先刷新模型目录')
         model = next((m for m in row['models'] if m['id'] == node.get('model')), None)
-        if node.get('provider') != 'codex' or not model or node.get('effort') not in model.get('efforts', []):
+        efforts = (model.get('efforts', []) if model else
+                   {effort for candidate in row['models'] for effort in candidate['efforts']} if manual_model else ())
+        if node.get('provider') != 'codex' or node.get('effort') not in efforts:
             raise Invalid('保存的 Provider、模型或推理强度不在当前发现目录中；原配置保留，请重新选择')
         if node['effort'] == 'ultra':
             raise Invalid('本期不开放自动委派推理强度，请选择当前目录中的其他强度')
