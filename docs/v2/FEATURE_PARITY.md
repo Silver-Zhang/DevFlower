@@ -161,19 +161,27 @@ Phase 3 收尾候选的证据按类型记录。
 |---|---|---|---|---|---|---|
 | D01 | 空白草稿与未配置保存 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/documents.py` | C | P0 | 空白/不完整草稿可保存重开 |
 | D02 | 节点添加与拖动 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 拖动位置持久化，不误启动 |
-| D03 | 端口连线和箭头 | `tools/studio/workbench_ui/HandoffEdge.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 合法连线即时建立，非法明确拒绝 |
-| D04 | 多选、框选和批量操作 | `tools/studio/workbench_ui/canvas_editing.mjs` | — | M | P1 | 多选/框选/批量删除准确 |
-| D05 | 复制、粘贴、批量克隆 | `tools/studio/workbench_ui/canvas_editing.mjs` | — | M | P1 | 节点与连线 ID 去重，撤销恢复 |
+| D03 | 端口、方向、箭头和交接定义 | `tools/studio/workbench_ui/HandoffEdge.jsx` | `tools/v2/ui/index.jsx`、`tools/v2/canvas_structure.py` | C | P0 | 合法连线可选择、配置和删除，非法端口、重复连线和循环有诊断 |
+| D04 | 多选、框选和批量操作 | `tools/studio/workbench_ui/canvas_editing.mjs` | `tools/v2/ui/index.jsx` | C | P1 | 多选、框选、整组拖动和批量删除准确 |
+| D05 | 复制、粘贴、批量克隆 | `tools/studio/workbench_ui/canvas_editing.mjs` | `tools/v2/ui/canvasEditing.mjs` | C | P1 | 新建节点及内部连线 ID，副本显式绑定 Agent，撤销恢复 |
 | D06 | 撤销与重做 | `tools/studio/workbench_ui/canvas_editing.mjs` | `tools/v2/ui/index.jsx` | C | P0 | 结构与坐标恢复，不影响运行 |
-| D07 | 节点对齐、布局及自由画布菜单 | `tools/studio/workbench_ui/CanvasMenus.jsx` | — | M | P1 | 适应画布、对齐、右键菜单可用 |
-| D08 | 缩放、平移、视图适配 | `tools/studio/workbench_ui/EditorToolbar.jsx` | `tools/v2/ui/index.jsx` | P | P1 | 大图、窄屏、滚轮/触控操作 |
-| D09 | 节点检查器 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 可配置、关闭、重开、不串状态 |
-| D10 | 统一节点库与角色模板 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | — | M | P1 | 添加各种类型时配置一致 |
-| D11 | Condition、Router、Merge、Loop 可编辑 | `tools/studio/workbench_ui/RouterEditor.jsx` | — | M | P0 | 拓扑、输入输出和分支语义正确 |
-| D12 | Human、Tool、Validation、Output 节点 | `tools/studio/workbench_ui/index.jsx` | — | M | P1 | 完整节点行为与参数校验 |
+| D07 | 节点对齐、布局及自由画布菜单 | `tools/studio/workbench_ui/CanvasMenus.jsx` | `tools/v2/ui/index.jsx` | C | P1 | 对齐、分布和右键添加使用同一草稿历史 |
+| D08 | 缩放、平移、视图适配 | `tools/studio/workbench_ui/EditorToolbar.jsx` | `tools/v2/ui/index.jsx` | C | P1 | 缩放、平移和视图适配可操作，保存后恢复视口 |
+| D09 | 节点和连线检查器 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/ui/index.jsx`、`tools/v2/ui/CanvasNodes.jsx` | C | P0 | 可关闭和重开，切换保留配置，Agent 复用原有管理器 |
+| D10 | 统一节点库与 Agent 角色模板 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | `tools/v2/ui/CanvasNodes.jsx`、`tools/v2/ui/AgentManager.jsx` | C | P1 | 十类节点共用视觉与配置入口，Agent 模板继续由 Agent Manager 提供 |
+| D11 | Condition、Router、Merge、Loop 可编辑 | `tools/studio/workbench_ui/RouterEditor.jsx` | `tools/v2/canvas_types.json`、`tools/v2/ui/CanvasNodes.jsx` | C | P0 | 结构化判定、稳定分支、汇合策略与有界循环可配置并保存 |
+| D12 | Start、Human、Tool、Validation、Output 可编辑 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/canvas_types.json`、`tools/v2/ui/CanvasNodes.jsx` | C | P1 | 初始数据、审批、工具权限、验证规则与输出配置可保存并检查 |
 | D13 | 工作流模板与示例复用 | `tools/studio/workflow_library.py` | — | M | P1 | 使用模板不修改源模板 |
-| D14 | 草稿 CAS 版本与冻结运行 | `tools/studio/workbench_store.py` | `tools/v2/store.py` | C | P0 | 编辑不改历史执行，版本冲突保护 |
-| D15 | 草稿传输与导入校验 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py` | C | P1 | 导出-导入规范一致且不绕过校验 |
+| D14 | 草稿 CAS、节点配置版本和 Agent 引用隔离 | `tools/studio/workbench_store.py` | `tools/v2/store.py`、`tools/v2/documents.py` | C | P0 | 节点坐标和配置独立保存，Agent 引用固定版本，失效时明确要求重绑 |
+| D15 | 草稿传输与导入校验 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py`、`tools/v2/documents.py` | C | P1 | 旧格式保留，扩展字段往返一致，结构错误拒绝，未完成配置可保存 |
+
+#### Phase 4 验收边界
+
+草稿继续使用 V2 文档和归档版本 1。旧节点隐式为 Agent。新版节点携带类型及版本化配置，边携带端口身份和可选交接定义。开始节点无入边，输出节点无出边。汇合节点允许多个上游，其余输入端口最多接收一条边。分支按稳定端口身份连接。草稿检查可报告缺少的字段与连线，草稿保存检查拒绝损坏的结构。
+
+顺序 Agent 链沿用现有冻结及授权流程。新增节点和非默认交接只具备设计、校验与持久化能力，运行请求在登记启动前被拒绝。Condition、Router、Merge、Loop、Human Approval 等执行能力在 Runtime 表中单独追踪。
+
+`WORKFLOW_DESIGNER_ACCEPTED` 以同一候选的独立 Chromium 操作验收、UI 评分和完整 [V2 CI](https://github.com/Silver-Zhang/DevFlower/actions/workflows/v2.yml?query=branch%3Av2%2Fparity-integration) 为准。
 
 ### Workflow Runtime
 
