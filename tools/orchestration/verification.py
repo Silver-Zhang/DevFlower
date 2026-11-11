@@ -44,7 +44,7 @@ def counts(path, format):
     return totals(root)
 
 
-def verify(config, candidate, artifacts, run, round_number, candidate_hash, acceptance_hash, store=None, *, deny_network=False):
+def verify(config, candidate, artifacts, run, round_number, candidate_hash, acceptance_hash, store=None, *, deny_network=False, capture_asserted_json=False, cancel_check=None):
     artifacts = Path(artifacts)
     artifacts.mkdir(parents=True, exist_ok=False)
     reports = []
@@ -62,12 +62,13 @@ def verify(config, candidate, artifacts, run, round_number, candidate_hash, acce
         try:
             if runner not in ('json-assertion', 'exit-code'):
                 raise Blocked('Execution requires parent-owned assertions; legacy candidate-reported counters are unsupported')
+            cancellation = {'cancel_check': cancel_check} if cancel_check is not None else {}
             process, stdout, _ = execute(argv, candidate, artifacts / 'home',
                 read=[str(candidate), *spec.get('read_paths', [])], input_text=spec.get('stdin', ''),
                 write=[],
                 timeout=config['policy']['limits']['step_timeout_seconds'], cap=config['policy']['limits']['max_log_bytes'],
                 store=store, run=run, backend=config.get('verification_isolation', 'landlock'),
-                context={**binding, 'verification_operation_id': operation}, deny_network=deny_network)
+                context={**binding, 'verification_operation_id': operation}, deny_network=deny_network, **cancellation)
             # Exit is observed before validation, and is never a PASS signal.
             if store:
                 store.finish(operation, 'EXECUTED', process_operation_id=process['operation_id'])
@@ -106,6 +107,8 @@ def verify(config, candidate, artifacts, run, round_number, candidate_hash, acce
                       'assertion': {k: spec[k] for k in ('runner', 'stdin', 'expected_json', 'read_paths', 'dependency_sha256', 'min_cases', 'max_skipped') if k in spec},
                       'process': process, 'counts': counter, 'passed': bool(passed),
                       'result_path': str(result_path), 'result_sha256': digest(result_path.read_bytes())}
+            if capture_asserted_json and passed and runner == 'json-assertion':
+                report['asserted_json'] = actual
             if store:
                 # Only Controller-validated counters are published. No argv, path or source in these events.
                 store.finish(operation, 'VALIDATED', counts=counter, passed=bool(passed), result_sha256=report['result_sha256'])

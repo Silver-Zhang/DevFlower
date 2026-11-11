@@ -43,13 +43,15 @@ def stop(record):
 
 
 def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
-            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False):
+            store=None, run=None, input_text='', env_extra=None, isolate=True, backend='landlock', context=None, readonly_files=(), on_stdout=None, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False, cancel_check=None):
     # Native session HOME persists; scratch is short enough for AF_UNIX sockets
     # and belongs to exactly one invocation. Cleanup cannot erase sessions.
     parent_scratch = tempfile.gettempdir()
     if len(os.fsencode(parent_scratch)) > 50:
         parent_scratch = '/tmp'
     spawn_options = {} if executable_fd is None else {'executable_fd': executable_fd}
+    if cancel_check is not None:
+        spawn_options['cancel_check'] = cancel_check
     with tempfile.TemporaryDirectory(prefix='dfp-', dir=parent_scratch) as scratch:
         return _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                         input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout,
@@ -58,7 +60,7 @@ def execute(argv, cwd, home, read=(), write=(), timeout=60, cap=1048576,
 
 
 def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
-             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False):
+             input_text, env_extra, isolate, backend, context, readonly_files, scratch, on_stdout, readonly_paths=(), readonly_dirs=(), hidden_paths=(), on_stderr=None, *, executable_fd=None, pass_fds=(), process_attest=None, deny_network=False, cancel_check=None):
     if not argv or not isinstance(argv, list):
         raise Blocked('argv required')
     if deny_network and (backend != 'bwrap' or not isolate):
@@ -157,6 +159,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
         if isolate and backend == 'landlock':
             sandbox.enforce(sandbox.runtime_paths() + list(read), ['/dev/null', str(home), scratch] + list(write))
 
+    if cancel_check is not None and cancel_check():
+        raise Blocked('执行在启动进程前已取消。')
     op = store.intent(run, 'PROCESS', {'argv': argv, 'cwd': str(cwd), 'context': context or {}}) if store else None
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -205,7 +209,8 @@ def _execute(argv, cwd, home, read, write, timeout, cap, store, run,
                 timed_out = True
                 stop(record)
                 break
-            if store and store.get(run)['data'].get('cancel_requested'):
+            if (cancel_check is not None and cancel_check()
+                    or store and store.get(run)['data'].get('cancel_requested')):
                 cancelled = True
                 stop(record)
                 break

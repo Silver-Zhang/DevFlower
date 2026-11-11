@@ -34,7 +34,7 @@ class DraftTransferError(ValueError):
         super().__init__(message)
 
 
-def read_request(query, headers, stream):
+def read_request(query, headers, stream, *, max_bytes=MAX_ARCHIVE_BYTES):
     try:
         if len(query.encode('utf-8')) > MAX_QUERY_BYTES:
             raise ValueError()
@@ -47,7 +47,7 @@ def read_request(query, headers, stream):
                 or len(types) != 1 or types[0].split(';', 1)[0].strip().lower() != 'application/json'):
             raise ValueError()
         length = int(lengths[0])
-        if not 1 <= length <= MAX_ARCHIVE_BYTES:
+        if not 1 <= length <= max_bytes:
             raise ValueError()
         raw = stream.read(length)
         if len(raw) != length:

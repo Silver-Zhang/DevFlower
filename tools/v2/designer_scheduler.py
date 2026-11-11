@@ -415,6 +415,8 @@ class DesignerScheduler(Scheduler):
             else:
                 raise Invalid('冻结的节点类型无法执行。')
             current = self.db.get('activation', row['id'])
+            if event_kind == 'tool-verified' and self.db.get('run', self.run).get('cancel_requested'):
+                raise Blocked('工具执行已取消。')
             contract = current.get('data_contract')
             if contract and contract['state']=='FAILED':
                 self.transition(current,'FAILED',event_kind='output-contract-failed',output=public_data(output),
@@ -431,9 +433,12 @@ class DesignerScheduler(Scheduler):
 
     def execute_tool(self, node, row):
         kind = node.get('tool_type')
-        if kind in ('verify-json','delivery-gate'):
+        if kind in ('check-json','verify-json','delivery-gate'):
             from .development_evidence import delivery_gate, verify_candidate
-            if kind=='verify-json':
+            if kind == 'check-json':
+                output = verify_candidate(self.rt,self.run,row,node,capture_result=True)
+                event = 'tool-verified'
+            elif kind == 'verify-json':
                 output = verify_candidate(self.rt,self.run,row,node)
                 event = 'development-verified'
             else:

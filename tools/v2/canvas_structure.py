@@ -237,7 +237,7 @@ def config_issues(node):
         except (Invalid, ValueError, RecursionError):
             issues.append(('rules', '验证规则需要结构化 JSON 条件，例如 {"field":"result.ok","op":"equals","value":true}。'))
     if kind == 'tool' and config.get('tool'):
-        scopes = {'read-file':('workspace-read','workspace-write'), 'verify-json':('workspace-read',),
+        scopes = {'read-file':('workspace-read','workspace-write'), 'verify-json':('workspace-read',), 'check-json':('workspace-read',),
                   'delivery-gate':('none',)}.get(config['tool'],('workspace-write',))
         if config.get('permission', 'none') not in scopes:
             issues.append(('permission', '选择与工具一致的工作区权限。'))

@@ -51,8 +51,8 @@ def graph_issues(document):
         if kind == 'tool':
             config = node['config']
             try:
-                from .development_graph import TOOLS, tool_options
-                if config.get('tool') in TOOLS:
+                from .development_graph import CHECK, TOOLS, tool_options
+                if config.get('tool') in TOOLS | {CHECK}:
                     tool_options(node)
                 else:
                     if config.get('tool') != 'read-file' or config.get('permission') != 'workspace-read':

@@ -15,6 +15,8 @@ from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
 from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
 from .git_platform import GitPlatform, parameters as git_platform_parameters
+from .history_archives import HistoryArchives, MAX_BYTES as HISTORY_ARCHIVE_BYTES
+from .local_delivery import package as local_delivery_package, preview as local_delivery_preview
 from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
@@ -26,6 +28,8 @@ from .session_identity import SessionRefused
 from .session_lease import CODEX_COORDINATION_VERSION
 from .native_history_config import unique_pairs
 from .run_inspector import RunInspector, parameters as inspector_parameters
+from .tool_artifacts import read as read_tool_artifact
+from .workflow_templates import WorkflowTemplates
 from .run_summary import RunSummaryError, read_run_summary, request_parameters as run_summary_parameters
 
 STATIC = Path(__file__).parent / 'static'
@@ -47,6 +51,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
               and 'codex' in getattr(session_operations,'profiles',{})
               and getattr(session_operations.codex,'version',None)==CODEX_COORDINATION_VERSION else None)
     inspector = RunInspector(store)
+    archives = HistoryArchives(store, inspector)
+    templates = WorkflowTemplates(store)
     assistant = Assistant(store, session_operations, runtime)
     git_platform = GitPlatform(store,runtime)
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
@@ -142,6 +148,13 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 if post and path == '/api/v2/drafts/validate':
                     workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile)
                     return self.reply(200, validate_archive(store, workspace, raw))
+                if post and path == '/api/v2/history-archives/import':
+                    workspace, raw = read_request(urlsplit(self.path).query, self.headers, self.rfile,
+                                                  max_bytes=HISTORY_ARCHIVE_BYTES)
+                    return self.reply(200, archives.import_file(workspace, raw))
+                if not post and path == '/api/v2/history-archives/export':
+                    args = inspector_parameters(urlsplit(self.path).query, self.headers, 'export')
+                    return self.reply(200, archives.export(**args))
                 if path.startswith('/api/v2/git-platform/'):
                     route = path.removeprefix('/api/v2/git-platform/')
                     query = urlsplit(self.path).query
@@ -307,6 +320,20 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = store.draft(query.get('workspace'), query.get('id'))
                 elif post and path == '/api/v2/drafts/save' and set(data) == {'workspace', 'id', 'expected', 'document'}:
                     result = store.save(data['workspace'], data['id'], data['expected'], data['document'])
+                elif not post and path == '/api/v2/workflow-templates' and set(query) == {'workspace'}:
+                    result = templates.listing(query['workspace'])
+                elif not post and path == '/api/v2/workflow-template' and set(query) == {'workspace', 'id', 'revision'}:
+                    result = templates.get(query['workspace'], query['id'], query['revision'])
+                elif post and path == '/api/v2/workflow-templates/save' and not query:
+                    result = templates.save(data)
+                elif post and path == '/api/v2/workflow-templates/manage' and not query:
+                    result = templates.manage(data)
+                elif not post and path == '/api/v2/history-archives' and set(query) == {'workspace'}:
+                    result = archives.listing(query['workspace'])
+                elif not post and path == '/api/v2/history-archive' and set(query) == {'workspace', 'id'}:
+                    result = archives.read(query['workspace'], query['id'])
+                elif not post and path == '/api/v2/tool-artifact' and set(query) == {'workspace', 'run', 'activation'}:
+                    result = read_tool_artifact(store, **query)
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
                     result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
@@ -348,6 +375,10 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = titles.operation(query['workspace'],query['intent_key'],verify=True)
                 elif not post and path == '/api/v2/runs' and runtime:
                     result = inspector.clean(runtime.runs(query.get('workspace')))
+                elif not post and path == '/api/v2/local-delivery/preview' and runtime and set(query) == {'workspace', 'run'}:
+                    result = local_delivery_preview(git_platform, **query)
+                elif post and path == '/api/v2/local-delivery' and runtime and not query:
+                    return self.reply(200, local_delivery_package(git_platform, data), 'application/zip')
                 elif not post and path == '/api/v2/run' and runtime:
                     result = runtime.snapshot(query.get('workspace'),query.get('id'))
                 elif post and path == '/api/v2/launch' and runtime:

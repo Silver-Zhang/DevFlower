@@ -50,7 +50,7 @@ export const developmentRoles=['developer_node','tester_node','reviewer_node','v
 export function runtimeBlock(node){
  const kind=nodeKind(node),config=node.config||{};
  if(kind==='tool'){
-  if(config.tool==='verify-json'){
+  if(['verify-json','check-json'].includes(config.tool)){
    if(!config.path?.endsWith('.py')||config.permission!=='workspace-read')return '确定性 JSON 测试需要只读的工作区 Python 入口。';
    try{JSON.parse(config.expected_json)}catch{return '请填写有效的期望 JSON。'}
    return '';

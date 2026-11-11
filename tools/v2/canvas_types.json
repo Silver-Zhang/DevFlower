@@ -27,7 +27,7 @@
   },
   "tool": {
     "label": "工具", "english": "Tool", "inputs": {"in": "工具输入"}, "outputs": {"out": "工具结果"},
-    "fields": {"tool": {"label": "工具类型", "type": "choice", "required": true, "options": {"": "选择工具", "read-file": "读取工作区文件", "write-file": "写入工作区文件", "command": "受控命令", "verify-json": "确定性 JSON 测试", "delivery-gate": "独立交付 Gate"}}, "permission": {"label": "工具权限", "type": "choice", "default": "none", "options": {"none": "未授予权限", "workspace-read": "工作区只读", "workspace-write": "工作区读写"}}, "path": {"label": "工作区相对文件路径", "type": "text"}, "expected_json": {"label": "期望 JSON", "type": "text"}, "developer_node": {"label": "开发节点 ID", "type": "text"}, "tester_node": {"label": "测试 Agent 节点 ID", "type": "text"}, "reviewer_node": {"label": "审核节点 ID", "type": "text"}, "verification_node": {"label": "确定性测试节点 ID", "type": "text"}}
+    "fields": {"tool": {"label": "工具类型", "type": "choice", "required": true, "options": {"": "选择工具", "read-file": "读取工作区文件", "write-file": "写入工作区文件", "command": "受控命令", "check-json": "运行只读 JSON 校验", "verify-json": "研发 JSON 测试", "delivery-gate": "独立交付 Gate"}}, "permission": {"label": "工具权限", "type": "choice", "default": "none", "options": {"none": "未授予权限", "workspace-read": "工作区只读", "workspace-write": "工作区读写"}}, "path": {"label": "工作区相对文件路径", "type": "text"}, "expected_json": {"label": "期望 JSON", "type": "text"}, "developer_node": {"label": "开发节点 ID", "type": "text"}, "tester_node": {"label": "测试 Agent 节点 ID", "type": "text"}, "reviewer_node": {"label": "审核节点 ID", "type": "text"}, "verification_node": {"label": "确定性测试节点 ID", "type": "text"}}
   },
   "validation": {
     "label": "验证", "english": "Validation", "inputs": {"in": "待验证"}, "outputs": {"pass": "通过", "fail": "未通过"},

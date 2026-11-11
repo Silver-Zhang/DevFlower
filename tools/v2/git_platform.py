@@ -209,13 +209,13 @@ class GitPlatform:
                 (TASK,binding.workspace,adapter.platform,adapter.repository,LIST)).fetchall()
         return [self.public_review(json.loads(raw)) for (raw,) in rows]
 
-    def delivery(self, scope):
+    def delivery(self, scope, *, run_id=None):
         if self.runtime is None:
             return DELIVERY
         with self.store.db.tx(read=True) as tx:
             raw = tx.execute("""SELECT data FROM records WHERE kind='run'
                 AND json_extract(data,'$.workspace')=? AND json_type(data,'$.graph.development')='object'
-                ORDER BY rowid DESC LIMIT 1""",(scope.workspace,)).fetchone()
+                AND (? IS NULL OR id=?) ORDER BY rowid DESC LIMIT 1""",(scope.workspace,run_id,run_id)).fetchone()
             if raw is None:
                 return DELIVERY
             run = json.loads(raw[0])

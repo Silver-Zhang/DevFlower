@@ -16,6 +16,9 @@ import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, sele
 import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../studio/workbench_ui/canvas_editing.mjs';
 import {CanvasContextMenu, ConnectedNodePicker} from '../../studio/workbench_ui/CanvasMenus.jsx';
 import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
+import {WorkflowLibrary} from '../../studio/workbench_ui/WorkflowLibrary.jsx';
+import {downloadFile,HistoryArchives} from './HistoryArchives.jsx';
+import {LocalDelivery} from './LocalDelivery.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
@@ -42,9 +45,9 @@ function connectionError(path){return new RequestError(path==='cancel'?
  '启动结果未确认。请保留本次启动身份，检查服务连接后点击“核验本次启动”；不会自动重发或创建第二次运行。':path==='drafts/save'?
  '保存结果未确认，当前修改仍保留。请检查本机服务连接后点击保存重试；重试会先核验已保存版本。若出现版本冲突，请保留本页编辑，再核对已保存版本。':
  '未能完整读取本机服务响应，当前编辑仍保留。请检查服务是否运行以及连接状态，再重试当前操作。',{uncertain:true})}
-async function api(path,data,{raw=false}={}){
+async function api(path,data,{raw=false,binary=false}={}){
  let response;try{response=await fetch('/api/v2/'+path,{headers:{Authorization:'Bearer '+token,...(data?{'Content-Type':'application/json'}:{})},...(data?{method:'POST',body:raw?data:JSON.stringify(data)}:{})})}catch{throw connectionError(path)}
- let result;try{result=await response.json()}catch{if(response.ok)throw connectionError(path);throw new RequestError('本机服务返回 HTTP '+response.status+'，错误响应未完整读取。请检查服务连接后重试。',{status:response.status})}
+ let result;try{result=await (response.ok&&binary?response.arrayBuffer():response.json())}catch{if(response.ok)throw connectionError(path);throw new RequestError('本机服务返回 HTTP '+response.status+'，错误响应未完整读取。请检查服务连接后重试。',{status:response.status})}
  if(!response.ok)throw new RequestError((result.error||'本机服务暂时不可用')+'（HTTP '+response.status+'）'+(response.status===409&&path==='drafts/save'?'。'+conflictHelp:''),{status:response.status});return result;
 }
 const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
@@ -144,6 +147,7 @@ function App(){
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
+ const sideViewRef=useRef(sideView);sideViewRef.current=sideView;
  const [runTerminal,setRunTerminal]=useState(null),[linkedActivation,setLinkedActivation]=useState(null);
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
  const [taskFiles,setTaskFiles]=useState([]),[taskText,setTaskText]=useState('');
@@ -383,6 +387,29 @@ function App(){
   }finally{
    if(currentTransfer(ticket))cancelTransfer();
   }
+ }
+ async function exportHistory(){
+  const w=workspaceRef.current,run=runRef.current;
+  if(!w||!run)return;
+  const bytes=await api('history-archives/export?'+new URLSearchParams({workspace:w.id,run:run.id}),undefined,{binary:true});
+  if(workspaceRef.current?.id===w.id&&runRef.current===run)downloadFile(bytes,'devflower-run-history.json');
+ }
+ function templateApi(route,data){
+  if(route.startsWith('/api/workflow-library?'))return api('workflow-templates?'+route.split('?')[1]);
+  if(route.endsWith('/save'))return api('workflow-templates/save',{workspace:data.workspace,document:data.graph,
+   name:data.name,description:data.description,id:null,expected:null});
+  return api('workflow-templates/manage',data);
+ }
+ function useTemplate(graph){
+  navigate(()=>{
+   install(graph,null,true);setSideView('');
+   setNotice('模板已打开为未保存的新草稿。需要的 Agent 请重新绑定。');
+  },'从模板新建草稿');
+ }
+ async function readTemplate(item){
+  const w=workspaceRef.current,epoch=workspaceEpoch.current;
+  const result=await api('workflow-template?'+new URLSearchParams({workspace:w.id,id:item.id,revision:item.revision}));
+  if(sideViewRef.current==='templates'&&inWorkspace(w,epoch)&&result.workspace===w.id&&result.revision===item.revision)useTemplate(result.graph);
  }
  function chooseArchive(){
   const ticket=beginTransfer();
@@ -714,6 +741,7 @@ function App(){
     if(sideView==='assistant'){closeAssistant();return}
     if(sideView==='git'){closeGit();return}
     if(sideView==='agents'){closeAgents();return}
+    if(['templates','archives'].includes(sideView)){setSideView('');return}
     closeInspector();
    }
    const letter=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
@@ -856,6 +884,8 @@ function App(){
    <Button ref={summaryOpener} className="run-summary-open" onClick={chooseRunSummary}>查看运行摘要文件</Button>
    <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
     onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
+   {workspace&&<div className="workspace-actions"><Button aria-expanded={sideView==='templates'} onClick={()=>setSideView(sideView==='templates'?'':'templates')}>工作流模板</Button>
+    <Button aria-expanded={sideView==='archives'} onClick={()=>setSideView(sideView==='archives'?'':'archives')}>历史归档</Button></div>}
    <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(()=>openDraft(row),'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}{workspace&&!drafts.length&&<p className="muted small empty-list">还没有已保存的工作流。<br/>从空白画布开始。</p>}</nav>
    <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
    <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
@@ -878,12 +908,14 @@ function App(){
      <Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>
     </details>
    </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
+   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button><Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
    {!readOnly&&launchBlock&&<p className="phase5-note">{launchBlock} 当前图仍可编辑、保存和导出。</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
    <Button onClick={()=>{clearSelection();setRunInspectorOpen(true)}}>运行检查器</Button>
    <Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>
+   {runTrusted&&runSnapshot?.state==='COMPLETED'&&runSnapshot.run?.output?.result?.gate_verdict==='ACCEPT'&&
+    runSnapshot.definition?.graph?.development&&<LocalDelivery key={activeRun.id} api={api} workspace={workspace.id} run={activeRun.id}/>}
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
    {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
@@ -1016,6 +1048,11 @@ function App(){
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
    onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
+  {workspace&&sideView==='templates'&&<aside className="project-panel template-panel">
+   <WorkflowLibrary key={workspace.id} api={templateApi} workspace={workspace} examples={[]} searchable
+    graph={readOnly?null:doc} onUse={useTemplate} onUseTemplate={readTemplate} onClose={()=>setSideView('')}/>
+  </aside>}
+  {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>setSideView('')}/>}
   {workspace&&sideView==='git'&&<GitWorkspace key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} onClose={closeGit}/>}
   {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}

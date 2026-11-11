@@ -5,7 +5,7 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.workbench_graph import validate_graph
 from .canvas_structure import SCHEMA_PATH, json_input, node_kind, validation_expression
-from .development_graph import TOOLS, freeze_source, layout as development_layout, tool_options
+from .development_graph import CHECK, TOOLS, freeze_source, layout as development_layout, tool_options
 from .designer_graph import edge_spec, is_designer_graph
 from .documents import validate_draft, check_chain
 from .data_handoff import field_contract, has_output_contract
@@ -53,6 +53,29 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
 
     development = development_layout(doc)
     graph = normalize_graph(doc, bind, designer=designer)
+    def checks(body):
+        for node in body['nodes']:
+            if node.get('tool_type') == CHECK:
+                yield node
+            if node['kind'] == 'loop':
+                yield from checks(node['body'])
+
+    if ordinary_checks := list(checks(graph)):
+        from .development_evidence import verification_entry_sha
+        from .git_workspace import bind_workspace
+        from .project_files import read_project
+        root = store.workspace(workspace)['path']
+        scope = bind_workspace(store, workspace, require_origin=False)
+        if not scope.head:
+            raise Invalid('JSON 校验需要本机 Git 工作区及初始提交。')
+        source = dict(binding=scope.identity, branch=scope.branch, head=scope.head)
+        for check in ordinary_checks:
+            path = check['path']
+            approved = read_project(store, workspace, path, fingerprint=True)
+            frozen = verification_entry_sha(root, path)
+            if approved['sha256'] != frozen:
+                raise Invalid('校验入口在启动准备期间变化。')
+            check.update(source=source, entry_sha256=frozen)
     if development:
         source, entry_sha = freeze_source(store,workspace,doc,development,configured,bindings)
         bindings = {path: dict(binding, v2_development_untrusted=True) if binding['provider']=='codex' else binding
@@ -88,7 +111,7 @@ def graph_budget(nodes):
             calls += rounds * child_calls
             seconds += rounds * child_seconds
             activations += rounds * child_count
-        elif kind=='tool' and node.get('tool_type')=='verify-json':
+        elif kind=='tool' and node.get('tool_type') in ('verify-json',CHECK):
             seconds += 20
         elif kind in ('agent', 'human'):
             calls += kind == 'agent'
@@ -138,7 +161,7 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
             continue
         if kind == 'tool':
             tool = n['config']['tool']
-            options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS else {'path':n['config']['path']}
+            options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS | {CHECK} else {'path':n['config']['path']}
             nodes.append(dict(id=n['id'], name=n['name'], kind='tool', **options))
             continue
         spec = bind(n, prefix)

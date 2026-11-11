@@ -7,6 +7,18 @@ from .server import Conflict
 from .workbench_graph import validate_graph
 
 
+TEMPLATE_OPERATIONS = ('favorite', 'unfavorite', 'trash', 'restore')
+
+
+def template_labels(name, description):
+    if not isinstance(name, str):
+        raise Invalid('模板名称无效')
+    name = name.strip()
+    if not 1 <= len(name) <= 100 or not isinstance(description, str) or len(description) > 1000:
+        raise Invalid('请填写模板名称（1–100字）和简短说明')
+    return name, description
+
+
 class WorkflowLibrary:
     def __init__(self,runtime):self.rt=runtime
 
@@ -18,9 +30,7 @@ class WorkflowLibrary:
     def save(self,data):
         if set(data)-{'workspace','graph','name','description','id','expected'} or not {'workspace','graph','name'}<=set(data):raise Invalid('模板字段无效')
         self.rt.session_center.workspace(data['workspace'])
-        if not isinstance(data['name'],str):raise Invalid('模板名称无效')
-        name=data['name'].strip();description=data.get('description','')
-        if not 1<=len(name)<=100 or not isinstance(description,str) or len(description)>1000:raise Invalid('请填写模板名称（1–100字）和简短说明')
+        name,description=template_labels(data['name'],data.get('description',''))
         from .canvas_assistant import redact_visible
         # Same explicit credential redaction as visible assistant context.
         graph=validate_graph(redact_visible(self.rt,data['graph']))
@@ -50,7 +60,7 @@ class WorkflowLibrary:
         return row
 
     def manage(self,data):
-        if set(data)!={'workspace','id','expected','operation'} or data['operation'] not in ('favorite','unfavorite','trash','restore'):raise Invalid('模板操作无效')
+        if set(data)!={'workspace','id','expected','operation'} or data['operation'] not in TEMPLATE_OPERATIONS:raise Invalid('模板操作无效')
         self.rt.session_center.workspace(data['workspace'])
         import json
         with self.rt.project_files(data['workspace']).library() as store, store.tx() as db:

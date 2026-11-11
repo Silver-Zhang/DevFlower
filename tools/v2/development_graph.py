@@ -4,6 +4,7 @@ from studio.graph import Invalid
 from .canvas_structure import ID, json_input, node_kind
 
 VERIFY = 'verify-json'
+CHECK = 'check-json'
 GATE = 'delivery-gate'
 TOOLS = {VERIFY, GATE}
 ROLES = ('developer_node','tester_node','reviewer_node','verification_node')
@@ -41,7 +42,7 @@ def chain(graph, nodes):
 def tool_options(node):
     config = node['config']
     tool = config.get('tool')
-    if tool==VERIFY:
+    if tool in (VERIFY, CHECK):
         from .project_files import checked_path
         if config.get('permission')!='workspace-read' or not checked_path(config.get('path','')).parts:
             raise Invalid('JSON 测试需要固定工作区相对文件路径与只读权限。')

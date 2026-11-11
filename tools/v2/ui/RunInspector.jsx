@@ -19,13 +19,34 @@ const kinds={'run-authorized':'授权本次运行','worker-bound':'绑定运行�
  'human-decision':'记录人工决定','human-approved':'人工批准','human-rejected':'人工拒绝',
  'human-timeout':'审批超时','loop-round-started':'开始新一轮','loop-round-completed':'本轮完成',
  'loop-completed':'循环结束','loop-limit-reached':'达到研发循环上限',
- 'development-verified':'记录实际测试结果','delivery-gate-decided':'记录独立交付 Gate','cancel-requested':'请求取消','run-finished':'运行结束',
+ 'development-verified':'记录实际测试结果','tool-verified':'记录工具实际校验结果','delivery-gate-decided':'记录独立交付 Gate','cancel-requested':'请求取消','run-finished':'运行结束',
  'native-tool-activity':'记录原生工具活动','event-oversized':'记录超过安全读取上限'};
 
 function download(value){
  const url=URL.createObjectURL(new Blob([JSON.stringify(value)],{type:'application/json'}));
  try{const anchor=document.createElement('a');anchor.href=url;anchor.download='devflower-run-detail.json';anchor.click()}
  finally{setTimeout(()=>URL.revokeObjectURL(url),0)}
+}
+
+function ToolResult({api,scope,activation}){
+ const [value,setValue]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ const ref=activation.output?.result?.tool_artifact;
+ if(!ref)return null;
+ async function read(){
+  setBusy(true);setError('');
+  try{
+   const actual=await api('tool-artifact?'+new URLSearchParams({...scope,activation:activation.id}));
+   if(actual.sha256!==ref.sha256||actual.activation!==activation.id)throw Error('工具产物与原激活不一致。');
+   setValue(actual);
+  }catch(failure){setError(failure.message)}
+  finally{setBusy(false)}
+ }
+ return <section className="tool-artifact" aria-label="校验工具产物">
+  {ref.available?<><button disabled={busy} onClick={read}>{busy?'正在读取…':'查看工具 JSON 产物'}</button>
+   <small>SHA-256 <code>{ref.sha256}</code></small></>:<p className="field-note">{ref.reason}</p>}
+  {error&&<p role="alert" className="error-text">{error}</p>}
+  {value&&<pre aria-label="工具实际 JSON 结果">{readable(value.value)}</pre>}
+ </section>;
 }
 
 export function PayloadPages({api,workspace,run,activation,field,edge}){
@@ -137,6 +158,7 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
     onClick={()=>setTab(key)}>{label}</button>)}
    <button disabled={!scope||exporting} onClick={exportRun}>{exporting?'正在导出…':'导出运行详情'}</button>
   </nav>
+  {tab==='detail'&&trusted&&activation?.kind==='tool'&&<ToolResult key={activation.id} api={api} scope={scope} activation={activation}/>}
   {exportError&&<p role="alert" className="error-text">{exportError}</p>}
   {tab==='detail'&&(detail||<div className="run-inspector-overview">
    <dl><dt>运行</dt><dd>{run?.id||'读取中'}</dd><dt>登记</dt><dd>{date(run?.created_at)}</dd><dt>开始</dt><dd>{date(run?.started_at)}</dd>

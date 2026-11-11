@@ -5,11 +5,13 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import time
 
 from orchestration.common import Blocked, canonical, digest, save
 from orchestration.gate import gate
 from orchestration.privacy import credentials
 from orchestration.verification import verify
+from studio.graph import Invalid
 from studio.session_sources import opened, regular_at
 from studio.workspace_read_policy import stamp
 from studio.workbench_data import public_data
@@ -24,12 +26,13 @@ TEST_PATH = re.compile(r'(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py')
 VERDICTS = {'ACCEPT', 'REJECT', 'ACCEPT_WITH_LIMITATIONS'}
 
 
-def candidate_files(root, destination=None):
+def candidate_files(root, destination=None, *, project=None):
     """Bound and pin reads before copying; V1's tree manifest is the digest format."""
+    from .project_files import mount_id
     rows = []
     entries = total = 0
 
-    def collect(folder, prefix=(), level=0):
+    def collect(folder, prefix=(), level=0, view=None):
         nonlocal entries, total
         if level > 16:
             raise Blocked('候选目录层级超出校验限制。')
@@ -43,6 +46,15 @@ def candidate_files(root, destination=None):
                     continue
                 path = (*prefix, item.name)
                 name = '/'.join(path)
+                if view is not None:
+                    from .project_files import checked_path
+                    try:
+                        relative = checked_path(name)
+                        project.check_scope(relative)
+                    except (Invalid, Blocked):
+                        continue
+                    if view.rules.denied(relative):
+                        continue
                 if any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in name):
                     raise Blocked('候选含不支持的文件名。')
                 before = item.stat(follow_symlinks=False)
@@ -51,7 +63,9 @@ def candidate_files(root, destination=None):
                     try:
                         if stamp(os.fstat(child)) != stamp(before):
                             raise Blocked('候选目录在读取期间变化。')
-                        collect(child, path, level + 1)
+                        if mount_id(child) != root_mount:
+                            raise Blocked('候选不能跨挂载读取文件。')
+                        collect(child, path, level + 1, view)
                     finally:
                         os.close(child)
                     continue
@@ -60,7 +74,10 @@ def candidate_files(root, destination=None):
                 total += before.st_size
                 if total > MAX_BYTES:
                     raise Blocked('候选文件体积超出校验限制。')
-                with regular_at(item.name, folder) as fd:
+                open_regular = view.regular if view is not None else regular_at
+                with open_regular(item.name, folder) as fd:
+                    if mount_id(fd) != root_mount:
+                        raise Blocked('候选不能跨挂载读取文件。')
                     raw = os.pread(fd, before.st_size + 1, 0)
                     if len(raw) != before.st_size or stamp(os.fstat(fd)) != stamp(before):
                         raise Blocked('候选文件在读取期间变化。')
@@ -76,12 +93,19 @@ def candidate_files(root, destination=None):
         if stamp(os.fstat(folder)) != initial:
             raise Blocked('候选目录在读取期间变化。')
 
-    with opened(root, directory=True) as directory:
-        collect(directory)
+    if project is None:
+        with opened(root, directory=True) as directory:
+            root_mount = mount_id(directory)
+            collect(directory)
+    else:
+        with project.open_view() as view:
+            root_mount = view.root_mount
+            collect(view.root_fd, view=view)
+            view.rules.validate()
     return sorted(rows, key=lambda row: row['path'])
 
 
-def current_candidate(root, destination=None):
+def current_candidate(root, destination=None, *, project=None):
     """A fixed Git HEAD and all non-metadata workspace files, including untracked files."""
     root = Path(root)
     try:
@@ -94,8 +118,8 @@ def current_candidate(root, destination=None):
         head = git_read(root, ['rev-parse', '--verify', 'HEAD']).rstrip('\n')
         if not OID.fullmatch(head):
             raise Blocked('研发校验需要已固定的 Git HEAD。')
-        entries = candidate_files(root, destination)
-        if entries != candidate_files(root) or head != git_read(root, ['rev-parse', '--verify', 'HEAD']).rstrip('\n'):
+        entries = candidate_files(root, destination, project=project)
+        if entries != candidate_files(root, project=project) or head != git_read(root, ['rev-parse', '--verify', 'HEAD']).rstrip('\n'):
             raise Blocked('候选在校验期间变化。')
     except (OSError, ValueError) as exc:
         raise Blocked('无法安全读取固定 Git 候选。') from exc
@@ -146,17 +170,26 @@ def evidence_path(rt, run_id, activation):
     return rt.storage / 'flow-artifacts' / run_id / activation / 'development-verification.json'
 
 
-def require_bound_source(rt, run):
-    source = run['graph']['development']['source']
+def require_bound_source(rt, run, source=None):
+    source = source if source is not None else run['graph']['development']['source']
     binding = bind_workspace(rt.store, run['workspace'], require_origin=False)
     if source != dict(binding=binding.identity, branch=binding.branch, head=binding.head):
         raise Blocked('当前 Git 分支、HEAD 或工作树绑定与启动时的候选不同。')
 
 
-def verify_candidate(rt, run_id, activation, node):
+def verify_candidate(rt, run_id, activation, node, *, capture_result=False):
     rt.check_operator()
     run = rt.flow.get('run', run_id)
-    require_bound_source(rt, run)
+    source = node['source'] if capture_result else None
+    project = None
+    def cancelled():
+        return bool(rt.flow.get('run', run_id).get('cancel_requested'))
+    if capture_result:
+        from .project_files import ProjectFiles
+        project = ProjectFiles(rt.store, run['workspace'])
+        if cancelled():
+            raise Blocked('工具执行已取消。')
+    require_bound_source(rt, run, source)
     root = rt.store.workspace(run['workspace'])['path']
     spec = verification_spec(node)
     contract_hash = digest(canonical(spec))
@@ -166,16 +199,25 @@ def verify_candidate(rt, run_id, activation, node):
         scratch = Path(temp)
         candidate = scratch / 'candidate'
         candidate.mkdir()
-        identity = current_candidate(root, candidate)
+        identity = current_candidate(root, candidate, project=project)
         if verification_entry_sha(candidate, node['path']) != spec['entry_sha256']:
             raise Blocked('校验入口与启动时冻结的文件不同，未运行测试。')
+        timeout = 20
+        if capture_result and isinstance(run.get('started_at'), (int, float)):
+            remaining = run['started_at'] + run['graph']['budget']['seconds'] - time.time()
+            if remaining <= 0:
+                raise Blocked('运行已达到时间预算，未启动校验进程。')
+            timeout = min(timeout, remaining)
         config = dict(verification_isolation='bwrap', policy=dict(
-            verification=[spec], limits=dict(step_timeout_seconds=20, max_log_bytes=131072)))
+            verification=[spec], limits=dict(step_timeout_seconds=timeout, max_log_bytes=131072)))
+        output_options = {'capture_asserted_json': True, 'cancel_check': cancelled} if capture_result else {}
         report, = verify(config, candidate, scratch / 'artifacts', run_id, activation['round'],
-                         identity['candidate_sha256'], contract_hash, deny_network=True)
+                         identity['candidate_sha256'], contract_hash, deny_network=True, **output_options)
     rt.check_operator()
-    require_bound_source(rt, run)
-    if identity != current_candidate(root):
+    require_bound_source(rt, run, source)
+    if capture_result and cancelled():
+        raise Blocked('工具执行已取消。')
+    if identity != current_candidate(root, project=project):
         raise Blocked('测试期间工作区发生变化，测试结果不能用于交付。')
     # No argv, full filesystem paths, credentials or candidate-controlled stdout in public results.
     proof = {key: report[key] for key in ('id', 'run_id', 'round', 'acceptance_sha256',
@@ -186,6 +228,11 @@ def verify_candidate(rt, run_id, activation, node):
                '实际测试失败：进程退出非零、输出与预期 JSON 不符，或触发了执行限制。')
     result = dict(identity, passed=proof['passed'], counts=proof['counts'], exit=proof['process']['exit'],
                   verification_sha256=digest(canonical(proof)), feedback=message)
+    if capture_result and 'asserted_json' in report:
+        if cancelled():
+            raise Blocked('工具执行已取消。')
+        from .tool_artifacts import publish
+        result['tool_artifact'] = publish(rt, run, activation, report, result['verification_sha256'])
     return dict(answer=message, result=result)
 
 
