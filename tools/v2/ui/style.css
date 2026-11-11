@@ -514,8 +514,13 @@
 .canvas-empty h1,.canvas-empty p { margin: 0; }
 .canvas-empty p { max-width: 32em; text-wrap: pretty; }
 .canvas-empty .empty-icon { border-radius: 12px; color: var(--studio-text); }
-.canvas-empty { top: 42%; }
+.canvas-empty { top: 0; bottom: 62px; transform: translateX(-50%); justify-content: center; }
 .v2-app :is(button,select,input,textarea,summary):focus-visible { outline: 2px solid var(--studio-focus); outline-offset: -2px; }
+
+@media (max-height: 650px) {
+ .canvas-empty { gap: 8px; }
+ .canvas-empty .empty-icon { display: none; }
+}
 
 @media (min-width: 761px) and (max-width: 1350px) {
  .v2-app > .inspector { position: static; width: auto; box-shadow: none; }
@@ -541,7 +546,6 @@
  .draft-transfer,.document-actions { gap: 5px; flex-wrap: wrap; }
  .document-bar { gap: 6px; }
  .notice { white-space: normal; overflow-wrap: anywhere; }
- .canvas-empty { top: 38%; }
  .scrim { padding: 12px; }
  .dialog { padding: 16px; }
  .folder-address input { min-width: 0; }
