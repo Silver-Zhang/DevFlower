@@ -16,7 +16,7 @@ from v2.native_sessions import NativeSessions
 from v2.session_operations import SessionOperations, load_write_profiles
 
 
-def main():
+def main(argv=None, *, ready=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', required=True, help='new private V2 state directory, separate from allowed workspaces')
     parser.add_argument('--allow-root', action='append', required=True, help='explicit folder browsing boundary; repeatable')
@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--copilot-catalog-config', help='private opt-in GitHub Copilot catalog profile')
     parser.add_argument('--git-delivery-target', action='append', default=[],
                         help='operator-approved local bare Git destination NAME=/absolute/repository.git')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if sys.platform != 'linux':
             raise Invalid('V2 当前支持 Linux 本机环境')
@@ -47,11 +47,14 @@ def main():
             catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
             server, token = create_server(store, args.port, runtime=runtime, native_sessions=native, copilot_catalog=catalog,
                                           session_operations=operations, git_delivery_targets=args.git_delivery_target)
-            url = 'http://127.0.0.1:' + str(server.server_port) + '/#' + token
-            if args.no_browser or not webbrowser.open(url):
-                print(url, flush=True)
-            print('DevFlower V2 · Development · 提示词工作流；保存不启动 Agent', file=sys.stderr, flush=True)
             with server:
+                if ready is None:
+                    url = 'http://127.0.0.1:' + str(server.server_port) + '/#' + token
+                    if args.no_browser or not webbrowser.open(url):
+                        print(url, flush=True)
+                else:
+                    ready(server.server_port, token, store)
+                print('DevFlower V2 · Development · 提示词工作流；保存不启动 Agent', file=sys.stderr, flush=True)
                 server.serve_forever()
     except KeyboardInterrupt:
         return 0
