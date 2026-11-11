@@ -19,7 +19,7 @@ const kinds={'run-authorized':'授权本次运行','worker-bound':'绑定运行�
  'human-decision':'记录人工决定','human-approved':'人工批准','human-rejected':'人工拒绝',
  'human-timeout':'审批超时','loop-round-started':'开始新一轮','loop-round-completed':'本轮完成',
  'loop-completed':'循环结束','loop-limit-reached':'达到研发循环上限',
- 'development-verified':'记录实际测试结果','tool-verified':'记录工具实际校验结果','delivery-gate-decided':'记录独立交付 Gate','cancel-requested':'请求取消','run-finished':'运行结束',
+ 'development-verified':'记录实际测试结果','tool-verified':'记录工具实际校验结果','tool-output-written':'记录工作区文件写入','delivery-gate-decided':'记录独立交付 Gate','cancel-requested':'请求取消','run-finished':'运行结束',
  'native-tool-activity':'记录原生工具活动','event-oversized':'记录超过安全读取上限'};
 
 function download(value){
@@ -31,7 +31,8 @@ function download(value){
 function ToolResult({api,scope,activation}){
  const [value,setValue]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
  const ref=activation.output?.result?.tool_artifact;
- if(!ref)return null;
+ const file=activation.tool_output_intent;
+ if(!ref&&!file)return null;
  async function read(){
   setBusy(true);setError('');
   try{
@@ -42,8 +43,9 @@ function ToolResult({api,scope,activation}){
   finally{setBusy(false)}
  }
  return <section className="tool-artifact" aria-label="校验工具产物">
-  {ref.available?<><button disabled={busy} onClick={read}>{busy?'正在读取…':'查看工具 JSON 产物'}</button>
-   <small>SHA-256 <code>{ref.sha256}</code></small></>:<p className="field-note">{ref.reason}</p>}
+  {file&&<p className="field-note">{activation.tool_output_verified?'已核验写入':activation.state==='FAILED'?'写入失败':'待核对的输出'} <code>{file.path}</code> · SHA-256 <code>{file.sha256}</code></p>}
+  {ref&&(ref.available?<><button disabled={busy} onClick={read}>{busy?'正在读取…':'查看工具 JSON 产物'}</button>
+   <small>SHA-256 <code>{ref.sha256}</code></small></>:<p className="field-note">{ref.reason}</p>)}
   {error&&<p role="alert" className="error-text">{error}</p>}
   {value&&<pre aria-label="工具实际 JSON 结果">{readable(value.value)}</pre>}
  </section>;

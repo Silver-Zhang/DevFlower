@@ -131,7 +131,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
    if(field.type==='choice')return <Field key={key} label={field.label}><select value={value} onChange={e=>{
     const chosen=e.target.value;
     onChange({[key]:chosen,...(key==='tool'&&['verify-json','check-json'].includes(chosen)?{permission:'workspace-read'}:
-     key==='tool'&&chosen==='delivery-gate'?{permission:'none'}:{})});
+     key==='tool'&&['delivery-gate','write-file'].includes(chosen)?{permission:'none'}:{})});
    }}>
     {Object.entries(field.options).map(([option,label])=><option key={option} value={option}>{label}</option>)}
    </select></Field>;
@@ -141,6 +141,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
   })}
   {['verify-json','check-json'].includes(node.config.tool)&&<p className="field-note">启动时固定测试入口。验证器在隔离候选上运行该脚本并比较实际 JSON 输出。</p>}
   {node.config.tool==='check-json'&&<p className="field-note">通过后可在运行检查器读取实际 JSON 产物。验证器不写入工作区。</p>}
+  {node.config.tool==='write-file'&&<p className="field-note">运行时把上游结构化结果保存为指定的新 JSON 文件。已有文件保持原样。</p>}
   {node.config.tool==='delivery-gate'&&<p className="field-note">开发、测试、确定性测试与独立审核必须来自同一轮。只有 ACCEPT 会结束研发循环。</p>}
   {nodeKind(node)==='approval'&&<p className="field-note">等待期间停止启动后续节点。只有本机用户可批准。拒绝或超时会结束运行。</p>}
   {nodeKind(node)==='merge'&&<p className="field-note">ALL 等待全部输入。ANY 按已保存的连线顺序选择成功输入，较早的输入仍在执行时会等待。</p>}

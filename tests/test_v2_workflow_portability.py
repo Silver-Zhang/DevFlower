@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
+import time
 from types import SimpleNamespace
 from unittest import TestCase, skipUnless
 from unittest.mock import Mock, patch
@@ -14,8 +15,12 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 from v2.development_evidence import current_candidate
+from v2.git_delivery import GitDelivery, direct_tip
+from v2.git_workspace import git_read
 from v2.history_archives import HistoryArchives
 from v2.local_delivery import package
+from v2.recovery import project
+from v2.runtime import V2Runtime
 from v2.store import DraftStore
 from v2.workflow_templates import WorkflowTemplates, starter
 
@@ -28,6 +33,79 @@ class WorkflowPortabilityTests(TestCase):
             path.mkdir()
         self.store = DraftStore(self.base/'state', self.workspaces)
         self.a, self.b = [self.store.open_workspace(str(path))['id'] for path in self.workspaces]
+
+    def test_workspace_json_output_uses_scoped_path_and_fences_uncertain_effects(self):
+        root = self.workspaces[0]
+        (root/'output').mkdir()
+        foreign = self.workspaces[1]/'protected.json'
+        foreign.write_text('untouched')
+        (root/'escape').symlink_to(self.workspaces[1], target_is_directory=True)
+        rt = V2Runtime(self.store, str(self.base/'no-provider'))
+        graph = dict(version=1, name='Write checked JSON', nodes=[
+            dict(id='Start', name='Start', kind='start', position={'x':0, 'y':0}, config_version=1,
+                 config={'initial_data':'{"value":7}'}),
+            dict(id='Write', name='Write', kind='tool', position={'x':160, 'y':0}, config_version=1,
+                 config={'tool':'write-file', 'permission':'workspace-write', 'path':'output/result.json'}),
+            dict(id='End', name='End', kind='output', position={'x':320, 'y':0}, config_version=1,
+                 config={'format':'json'}),
+        ], edges=[
+            dict(id='Data', source='Start', target='Write', source_port='out', target_port='in'),
+            dict(id='Receipt', source='Write', target='End', source_port='out', target_port='in'),
+        ])
+
+        def finish(saved, intent):
+            start = subprocess.Popen
+            processes = []
+
+            def track(*args, **kwargs):
+                process = start(*args, **kwargs)
+                processes.append(process)
+                return process
+
+            with patch('v2.runtime.subprocess.Popen', side_effect=track):
+                run = rt.launch(self.a, saved['id'], saved['revision'], intent, '')['run']['id']
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    state = rt.snapshot(self.a, run)
+                    if state['state'] in ('COMPLETED', 'FAILED', 'RECOVERY_REQUIRED') and not state['worker_alive']:
+                        return run, state
+                    time.sleep(.04)
+                self.fail('Tool workflow did not settle')
+            finally:
+                for process in processes:
+                    process.wait(timeout=5)
+
+        draft = self.store.save(self.a, None, None, graph)
+        run, success = finish(draft, 'write-result-approved')
+        file = root/'output/result.json'
+        self.assertEqual(success['state'], 'COMPLETED',
+                         [(row['node'], row.get('reason')) for row in self.store.db.list('activation')])
+        self.assertEqual(success['run']['actual_calls'], 0)
+        self.assertEqual(json.loads(file.read_bytes()), {'value':7})
+        written = next(node for node in success['nodes'] if node['node'] == 'Write')
+        self.assertTrue(written['tool_output_verified'])
+        self.assertEqual(written['tool_output_intent']['sha256'], digest(file.read_bytes()))
+        self.assertEqual(rt.launch(self.a,draft['id'],draft['revision'],'write-result-approved','')['run']['id'], run)
+        _, duplicate_destination = finish(draft, 'write-result-new-intent')
+        self.assertEqual(duplicate_destination['state'], 'FAILED')
+        self.assertEqual(json.loads(file.read_bytes()), {'value':7})
+
+        graph['nodes'][1]['config']['path'] = 'escape/protected.json'
+        escaped = self.store.save(self.a, None, None, graph)
+        _, refused = finish(escaped, 'write-result-outside')
+        self.assertEqual(refused['state'], 'FAILED')
+        self.assertEqual(foreign.read_text(), 'untouched')
+
+        actual = self.store.db.get('run', run)
+        definition = self.store.db.get('definition', actual['definition_id'])
+        pending = dict(self.store.db.get('activation', written['id']), state='STARTING', effect_uncertain=True)
+        pending.pop('tool_output_verified')
+        recovered = project(rt, dict(actual, state='RUNNING'), definition, [pending], [])
+        self.assertEqual(recovered['state'], 'RECOVERY_REQUIRED')
+        self.assertEqual(recovered['provider_outcome'], 'not_sent')
+        self.assertFalse(recovered['run']['resume_available'])
+        self.assertEqual(recovered['nodes'][0]['state'], 'RECOVERY_REQUIRED')
 
     def test_templates_preserve_placement_rebind_cas_and_restore(self):
         library = WorkflowTemplates(self.store)
@@ -59,6 +137,59 @@ class WorkflowPortabilityTests(TestCase):
         self.assertEqual(library.get(self.a,saved['id'],restored['revision'])['graph'],row['graph'])
         self.assertEqual(len(self.store.db.list('workflow-template-version')),1)
         self.assertEqual(self.store.db.list('run'),[])
+
+    def test_local_git_delivery_requires_confirmation_and_recovers_by_readback(self):
+        root = self.workspaces[0]
+        bare = self.base/'delivery.git'
+
+        def git(folder, *args):
+            return subprocess.check_output(['/usr/bin/git','-C',str(folder),*args],
+                                           stderr=subprocess.DEVNULL, text=True, umask=0o077).strip()
+
+        git(root, 'init', '-q')
+        git(root, '-c','user.email=fixture@example.invalid','-c','user.name=Fixture','commit','--allow-empty','-qm','base')
+        git(self.base, 'init', '-q', '--bare', str(bare))
+        git(root, 'push', str(bare), 'HEAD:refs/heads/main')
+        base = git(root, 'rev-parse', 'HEAD')
+        (root/'app.py').write_text('print("approved")\n')
+        identity = current_candidate(root)
+        run, activation = 'a'*32, 'b'*64
+        (self.store.state/'flow-artifacts'/run).mkdir(parents=True)
+        self.store.db.put('run', run, {'created_at': time.time()})
+        status = dict(state='LOCAL_GATE_ACCEPTED',run=run,gate_activation=activation,
+                      gate=dict(**identity,verification_sha256='c'*64))
+        delivery = GitDelivery(SimpleNamespace(store=self.store, delivery=Mock(return_value=status)),
+                               ['fixture='+str(bare)])
+        data = dict(workspace=self.a, run=run, activation=activation, candidate_sha256=identity['candidate_sha256'],
+                    target='fixture', intent_key='approved-git-delivery', authorization='confirm-local-git-delivery')
+        ref = 'refs/heads/work/devflower-'+run
+        with self.assertRaises(Invalid):
+            delivery.publish(dict(data,authorization='none'))
+        with self.assertRaises(Conflict):
+            delivery.publish(dict(data,candidate_sha256='d'*64))
+        self.assertIsNone(direct_tip(bare,ref))
+
+        updates = []
+
+        def lost_reply(path, args, **options):
+            result = git_read(path,args,**options)
+            if args[0] == 'update-ref':
+                updates.append(args)
+                raise TimeoutError('lost local ref acknowledgement')
+            return result
+
+        with patch('v2.git_delivery.git_read', side_effect=lost_reply):
+            completed = delivery.publish(data)
+            self.assertEqual(delivery.publish(data), completed)
+            self.assertEqual(len(updates),1)
+        self.assertEqual(completed['state'],'COMPLETED')
+        self.assertEqual(direct_tip(bare,ref),completed['commit'])
+        self.assertEqual(git(bare, 'rev-parse', completed['commit']+'^'),base)
+        self.assertEqual(git(bare, 'show', completed['commit']+':app.py'),'print("approved")')
+        self.assertEqual(git(bare, 'rev-parse', 'refs/heads/main'),base)
+        self.assertEqual(git(root, 'rev-parse', 'HEAD'),base)
+        with self.assertRaises(Conflict):
+            delivery.publish(dict(data,intent_key='second-git-delivery'))
 
     def test_archive_checks_digest_and_never_registers_live_authority(self):
         archives = HistoryArchives(self.store)

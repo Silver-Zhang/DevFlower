@@ -161,7 +161,7 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
             continue
         if kind == 'tool':
             tool = n['config']['tool']
-            options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS | {CHECK} else {'path':n['config']['path']}
+            options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS | {CHECK, 'write-file'} else {'path':n['config']['path']}
             nodes.append(dict(id=n['id'], name=n['name'], kind='tool', **options))
             continue
         spec = bind(n, prefix)

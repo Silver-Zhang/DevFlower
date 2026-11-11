@@ -109,7 +109,7 @@ class DesignerScheduler(Scheduler):
         for row in rows:
             if row['state'] not in TERMINAL:
                 if row.get('effect_uncertain') or row.get('process') and group_alive(row['process']):
-                    self.transition(row, 'RECOVERY_REQUIRED', reason='原生效果待核验。')
+                    self.transition(row, 'RECOVERY_REQUIRED', reason='外部效果待核验。')
                 else:
                     self.transition(row, 'CANCELLED' if state == 'CANCELLED' else 'SKIPPED', reason='运行已停止调度。')
         self.finish_run(state, reason=safe_text(str(failure)), waiting_approval=None)
@@ -229,7 +229,8 @@ class DesignerScheduler(Scheduler):
                                     reason=safe_text(str(failure)), finished_at=time.time())
                     continue
                 row = self.ready(row, node, inputs, len(incoming))
-            if node['kind'] == 'agent' and not self.can_dispatch(node):
+            if (node['kind'] == 'agent' and not self.can_dispatch(node)
+                    or node.get('tool_type') == 'write-file' and self.active):
                 continue
             inputs = row['inputs']
             if node['kind'] == 'human':
@@ -399,7 +400,7 @@ class DesignerScheduler(Scheduler):
                 if node.get('input_instructions'):
                     output['instructions'] = node['input_instructions']
             elif node['kind'] == 'tool':
-                output, event_kind, evidence = self.execute_tool(node, row)
+                output, event_kind, evidence = self.execute_tool(node, row, inputs, seed)
             elif node['kind'] == 'result':
                 output = output_node(node, input_value(inputs, seed))
                 if node.get('output_instructions'):
@@ -431,8 +432,14 @@ class DesignerScheduler(Scheduler):
             state = 'RECOVERY_REQUIRED' if uncertain else 'CANCELLED' if stopped else 'FAILED'
             self.transition(current, state, reason=safe_text(str(failure)), finished_at=time.time())
 
-    def execute_tool(self, node, row):
+    def execute_tool(self, node, row, inputs, seed):
         kind = node.get('tool_type')
+        if kind == 'write-file':
+            from .tool_outputs import write_result
+            if any(item['fields'] not in ('envelope', 'result') or 'truncation' in item for item in inputs):
+                raise Invalid('JSON 写入需要完整的上游结构化结果或节点数据。')
+            output = write_result(self.rt, self.run, row, node, input_value(inputs, seed).get('result', {}))
+            return output, 'tool-output-written', {'effect_uncertain': False, 'tool_output_verified': True}
         if kind in ('check-json','verify-json','delivery-gate'):
             from .development_evidence import delivery_gate, verify_candidate
             if kind == 'check-json':

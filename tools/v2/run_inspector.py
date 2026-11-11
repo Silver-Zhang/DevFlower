@@ -33,7 +33,7 @@ NODE_FIELDS = ('id', 'run', 'node', 'name', 'kind', 'state', 'iteration', 'itera
                'initialization_included', 'receipt_verified', 'terminal_failure_verified', 'recovery_evidence',
                'provider_outcome', 'provider', 'model', 'effort', 'native_profile_id', 'error_class', 'error_category', 'visible_error',
                'output_instructions', 'passed', 'gate_verdict', 'data_contract', 'task_files',
-               'execution_failure', 'effective_timeout_seconds')
+               'execution_failure', 'effective_timeout_seconds', 'tool_output_intent', 'tool_output_verified')
 EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace', 'node', 'activation', 'iteration_path',
                 'iteration', 'attempt', 'edge', 'handoff_id', 'source', 'target_activation', 'target_node',
                 'source_round', 'target_round', 'content_sha256', 'source_content_sha256', 'received_at',

@@ -52,7 +52,7 @@ def graph_issues(document):
             config = node['config']
             try:
                 from .development_graph import CHECK, TOOLS, tool_options
-                if config.get('tool') in TOOLS | {CHECK}:
+                if config.get('tool') in TOOLS | {CHECK, 'write-file'}:
                     tool_options(node)
                 else:
                     if config.get('tool') != 'read-file' or config.get('permission') != 'workspace-read':

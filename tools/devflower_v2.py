@@ -30,6 +30,8 @@ def main():
                         help='approved independent native HOME: codex:NAME=/private/home or claude:NAME=/private/home')
     parser.add_argument('--native-session-writes', help='private opt-in JSON for standalone native session writes')
     parser.add_argument('--copilot-catalog-config', help='private opt-in GitHub Copilot catalog profile')
+    parser.add_argument('--git-delivery-target', action='append', default=[],
+                        help='operator-approved local bare Git destination NAME=/absolute/repository.git')
     args = parser.parse_args()
     try:
         if sys.platform != 'linux':
@@ -44,7 +46,7 @@ def main():
                           if args.native_session_writes else None)
             catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
             server, token = create_server(store, args.port, runtime=runtime, native_sessions=native, copilot_catalog=catalog,
-                                          session_operations=operations)
+                                          session_operations=operations, git_delivery_targets=args.git_delivery_target)
             url = 'http://127.0.0.1:' + str(server.server_port) + '/#' + token
             if args.no_browser or not webbrowser.open(url):
                 print(url, flush=True)

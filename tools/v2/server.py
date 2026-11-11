@@ -15,6 +15,7 @@ from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
 from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
 from .git_platform import GitPlatform, parameters as git_platform_parameters
+from .git_delivery import GitDelivery
 from .history_archives import HistoryArchives, MAX_BYTES as HISTORY_ARCHIVE_BYTES
 from .local_delivery import package as local_delivery_package, preview as local_delivery_preview
 from .draft_transfer import DraftTransferError, read_request, validate_archive
@@ -35,7 +36,8 @@ from .run_summary import RunSummaryError, read_run_summary, request_parameters a
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None):
+def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None,
+                  git_delivery_targets=()):
     token = secrets.token_urlsafe(32)
     catalog = CopilotCatalog() if copilot_catalog is None else copilot_catalog
     if native_sessions is not None and runtime is not None:
@@ -55,6 +57,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     templates = WorkflowTemplates(store)
     assistant = Assistant(store, session_operations, runtime)
     git_platform = GitPlatform(store,runtime)
+    git_delivery = GitDelivery(git_platform, git_delivery_targets)
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
 
@@ -378,8 +381,14 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = inspector.clean(runtime.runs(query.get('workspace')))
                 elif not post and path == '/api/v2/local-delivery/preview' and runtime and set(query) == {'workspace', 'run'}:
                     result = local_delivery_preview(git_platform, **query)
+                    result = dict(result, git_targets=sorted(git_delivery.targets),
+                                  git_ref='refs/heads/work/devflower-' + query['run'])
                 elif post and path == '/api/v2/local-delivery' and runtime and not query:
                     return self.reply(200, local_delivery_package(git_platform, data), 'application/zip')
+                elif post and path == '/api/v2/local-delivery/git' and runtime and not query:
+                    result = git_delivery.publish(data)
+                elif not post and path == '/api/v2/local-delivery/git-operation' and set(query) == {'workspace', 'intent_key'}:
+                    result = git_delivery.read(**query)
                 elif not post and path == '/api/v2/run' and runtime:
                     result = runtime.snapshot(query.get('workspace'),query.get('id'))
                 elif post and path == '/api/v2/launch' and runtime:

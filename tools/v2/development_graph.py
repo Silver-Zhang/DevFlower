@@ -54,6 +54,11 @@ def tool_options(node):
         except (ValueError, RecursionError):
             raise Invalid('请填写 4000 字节以内的期望 JSON。') from None
         return {'path':config['path'],'expected_json':value}
+    if tool == 'write-file':
+        from .tool_outputs import output_path
+        if config.get('permission') != 'workspace-write':
+            raise Invalid('写入 JSON 结果需要明确选择工作区读写权限。')
+        return {'path': output_path(config.get('path', '')).as_posix()}
     if tool==GATE:
         if config.get('permission','none')!='none' or any(not ID.fullmatch(config.get(key,'')) for key in ROLES):
             raise Invalid('交付 Gate 需要固定开发、测试、审核、确定性测试节点身份，权限选择未授予。')

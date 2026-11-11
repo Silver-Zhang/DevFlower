@@ -151,7 +151,11 @@ def project(rt,run,definition,nodes,steps):
     except (TypeError,KeyError,ValueError):bad_definition=True
     for source in nodes:
         node=copy.deepcopy(source)
-        if node['kind']!='agent':projected.append(node);continue
+        if node['kind'] != 'agent':
+            if node.get('tool_output_intent') and node.get('effect_uncertain') and (worker != 'alive' or node['state'] in END):
+                node.update(state='RECOVERY_REQUIRED', reason='工作区工具效果待核验，未重复写入。')
+            projected.append(node)
+            continue
         forced_unknown=bool(node.get('control_stop_unconfirmed'))
         outcome='unknown' if forced_unknown else 'pending';completion=None
         try:
@@ -205,12 +209,16 @@ def project(rt,run,definition,nodes,steps):
          and n.get('input_sent_operation_id') in (None,s['id']) for n in nodes)) for s in steps)
     duplicate=(_invalid_checkpoint_identity(run,definition,nodes) if designer else
                any(sum(n.get('kind')=='agent' and n.get('node')==e['id'] for n in nodes)>1 for e in expected))
-    uncertain=(bad_definition or interrupted or unassociated or duplicate or 'unknown' in outcomes
-               or designer and any(node['state']=='RECOVERY_REQUIRED' for node in projected))
+    uncertain_provider = bad_definition or interrupted or unassociated or duplicate or 'unknown' in outcomes
+    uncertain = uncertain_provider or designer and any(node['state']=='RECOVERY_REQUIRED' for node in projected)
     state=run['state'];reason=run.get('reason')
     resume_available=False
     if uncertain:
         state='RECOVERY_REQUIRED';provider='unknown';reason='存在未确认的 Provider 结果；已保留请求与进程证据，未自动重发。'
+        if not uncertain_provider and any(node.get('tool_output_intent') and node['state']=='RECOVERY_REQUIRED'
+                                          for node in projected):
+            provider = 'failed' if 'failed' in outcomes else 'completed_partial' if 'completed' in outcomes else 'not_sent'
+            reason = '工作区工具写入待核验。请查看激活记录中的路径和摘要，未重复写入。'
     elif designer:
         state,provider,reason,resume_available=_designer_state(run,worker,projected,steps,outcomes)
     elif all_complete:
