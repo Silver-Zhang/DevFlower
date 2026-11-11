@@ -19,6 +19,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--state-dir', required=True); p.add_argument('--allow-root', action='append', required=True)
     p.add_argument('--run', required=True); p.add_argument('--codex-cli')
+    p.add_argument('--native-agent-home', action='append', default=[])
     p.add_argument('--start-fd', type=int, required=True)
     a = p.parse_args()
     try:
@@ -36,7 +37,7 @@ def main():
                 worker_facts.enter_worker(store.db, a.run, own)
         except Blocked:
             return 1
-        rt = V2Runtime(store, a.codex_cli, worker_run=a.run)
+        rt = V2Runtime(store, a.codex_cli, worker_run=a.run, native_homes=a.native_agent_home)
         if row.get('designer_runtime') == 1:
             from v2.designer_scheduler import DesignerScheduler
             scheduler = DesignerScheduler

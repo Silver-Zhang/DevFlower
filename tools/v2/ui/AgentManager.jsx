@@ -75,7 +75,9 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   setSessions(null); setSkills(null);
  }
  async function discover(provider) {
-  const result = await api('cli-providers/discover', {provider});
+  const selected=profiles.find(row=>row.provider===provider&&row.id===config.native_profile);
+  const result = await api('cli-providers/discover', {provider,
+   ...(selected?.kind==='isolated-home'?{native_profile:selected.id}:{})});
   if(alive.current){setProviders(result.providers);setProfiles(result.profiles||[])}
  }
  async function loadSessions() {
@@ -94,7 +96,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   await action(async () => {
    const changedSession = config.session.kind === 'existing'
     && (config.session.handle !== record?.config.session.handle || config.provider !== record?.config.provider
-     || config.cwd !== record?.config.cwd);
+     || config.cwd !== record?.config.cwd || config.native_profile !== record?.config.native_profile);
    const saved = await api('agents/save', {workspace: workspace.id, id: newId.current, expected: record?.revision ?? null,
     config, session_revision: changedSession ? sessions?.revision ?? null : null});
    if (!alive.current) return;
@@ -130,9 +132,11 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
    }
   });
  }
- const provider = providers.find(row=>row.provider===config?.provider);
  const nativeProfiles=profiles.filter(row=>row.provider===config?.provider);
  const nativeProfile=nativeProfiles.find(row=>row.id===config?.native_profile);
+ const isolated=nativeProfile?.kind==='isolated-home';
+ const profileUnavailable=Boolean(config?.native_profile&&!nativeProfile?.available);
+ const provider=profileUnavailable?null:isolated?nativeProfile.catalog:providers.find(row=>row.provider===config?.provider);
  const isDirty = Boolean(config && (!record || JSON.stringify(config) !== JSON.stringify(record.config)));
  const model = provider?.models.find(item => item.id === config?.model);
  const efforts = model?.efforts?.length ? model.efforts : provider?.efforts ?? [];
@@ -175,16 +179,20 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
       </div>
       {(nativeProfiles.length>0||config.native_profile)&&<Field label="原生 Profile">
        <select aria-label="原生 Profile" value={config.native_profile||''} onChange={event=>{
+        const next=nativeProfiles.find(row=>row.id===event.target.value);
         change({native_profile:event.target.value||null,model:null,model_source:'native_default',effort:null,
-         session:{kind:'new'}});setSessions(null);
+         session:{kind:'new'},...(next?.kind==='isolated-home'?{mode:'Ask',permission:'none',skills:[]}: {})});
+        setSessions(null);setSkills(null);
        }}>
         <option value="">默认原生配置</option>
         {config.native_profile&&!nativeProfile&&<option value={config.native_profile} disabled>{config.native_profile}（未登记）</option>}
         {nativeProfiles.map(row=><option key={row.id} value={row.id} disabled={!row.available}>
-         {row.id}{row.available?'':'（核验未通过）'}</option>)}
+         {row.id}{row.kind==='isolated-home'?' · 独立 HOME':''}{row.available?'':'（核验未通过）'}</option>)}
        </select></Field>}
       {nativeProfile?.available&&<p className="field-note">
        模型 {nativeProfile.model||'沿用默认'} · 推理强度 {nativeProfile.effort||'沿用默认'}</p>}
+      {profileUnavailable&&<p className="field-note">此 Profile 未登记或已变化。请核对原生配置，再明确选择。</p>}
+      {isolated&&<p className="field-note">此 Agent 使用独立账户与历史。Ask 禁用文件、命令和扩展工具，可绑定本工作区的受管会话。</p>}
       <p className="field-note">{provider?.version || '尚未核验 CLI 版本'}
        {provider?.authenticated === true ? ' · 已观察到认证配置' : provider?.authenticated === false ? ' · CLI 未报告登录' : ''}
        {provider?.stale && provider?.refreshed_at ? ' · 发现记录待刷新' : ''}。{provider?.error || ''}</p>
@@ -229,7 +237,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
          <option value={config.session.handle}>当前绑定的已有会话</option>}
         {sessionRows.map((row, index) => <option key={row.handle} value={row.handle}>{LABELS[row.provider]} 会话 {index + 1}
          {row.updated_at ? ' · ' + new Date(row.updated_at).toLocaleString() : ''}</option>)}</select></Field>
-       <button type="button" disabled={!writeProviders?.includes(config.provider)} onClick={() => action(loadSessions)}>读取可绑定会话</button>
+       <button type="button" disabled={!(isolated?nativeProfile.available:writeProviders?.includes(config.provider))} onClick={() => action(loadSessions)}>读取可绑定会话</button>
       </div>
      </fieldset>
      <fieldset disabled={busy}><legend>提示词</legend>
@@ -237,7 +245,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
       {editText('输出与交接要求', 'output_prompt', 3)}
      </fieldset>
      <details className="agent-advanced"><summary>Skills、子 Agent 与预算</summary>
-      <button type="button" disabled={busy} onClick={() => action(loadSkills)}>发现 Skills</button>
+      <button type="button" disabled={busy||isolated} onClick={() => action(loadSkills)}>发现 Skills</button>
       {skills && <><p className="field-note">{config.provider === 'claude' && config.mode !== 'Agent' ?
        'Claude Skills 用于已授权读写的 Agent 模式。' :
        skills.selectable ? '选择此 Agent 使用的原生 Skills。' : '当前 Provider 仅展示 Skills 来源。'}
@@ -264,10 +272,10 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      {record && <Field label="本次 Agent 运行输入"><input aria-label="本次 Agent 运行输入" disabled={busy || !!pendingRun}
       value={pendingRun?.task ?? directTask} onChange={event => setDirectTask(event.target.value)}/></Field>}
      <footer>
-      <button type="submit" className="primary" disabled={busy || !config.name.trim() || !config.role.trim()}>保存 Agent</button>
-      <button type="button" disabled={busy || !record || isDirty && !pendingRun} onClick={launch}>
+      <button type="submit" className="primary" disabled={busy || profileUnavailable || !config.name.trim() || !config.role.trim()}>保存 Agent</button>
+      <button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
        {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>
-      <button type="button" disabled={busy || isDirty || !record} onClick={() => onBind(record)}>
+      <button type="button" disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
        {selectedNode ? '用于当前节点' : '添加到工作流'}</button>
       {record && (deleteAsk ? <>
        <button type="button" disabled={busy} onClick={remove}>确认删除配置</button>

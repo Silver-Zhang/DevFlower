@@ -383,6 +383,8 @@ class LocalCodex:
         inventory=None
         with metadata_guard(gate,remaining(),cancelled) if gate else nullcontext(remaining()) as wait:
             image_options={'executable_image':agent_scope.image} if agent_scope else {}
+            if b.get('native_home'):
+                image_options['file_auth_only'] = True
             if b.get('v2_development_untrusted') is True:
                 if not ordinary or b.get('provider')!='codex' or b.get('cwd')!=cwd:
                     raise Blocked('研发运行的原生项目权限无效；未启动会话')

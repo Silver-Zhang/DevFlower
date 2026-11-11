@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import uuid
 
+from orchestration.common import canonical, digest
 from studio.graph import Invalid
 from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC, metadata_guard
@@ -26,12 +27,15 @@ def freeze_agent(runtime, workspace, node):
             or config['max_budget_usd'] is not None and provider != 'claude'):
         raise Invalid('所选 Provider 的工具权限、子 Agent 或预算尚未开放。')
     approved = runtime.agents.session_operations
-    if provider == 'claude' and (approved is None or provider not in approved.profiles):
+    home = runtime.agents.independent_home(provider,config.get('native_profile'))
+    if row.get('native_home_pin') != (digest(canonical(home)) if home else None):
+        raise Invalid('已保存 Agent 的独立账户绑定已变化，请核对 Profile 后重新保存并绑定。')
+    if provider == 'claude' and not home and (approved is None or provider not in approved.profiles):
         raise Invalid('启动 Claude Agent 需要本机明确启用 Claude 原生写入。')
     cwd = runtime.agents.directory(workspace, config['cwd'])
-    adapter = runtime.cli_providers.adapter(provider)
+    adapter = runtime.cli_providers.adapter(provider,config.get('native_profile')) if home else runtime.cli_providers.adapter(provider)
     binding = adapter.binding(workspace, config)
-    if provider == 'claude':
+    if provider == 'claude' and not home:
         permitted = approved.profiles['claude'][1]
         if any(binding[key] != permitted[key] for key in ('home', 'config_root', '_executable_sha256', 'root_identity',
                                                          'cli_environment_sha256')):
@@ -43,9 +47,12 @@ def freeze_agent(runtime, workspace, node):
                    runtime_profile='default-' + provider, local_lock_root=str(root / '.devflower-writer-locks'),
                    execution_mode=config['mode'])
     if config['session']['kind'] == 'existing':
-        if approved is None:
+        if home:
+            listing = runtime.agents.sessions(workspace,provider,str(cwd),home['id'])
+        elif approved is None:
             raise Invalid('绑定已有会话需要已启用的原生会话写入。')
-        listing = approved.reader.listing(workspace)
+        else:
+            listing = approved.reader.listing(workspace)
         locator, record = runtime.agents.verify_session(workspace, config, listing['revision'])
         binding.update(session_id=locator.native_uuid, resume_proof=dict(
             relative=str(record.ref.relative), sha256=record.ref.sha, history_identity=locator.root_identity.fields()))
@@ -69,7 +76,9 @@ def freeze_agent(runtime, workspace, node):
 def history_source(store, binding):
     provider = binding['provider']
     root = Path(binding['config_root']) / LEAF[provider]
-    spec = SourceSpec('default-' + provider, provider, Path(binding['home']), root, '默认来源')
+    profile = binding if binding.get('kind')=='isolated-home' else binding.get('native_home')
+    name = 'agent-'+provider+'-'+profile['id'] if profile else 'default-'+provider
+    spec = SourceSpec(name, provider, Path(binding['home']), root, '独立来源' if profile else '默认来源')
     return source_for(spec, startup_seed(store.state))
 
 
@@ -104,7 +113,7 @@ def prove_agent_history(store, binding, sid):
         with metadata_guard(store.state, timeout=20) as timeout:
             with NativeImage(binding['executable'], expected_sha256=binding['_executable_sha256']) as image:
                 with CodexRPC(image.path, binding['home'], binding['config_root'], binding['cwd'],
-                              timeout=timeout, executable_image=image) as rpc:
+                              timeout=timeout, executable_image=image, **({'file_auth_only':True} if binding.get('native_home') else {})) as rpc:
                     thread = rpc.request('thread/read', {'threadId': sid, 'includeTurns': False})['thread']
         if thread.get('id') != sid or thread.get('cwd') != binding['cwd'] or not isinstance(thread.get('path'), str):
             raise SessionRefused('LOCATOR_REFUSED')

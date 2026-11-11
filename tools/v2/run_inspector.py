@@ -31,7 +31,7 @@ NODE_FIELDS = ('id', 'run', 'node', 'name', 'kind', 'state', 'iteration', 'itera
                'request_id', 'session_binding_id', 'observed_session', 'native_turn_id', 'actual_request_sha256',
                'input_sent_sha256', 'input_sent_bytes', 'input_sent_at', 'input_sent_operation_id',
                'initialization_included', 'receipt_verified', 'terminal_failure_verified', 'recovery_evidence',
-               'provider_outcome', 'provider', 'model', 'effort', 'error_class', 'error_category', 'visible_error',
+               'provider_outcome', 'provider', 'model', 'effort', 'native_profile_id', 'error_class', 'error_category', 'visible_error',
                'output_instructions', 'passed', 'gate_verdict', 'data_contract', 'task_files',
                'execution_failure', 'effective_timeout_seconds')
 EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace', 'node', 'activation', 'iteration_path',

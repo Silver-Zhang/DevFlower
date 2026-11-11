@@ -103,7 +103,8 @@ def verified_workflow(store, config_root, sid, provider='codex'):
                     group=digest(canonical(['v2-workflow-session-group', run['workspace'], definition['draft_id']])),
                     workflow=safe_text(definition['draft_document']['name'])[:160], agent=safe_text(node['name'])[:160],
                     run=run['id'], activation=activation['id'], node=activation['node'], history=history,
-                    native_profile=profile_identity(frozen.get('native_profile')))
+                    native_profile=profile_identity(frozen.get('native_profile')),
+                    **({'native_home':frozen['native_home']['id']} if frozen.get('native_home') else {}))
     except (OSError, ValueError, TypeError, KeyError, StopIteration, Blocked, Invalid):
         raise SessionRefused('RECOVERY_REQUIRED') from None
 

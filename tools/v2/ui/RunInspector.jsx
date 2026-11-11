@@ -148,6 +148,7 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
    <span>{activation?`第 ${roundText(activation)} 轮 · ${stateDuration(activation.started_at,activation.finished_at,activation.state)}`:
     run?stateDuration(run.started_at,run.finished_at,snapshot.state):'读取原运行'}</span>
   </header>
+  {activation?.native_profile_id&&<p className="field-note">独立原生 Profile {activation.native_profile_id}</p>}
   {eligible.length>0&&!selection?.edge&&<label className="field"><span>激活与轮次</span><select aria-label="激活与轮次"
    value={activation?.id||''} onChange={event=>{setChosen(event.target.value);setTab('detail')}}>
    <option value="">{selection?.node?'当前画布节点':'整次运行'}</option>

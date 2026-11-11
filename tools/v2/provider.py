@@ -42,14 +42,22 @@ def public_provider_error(error):
 
 
 class CodexProvider:
-    def __init__(self, store, executable=None):
+    native_home = None
+    catalog_key = 'codex'
+    rpc_options = {}
+
+    def __init__(self, store, executable=None, *, native_home=None):
         self.store = store
         selected = executable or shutil.which('codex')
         if not selected:
             raise Blocked('未找到 Codex CLI；编辑和保存仍可使用，请在原生客户端安装并登录后重启')
         self.image = resolve(selected)
-        self.home = str(Path.home())
-        self.config_root = os.environ.get('CODEX_HOME') or str(Path(self.home) / '.codex')
+        self.native_home = native_home
+        self.home = native_home['home'] if native_home else str(Path.home())
+        self.config_root = (native_home['config_root'] if native_home else
+                            os.environ.get('CODEX_HOME') or str(Path(self.home) / '.codex'))
+        self.catalog_key = 'codex:' + native_home['id'] if native_home else 'codex'
+        self.rpc_options = {'file_auth_only':True} if native_home else {}
         if self.config_root != str(Path(self.home) / '.codex'):
             raise Blocked('当前 CODEX_HOME 不是本用户原生配置根；不会复制认证或静默改用其他账户')
         self.version = subprocess.check_output([self.image['path'], '--version'], timeout=10, text=True).strip()[:160]
@@ -63,17 +71,19 @@ class CodexProvider:
                     native_protected=[str(ROOT), str(self.store.state), self.config_root,
                                       str(Path(self.home) / '.claude'), str(Path(self.home) / '.claude.json')],
                     model=model, effort=effort, _metadata_guard=str(self.store.state),
-                    _executable_sha256=self.image['sha256'])
+                    _executable_sha256=self.image['sha256'],
+                    **({'native_home':self.native_home} if self.native_home else {}))
 
     def cached(self):
         try:
-            row = self.store.db.get('provider-catalog', 'codex')
+            row = self.store.db.get('provider-catalog', self.catalog_key)
         except Invalid:
             return {'provider': 'codex', 'models': [], 'source': None, 'at': None, 'stale': True,
                     'error': '尚未发现模型；请点击刷新模型目录', 'inference_verified': False,
                     'version': self.version, 'executable_sha256': self.image['sha256']}
-        result = {k: v for k, v in row.items() if k not in ('account_sha256', 'environment_sha256')}
-        result['stale'] = bool(row.get('error') or time.time() - row.get('at', 0) > 300 or row.get('executable_sha256') != self.image['sha256'])
+        result = {k: v for k, v in row.items() if k not in ('account_sha256', 'environment_sha256', 'native_home_sha256')}
+        result['stale'] = bool(row.get('error') or time.time() - row.get('at', 0) > 300 or row.get('executable_sha256') != self.image['sha256']
+                               or self.native_home and row.get('native_home_sha256') != self.native_home['sha256'])
         return result
 
     def discover(self, *, agent_defaults=False):
@@ -84,7 +94,7 @@ class CodexProvider:
             with metadata_guard(self.store.state):
                 image = NativeImage(self.image['path'], expected_sha256=self.image['sha256']) if agent_defaults else nullcontext()
                 with image as pinned, CodexRPC(self.image['path'], self.home, self.config_root, str(self.store.state),
-                        timeout=25, **({'executable_image': pinned} if pinned is not None else {})) as rpc:
+                        timeout=25, **self.rpc_options, **({'executable_image': pinned} if pinned is not None else {})) as rpc:
                     rows = codex_models(lambda binding, cwd, method, params: rpc.request(method, params),
                                         self.base('metadata', 'low'), self.home, self.store.state, **options)
                     account = rpc.request('account/read', {'refreshToken': False})
@@ -97,7 +107,8 @@ class CodexProvider:
             value = dict(id='codex', provider='codex', models=rows, source='Codex app-server model/list',
                          at=time.time(), error=None, authenticated=True, inference_verified=False,
                          account_sha256=digest(canonical(account)), environment_sha256=direct_environment_identity(binding),
-                         version=self.version, executable_sha256=self.image['sha256'])
+                         version=self.version, executable_sha256=self.image['sha256'],
+                         **({'native_home_sha256':self.native_home['sha256']} if self.native_home else {}))
             if agent_defaults:
                 catalog_defaults = {row['id']: (row.pop('catalog_default'), row.pop('default_effort')) for row in rows}
                 defaults = {'model': config.get('model'), 'effort': config.get('model_reasoning_effort'),
@@ -106,12 +117,13 @@ class CodexProvider:
         except (Blocked, Invalid, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
             # Do not serialize account/config/exception payloads into browser errors.
             value = dict(previous, id='codex', error=public_provider_error(exc), attempted_at=time.time(), stale=True)
-        self.store.db.put('provider-catalog', 'codex', value)
+        self.store.db.put('provider-catalog', self.catalog_key, value)
         return (self.cached(), defaults) if agent_defaults else self.cached()
 
     def binding(self, workspace, node, *, manual_model=False):
-        row = self.store.db.get('provider-catalog', 'codex')
-        if row.get('error') or time.time() - row.get('at', 0) > 300:
+        row = self.store.db.get('provider-catalog', self.catalog_key)
+        if (row.get('error') or time.time() - row.get('at', 0) > 300
+                or self.native_home and row.get('native_home_sha256') != self.native_home['sha256']):
             raise Invalid('模型目录未发现、失败或已过期，请先刷新模型目录')
         model = next((m for m in row['models'] if m['id'] == node.get('model')), None)
         efforts = (model.get('efforts', []) if model else
@@ -128,6 +140,9 @@ class CodexProvider:
         return binding
 
     def require_local(self, binding):
+        if self.native_home and (binding.get('native_home') != self.native_home
+                                 or binding['home'] != self.home or binding['config_root'] != self.config_root):
+            raise Blocked('冻结 Agent 的 Codex 账户来源已变化。')
         if resolve(binding['executable'])['sha256'] != binding['_executable_sha256']:
             raise Blocked('原生 CLI 映像已变化，未发送任务；请重新发现配置')
         if direct_environment_identity(binding) != binding['direct_environment_sha256']:
@@ -137,7 +152,7 @@ class CodexProvider:
         self.require_local(binding)
         try:
             with metadata_guard(self.store.state):
-                with CodexRPC(binding['executable'], self.home, self.config_root, str(self.store.state), timeout=20) as rpc:
+                with CodexRPC(binding['executable'], self.home, self.config_root, str(self.store.state), timeout=20, **self.rpc_options) as rpc:
                     account = rpc.request('account/read', {'refreshToken': False})
         except (Blocked, OSError, ValueError, KeyError) as exc:
             raise Blocked(public_provider_error(exc)) from None

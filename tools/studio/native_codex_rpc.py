@@ -60,7 +60,7 @@ def metadata_guard(storage, timeout=30, cancelled=lambda:False):
 
 class CodexRPC:
     def __init__(self, executable, home, config_root, cwd, timeout=300, cancelled=lambda:False, cap=8_000_000,
-                 *, shared_config=None, provider_args=(), executable_image=None, untrusted_project=None):
+                 *, shared_config=None, provider_args=(), executable_image=None, untrusted_project=None, file_auth_only=False):
         self.home, self.config_root, self.cwd = map(Path, (home, config_root, cwd))
         self.deadline = time.monotonic() + timeout
         self.cancelled = cancelled
@@ -75,6 +75,10 @@ class CodexRPC:
                 '-c', 'features.apps=false', '-c', 'features.browser_use=false',
                 '-c', 'features.computer_use=false', '-c', 'features.code_mode_host=false',
                 '-c', 'check_for_update_on_startup=false', 'app-server', '--stdio']
+        if file_auth_only:
+            if shared_config is not None:
+                raise Blocked('独立原生账户文件不能与共享会话配置混用。')
+            argv[-2:-2] = ['-c','cli_auth_credentials_store="file"']
         if untrusted_project is not None:
             from .native_codex_exec import untrusted_project_args
             if shared_config is not None:

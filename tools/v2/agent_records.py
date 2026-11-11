@@ -38,6 +38,13 @@ def matches(regex, value):
     return isinstance(value, str) and regex.fullmatch(value)
 
 
+def agent_revision(key, expected, config, home_pin):
+    parts = [key, expected, config]
+    if home_pin:
+        parts.append(home_pin)
+    return digest(canonical(parts))
+
+
 def validate_agent(value):
     if not isinstance(value,dict) or not FIELDS<=set(value)<=FIELDS|{'native_profile'}:
         raise Invalid('Agent 配置字段缺失或不受支持。')
@@ -117,7 +124,23 @@ class AgentRecords:
                         message=node['name'] + '：此 Agent 配置版本在当前工作空间不可用，请重新选择。'))
         return issues
 
+    def independent_home(self, provider, name):
+        if self.providers and self.providers.homes.get(provider,name):
+            return self.providers.homes.require(provider,name)
+        return None
+
     def verify_session(self, workspace, config, revision):
+        home = self.independent_home(config['provider'],config.get('native_profile'))
+        if home:
+            from types import SimpleNamespace
+            from .native_home_sessions import managed_home_sessions
+            rows, current = managed_home_sessions(self.store,workspace,config['cwd'],home)
+            if revision != current:
+                raise Conflict('独立原生历史已变化，请重新读取会话。')
+            for row, locator, ref in rows:
+                if row['handle'] == config['session']['handle']:
+                    return locator, SimpleNamespace(ref=ref)
+            raise Conflict('此会话不属于当前独立账户、工作区或原工作目录。')
         operations = self.session_operations
         if operations is None or not matches(REVISION, revision):
             raise Invalid('请从当前工作空间的原生会话列表选择已有会话。')
@@ -144,6 +167,11 @@ class AgentRecords:
 
     def sessions(self, workspace, provider, cwd, native_profile=None):
         self.directory(workspace, cwd)
+        home = self.independent_home(provider,native_profile)
+        if home:
+            from .native_home_sessions import managed_home_sessions
+            rows, revision = managed_home_sessions(self.store,workspace,cwd,home)
+            return {'sessions':[row for row,_,_ in rows],'revision':revision}
         operations = self.session_operations
         if operations is None or provider not in operations.profiles:
             raise Invalid('此 Provider 尚未启用原生会话绑定。')
@@ -168,10 +196,15 @@ class AgentRecords:
     def save(self, workspace, key, expected, value, session_revision=None):
         config = validate_agent(value)
         self.directory(workspace, config['cwd'])
+        home_pin = None
         if config.get('native_profile'):
             if not self.providers:
                 raise Invalid('原生命名配置未启用。')
-            self.providers.selected(config['provider'],config['native_profile'])
+            profile = self.providers.selected(config['provider'],config['native_profile'])
+            if profile.get('kind') == 'isolated-home':
+                if config['mode'] != 'Ask' or config['permission'] != 'none' or config['skills']:
+                    raise Invalid('独立原生 HOME 仅支持不开放文件或命令工具的 Ask。')
+                home_pin = digest(canonical(profile))
         if (key is None and expected is not None or key is not None and not matches(KEY, key)
                 or expected is not None and not matches(HASH, expected)):
             raise Invalid('保存 Agent 需要当前配置版本。')
@@ -181,15 +214,17 @@ class AgentRecords:
             except Invalid:
                 pass
             else:
-                if prior['revision'] == digest(canonical([key, None, config])):
+                if prior['revision'] == agent_revision(key,None,config,home_pin):
                     return prior
                 raise Conflict('此 Agent 保存意图已经使用。')
         if config['session']['kind'] == 'existing':
             if session_revision is not None or expected is None:
                 self.verify_session(workspace, config, session_revision)
             else:
-                previous = self.get(workspace, key, expected)['config']
-                if any(previous.get(field)!=config.get(field) for field in ('provider','cwd','session','native_profile')):
+                previous = self.get(workspace, key, expected)
+                if (previous.get('native_home_pin') != home_pin or any(
+                        previous['config'].get(field)!=config.get(field)
+                        for field in ('provider','cwd','session','native_profile'))):
                     raise Invalid('已有会话绑定已变化，请重新选择并核验。')
         elif session_revision is not None:
             raise Invalid('新会话不需要已有会话版本。')
@@ -198,8 +233,10 @@ class AgentRecords:
             if not available['selectable'] or not set(config['skills']) <= {row['id'] for row in available['skills']}:
                 raise Conflict('Skill 来源或文件已变化，请重新发现并选择。')
         key = key or secrets.token_hex(16)
-        revision = digest(canonical([key, expected, config]))
+        revision = agent_revision(key,expected,config,home_pin)
         result = dict(id=key, workspace=workspace, revision=revision, config=config)
+        if home_pin:
+            result['native_home_pin'] = home_pin
         with self.store.db.tx() as db:
             previous = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (KIND, key)).fetchone()
             if previous:

@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 import time
 import uuid
 
-from orchestration.common import Blocked, cli_probe_env
+from orchestration.common import Blocked, canonical, cli_probe_env, digest
 from orchestration.privacy import credentials
 from studio.graph import Invalid
 from studio.local_claude_adapter import LocalClaude, claude_args, claude_secrets
@@ -23,7 +23,9 @@ from .claude_session_profile import discover_cli, environment_identity, startup_
 from .claude_native_catalog import model_id, observe_native_catalog
 from .claude_agent_scope import scope_supported, scoped_environment
 from .native_history_config import unique_pairs
+from .native_agent_homes import NativeAgentHomes
 from .native_agent_profiles import approved_paths, public_profile, read_profile, require_frozen_profile
+from .provider import CodexProvider
 from .session_identity import StorageRootIdentity
 from .session_lease import CODEX_COORDINATION_VERSION
 
@@ -77,7 +79,7 @@ class CodexCLI:
                     probe = cli_read(image.path, image.fd, ['exec', '--help'], scratch, cli_probe_env(scratch))
             ask = native.version == CODEX_COORDINATION_VERSION and probe.returncode == 0 and all(
                 flag in probe.stdout for flag in (b'--json', b'--model', b'--ignore-user-config', b'--strict-config'))
-            scoped = ask and os.access('/usr/bin/bwrap', os.X_OK)
+            scoped = ask and not native.native_home and os.access('/usr/bin/bwrap', os.X_OK)
             row['modes'] = {
                 'Ask': mode(ask, ['exec', '--json'], '可选择仅对话，或允许模型读取当前工作区。'),
                 'Plan': mode(False, ['app-server', 'collaborationMode=plan'], '原生 Plan 只规划。转入 Agent 需要另行确认。'),
@@ -109,6 +111,8 @@ class CodexCLI:
             elif row['default_model']:
                 row['default_effort'] = next((item['default_effort'] for item in row['models']
                     if item['id'] == row['default_model']['id']), None)
+            if native.native_home:
+                row['native_home_sha256'] = native.native_home['sha256']
             row.update(authenticated=True if catalog.get('authenticated') and not catalog.get('error') else None,
                        catalog_available=bool(row['models']) and not catalog.get('error'),
                        error=catalog.get('error'), refreshed_at=time.time())
@@ -123,8 +127,11 @@ class CodexCLI:
         if not self.provider or self.provider.version != CODEX_COORDINATION_VERSION or mode_permission not in access:
             raise Invalid('Codex 支持 Ask、仅规划的 Plan 和获准工作区读写的 Agent。')
         scope = access[mode_permission]
+        isolated = self.provider.native_home
+        if isolated and (mode_permission != ('Ask','none') or agent.get('skills')):
+            raise Invalid('独立 Codex HOME 仅支持不开放文件或命令工具的 Ask。')
         named = (selected_profile(self.provider_id,self.provider.config_root,self.profiles,agent['native_profile'])
-                 if agent.get('native_profile') else None)
+                 if agent.get('native_profile') and not isolated else None)
         plan = agent['mode'] == 'Plan'
         if named and plan:
             raise Invalid('原生 Plan 使用默认 Codex 配置。')
@@ -138,7 +145,7 @@ class CodexCLI:
         if named:
             model, effort = model or named['model'],effort or named['effort']
         if model is None or effort is None:
-            row = self.provider.store.db.get(CATALOG, self.provider_id)
+            row = self.provider.store.db.get(CATALOG, self.provider.catalog_key)
             default = (row.get('default_model') or {}).get('id')
             model = model or default
             effort = effort or (row.get('default_effort') if model == default else next(
@@ -156,6 +163,7 @@ class CodexCLI:
             binding['v2_agent_plan'] = True
         if named:
             binding['native_profile'] = named
+        if named or isolated:
             binding['v2_development_untrusted'] = True
         return binding
 
@@ -196,20 +204,25 @@ class ClaudeCLI:
     provider_id = 'claude'
     label = 'Claude Code'
 
-    def __init__(self, store, profiles=None):
+    def __init__(self, store, profiles=None, *, native_home=None):
         self.store = store
         self.profiles = profiles or {}
+        self.native_home = native_home
+        self.catalog_key = 'claude:' + native_home['id'] if native_home else 'claude'
+
+    def credential_environment(self):
+        return {} if self.native_home else startup_environment(os.environ)
 
     def profile(self, *, allow_unsupported=False):
-        if os.environ.get('CLAUDE_CONFIG_DIR'):
+        if not self.native_home and os.environ.get('CLAUDE_CONFIG_DIR'):
             raise Invalid('当前 Agent 仅支持默认 Claude HOME 配置。')
-        home = Path.home()
+        home = Path(self.native_home['home']) if self.native_home else Path.home()
         root = home / '.claude'
         return dict(discover_cli(details=True, allow_unsupported=allow_unsupported),
                     provider=self.provider_id, home=str(home), config_root=str(root),
                     runtime_profile='default-claude', execution_backend='native-local',
                     local_lock_root=str(root / '.devflower-writer-locks'), role='reviewer', chat_only=True,
-                    readonly_files=[])
+                    readonly_files=[], **({'native_home':self.native_home} if self.native_home else {}))
 
     def observe(self):
         row = dict(empty(self.provider_id, self.label), installed=bool(shutil.which('claude')))
@@ -225,8 +238,8 @@ class ClaudeCLI:
                             for name, value, detail in (
                                 ('Ask', 'manual', '仅对话，禁止模型工具。'),
                                 ('Plan', 'plan', '使用原生 Plan 权限模式，禁止模型工具。'))}
-            env = startup_environment(os.environ)
-            scoped = 'acceptEdits' in profile['permission_modes'] and scope_supported()
+            env = self.credential_environment()
+            scoped = not self.native_home and 'acceptEdits' in profile['permission_modes'] and scope_supported()
             if scoped:
                 try:
                     scoped_environment(profile, env)
@@ -236,6 +249,9 @@ class ClaudeCLI:
                                         '仅在已授权工作区使用文件工具和受控 Bash。' if scoped else
                                         '需要已核验的 Linux 隔离和本机 Claude API 认证配置。')
             row['permissions'] = ['none','workspace-read','workspace-write'] if scoped else ['none']
+            if self.native_home:
+                for name in ('Plan','Agent'):
+                    row['modes'][name] = mode(False, [], '独立 Claude HOME 当前只支持无工具 Ask。')
             root = Path(profile['config_root'])
             settings = {}
             try:
@@ -286,6 +302,13 @@ class ClaudeCLI:
             auth = json.loads(result.stdout, object_pairs_hook=unique_pairs)
             if result.returncode in (0, 1) and type(auth.get('loggedIn')) is bool:
                 row['authenticated'] = auth['loggedIn']
+            if self.native_home:
+                if (row['authenticated'] is not True or auth.get('configDirectory') != str(root)
+                        or auth.get('projectsDirectory') != str(root/'projects')):
+                    raise Blocked('CLI 未确认已登记 Claude HOME 的账户和历史根。')
+                row.update(native_home_sha256=self.native_home['sha256'],
+                           executable_sha256=profile['_executable_sha256'],
+                           account_sha256=digest(canonical(auth)))
         except READ_ERRORS:
             row['error'] = '无法读取 Claude Code 元数据。请核对安装版本与本机配置。'
         return row
@@ -296,12 +319,15 @@ class ClaudeCLI:
                  ('Plan','workspace-read'):'plan',('Agent','workspace-write'):'acceptEdits'}
         permission = agent.get('permission','none')
         native = modes.get((agent['mode'],permission))
+        if self.native_home and ((agent['mode'],permission) != ('Ask','none') or agent.get('skills')):
+            raise Invalid('独立 Claude HOME 当前只支持无工具 Ask。')
         if not native or native not in profile['permission_modes']:
             raise Invalid('此 Claude 工作模式尚未核验。')
         scoped = permission in ('workspace-read','workspace-write')
         if scoped and not scope_supported():
             raise Invalid('本机 Bubblewrap 不可用，未开放 Claude 文件和命令工具。')
-        named = selected_profile(self.provider_id,profile['config_root'],self.profiles,agent.get('native_profile'))
+        named = (selected_profile(self.provider_id,profile['config_root'],self.profiles,agent.get('native_profile'))
+                 if not self.native_home else None)
         model, effort, budget = agent['model'],agent['effort'],agent.get('max_budget_usd')
         if named:
             model, effort = model or named['model'],effort or named['effort']
@@ -311,7 +337,7 @@ class ClaudeCLI:
             raise Invalid('当前 Claude CLI 未提供所选推理强度。')
         if model is not None and effort is not None and agent.get('model_source') == 'catalog':
             try:
-                catalog = self.store.db.get(CATALOG, self.provider_id)
+                catalog = self.store.db.get(CATALOG, self.catalog_key)
             except Invalid:
                 catalog = {}
             known = next((item['efforts'] for item in catalog.get('models', []) if item['id'] == model), [])
@@ -320,7 +346,14 @@ class ClaudeCLI:
         if budget is not None and (not profile['native_budget'] or not isinstance(budget, str)
                                    or not re.fullmatch(r'[0-9]{1,4}(?:\.[0-9]{1,4})?', budget) or float(budget) <= 0):
             raise Invalid('Claude 原生费用上限无效。')
-        env = startup_environment(os.environ)
+        env = self.credential_environment()
+        if self.native_home:
+            catalog = self.store.db.get(CATALOG, self.catalog_key)
+            if (catalog.get('authenticated') is not True or catalog.get('error') or not catalog.get('catalog_available')
+                    or time.time()-catalog.get('refreshed_at',0)>300
+                    or catalog.get('native_home_sha256') != self.native_home['sha256']
+                    or catalog.get('executable_sha256') != profile['_executable_sha256']):
+                raise Invalid('请先刷新当前独立 Claude HOME 的目录和账户。')
         binding = {key: value for key, value in profile.items()
                    if key not in ('supported', 'efforts', 'aliases', 'permission_modes', 'native_budget')}
         binding.update(project=workspace, model=model, effort=effort, session_id=None,
@@ -337,6 +370,8 @@ class ClaudeCLI:
         binding['direct_environment_sha256'] = profile_identity(binding)
         if named:
             binding['native_profile'] = named
+        if self.native_home:
+            binding['account_sha256'] = catalog['account_sha256']
         return binding
 
     def require_local(self, binding):
@@ -344,7 +379,7 @@ class ClaudeCLI:
             image = binary_digest(fd)
         if (image != binding['_executable_sha256'] or profile_identity(binding) != binding['direct_environment_sha256']
                 or StorageRootIdentity.capture(binding['config_root']).fields() != binding['root_identity']
-                or environment_identity(startup_environment(os.environ)) != binding['cli_environment_sha256']):
+                or environment_identity(self.credential_environment()) != binding['cli_environment_sha256']):
             raise Blocked('Claude 原生 CLI 或配置已变化，未发送任务。')
         require_frozen_profile(binding)
 
@@ -360,42 +395,79 @@ class ClaudeCLI:
 
     def transport(self, binding, limits, *, managed_resume=False):
         self.require_local(binding)
-        return LocalClaude(binding, limits, credential_env=startup_environment(os.environ), managed_resume=managed_resume)
+        return LocalClaude(binding, limits, credential_env=self.credential_environment(), managed_resume=managed_resume)
 
 
 class ProviderRegistry:
-    def __init__(self, store, codex=None, codex_error=None, *, native_profiles=()):
+    def __init__(self, store, codex=None, codex_error=None, *, native_profiles=(), native_homes=(), executable=None):
         self.store = store
         self.profiles = approved_paths(native_profiles,Path.home())
+        self.homes = NativeAgentHomes(store,native_homes,self.profiles)
+        self.executable = executable
+        self.isolated = {}
         self.adapters = {adapter.provider_id:adapter for adapter in (
             CodexCLI(codex,codex_error,self.profiles),ClaudeCLI(store,self.profiles))}
 
     def selected(self, provider, name):
+        if self.homes.get(provider,name):
+            return self.homes.require(provider,name)
         return selected_profile(provider,str(Path.home()/('.'+provider)),self.profiles,name)
 
-    def adapter(self, provider):
+    def adapter(self, provider, name=None):
         if not isinstance(provider, str) or provider not in self.adapters:
             raise Invalid('当前只支持 Codex CLI 与 Claude Code。')
-        return self.adapters[provider]
+        if not self.homes.get(provider,name):
+            return self.adapters[provider]
+        home = self.homes.require(provider,name)
+        key = provider,name
+        if key not in self.isolated:
+            self.isolated[key] = (CodexCLI(CodexProvider(self.store,self.executable,native_home=home),None)
+                                  if provider=='codex' else ClaudeCLI(self.store,native_home=home))
+        return self.isolated[key]
 
-    def discover(self, provider):
-        adapter = self.adapter(provider)
-        self.store.db.put(CATALOG, provider, adapter.observe())
+    def adapter_for(self, binding):
+        self.homes.require_binding(binding)
+        return self.adapter(binding['provider'],(binding.get('native_home') or {}).get('id'))
+
+    def discover(self, provider, name=None):
+        if name is not None and (not isinstance(provider,str) or not isinstance(name,str) or not self.homes.get(provider,name)):
+            raise Invalid('请选择已登记的独立原生 HOME。')
+        adapter = self.adapter(provider,name)
+        key = self.catalog_key(provider,name)
+        self.store.db.put(CATALOG, key, adapter.observe())
         return self.listing()
 
+    @staticmethod
+    def catalog_key(provider, name=None):
+        return provider+':'+name if name else provider
+
+    def catalog_row(self, provider, adapter, name=None):
+        try:
+            row = self.store.db.get(CATALOG, self.catalog_key(provider,name))
+        except Invalid:
+            row = empty(provider, adapter.label)
+        refreshed = row.get('refreshed_at')
+        stale = bool(not refreshed or row.get('error') or time.time()-refreshed>300)
+        if name is not None:
+            stale |= row.get('native_home_sha256') != self.homes.get(provider,name)['sha256']
+        return dict({key:value for key,value in row.items() if key not in (
+                    'native_home_sha256','account_sha256','executable_sha256')}, stale=stale)
+
     def listing(self):
-        rows = []
-        for name, adapter in self.adapters.items():
-            try:
-                row = self.store.db.get(CATALOG, name)
-            except Invalid:
-                row = empty(name, adapter.label)
-            refreshed = row.get('refreshed_at')
-            rows.append(dict(row, stale=bool(not refreshed or row.get('error') or time.time() - refreshed > 300)))
+        rows = [self.catalog_row(provider,adapter) for provider,adapter in self.adapters.items()]
         profiles = []
         for provider,name in self.profiles:
             try:
                 profiles.append(dict(public_profile(self.selected(provider,name)),available=True))
             except READ_ERRORS:
                 profiles.append(dict(id=name,provider=provider,available=False))
+        for provider,name in self.homes.entries:
+            available = True
+            try:
+                self.homes.require(provider,name)
+            except READ_ERRORS:
+                available = False
+            catalog = self.catalog_row(provider,self.adapters[provider],name)
+            profiles.append(dict(id=name,provider=provider,kind='isolated-home',available=available,catalog=catalog,
+                                 model=(catalog.get('default_model') or {}).get('id'),effort=catalog.get('default_effort')))
         return {'providers':rows,'profiles':profiles}
