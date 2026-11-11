@@ -5,12 +5,13 @@ from studio.workbench_graph import field, predicate, transfer
 from studio.workbench_data import public_data, public_field
 
 from .canvas_structure import DEFAULT_TRANSFER, config_issues, node_kind, node_ports
+from .data_handoff import field_contract, has_output_contract, select_fields
 
 SUPPORTED = {'start', 'agent', 'output', 'condition', 'router', 'validation', 'merge', 'loop', 'approval', 'tool'}
 
 
 def is_designer_graph(document):
-    return (any(node_kind(node) != 'agent' for node in document['nodes'])
+    return (any(node_kind(node) != 'agent' or has_output_contract(node) for node in document['nodes'])
             or any(edge.get('transfer', DEFAULT_TRANSFER) != DEFAULT_TRANSFER for edge in document['edges']))
 
 
@@ -111,9 +112,12 @@ def edge_spec(edge, nodes):
     mode = edge.get('transfer', {}).get('mode')
     if mode is None:
         mode = 'answer' if node_kind(nodes[source]) == node_kind(nodes[target]) == 'agent' else 'envelope'
-    return dict(id=edge['id'], source=source, target=target,
-                source_port=edge.get('source_port', 'out'), target_port=edge.get('target_port', 'in'),
-                transfer=mode, max_chars=edge.get('transfer', DEFAULT_TRANSFER)['max_chars'])
+    value = dict(id=edge['id'], source=source, target=target,
+                 source_port=edge.get('source_port', 'out'), target_port=edge.get('target_port', 'in'),
+                 transfer=mode, max_chars=edge.get('transfer', DEFAULT_TRANSFER)['max_chars'])
+    if mode=='fields':
+        value['fields'] = field_contract(edge['transfer']['fields'])
+    return value
 
 
 def handoff(output, edge, *, control):
@@ -124,9 +128,16 @@ def handoff(output, edge, *, control):
         spec = dict(edge, transfer='result')
     elif mode == 'result':
         spec = dict(edge, transfer='field', field='result')
+    elif mode == 'artifacts':
+        spec = dict(edge, transfer='field', field='artifacts')
     else:
         spec = edge
-    content, truncated = transfer(output, spec, with_truncation=True)
+    if mode == 'fields':
+        content, truncated = select_fields(output, edge['fields'], edge['max_chars'])
+    else:
+        content, truncated = transfer(output, spec, with_truncation=True)
+    if mode in ('fields','artifacts') and truncated:
+        raise Invalid('选定字段或产物引用超过交接上限，未发送不完整数据。')
     if not truncated:
         return content, {}
     proof = {key: content[key] for key in ('original_chars', 'budget')}
@@ -153,6 +164,10 @@ def input_value(inputs, seed):
         return {'answer': item.get('answer_preview', value['text']), 'result': {'truncation': item['truncation']}}
     if item['fields'] == 'envelope' and isinstance(value, dict):
         return value
+    if item['fields'] == 'fields':
+        return {'answer':'','result':{},**value}
+    if item['fields'] == 'artifacts':
+        return {'answer':'','result':{},'artifacts':value}
     if item['fields'] == 'summary':
         return {'answer': value, 'summary': value, 'result': {}}
     if item['fields'] == 'result':

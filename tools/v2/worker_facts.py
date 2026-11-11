@@ -90,6 +90,13 @@ def _read_fact(db, seq, expected):
     return expected
 
 
+def launch_payload(workspace, draft_id, revision, task, files=()):
+    payload = dict(workspace=workspace,draft_id=draft_id,revision=revision,task=task)
+    if files:
+        payload['task_files'] = [dict(path=row['path'],sha256=row['sha256']) for row in files]
+    return payload
+
+
 def _original_authority(db, row):
     run_id = row['id']
     definition_id = row.get('definition_id')
@@ -102,8 +109,8 @@ def _original_authority(db, row):
     _require(canonical([row[key] for key in fields]) == canonical([definition[key] for key in fields]))
     _require(row.get('designer_runtime') == definition.get('designer_runtime'))
     _require(digest(canonical({k: v for k, v in definition.items() if k != 'id'})) == definition_id)
-    payload_sha = digest(canonical(dict(workspace=workspace, draft_id=row['draft_id'],
-                                        revision=row['draft_revision'], task=row['task'])))
+    payload = launch_payload(workspace,row['draft_id'],row['draft_revision'],row['task'],definition.get('task_files'))
+    payload_sha = digest(canonical(payload))
     reservation = db.execute(
         'SELECT payload_sha,run_id,definition_id,state,created FROM launch_intents '
         'WHERE workspace=? AND intent_key=?', (workspace, intent)).fetchone()

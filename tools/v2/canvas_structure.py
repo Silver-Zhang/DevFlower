@@ -9,7 +9,7 @@ from studio.graph import Invalid
 SCHEMA_PATH = Path(__file__).with_name('canvas_types.json')
 TYPES = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 ROUTE_OPERATORS = {'equals', 'not_equals', 'contains', 'greater', 'less', 'exists'}
-TRANSFER_MODES = {'envelope': '节点数据', 'answer': '最终回答', 'summary': '摘要', 'result': '结构化结果', 'none': '仅控制顺序'}
+TRANSFER_MODES = {'envelope': '节点数据', 'answer': '最终回答', 'summary': '摘要', 'result': '结构化结果', 'fields': '选定字段', 'artifacts': '产物引用', 'none': '仅控制顺序'}
 DEFAULT_TRANSFER = {'mode': 'answer', 'max_chars': 16000}
 EDGE_EXTENSION = {'source_port', 'target_port', 'transfer'}
 ID = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')

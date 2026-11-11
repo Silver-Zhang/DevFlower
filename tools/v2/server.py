@@ -271,13 +271,17 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                             raise Conflict('最近工作空间与登记文件夹不一致；请重新选择')
                     else:
                         result = store.open_workspace(data['path'])
-                elif not post and path in ('/api/v2/project-files', '/api/v2/project-file'):
+                elif not post and path in ('/api/v2/project-files', '/api/v2/project-file', '/api/v2/task-file'):
                     params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict')
                     if 'workspace' not in params or set(params) - {'workspace', 'path'} or any(
                             len(values) != 1 for values in params.values()):
                         raise Invalid('读取项目文件需要工作空间身份和可选相对路径')
-                    result = read_project(store, params['workspace'][0], params.get('path', [''])[0],
-                                          preview=path == '/api/v2/project-file')
+                    workspace, relative = params['workspace'][0], params.get('path',[''])[0]
+                    if path=='/api/v2/task-file':
+                        from .data_handoff import task_file
+                        result = task_file(store,workspace,relative)
+                    else:
+                        result = read_project(store,workspace,relative,preview=path=='/api/v2/project-file')
                 elif not post and path in ('/api/v2/native-sessions', '/api/v2/native-session'):
                     transcript = path == '/api/v2/native-session'
                     try:
@@ -331,9 +335,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif not post and path == '/api/v2/run' and runtime:
                     result = runtime.snapshot(query.get('workspace'),query.get('id'))
                 elif post and path == '/api/v2/launch' and runtime:
-                    if set(data) != {'workspace','draft_id','revision','intent_key','task'}:
+                    required = {'workspace','draft_id','revision','intent_key','task'}
+                    if not required <= set(data) <= required | {'task_files'}:
                         raise Invalid('启动需要明确的工作空间、草稿版本、本次任务与启动意图')
-                    result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'])
+                    options = {}
+                    if 'task_files' in data:
+                        from .data_handoff import task_selection
+                        options['task_files'] = task_selection(data['task_files'])
+                    result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'],
+                                            **options)
                 elif post and path == '/api/v2/resume' and runtime and set(data) == {'workspace', 'run_id'}:
                     result = runtime.resume(data['workspace'], data['run_id'])
                 elif post and path == '/api/v2/approval' and runtime and set(data) == {

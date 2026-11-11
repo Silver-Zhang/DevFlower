@@ -1,5 +1,6 @@
 import React,{useState} from 'react';
 import {ArrowRight} from 'lucide-react';
+import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {connectionIssue,defaultEdgeMode,defaultTransfer,nodeKind,ports,transferModes} from './canvasModel.mjs';
 
 export function NodeConnections({node,graph,onConnect,Field}){
@@ -39,9 +40,17 @@ export function EdgeDraftConfig({edge,source,target,onUpdate,Field}){
   <Field label="目标输入端口"><select value={selectedTarget} onChange={e=>onUpdate({target_port:e.target.value})}>
    {ports(target,'inputs').map(([id,label])=><option key={id} value={id}>{label}</option>)}
   </select></Field>
-  <Field label="交接内容"><select value={transfer.mode} onChange={e=>onUpdate({transfer:{...transfer,mode:e.target.value}})}>
-   {Object.entries(transferModes).map(([id,label])=><option key={id} value={id}>{label}</option>)}
+  <Field label="交接内容"><select value={transfer.mode} onChange={e=>{
+   const next={mode:e.target.value,max_chars:transfer.max_chars};
+   if(next.mode==='fields')next.fields=[{field:'result.field1',type:'any',required:true}];
+   onUpdate({transfer:next});
+  }}>
+   {Object.entries(transferModes).map(([id,label])=><option key={id} value={id}
+    disabled={id==='artifacts'&&!source.artifact_paths?.length}>{label}</option>)}
   </select></Field>
+  {transfer.mode==='fields'&&<ContractEditor label="交接" rows={transfer.fields} maxRows={32} maxFieldLength={200}
+   onChange={fields=>onUpdate({transfer:fields.length?{...transfer,fields}:{mode,max_chars:transfer.max_chars}})}/>}
+  {transfer.mode==='artifacts'&&<p className="field-note">传送已核验的相对路径、文件摘要与来源。接收时重新核对文件。</p>}
   <Field label="交接字符上限"><input type="number" min="1" max="20000" value={transfer.max_chars}
    onChange={e=>{if(e.target.value!=='')onUpdate({transfer:{...transfer,max_chars:Math.min(20000,Math.max(1,Math.trunc(Number(e.target.value))))}})}}/></Field>
   <p className="field-note">{transfer.mode===mode&&transfer.max_chars===16000?'使用当前节点类型的默认交接。':'按所选公开内容和字符上限交接。'} 草稿没有实际交接数据。</p>

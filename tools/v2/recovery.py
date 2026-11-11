@@ -11,6 +11,9 @@ from orchestration.process import group_alive
 from orchestration.store import process_identity
 from studio.session_sources import opened
 from studio.workbench_data import public_data
+from studio.data_contracts import check
+from .data_handoff import has_output_contract, MAX_ARTIFACTS, SHA
+from .project_files import MAX_ARTIFACT_BYTES
 
 IDENTITY=('host','boot_id','pid','start','pgid','sid')
 END={'COMPLETED','FAILED','CANCELLED','SKIPPED','RECOVERY_REQUIRED'}
@@ -89,7 +92,12 @@ def read_completion(rt,run,node,definition,steps):
     receipt=copy.deepcopy(value['receipt']);output=value['output']
     if receipt.get('native_turn_id')=='unknown':receipt['native_turn_id']=None
     if (not isinstance(output,dict) or set(output)!={'answer','summary','result','evidence','issues','next','artifacts'}
-        or not isinstance(output['result'],dict) or output['artifacts']!=[] or public_data(output)!=output):raise ValueError('completion public output')
+        or not isinstance(output['result'],dict) or public_data(output)!=output):raise ValueError('completion public output')
+    spec = frozen_node(definition,node['node'])
+    if has_output_contract(spec):
+        validate_data_completion(run,node,binding,spec,value)
+    elif 'data_contract' in value or output['artifacts']!=[]:
+        raise ValueError('unexpected completion contract')
     receipt['report']=dict(reply=output['answer'],summary=output['summary'],accepted=False,
         result_json=json.dumps(output['result']),artifacts=[],evidence=output['evidence'],issues=output['issues'],next=output['next'])
     verify_completion(node,receipt,binding)
@@ -99,6 +107,33 @@ def read_completion(rt,run,node,definition,steps):
         or step.get('status')!='EXITED' or any(step['data'].get(k)!=process.get(k)
              for k in ('process','operation_id','exit','timeout','cancelled','overflow'))):raise ValueError('completion process')
     return value
+
+
+def validate_data_completion(run,node,binding,spec,value):
+    contract = value.get('data_contract')
+    output = value['output']
+    if not isinstance(contract,dict):
+        raise ValueError('completion contract')
+    if contract.get('state')=='FAILED':
+        reason = contract.get('reason')
+        if set(contract)!={'state','reason'} or not isinstance(reason,str) or not reason or output['artifacts']!=[]:
+            raise ValueError('failed completion contract')
+        return
+    if contract!={'state':'PASSED'}:
+        raise ValueError('completion contract state')
+    check(output,spec.get('output_contract',[]))
+    artifacts = output['artifacts']
+    if not isinstance(artifacts,list) or len(artifacts)>MAX_ARTIFACTS:
+        raise ValueError('completion artifacts')
+    for item in artifacts:
+        expected = dict(workspace=run['workspace'],run=run['id'],activation=node['id'],node=node['node'],
+                        provider=binding['provider'],session_id=value['receipt']['session_id'])
+        if (not isinstance(item,dict) or set(item)!=set(expected)|{'path','sha256','bytes'}
+                or any(item[key]!=part for key,part in expected.items())
+                or item['path'] not in spec.get('artifact_paths',[]) or not isinstance(item['sha256'],str)
+                or not SHA.fullmatch(item['sha256']) or type(item['bytes']) is not int
+                or not 0<=item['bytes']<=MAX_ARTIFACT_BYTES):
+            raise ValueError('completion artifact provenance')
 
 
 def project(rt,run,definition,nodes,steps):
@@ -125,10 +160,18 @@ def project(rt,run,definition,nodes,steps):
         except (OSError,Blocked,ValueError,KeyError,TypeError,StopIteration):
             if node.get('receipt_verified') or node['state']=='COMPLETED':outcome='unknown'
         if completion is not None:
-            outcome='completed';proofs[node['node']]=completion['output']
-            node.update(state='COMPLETED',output=completion['output'],receipt=completion['receipt'],receipt_verified=True,
-                        recovery_evidence='validated_completion',effect_uncertain=False,
-                        completion_sha256=digest(canonical(completion)))
+            outcome='completed'
+            contract = completion.get('data_contract')
+            failed = contract and contract['state']=='FAILED'
+            if not failed:
+                proofs[node['node']]=completion['output']
+            node.update(state='FAILED' if failed else 'COMPLETED',output=completion['output'],
+                        receipt=completion['receipt'],receipt_verified=True,recovery_evidence='validated_completion',
+                        effect_uncertain=False,completion_sha256=digest(canonical(completion)))
+            if contract:
+                node['data_contract'] = contract
+            if failed:
+                node['reason'] = contract['reason']
         elif node.get('terminal_failure_verified') and not forced_unknown:
             try:
                 failure=node['failure_receipt'];proc=failure['process'];binding=_binding(definition,node)
@@ -299,11 +342,12 @@ def resume(rt, workspace, run_id):
                 if node['kind'] != 'agent':
                     if source['state'] == 'STARTING':
                         repairs.append((source, dict(state='READY'), 'node-ready-recovered'))
-                elif node['provider_outcome'] == 'completed' and source['state'] != 'COMPLETED':
+                elif node['provider_outcome']=='completed' and source['state']!=node['state']:
                     update = {key: node[key] for key in ('state','output','receipt','receipt_verified',
-                                                        'effect_uncertain','completion_sha256')}
+                        'effect_uncertain','completion_sha256','data_contract','reason') if key in node}
                     update['finished_at'] = time.time()
-                    repairs.append((source, update, 'node-completion-recovered'))
+                    event = 'output-contract-failed' if node['state']=='FAILED' else 'node-completion-recovered'
+                    repairs.append((source, update, event))
                 elif node['provider_outcome'] == 'failed' and source['state'] != 'FAILED':
                     update = dict(state='FAILED', reason=node['reason'], finished_at=time.time())
                     repairs.append((source, update, 'node-failure-recovered'))

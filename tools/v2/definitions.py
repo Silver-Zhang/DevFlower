@@ -8,6 +8,7 @@ from .canvas_structure import SCHEMA_PATH, json_input, node_kind, validation_exp
 from .development_graph import TOOLS, freeze_source, layout as development_layout, tool_options
 from .designer_graph import edge_spec, is_designer_graph
 from .documents import validate_draft, check_chain
+from .data_handoff import field_contract, has_output_contract
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,7 +21,7 @@ def source_manifest():
     return {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in sorted(paths) if p.is_file()}
 
 
-def compile_definition(store, provider, workspace, draft, task='', *, agent_binding=None, provider_error=None):
+def compile_definition(store, provider, workspace, draft, task='', *, agent_binding=None, provider_error=None, task_files=()):
     doc = validate_draft(draft['graph'])
     issues = check_chain(doc)['issues']
     if issues:
@@ -72,6 +73,8 @@ def compile_definition(store, provider, workspace, draft, task='', *, agent_bind
         value['designer_runtime'] = 1
     if configured:
         value['agent_configs'] = configured
+    if task_files:
+        value['task_files'] = task_files
     return dict(value, id=digest(canonical(value)))
 
 
@@ -139,11 +142,18 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
             nodes.append(dict(id=n['id'], name=n['name'], kind='tool', **options))
             continue
         spec = bind(n, prefix)
+        if has_output_contract(n) and spec.get('mode')=='Plan':
+            raise Invalid('原生 Plan 输出固定为计划文本，不能配置结构化字段或产物。')
+        output = {}
+        if n.get('output_contract'):
+            output['output_contract'] = field_contract(n['output_contract'])
+        if n.get('artifact_paths'):
+            output['artifact_paths'] = n['artifact_paths']
         nodes.append(dict(id=n['id'], kind='agent', name=n['name'], mode=spec.get('mode', 'Ask'),
                            permission='workspace-write' if spec.get('permission') == 'workspace-write' else 'read',
                            initial_prompt=spec.get('initial_prompt', ''), round_prompt=spec.get('round_prompt', ''),
                            handoff_prompt=spec.get('output_prompt', ''), timeout=spec.get('timeout', 300),
-                           subagents='disabled', task_context=True))
+                           subagents='disabled', task_context=True, **output))
     agents = [node for node in nodes if node['kind'] == 'agent']
     used = {n['id'] for n in nodes}
     original = {n['id']: n for n in doc['nodes']}

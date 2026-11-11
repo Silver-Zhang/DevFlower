@@ -444,3 +444,11 @@
 .git-actions{margin-top:8px}
 @media(max-width:620px){.git-platform-panel{width:calc(100vw - 16px)}.git-work{grid-template-columns:minmax(0,1fr)}
  .git-records{max-height:145px;overflow:auto}}
+
+.task-context {flex:1 1 100%;min-width:0}
+.task-context summary,.inspector .contract-editor summary {cursor:pointer}
+.task-context[open] {display:grid;gap:8px;padding:8px 0}
+.task-context .field {max-width:38rem}
+.task-file-row,.inspector .contract-editor>div {display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0;min-width:0}
+.task-file-row span {overflow-wrap:anywhere}
+.inspector .contract-editor input:not([type=checkbox]) {flex:1;min-width:8rem}

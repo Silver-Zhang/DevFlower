@@ -18,6 +18,7 @@ import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
+import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {GitWorkspace} from './GitWorkspace.jsx';
 import {Assistant} from './Assistant.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
@@ -72,6 +73,8 @@ function RunEvidence({activation,node,trusted,onTransition}){const a=activation;
  <h3>{a?.receipt_verified?'最终回答':'已存文本（终结尚未确认）'}</h3><pre aria-label="Agent 最终回答">{a?.output?.answer??'尚无已验证的最终回答'}</pre>
  {onTransition&&<Button onClick={onTransition}>转入 Agent</Button>}
  {a?.reason&&<p className="error-text">{a.reason}</p>}
+ {a?.data_contract&&a.output&&<details><summary>结构化输出与产物引用</summary>
+  <pre>{readable({result:a.output.result,artifacts:a.output.artifacts})}</pre></details>}
  <h3>本次实际可见请求</h3><p className="field-note">包括 DevFlower 加入的格式要求与实际上游内容；这是本机发送文本，不代表服务端全部上下文。</p><pre aria-label="实际可见请求">{a?.actual_request??'尚无持久化请求'}</pre>
  <h3>发送与回执</h3><p>{a?.input_sent_sha256?'请求字节已写入自有 CLI 进程':'尚无请求写入证据'}；{a?.receipt_verified?'原生终结回执已关联核验':a?.terminal_failure_verified?'原生终结失败已关联核验':'终结结果未确认'}。</p>
  <p className="field-note">请求：{a?.provider||node.provider||'unknown'} · {a?.model||node.model||'unknown'} / {a?.effort||node.effort||'unknown'}。实际模型：{a?.receipt?.resolved_model||'unknown'}；实际强度：{a?.receipt?.resolved_effort||'unknown'}。未报告的字段保持 unknown。</p>
@@ -129,6 +132,7 @@ function App(){
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
+ const [taskFiles,setTaskFiles]=useState([]),[taskText,setTaskText]=useState('');
  const assistantOpener=useRef(null),gitOpener=useRef(null);
  const [agentPanel,setAgentPanel]=useState(null);
  const [planApproval,setPlanApproval]=useState(null),[planBusy,setPlanBusy]=useState(false),[planError,setPlanError]=useState('');
@@ -168,7 +172,7 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false){setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -234,8 +238,10 @@ function App(){
   }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}
  }
  async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
-  try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:''};keepLaunch(attempt,w)}
-   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
+  try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:taskText};
+    if(taskFiles.length)attempt.task_files=taskFiles.map(({path,sha256})=>({path,sha256}));
+    keepLaunch(attempt,w)}
+   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);setTaskFiles([]);setTaskText('');showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
   }catch(e){if(!e.uncertain&&e.status&&e.status<500&&inWorkspace(w,epoch)){
     // Even an explicit HTTP error can follow durable reservation (e.g. worker
     // publication refusal). Only a successful scoped list proving absence may
@@ -433,6 +439,14 @@ function App(){
   setNotice('已关闭工作空间');
   requestAnimationFrame(()=>workspacePicker.current?.focus());
  }
+ function attachTaskFile({path,sha256,bytes}){
+  if(launchBusy.current||launchRef.current||viewModeRef.current!=='draft')return;
+  if(taskFiles.length>=3&&!taskFiles.some(item=>item.path===path)){
+   setError('本次运行最多附加 3 个项目文件。');return;
+  }
+  setTaskFiles(files=>[...files.filter(item=>item.path!==path),{path,sha256,bytes}]);
+  setNotice('已选择 '+path+'。启动时会核验文件摘要。');
+ }
  function closeGit(){
   setSideView('');
   requestAnimationFrame(()=>gitOpener.current?.focus());
@@ -527,6 +541,8 @@ function App(){
   change(d=>{
    const node={id,name:record.config.name,agent_id:record.id,agent_revision:record.revision,
     position:previous?.position||{x:100+d.nodes.length*300,y:160},...(!previous||previous.kind?{kind:'agent'}:{})};
+   if(previous?.output_contract?.length)node.output_contract=previous.output_contract;
+   if(previous?.artifact_paths?.length)node.artifact_paths=previous.artifact_paths;
    if(previous)d.nodes=d.nodes.map(item=>item.id===id?node:item);else d.nodes.push(node);
   });
   setSelected(id);setEdge(null);setEdgeSelection([]);setAgentRefresh(value=>value+1);closeAgents();
@@ -829,6 +845,16 @@ function App(){
     <input ref={transferInput} hidden type="file" accept=".json,application/json" aria-label="选择工作流文件"
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
+    <details className="task-context" aria-label="本次运行上下文">
+     <summary>本次运行上下文{taskFiles.length>0?' · '+taskFiles.length+' 个文件':''}</summary>
+     <Field label="本次任务"><textarea rows={2} maxLength={20000} value={taskText} disabled={launching||Boolean(launchAttempt)}
+      onChange={event=>setTaskText(event.target.value)}/></Field>
+     <p className="field-note">所选文件文本会发送给本次运行的 Agent。文件权限由各 Agent 配置控制。</p>
+     {taskFiles.map(file=><div key={file.path} className="task-file-row"><span>{file.path} · {file.bytes} B</span>
+      <button aria-label={'移除任务文件 '+file.path} disabled={launching||Boolean(launchAttempt)}
+       onClick={()=>setTaskFiles(files=>files.filter(item=>item.path!==file.path))}>移除</button></div>)}
+     <Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>
+    </details>
    </div>}
    <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
    {!readOnly&&launchBlock&&<p className="phase5-note">{launchBlock} 当前图仍可编辑、保存和导出。</p>}
@@ -895,7 +921,8 @@ function App(){
      const scoped={api,workspace:runSnapshot?.run?.workspace,run:runSnapshot?.run?.id,activation:current?.id};
      if(e)return <div className="run-evidence">
       <p>{shown.nodes.find(node=>node.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(node=>node.id===e.target)?.name}</p>
-      <h3>交接最终回答</h3><p className="field-note">此处显示下游激活实际记录的交接。</p>
+      <h3>{e.transfer?.mode==='fields'?'交接选定字段':e.transfer?.mode==='artifacts'?'交接产物引用':'交接最终回答'}</h3>
+      <p className="field-note">此处显示下游激活实际记录的交接。</p>
       {actualInputs.map((input,index)=><section key={input.handoff_id||index}>
        <pre aria-label="实际交接内容">{readable(input.content)}</pre>
        <p className="field-note">{current?.input_sent_sha256?'下游请求已有字节写入证据。':current?.kind==='agent'?'尚无下游请求写入证据。':'确定性节点的接收状态见事件。'}</p>
@@ -912,6 +939,9 @@ function App(){
        onTransition={completedPlans.some(row=>row.id===current?.id)&&current.node===n?.id?guard(()=>openPlanApproval(current)):null}/>:
        <ControlEvidence activation={current} trusted={runTrusted}/>}
       {current?.started_at&&<details><summary>激活时间</summary><pre>{readable({started_at:current.started_at,finished_at:current.finished_at})}</pre></details>}
+      {current?.task_files?.length>0&&<details><summary>本次所附任务文件</summary><pre>{readable(current.task_files)}</pre></details>}
+      {current?.data_contract&&<p className="field-note" aria-label="输出合同结果">
+       {current.data_contract.state==='PASSED'?'输出合同通过':'输出合同未通过'}{current.receipt_verified?' · 原生回执已核验':''}</p>}
       {agent&&current?.inputs?.length>0&&<details><summary>持久化输入</summary><pre>{readable(current.inputs)}</pre></details>}
       {Object.keys(current?.paged_fields||{}).filter(field=>field!=='native_tool_activity').map(field=>
        <PayloadPages key={current.id+field} {...scoped} field={field}/>)}
@@ -937,6 +967,21 @@ function App(){
     <p className="field-note" aria-label="模型目录状态">{catalog?.source||'尚无真实发现目录'}{catalog?.at?' · '+new Date(catalog.at*1000).toLocaleString():''}。{catalog?.stale?'目录过期或不可用，请刷新。':''}{catalog?.error||''} {modelKnown?'所选模型与强度在目录中；启动时仍将核验。':'当前配置尚未被目录确认，原值可继续保存。'} 登录状态与目录不代表推理成功。</p>
     <Field label="初始化提示词" note="每次新运行初始化此 Agent。"><textarea rows={3} value={n.initial_prompt||''} onChange={e=>updateNode(n.id,{initial_prompt:e.target.value})}/></Field><Field label="每轮提示词"><textarea rows={4} value={n.round_prompt||''} onChange={e=>updateNode(n.id,{round_prompt:e.target.value})}/></Field><Field label="输出与交接要求"><textarea rows={3} value={n.output_prompt||''} onChange={e=>updateNode(n.id,{output_prompt:e.target.value})}/></Field>
     <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details></>}
+    {nodeKind(n)==='agent'&&<>
+     <ContractEditor label="输出" rows={n.output_contract} maxRows={32} maxFieldLength={200}
+      onChange={rows=>updateNode(n.id,{output_contract:rows})}/>
+     <details className="contract-editor"><summary>可报告的产物路径 · {n.artifact_paths?.length||0} 项</summary>
+      <p className="field-note">填写当前工作区内的相对路径。实际回复报告这些文件时，运行器记录文件摘要。</p>
+      {(n.artifact_paths||[]).map((path,index)=><div className="task-file-row" key={index}>
+       <input aria-label={'产物路径 '+(index+1)} value={path} placeholder="例如 results/report.json" maxLength={4096}
+        onChange={event=>updateNode(n.id,{artifact_paths:n.artifact_paths.map((item,i)=>i===index?event.target.value:item)})}/>
+       <button aria-label={'移除产物路径 '+(index+1)}
+        onClick={()=>updateNode(n.id,{artifact_paths:n.artifact_paths.filter((_,i)=>i!==index)})}>移除</button>
+      </div>)}
+      <Button disabled={(n.artifact_paths?.length||0)>=8}
+       onClick={()=>updateNode(n.id,{artifact_paths:[...(n.artifact_paths||[]),'']})}>添加产物路径</Button>
+     </details>
+    </>}
     <NodeConnections node={n} graph={doc} onConnect={connect} Field={Field}/>
     {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}
     <Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[n.id]));closeInspector()}}>
@@ -945,7 +990,8 @@ function App(){
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
-  {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}/>}
+  {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
+   onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='git'&&<GitWorkspace key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} onClose={closeGit}/>}
   {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}

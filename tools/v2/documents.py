@@ -5,6 +5,7 @@ import re
 
 from studio.graph import Invalid
 
+from .data_handoff import MAX_ARTIFACTS, field_contract, file_paths
 from .canvas_structure import (EDGE_EXTENSION, ID, TRANSFER_MODES, TYPES, config_issues, connection_message,
                                fields, node_kind, number, text, validate_config)
 
@@ -50,6 +51,8 @@ def validate_draft(document, *, depth=0):
         else:
             config = {'config_version', 'config'}
             required |= config
+        if kind == 'agent':
+            config |= {'output_contract','artifact_paths'}
         fields(node, {'id', 'name', 'position', 'kind'} | config, required)
         if not isinstance(node['id'], str) or not ID.fullmatch(node['id']) or node['id'] in nodes:
             raise Invalid('节点身份无效或重复')
@@ -63,6 +66,10 @@ def validate_draft(document, *, depth=0):
             if kind == 'loop' and 'body' in node['config']:
                 validate_draft(node['config']['body'], depth=depth + 1)
             continue
+        if 'output_contract' in node:
+            field_contract(node['output_contract'])
+        if 'artifact_paths' in node:
+            file_paths(node['artifact_paths'],MAX_ARTIFACTS)
         if reference:
             if any(not isinstance(node.get(key), str) or not re.fullmatch(r'[0-9a-f]{' + str(length) + '}', node[key])
                    for key, length in (('agent_id', 32), ('agent_revision', 64))):
@@ -93,10 +100,19 @@ def validate_draft(document, *, depth=0):
                 raise Invalid('连线端口身份无效。')
         if 'transfer' in edge:
             transfer = edge['transfer']
-            fields(transfer, {'mode', 'max_chars'}, {'mode', 'max_chars'})
+            fields(transfer, {'mode', 'max_chars', 'fields'}, {'mode', 'max_chars'})
             if (not isinstance(transfer['mode'], str) or transfer['mode'] not in TRANSFER_MODES
                     or type(transfer['max_chars']) is not int or not 1 <= transfer['max_chars'] <= 20000):
                 raise Invalid('连线交接模式或长度上限无效。')
+            if transfer['mode']=='fields':
+                if not field_contract(transfer.get('fields')):
+                    raise Invalid('请选择至少一个要交接的字段。')
+            elif 'fields' in transfer:
+                raise Invalid('只有选定字段交接可以声明字段。')
+            if transfer['mode']=='artifacts':
+                source = nodes.get(edge['source'])
+                if not source or node_kind(source)!='agent' or not source.get('artifact_paths'):
+                    raise Invalid('产物引用交接需要源 Agent 配置明确的产物路径。')
         if typed:
             if problem := connection_message(edge, nodes, previous):
                 raise Invalid(problem)

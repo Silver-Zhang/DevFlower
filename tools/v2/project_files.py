@@ -14,6 +14,7 @@ from studio.workspace_read_policy import IgnoreRules, safe_parts, stamp
 
 MAX_ENTRIES = 512
 MAX_BYTES = 16_000
+MAX_ARTIFACT_BYTES = 1_000_000
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
@@ -147,17 +148,17 @@ class FileView:
             raise Blocked('项目忽略规则拒绝查看此位置')
 
 
-def read_project(store, workspace, path, *, preview=False):
+def read_project(store, workspace, path, *, preview=False, fingerprint=False):
     relative = checked_path(path)
-    if preview and not relative.parts:
+    if (preview or fingerprint) and not relative.parts:
         raise Invalid('请选择要预览的文件')
     project = ProjectFiles(store, workspace)
     project.check_scope(relative)
     try:
         with project.open_view() as view:
             view.check_rules(relative)
-            if preview:
-                result = preview_file(view, relative)
+            if preview or fingerprint:
+                result = preview_file(view, relative, fingerprint=fingerprint)
             else:
                 view.rules.remember(relative)
                 result = list_files(project, view, relative)
@@ -197,15 +198,19 @@ def list_files(project, view, relative):
     return {'entries': sorted(rows, key=lambda row: (not row['directory'], row['name'])), 'truncated': truncated}
 
 
-def preview_file(view, relative):
+def preview_file(view, relative, *, fingerprint=False):
+    limit = MAX_ARTIFACT_BYTES if fingerprint else MAX_BYTES
+    operation = '读取产物' if fingerprint else '预览'
     with view.directory(relative.parent) as directory, view.regular(relative.name, directory) as fd:
-        if os.fstat(fd).st_size > MAX_BYTES:
-            raise Invalid(f'文件超过 {MAX_BYTES} 字节，无法预览')
+        if os.fstat(fd).st_size > limit:
+            raise Invalid(f'文件超过 {limit} 字节，无法{operation}')
         # Buffered read handles short OS reads and still enforces the byte cap.
         with os.fdopen(os.dup(fd), 'rb') as stream:
-            raw = stream.read(MAX_BYTES + 1)
-        if len(raw) > MAX_BYTES:
-            raise Invalid(f'文件超过 {MAX_BYTES} 字节，无法预览')
+            raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise Invalid(f'文件超过 {limit} 字节，无法{operation}')
+        if fingerprint:
+            return {'sha256':digest(raw),'bytes':len(raw)}
         if b'\0' in raw:
             raise Invalid('二进制文件无法预览')
         try:

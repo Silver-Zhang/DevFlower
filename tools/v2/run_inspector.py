@@ -32,7 +32,7 @@ NODE_FIELDS = ('id', 'run', 'node', 'name', 'kind', 'state', 'iteration', 'itera
                'input_sent_sha256', 'input_sent_bytes', 'input_sent_at', 'input_sent_operation_id',
                'initialization_included', 'receipt_verified', 'terminal_failure_verified', 'recovery_evidence',
                'provider_outcome', 'provider', 'model', 'effort', 'error_class', 'error_category', 'visible_error',
-               'output_instructions', 'passed', 'gate_verdict')
+               'output_instructions', 'passed', 'gate_verdict', 'data_contract', 'task_files')
 EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace', 'node', 'activation', 'iteration_path',
                 'iteration', 'attempt', 'edge', 'handoff_id', 'source', 'target_activation', 'target_node',
                 'source_round', 'target_round', 'content_sha256', 'source_content_sha256', 'received_at',
@@ -60,7 +60,9 @@ WORKER_EVENTS = {
 }
 PRIVATE = PRIVATE_FIELDS | {'env', 'argv', 'command_line', 'native_history', 'native_child', 'readonly_files',
                             'config_root', 'runtime_sources', 'runtime_source', 'executable', 'storage',
-                            'private_state', 'api_token', 'stderr', 'stdout', 'raw_stderr', 'raw_stdout'}
+                            'private_state', 'api_token', 'stderr', 'stdout', 'raw_stderr', 'raw_stdout',
+                            'token', 'id_token', 'api-key', 'access-token', 'refresh-token', 'auth-token',
+                            'id-token', 'passwd', 'anthropic_custom_headers'}
 
 
 def take(value, fields):
@@ -202,6 +204,9 @@ class RunInspector:
         definition = value['definition']
         public_def = self.clean(take(definition, ('id', 'draft_id', 'draft_revision', 'workspace', 'draft_document',
                                                  'graph', 'graph_sha256', 'designer_runtime')))
+        if definition.get('task_files'):
+            public_def['task_files'] = self.clean([take(item, ('path','sha256','bytes'))
+                                                  for item in definition['task_files']])
         if isinstance(definition.get('agent_configs'), dict):
             # The existing Plan confirmation needs only the approved working directory.
             public_def['agent_configs'] = self.clean({path: {'config': take(row.get('config'), ('cwd',))}
@@ -355,6 +360,9 @@ class RunInspector:
                           definition=self.clean(take(definition, ('id', 'workspace', 'draft_id', 'draft_revision',
                                                                    'graph_sha256', 'designer_runtime'))),
                           through_event=max_seq or 0, activations=[], events=[])
+            if definition.get('task_files'):
+                result['definition']['task_files'] = self.clean([take(item, ('path','sha256','bytes'))
+                                                                for item in definition['task_files']])
             budget = EXPORT_BYTES - len(canonical(result)) - 4096
             omitted_fields = 0
             for key in nodes:

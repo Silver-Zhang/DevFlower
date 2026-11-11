@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, RefreshCw, X} from 'lucide-react';
 
-export function ProjectFiles({api, workspace, onClose, onAttach}) {
+export function ProjectFiles({api, workspace, onClose, onAttach, onTaskAttach}) {
  const [tree, setTree] = useState(() => new Map());
  const [expanded, setExpanded] = useState(new Set());
  const [preview, setPreview] = useState(null);
@@ -48,12 +48,12 @@ export function ProjectFiles({api, workspace, onClose, onAttach}) {
   });
   if (opening && (!tree.has(path) || tree.get(path).error)) load(path);
  }
- async function readFile(path, opener) {
+ async function readFile(path, opener, forTask=false) {
   const version = ++previewVersion.current;
   previewOpener.current = opener;
   setPreview({path, loading: true});
   try {
-   const result = await api('project-file?' + query(path));
+   const result = await api((forTask ? 'task-file?' : 'project-file?') + query(path));
    if (version === previewVersion.current) setPreview(result);
   } catch (error) {
    if (version === previewVersion.current) setPreview({path, error: error.message});
@@ -107,7 +107,11 @@ export function ProjectFiles({api, workspace, onClose, onAttach}) {
    {preview && <section className="project-preview" aria-label="文件预览">
     <header><button ref={previewBack} aria-label="返回文件树" title="返回文件树" onClick={back}><ArrowLeft size={16}/></button>
      <h3>{preview.path}</h3>
-     {onAttach&&!preview.loading&&!preview.error&&<button onClick={()=>onAttach(preview.path)}>附加到助手</button>}</header>
+     {onAttach&&!preview.loading&&!preview.error&&<button onClick={()=>onAttach(preview.path)}>附加到助手</button>}
+     {onTaskAttach&&!preview.loading&&!preview.error&&(preview.sha256?
+      <button onClick={()=>onTaskAttach(preview)}>附加到本次运行</button>:
+      <button onClick={()=>readFile(preview.path,previewOpener.current,true)}>预览发送内容</button>)}</header>
+    {preview.sha256&&<p className="field-note">以下是附加后将发送的文本。</p>}
     {preview.loading ? <p className="muted small" role="status">正在读取文件…</p> :
      preview.error ? <p className="error-text" role="alert">{preview.error}</p> :
      <pre tabIndex={0}>{preview.text || <span className="muted">空文件</span>}</pre>}

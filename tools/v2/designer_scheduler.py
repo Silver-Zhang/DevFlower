@@ -12,6 +12,8 @@ from studio.workbench_data import public_data
 from studio.workbench_scheduler import Scheduler, merge_output, writes
 
 from .designer_graph import condition, handoff, input_value, output_node, select_branch
+from .data_handoff import verify_artifacts
+from .run_inspector import RunInspector
 
 TERMINAL = {'COMPLETED', 'FAILED', 'SKIPPED', 'CANCELLED', 'RECOVERY_REQUIRED'}
 PENDING = {'PENDING', 'READY', 'WAITING'}
@@ -222,8 +224,9 @@ class DesignerScheduler(Scheduler):
                     continue
                 try:
                     inputs = self.inputs(row, eligible, rows)
-                except (Invalid, ValueError) as failure:
-                    self.transition(row, 'FAILED', reason=safe_text(str(failure)), finished_at=time.time())
+                except (Invalid, ValueError, Blocked) as failure:
+                    self.transition(row, 'FAILED', event_kind='handoff-contract-failed',
+                                    reason=safe_text(str(failure)), finished_at=time.time())
                     continue
                 row = self.ready(row, node, inputs, len(incoming))
             if node['kind'] == 'agent' and not self.can_dispatch(node):
@@ -361,7 +364,17 @@ class DesignerScheduler(Scheduler):
         values = []
         for edge in edges:
             source = upstream[edge['source']]
-            content, evidence = handoff(source['output'], edge, control=row['kind'] != 'agent')
+            output = source['output']
+            try:
+                if edge['transfer']=='artifacts':
+                    verify_artifacts(self.rt.store,self.workspace,self.run,source,output.get('artifacts'))
+                elif output.get('artifacts'):
+                    output = dict(output,artifacts=[])
+                if edge['transfer']=='fields':
+                    output = RunInspector(self.rt.store).clean(output)
+                content, evidence = handoff(output, edge, control=row['kind'] != 'agent')
+            except (Invalid,ValueError,Blocked) as error:
+                raise Invalid('连线 '+edge['id']+'：'+str(error)) from error
             content_hash = digest(canonical(content))
             values.append(dict(edge=edge['id'], source=source['node'], iteration=source['iteration'],
                                iteration_path=source['iteration_path'], activation=source['id'],
@@ -402,6 +415,11 @@ class DesignerScheduler(Scheduler):
             else:
                 raise Invalid('冻结的节点类型无法执行。')
             current = self.db.get('activation', row['id'])
+            contract = current.get('data_contract')
+            if contract and contract['state']=='FAILED':
+                self.transition(current,'FAILED',event_kind='output-contract-failed',output=public_data(output),
+                                reason=contract['reason'],finished_at=time.time())
+                return
             self.transition(current, 'COMPLETED', event_kind=event_kind, output=public_data(output),
                             finished_at=time.time(), **evidence)
         except Exception as failure:

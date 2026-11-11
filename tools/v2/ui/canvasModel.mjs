@@ -3,7 +3,7 @@ import types from '../canvas_types.json';
 export const nodeKind = node => node.kind ?? 'agent';
 export const nodeType = node => types[nodeKind(node)];
 export const defaultTransfer = Object.freeze({mode:'answer',max_chars:16000});
-export const transferModes = {envelope:'节点数据',answer:'最终回答',summary:'摘要',result:'结构化结果',none:'仅控制顺序'};
+export const transferModes = {envelope:'节点数据',answer:'最终回答',summary:'摘要',result:'结构化结果',fields:'选定字段',artifacts:'产物引用',none:'仅控制顺序'};
 export const emptyPredicate = {field:'',op:'equals',value:true};
 
 export function ports(node, direction) {

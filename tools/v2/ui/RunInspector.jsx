@@ -13,6 +13,7 @@ const kinds={'run-authorized':'授权本次运行','worker-bound':'绑定运行�
  'handoff-ready':'固定上游交接','handoff-received':'下游已接收','handoff-sent':'交接随请求写入',
  'node-ready':'节点已就绪','node-pending':'登记节点','node-starting':'开始处理节点',
  'node-completed':'节点完成','node-skipped':'跳过节点','node-failed':'节点失败',
+ 'output-contract-failed':'输出字段或产物合同失败','handoff-contract-failed':'交接合同失败',
  'node-recovery-required':'节点待核验','merge-completed':'汇合完成','condition-decided':'条件判定',
  'route-selected':'选择路由','validation-decided':'验证结果','human-confirmation-required':'等待人工审批',
  'human-decision':'记录人工决定','human-approved':'人工批准','human-rejected':'人工拒绝',
