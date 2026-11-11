@@ -12,13 +12,13 @@
 
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
-| 工作空间 | 12 | 8 | 2 | 2 | 66.7% |
-| 会话中心 | 15 | 12 | 3 | 0 | 80.0% |
-| Agent 与 Provider | 15 | 10 | 3 | 2 | 66.7% |
+| 工作空间 | 12 | 9 | 1 | 2 | 75.0% |
+| 会话中心 | 15 | 15 | 0 | 0 | 100.0% |
+| Agent 与 Provider | 15 | 11 | 2 | 2 | 73.3% |
 | 工作流设计器 | 15 | 14 | 0 | 1 | 93.3% |
 | Workflow Runtime | 15 | 14 | 1 | 0 | 93.3% |
-| 运行监控与研发自动化 | 15 | 12 | 2 | 1 | 80.0% |
-| **合计** | **87** | **70** | **11** | **6** | **80.5%** |
+| 运行监控与研发自动化 | 15 | 13 | 2 | 0 | 86.7% |
+| **合计** | **87** | **76** | **6** | **5** | **87.4%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -36,7 +36,7 @@
 | W06 | 文本文件只读预览 | `tools/studio/workbench_ui/ProjectFiles.jsx` | `tools/v2/ui/ProjectFiles.jsx` | C | P1 | 正常文本、超限、二进制、拒绝路径均明确 |
 | W07 | 可配置的任务项目上下文与文件引用 | `tools/studio/project_files.py` | `tools/v2/data_handoff.py`、`tools/v2/ui/ProjectFiles.jsx` | C | P0 | 显式选择预览文件，启动冻结公开文本与摘要，实际请求和重开记录可核对 |
 | W08 | 远程工作空间与运行环境区分 | `#9` | — | M | P2 | 远程环境信息和凭据隔离正确 |
-| W09 | 嵌套目录原生配置发现 | `tools/studio/agent_sessions.py` | `tools/v2/native_sessions.py` | P | P1 | 嵌套 .claude/.codex 完整覆盖与覆盖统计 |
+| W09 | 嵌套目录原生配置发现 | `tools/studio/agent_sessions.py` | `tools/v2/native_sessions.py`、`tools/v2/ui/NativeSessions.jsx` | C | P1 | 分开显示仅有配置的目录与历史来源，范围或预算不足时显示覆盖限制 |
 | W10 | 工作流模板库与收藏 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | — | M | P1 | 模板新建、收藏、加载、修改不污染原版 |
 | W11 | 项目内设计迁移与历史归档 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py` | P | P1 | 迁移不重写原始历史，导入导出可读回 |
 | W12 | 路径权限与保护范围 | `tools/studio/workspace_access.py` | `tools/v2/workspace_select.py` | C | P0 | symlink、protected、跨 workspace 不泄露 |
@@ -55,11 +55,11 @@
 | S08 | 用户回答、Markdown 与代码块阅读 | `tools/studio/workbench_ui/ConversationView.jsx` | `tools/v2/ui/NativeMessages.jsx` | C | P1 | Markdown、代码、工具消息清晰区分 |
 | S09 | 公开工具活动与摘要 | `tools/studio/tool_activity.py` | `tools/v2/native_session_activity.py` | C | P1 | 工具活动隐藏私有输入并保留状态 |
 | S10 | 新建独立原生会话 | `tools/studio/session_center.py`、`local_codex_adapter.py`、`local_claude_adapter.py` | `tools/v2/session_operations.py` | C | P0 | Codex 与 Claude 使用单独批准的原生配置创建。Claude 2.1.319 采用其用户级认证、服务地址及原生模型默认。发送意图先落盘，按已核验的实际 UUID 重开 |
-| S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py` | P | P1 | 本地别名按工作空间与会话持久化；Provider 原生命名写入口待实现 |
+| S11 | 重命名与别名 | `tools/studio/workbench_sessions.py` | `tools/v2/native_session_views.py`、`tools/v2/native_session_title.py` | C | P1 | 本地别名独立持久化；受管 Codex 使用原生 UUID、标题版本和同一写租约修改并回读。未知结果仅回读原意图 |
 | S12 | 隐藏、归档、回收站与恢复 | `tools/studio/session_batch.py` | `tools/v2/native_session_views.py` | C | P1 | 单条可逆整理；Codex 0.163.0 工作流整组入回收站按预览成员与历史版本原子提交，忙碌或来源变化整组拒绝 |
 | S13 | 安全恢复已有原生会话 | `tools/studio/session_center.py` | `tools/v2/session_operations.py` | C | P0 | Codex 使用原生锁。Claude 只续聊本产品已核验创建且最新历史、配置、工作区和 UUID 一致的会话。单写协调范围为参与 DevFlower 租约的写者 |
-| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | `tools/v2/codex_terminals.py`、`tools/v2/ui/NativePty.jsx` | P | P1 | 受支持的 Linux/Bubblewrap 与 Codex 0.163.0 可启用同一受管 PTY，浏览器与本机端显式接管。Claude PTY 关闭，外部 Claude 历史保持只读 |
-| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/codex_terminals.py` | P | P0 | Codex 受管 API 与 PTY 共用 UUID 租约和原生线程锁。Claude 受管入口共用 UUID 租约，外部 CLI 不参与。未知效果不重发 |
+| S14 | 一键终端与 PTY 连接/接管 | `tools/studio/native_terminals.py`、`native_attach.py`、`NativeTerminal.jsx` | `tools/v2/codex_terminals.py`、`tools/v2/ui/NativePty.jsx` | C | P1 | Linux/Bubblewrap 与 Codex 0.163.0 核验实际隔离配置后恢复原生会话。浏览器与本机端接管同一 PTY，关闭视图与显式停止分开。Claude PTY 关闭 |
+| S15 | 原生会话单写租约与跨端一致性 | `tools/studio/native_local.py` | `tools/v2/session_lease.py`、`tools/v2/session_operations.py`、`tools/v2/codex_terminals.py` | C | P0 | 受管发送、原生改名及 PTY 使用同一 UUID 租约。Claude 外部变更使受管续聊失效，历史仍可阅读。未知效果不重发 |
 
 #### 会话中心候选证据
 
@@ -121,7 +121,7 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | A02 | Claude Code 执行能力与模型目录 | `tools/studio/local_claude_adapter.py` | `tools/v2/cli_providers.py`、`tools/v2/claude_native_catalog.py` | C | P0 | 原生初始化给出模型与推理强度，受管进程使用本机配置 |
 | A03 | Copilot 模型目录与身份 | `tools/studio/copilot_adapter.py` | `tools/v2/copilot_catalog.py` | P | P1 | 目录与认证来源可证，不等于执行 |
 | A04 | Copilot 可执行 Agent 适配 | `tools/studio/copilot_adapter.py` | — | M | P2 | 仅真实支持的模式可执行 |
-| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/cli_providers.py` | P | P1 | 每种 CLI 使用本机默认 Profile，多 HOME 选择待接入 |
+| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/native_agent_profiles.py`、`tools/v2/cli_providers.py`、`tools/v2/ui/AgentManager.jsx` | P | P1 | 同一原生 HOME 内可选择获准的模型与强度配置，冻结来源，拒绝跨 Profile 续聊。独立 HOME 与账户选择尚缺 |
 | A06 | Agent 身份、职责、背景和目标 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/agent_records.py`、`tools/v2/ui/AgentManager.jsx` | C | P0 | 角色模板与 Provider 分离，版本按工作区保存和重开 |
 | A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | `tools/v2/cli_providers.py`、`tools/v2/codex_agent_plan.py` | C | P0 | 两种 CLI 的三种模式有原生映射，Codex 完整 Plan 转 Agent 需单独确认 |
 | A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | `tools/v2/agent_execution.py` | C | P0 | 核验原生来源、工作目录、UUID 及写租约，外部 Claude 保持只读 |
@@ -131,7 +131,7 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | `tools/v2/codex_agent_scope.py`、`tools/v2/claude_agent_scope.py` | C | P0 | 原生工作区读写与受控命令，验证越界、认证环境及不可用时的拒绝 |
 | A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | `tools/v2/agent_records.py`、`tools/v2/claude_agent_scope.py` | C | P1 | Claude、Codex 原生选择及内容复核，Claude 区分工作区与用户级来源 |
 | A14 | 子 Agent 与托管子任务 | `tools/studio/managed_children.py` | — | M | P2 | 深度、数量、授权和回执正确 |
-| A15 | 超时、预算与能力错误 | `tools/studio/workbench_runtime.py` | `tools/v2/cli_providers.py`、`tools/v2/runtime.py` | P | P0 | 两者支持超时与调用次数约束，Claude 支持原生美元预算 |
+| A15 | 超时、预算与能力错误 | `tools/studio/workbench_runtime.py` | `tools/v2/execution_facts.py`、`tools/v2/runtime.py`、`tools/v2/run_inspector.py` | C | P0 | 显示冻结限额、实际进程数、受支持的原生费用与超时。区分预检拒绝、已核验失败与未知效果，保留恢复证据 |
 
 #### Phase 3 候选证据
 
@@ -220,7 +220,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/verification.py`、`tools/orchestration/gate.py` | `tools/v2/development_evidence.py`、`tools/v2/designer_scheduler.py` | C | P1 | 固定 Git 源码与测试入口，隔离执行并保留实际进程证据，三名不同会话的 CLI 角色绑定同轮；仅 `ACCEPT` 通过 |
 | O12 | 执行费用/Token 用量 | `tools/studio/usage.py` | `tools/v2/run_summary.py` | P | P2 | unknown 不补零，provider 自报需标注 |
 | O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx` | `tools/v2/ui/style.css` | P | P1 | 模块级操作与 1280/1440/窄屏评分 |
-| O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | — | M | P1 | 真实日志和键盘接管，不启动第二写者 |
+| O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | `tools/v2/codex_terminals.py`、`tools/v2/ui/RunInspector.jsx` | C | P1 | 从核验的运行激活定位相同原生 UUID 与已存在的 PTY。新建终端需要单独确认工作区读写 |
 | O15 | 完整自举研发场景验证 | `#132` | `tools/v2/development_graph.py`、`tools/v2/designer_scheduler.py`、`tests/v2_development_live.py` | C | P0 | 独立真实 CLI 开发、测试、审核、反馈修复、再验证与 Gate，绑定可丢弃 Git 候选与轮次证据 |
 
 #### Phase 6 Batch 1 运行检查器证据
