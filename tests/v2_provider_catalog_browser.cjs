@@ -13,6 +13,7 @@ const states=complete=>fs.writeFileSync(path.join(out,'results.json'),JSON.strin
 },null,2));
 const panel=page=>page.getByLabel('Provider 模型目录',{exact:true});
 const opener=page=>page.getByRole('button',{name:'Provider 模型目录',exact:true});
+const navigation=page=>page.getByRole('button',{name:'展开导航栏',exact:true});
 const close=page=>page.getByRole('button',{name:'关闭 Provider 模型目录',exact:true});
 const refresh=page=>page.getByRole('button',{name:'刷新 GitHub Copilot 目录',exact:true});
 const row=(page,id)=>panel(page).getByText(id,{exact:true});
@@ -42,6 +43,10 @@ async function watch(page,name,test) {
 }
 async function show(page,{key=false}={}) {
  const reply=page.waitForResponse(response=>isReply(response,'GET'));
+ if(page.viewportSize().width<=760){
+  if(key){await navigation(page).focus();await page.keyboard.press('Enter')}
+  else await navigation(page).click();
+ }
  if(key) {
   await opener(page).focus();
   await page.keyboard.press('Enter');
@@ -133,7 +138,7 @@ async function storage(page) {
   await noConfig.keyboard.press('Escape');
   await panel(noConfig).waitFor({state:'hidden'});
   await settled(noConfig);
-  assert.equal(await opener(noConfig).evaluate(el=>el===document.activeElement),true);
+  assert.equal(await navigation(noConfig).evaluate(el=>el===document.activeElement),true);
   assert.deepEqual(requests.slice(before),[{label:'empty',path:endpoint,method:'GET'}]);
   assert.deepEqual(await storage(noConfig),saved);
  });
@@ -241,7 +246,7 @@ async function storage(page) {
   await page.keyboard.press('Escape');
   await panel(page).waitFor({state:'hidden'});
   await settled(page);
-  assert.equal(await opener(page).evaluate(el=>el===document.activeElement),true);
+  assert.equal(await navigation(page).evaluate(el=>el===document.activeElement),true);
   const forbidden=requests.filter(item=>item.path==='external'||(item.method==='POST'&&
    ![endpoint,'/api/v2/providers/discover','/api/v2/workspaces/open'].includes(item.path)));
   assert.deepEqual(forbidden,[]);

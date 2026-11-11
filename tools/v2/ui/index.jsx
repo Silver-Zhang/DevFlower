@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
-import {FolderOpen,Plus,Save,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose} from 'lucide-react';
+import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
@@ -17,6 +17,7 @@ import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../st
 import {CanvasContextMenu, ConnectedNodePicker} from '../../studio/workbench_ui/CanvasMenus.jsx';
 import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {WorkflowLibrary} from '../../studio/workbench_ui/WorkflowLibrary.jsx';
+import {SidebarToggle} from '../../studio/workbench_ui/WorkspaceLayout.jsx';
 import {downloadFile,HistoryArchives} from './HistoryArchives.jsx';
 import {LocalDelivery} from './LocalDelivery.jsx';
 import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
@@ -165,6 +166,11 @@ function App(){
  const summaryAction=useRef(null),summaryInput=useRef(null),summaryOpener=useRef(null),summarySource=useRef(null);
  const filesOpen=sideView==='files',nativeOpen=sideView==='native';
  const workspaceEpoch=useRef(0),workspacePicker=useRef(null),filesOpener=useRef(null),nativeOpener=useRef(null);
+ const navigationToggle=useRef(null),navigationPane=useRef(null),templatesOpener=useRef(null),archivesOpener=useRef(null),taskContext=useRef(null);
+ const [compact,setCompact]=useState(()=>matchMedia('(max-width: 760px)').matches);
+ const [drawer,setDrawer]=useState(false);
+ const [sidebarHidden,setSidebarHidden]=useState(()=>localStorage.getItem('devflower-v2-sidebar-hidden')==='true');
+ const navigationOpen=!canvasFocused&&(compact?drawer:!sidebarHidden);
  const [theme,setTheme]=useState(()=>localStorage.getItem('devflower-v2-theme')||'system');
  const [measurements,setMeasurements]=useState(()=>new Map());
  const [catalog,setCatalog]=useState(null),[catalogBusy,setCatalogBusy]=useState(false),[runs,setRuns]=useState([]);
@@ -176,17 +182,41 @@ function App(){
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
+ useEffect(()=>{
+  const query=matchMedia('(max-width: 760px)');
+  const resize=()=>{setCompact(query.matches);setDrawer(false)};
+  query.addEventListener('change',resize);
+  return ()=>query.removeEventListener('change',resize);
+ },[]);
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
  function invalidateProviderView(){setProviderGeneration(++providerEpoch.current)}
  function setSideView(view){
   if(providerOpen||view==='providers')invalidateProviderView();
+  if(view)setDrawer(false);
   setSidePanel(view);
+ }
+ function toggleNavigation(){
+  if(canvasFocused){setCanvasFocused(false);if(compact)setDrawer(true);else setSidebarHidden(false);return}
+  if(compact){setDrawer(open=>!open);return}
+  localStorage.setItem('devflower-v2-sidebar-hidden',String(!sidebarHidden));
+  setSidebarHidden(!sidebarHidden);
+ }
+ function focusNavigation(opener){
+  const button=opener?.current;
+  (button?.getClientRects().length?button:navigationToggle.current)?.focus();
+ }
+ useEffect(()=>{
+  if(compact&&navigationOpen)navigationPane.current?.querySelector('button:not(:disabled)')?.focus();
+ },[compact,navigationOpen]);
+ function closeSideView(opener){
+  setSideView('');
+  requestAnimationFrame(()=>focusNavigation(opener));
  }
  function setSelected(id){invalidateProviderView();setSelectedNode(id);setNodeSelection(id?[id]:[])}
  function closeProviderCatalog(){
   setSideView('');
   const epoch=providerEpoch.current;
-  requestAnimationFrame(()=>{if(providerEpoch.current===epoch)providerOpener.current?.focus()});
+  requestAnimationFrame(()=>{if(providerEpoch.current===epoch)focusNavigation(providerOpener)});
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
@@ -234,7 +264,7 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function showRun(id,w=workspaceRef.current,environment){setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
  function editDraft(){setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
   try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');const done=ended(response.state)&&ended(response.run.persisted_state??response.state);if(done)refreshRuns();return done}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
@@ -358,7 +388,7 @@ function App(){
  }
  function closeRunSummary(){
   clearRunSummary();
-  requestAnimationFrame(()=>summaryOpener.current?.focus());
+  requestAnimationFrame(()=>focusNavigation(summaryOpener));
  }
  function beginTransfer(){
   const currentWorkspace=workspaceRef.current;
@@ -466,6 +496,7 @@ function App(){
  }
  function selectWorkspace(w,rows,row=null){
   clipboard.current=null;setCanvasFocused(false);setAgentVersions(null);
+  setDrawer(false);
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
@@ -486,21 +517,16 @@ function App(){
    setError('本次运行最多附加 3 个项目文件。');return;
   }
   setTaskFiles(files=>[...files.filter(item=>item.path!==path),{path,sha256,bytes}]);
+  if(taskContext.current)taskContext.current.open=true;
   setNotice('已选择 '+path+'。启动时会核验文件摘要。');
  }
- function closeGit(){
-  setSideView('');
-  requestAnimationFrame(()=>gitOpener.current?.focus());
- }
+ function closeGit(){closeSideView(gitOpener)}
  function openAssistant({file,run}={}){
   if(file)setAssistantFiles(list=>list.includes(file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
   setSideView('assistant');
  }
- function closeAssistant(){
-  setSideView('');
-  requestAnimationFrame(()=>assistantOpener.current?.focus());
- }
+ function closeAssistant(){closeSideView(assistantOpener)}
  async function applyAssistant(data){
   const w=workspaceRef.current,epoch=workspaceEpoch.current,gen=generation.current;
   const sameDraft=()=>w&&data.workspace===w.id&&inWorkspace(w,epoch)&&generation.current===gen&&viewModeRef.current==='draft'&&
@@ -511,10 +537,7 @@ function App(){
   if(!sameDraft())throw Error('验证期间草稿已变化，提案未应用。');
   edit(result.document);
  }
- function closeFiles(){
-  setSideView('');
-  requestAnimationFrame(()=>filesOpener.current?.focus());
- }
+ function closeFiles(){closeSideView(filesOpener)}
  async function openRunTerminal(activation){
   const current=runRef.current,w=workspaceRef.current;
   if(!current||!w||activation.run!==current.id)return;
@@ -523,18 +546,12 @@ function App(){
   if(!target.available)throw Error(target.reason);
   setRunTerminal(target);setSideView('run-pty');
  }
- function closeNative(){
-  setSideView('');
-  requestAnimationFrame(()=>nativeOpener.current?.focus());
- }
+ function closeNative(){closeSideView(nativeOpener)}
  function openAgents(node=null){
   setAgentPanel({node});
   setSideView('agents');
  }
- function closeAgents(){
-  setSideView('');
-  requestAnimationFrame(()=>agentOpener.current?.focus());
- }
+ function closeAgents(){closeSideView(agentOpener)}
  async function openPlanApproval(activation){
   const w=workspaceRef.current,run=runRef.current;
   const config=runSnapshot?.definition?.agent_configs?.[activation.node]?.config;
@@ -631,7 +648,7 @@ function App(){
  },[]);
  async function browse(path){const epoch=++folderEpoch.current;setFolderError('');setFolder(f=>f?{...f,loading:true}:f);try{const listing=await api('folders'+(path?'?path='+encodeURIComponent(path):''));if(folderOpen.current&&epoch===folderEpoch.current){setFolder(listing);setFolderPath(listing.path)}}catch(e){if(folderOpen.current&&epoch===folderEpoch.current){setFolderError(e.message);setFolder(f=>f?{...f,loading:false}:f)}}}
  function hideFolder(){folderOpen.current=false;folderEpoch.current++;setFolder(null);lastFocus.current?.focus()}
- function showFolder(){lastFocus.current=document.activeElement;folderOpen.current=true;setFolderPath(status?.roots?.[0]||'');setFolder({entries:[],roots:status?.roots||[],loading:true});browse()}
+ function showFolder(){lastFocus.current=document.activeElement;setDrawer(false);folderOpen.current=true;setFolderPath(status?.roots?.[0]||'');setFolder({entries:[],roots:status?.roots||[],loading:true});browse()}
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
  function resetCanvasSelection(){setNodeSelection([]);setEdgeSelection([]);setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);dragBase.current=null}
  function clearSelection(){setSelected(null);setEdge(null);setEdgeSelection([]);setCanvasMenu(null);setArrangeOpen(false)}
@@ -731,17 +748,28 @@ function App(){
  useEffect(()=>{
   function key(event){
    if(event.defaultPrevented)return;
+   if(event.key==='Tab'&&compact&&navigationOpen&&!folder&&!pending&&!summaryFile&&!planApproval){
+    const items=[navigationToggle.current,...(navigationPane.current?.querySelectorAll('button:not(:disabled)')||[])];
+    const current=items.indexOf(document.activeElement);
+    event.preventDefault();
+    const next=current===-1?(event.shiftKey?items.length-1:0):
+     (current+(event.shiftKey?-1:1)+items.length)%items.length;
+    items[next]?.focus();
+    return;
+   }
    if(event.key==='Escape'){
     if(canvasMenu||nodePicker||arrangeOpen){setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);canvasRef.current?.focus();return}
     if(pendingRef.current){closePending();return}
     if(folder){hideFolder();return}
+    if(compact&&drawer){setDrawer(false);focusNavigation();return}
     if(providerOpen){closeProviderCatalog();return}
     if(filesOpen){closeFiles();return}
     if(nativeOpen){closeNative();return}
     if(sideView==='assistant'){closeAssistant();return}
     if(sideView==='git'){closeGit();return}
     if(sideView==='agents'){closeAgents();return}
-    if(['templates','archives'].includes(sideView)){setSideView('');return}
+    if(sideView==='templates'){closeSideView(templatesOpener);return}
+    if(sideView==='archives'){closeSideView(archivesOpener);return}
     closeInspector();
    }
    const letter=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
@@ -867,28 +895,49 @@ function App(){
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
- return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')}>
-  <header className="app-header"><a className="brand" href="/" onClick={e=>e.preventDefault()}><Workflow size={22}/> DevFlower <span>V2</span></a><span className="channel">Development</span><div className="header-spacer"/><label className="theme">外观<select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label><Button ref={workspacePicker} icon={FolderOpen} disabled={!status||!!busy} onClick={showFolder}>{workspace?workspace.name:'打开工作空间'}</Button></header>
-  <aside className="navigation"><div className="section-heading"><span>工作流</span><button aria-label="新建工作流" disabled={!workspace||!!busy} onClick={()=>navigate(()=>{install(blank());remember(workspace,null)},'新建工作流')}><Plus size={17}/></button></div>
-   <div className="workspace-line" title={workspace?.path}>{workspace?.path||'先打开一个工作空间'}</div>
-   {workspace&&<div className="workspace-actions">
-    <Button ref={filesOpener} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
-    <Button ref={nativeOpener} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
-    <Button ref={gitOpener} aria-expanded={sideView==='git'} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
-    <Button ref={assistantOpener} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
-    <Button ref={agentOpener} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
-    <Button disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}>关闭工作空间</Button>
-   </div>}
-   <Button ref={providerOpener} className="provider-catalog-open" aria-expanded={providerOpen}
-    onClick={()=>providerOpen?closeProviderCatalog():setSideView('providers')}>Provider 模型目录</Button>
-   <Button ref={summaryOpener} className="run-summary-open" onClick={chooseRunSummary}>查看运行摘要文件</Button>
+ return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')}>
+  <SidebarToggle collapsed={!navigationOpen} onClick={toggleNavigation} ref={navigationToggle}
+   aria-controls="v2-navigation" aria-expanded={navigationOpen}/>
+  <header className="app-header">
+   <div className="brand"><Workflow size={21}/> DevFlower <span>V2</span></div>
+   <div className="header-spacer"/>
+   <label className="theme"><select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+   <Button ref={workspacePicker} className="workspace-picker" icon={FolderOpen} disabled={!status||!!busy} onClick={showFolder}
+    title={workspace?.path}>{workspace?workspace.name:'打开工作空间'}</Button>
+  </header>
+  {compact&&navigationOpen&&<div className="navigation-shade" onClick={()=>{setDrawer(false);focusNavigation()}}/>}
+  <aside ref={navigationPane} id="v2-navigation" className="navigation" aria-label="工作台导航" hidden={!navigationOpen}>
+   {workspace&&<><div className="workspace-heading">
+    <div><strong>{workspace.name}</strong><div className="workspace-line" title={workspace.path}>{workspace.path}</div></div>
+    <button aria-label="关闭工作空间" title="关闭工作空间" disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}><X size={15}/></button>
+   </div>
+   <nav className="workspace-actions" aria-label="工作空间工具">
+    <Button ref={filesOpener} icon={FolderOpen} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
+    <Button ref={agentOpener} icon={Bot} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
+    <Button ref={nativeOpener} icon={MessageSquare} aria-expanded={nativeOpen} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
+    <Button ref={assistantOpener} icon={Sparkles} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
+    <Button ref={gitOpener} icon={GitBranch} aria-expanded={sideView==='git'} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
+   </nav>
+   <div className="section-heading"><span>工作流</span><button aria-label="新建工作流" title="新建工作流" disabled={!!busy}
+    onClick={()=>navigate(()=>{install(blank());remember(workspace,null);setDrawer(false)},'新建工作流')}><Plus size={17}/></button></div>
+   <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(async()=>{await openDraft(row);setDrawer(false)},'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}
+    {!drafts.length&&<p className="muted small empty-list">尚无已保存的工作流</p>}
+   </nav>
+   <nav className="workspace-actions" aria-label="模板与归档">
+    <Button ref={templatesOpener} icon={LibraryBig} aria-expanded={sideView==='templates'} onClick={()=>sideView==='templates'?closeSideView(templatesOpener):setSideView('templates')}>工作流模板</Button>
+    <Button ref={archivesOpener} icon={Archive} aria-expanded={sideView==='archives'} onClick={()=>sideView==='archives'?closeSideView(archivesOpener):setSideView('archives')}>历史归档</Button>
+   </nav></>}
+   {workspace&&<section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>}
+   {!!status?.workspaces.length&&<div className="section-heading spaces">最近工作空间</div>}
+   {status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path}
+    disabled={!!busy} aria-current={w.id===workspace?.id?'location':undefined} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
+   <div className="workspace-actions workspace-utilities">
+    <Button ref={providerOpener} icon={Bot} className="provider-catalog-open" aria-expanded={providerOpen}
+     onClick={()=>providerOpen?closeProviderCatalog():setSideView('providers')}>Provider 模型目录</Button>
+    <Button ref={summaryOpener} icon={FileText} className="run-summary-open" onClick={chooseRunSummary}>查看运行摘要文件</Button>
+   </div>
    <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
     onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
-   {workspace&&<div className="workspace-actions"><Button aria-expanded={sideView==='templates'} onClick={()=>setSideView(sideView==='templates'?'':'templates')}>工作流模板</Button>
-    <Button aria-expanded={sideView==='archives'} onClick={()=>setSideView(sideView==='archives'?'':'archives')}>历史归档</Button></div>}
-   <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(()=>openDraft(row),'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}{workspace&&!drafts.length&&<p className="muted small empty-list">还没有已保存的工作流。<br/>从空白画布开始。</p>}</nav>
-   <div className="section-heading spaces">最近工作空间</div>{status?.workspaces.map(w=><button key={w.id} className={'workspace-link'+(w.id===workspace?.id?' active':'')} title={w.path} disabled={!!busy} onClick={()=>{if(w.id!==workspace?.id)navigate(()=>openWorkspacePath(w.path,w.id),'切换工作空间')}}><FolderOpen size={15}/><span>{w.name}</span></button>)}
-   <section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!workspace||!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(readOnly&&activeRun?.id===row.id?' active':'')} onClick={()=>showRun(row.id)}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>
   </aside>
   <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))} title={launchBlock&&!launchAttempt?launchBlock:status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
    {workspace&&!readOnly&&<div className="draft-transfer">
@@ -897,7 +946,7 @@ function App(){
     <input ref={transferInput} hidden type="file" accept=".json,application/json" aria-label="选择工作流文件"
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
-    <details className="task-context" aria-label="本次运行上下文">
+    <details ref={taskContext} className="task-context" aria-label="本次运行上下文">
      <summary>本次运行上下文{taskFiles.length>0?' · '+taskFiles.length+' 个文件':''}</summary>
      <Field label="本次任务"><textarea rows={2} maxLength={20000} value={taskText} disabled={launching||Boolean(launchAttempt)}
       onChange={event=>setTaskText(event.target.value)}/></Field>
@@ -960,7 +1009,15 @@ function App(){
      onAdd={()=>openPicker(canvasMenu.position)} onFit={fitCanvas}/>}
     {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={nodeKinds} canChoose={()=>true}
      onChoose={kind=>addNode(kind,nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
-    {!shown.nodes.length&&<div className="canvas-empty"><span className="empty-icon"><Workflow size={30}/></span><h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1><p>{readOnly?'仅查询持久化结果，不启动或重发请求。':workspace?'从节点库选择类型，或先添加一个 Agent。':'打开一个工作空间，创建并保存你的 Agent 工作流。'}</p>{!readOnly&&<><Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>addNode():showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button><small>空白或未配置完成的工作流也可以保存</small></>}</div>}
+    {!shown.nodes.length&&<div className="canvas-empty">
+     <span className="empty-icon"><Workflow size={29}/></span>
+     <h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1>
+     <p>{readOnly?'正在读取已保存的运行记录。':workspace?'添加 Agent 节点并绑定配置。保存后，可检查连线和权限，再启动运行。':'打开获准的项目文件夹，创建 Agent、连接工作流，并在本机运行。'}</p>
+     {!readOnly&&<div className="empty-actions">
+      <Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>addNode():showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button>
+      {workspace&&<Button icon={LibraryBig} onClick={()=>setSideView('templates')}>从模板开始</Button>}
+     </div>}
+    </div>}
    </div>
    {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id.split('/')[0]);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}</section>}
    <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
@@ -1050,9 +1107,9 @@ function App(){
    onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='templates'&&<aside className="project-panel template-panel">
    <WorkflowLibrary key={workspace.id} api={templateApi} workspace={workspace} examples={[]} searchable
-    graph={readOnly?null:doc} onUse={useTemplate} onUseTemplate={readTemplate} onClose={()=>setSideView('')}/>
+    graph={readOnly?null:doc} onUse={useTemplate} onUseTemplate={readTemplate} onClose={()=>closeSideView(templatesOpener)}/>
   </aside>}
-  {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>setSideView('')}/>}
+  {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>closeSideView(archivesOpener)}/>}
   {workspace&&sideView==='git'&&<GitWorkspace key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} onClose={closeGit}/>}
   {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}

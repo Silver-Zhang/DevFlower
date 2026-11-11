@@ -190,6 +190,11 @@ async function main() {
   await caseRun('narrow-keyboard-empty-and-no-write-entry', async () => {
    for (const width of [600, 900]) {
     await page.setViewportSize({width, height: 900});
+    const navigation = page.getByRole('button', {name: '展开导航栏', exact: true});
+    if (width <= 760) {
+     await navigation.focus();
+     await page.keyboard.press('Enter');
+    }
     await opener.focus();
     await page.keyboard.press('Enter');
     await read(defaultRow('Codex'), 'DEFAULT_CODEX_B');
@@ -198,7 +203,7 @@ async function main() {
     assert.equal(await body.count(), 0);
     await until(() => defaultRow('Codex').evaluate(element => element === document.activeElement));
     await page.keyboard.press('Escape');
-    await until(() => opener.evaluate(element => element === document.activeElement));
+    await until(() => (width <= 760 ? navigation : opener).evaluate(element => element === document.activeElement));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
    }
    await visit('Empty');

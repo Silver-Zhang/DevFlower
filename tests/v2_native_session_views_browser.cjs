@@ -86,6 +86,8 @@ async function main() {
     };
     await page.route('**/api/v2/native-session-views?*', handler);
     await page.setViewportSize({width: 600, height: 900});
+    await page.getByRole('button', {name: '展开导航栏', exact: true}).focus();
+    await page.keyboard.press('Enter');
     await native.focus();
     await page.keyboard.press('Enter');
     await until(() => seen);

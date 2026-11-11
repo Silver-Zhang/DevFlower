@@ -185,6 +185,8 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   for(const width of [600,900,1440]){
    await page.setViewportSize({width,height:900});
    await page.getByLabel('外观主题',{exact:true}).selectOption(width===900?'dark':'light');
+   const navigation=page.getByRole('button',{name:'展开导航栏',exact:true});
+   if(width<=760){await navigation.focus();await page.keyboard.press('Enter')}
    await entry.focus();await page.keyboard.press('Enter');await panel.waitFor();
    const ordinary=panel.getByRole('button',{name:'constructor',exact:true});
    await ordinary.click();
@@ -208,12 +210,13 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
    await panel.getByRole('button',{name:'预览文件 bad.bin',exact:true}).click();
    await preview.getByRole('alert').filter({hasText:'二进制'}).waitFor();
    await panel.getByRole('button',{name:'关闭项目文件',exact:true}).click();
-   await until(()=>entry.evaluate(button=>button===document.activeElement));
+   await until(()=>(width<=760?navigation:entry).evaluate(button=>button===document.activeElement));
    assert.equal(await name.inputValue(),'文件视图不改编辑');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   }
   await page.getByRole('button',{name:'关闭工作空间',exact:true}).click();
   await page.getByRole('button',{name:'放弃修改',exact:true}).click();
+  await page.setViewportSize({width:1280,height:800});
  });
 
  await test('p1a-late-preview-cannot-replace-newer-or-returning-workspace',async()=>{
@@ -452,6 +455,45 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await page.getByText('本次运行上下文 · 1 个文件',{exact:true}).waitFor();
   await page.getByLabel('移除任务文件 quick.txt',{exact:true}).click();
   await page.getByText('本次运行上下文',{exact:true}).waitFor();
+ });
+ await test('compact-workbench-keyboard-navigation-and-reopen',async()=>{
+  await page.setViewportSize({width:560,height:800});
+  const drawer=page.getByRole('complementary',{name:'工作台导航',exact:true});
+  const open=page.getByRole('button',{name:'展开导航栏',exact:true});
+  const close=page.getByRole('button',{name:'收起导航栏',exact:true});
+  await open.waitFor();
+  assert.equal(await drawer.isVisible(),false);
+  await open.focus();await page.keyboard.press('Enter');
+  await drawer.waitFor();assert.equal(await close.getAttribute('aria-expanded'),'true');
+  await until(()=>drawer.evaluate(element=>element.contains(document.activeElement)));
+  await close.focus();await page.keyboard.press('Shift+Tab');
+  assert.equal(await drawer.getByRole('button',{name:'查看运行摘要文件',exact:true}).evaluate(element=>element===document.activeElement),true);
+  await page.keyboard.press('Tab');
+  assert.equal(await close.evaluate(element=>element===document.activeElement),true);
+  await page.keyboard.press('Escape');await drawer.waitFor({state:'hidden'});
+  assert.equal(await open.evaluate(element=>element===document.activeElement),true);
+  await open.click();
+  await drawer.getByRole('button',{name:'文件',exact:true}).click();
+  await drawer.waitFor({state:'hidden'});
+  const files=page.getByRole('complementary',{name:'项目文件',exact:true});
+  await files.getByRole('button',{name:'预览文件 quick.txt',exact:true}).click();
+  await files.getByLabel('文件预览',{exact:true}).waitFor();
+  await files.getByRole('button',{name:'返回文件树',exact:true}).click();
+  await files.getByRole('button',{name:'预览文件 quick.txt',exact:true}).waitFor();
+  await files.getByRole('button',{name:'关闭项目文件',exact:true}).click();
+  await until(()=>open.evaluate(element=>element===document.activeElement));
+  for(const mode of ['light','dark']){
+   await page.getByLabel('外观主题',{exact:true}).selectOption(mode);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   assert((await page.getByLabel('工作流画布',{exact:true}).boundingBox()).width>530);
+   await page.screenshot({path:path.join(out,`layout-560-${mode}.png`)});
+  }
+  await page.setViewportSize({width:1440,height:900});await drawer.waitFor();
+  await close.click();await drawer.waitFor({state:'hidden'});await page.reload();
+  await until(async()=>await page.getByLabel('工作流名称',{exact:true}).inputValue()==='任务文件与字段交接');
+  await drawer.waitFor({state:'hidden'});
+  assert.equal(await page.getByLabel('外观主题',{exact:true}).inputValue(),'dark');
+  await open.click();await drawer.waitFor();
  });
  assert.equal(requests.some(r=>r.path.endsWith('/launch')||r.path.endsWith('/cancel')),false);
  assert.equal(requests.some(r=>/start|prepare|model|account|thread|turn|sessions/.test(r.path)),false,'M1 must not call native or legacy execution routes');assert.equal(errors.length,0,'Browser page errors: '+errors.join('; '));

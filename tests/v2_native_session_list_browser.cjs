@@ -72,6 +72,9 @@ async function main() {
   assert(await category('当前').isChecked());
  };
  const load = async () => {
+  if (page.viewportSize().width <= 760) {
+   await page.getByRole('button', {name: '展开导航栏', exact: true}).click();
+  }
   await native.click();
   await query.waitFor();
  };

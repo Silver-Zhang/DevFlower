@@ -145,6 +145,11 @@ async function noDownload(action) {
 }
 async function pick(page, buffer, name=filename) {
  const selected = page.waitForEvent('filechooser');
+ const navigation = named(page,'展开导航栏');
+ if (page.viewportSize().width <= 760 && await navigation.isVisible()) {
+  await navigation.focus();
+  await page.keyboard.press('Enter');
+ }
  const button = named(page,'查看运行摘要文件');
  await button.focus();
  await page.keyboard.press('Enter');
