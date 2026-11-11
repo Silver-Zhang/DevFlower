@@ -482,6 +482,15 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await files.getByRole('button',{name:'预览文件 quick.txt',exact:true}).waitFor();
   await files.getByRole('button',{name:'关闭项目文件',exact:true}).click();
   await until(()=>open.evaluate(element=>element===document.activeElement));
+  for(const [label,closeLabel] of [['工作流模板','关闭示例库'],['历史归档','关闭运行历史归档']]){
+   await open.click();
+   await drawer.getByRole('button',{name:label,exact:true}).click();
+   const panelClose=page.getByRole('button',{name:closeLabel,exact:true});
+   await until(()=>panelClose.evaluate(element=>element===document.activeElement));
+   await page.keyboard.press('Escape');
+   await panelClose.waitFor({state:'hidden'});
+   await until(()=>open.evaluate(element=>element===document.activeElement));
+  }
   for(const mode of ['light','dark']){
    await page.getByLabel('外观主题',{exact:true}).selectOption(mode);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

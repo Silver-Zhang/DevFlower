@@ -1105,8 +1105,10 @@ function App(){
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
   {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
    onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
-  {workspace&&sideView==='templates'&&<aside className="project-panel template-panel">
-   <WorkflowLibrary key={workspace.id} api={templateApi} workspace={workspace} examples={[]} searchable
+  {workspace&&sideView==='templates'&&<aside className="project-panel template-panel" onKeyDown={event=>{
+   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSideView(templatesOpener)}
+  }}>
+   <WorkflowLibrary key={workspace.id} api={templateApi} workspace={workspace} examples={[]} searchable autoFocusClose
     graph={readOnly?null:doc} onUse={useTemplate} onUseTemplate={readTemplate} onClose={()=>closeSideView(templatesOpener)}/>
   </aside>}
   {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>closeSideView(archivesOpener)}/>}

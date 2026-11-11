@@ -53,8 +53,10 @@ export function HistoryArchives({api,workspace,onClose}){
   });
  }
  const node=selected?.detail.activations.find(row=>row.id===activation);
- return <aside className="project-panel history-archives" aria-label="运行历史归档">
-  <header className="project-panel-header"><h2>运行历史归档</h2><button aria-label="关闭运行历史归档" onClick={onClose}><X size={16}/></button></header>
+ return <aside className="project-panel history-archives" aria-label="运行历史归档" onKeyDown={event=>{
+  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose()}
+ }}>
+  <header className="project-panel-header"><h2>运行历史归档</h2><button autoFocus aria-label="关闭运行历史归档" onClick={onClose}><X size={16}/></button></header>
   <div className="archive-controls">
    <button disabled={busy} onClick={()=>input.current.click()}>导入运行历史归档</button>
    <input hidden type="file" accept=".json,application/json" ref={input} aria-label="选择运行历史归档" onChange={importFile}/>
