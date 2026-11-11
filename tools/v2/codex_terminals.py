@@ -321,6 +321,8 @@ class CodexTerminals(NativeTerminals):
             terminal = self.snapshot(workspace,exact[0][0])
             return {'available':True,'id':terminal['id'],'handle':terminal['handle'],'run':run_id,
                     'activation':activation_id,'start_available':False}
+        if frozen.get('native_home'):
+            return {'available':False,'reason':'此激活使用独立原生 HOME，当前终端仅支持默认 HOME。'}
         if frozen.get('native_profile'):
             return {'available':False,'reason':'此激活使用命名 CLI 配置，当前终端仅使用默认配置。'}
         if cwd!=self.store.workspace(workspace)['path']:

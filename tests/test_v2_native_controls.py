@@ -150,3 +150,21 @@ class NativeControlTests(TestCase):
             with self.assertRaises(SessionRefused):
                 terminal.run_target(self.workspace,'1'*32,activation)
         terminal.operations.reader.listing.assert_not_called()
+
+    def test_run_target_explains_independent_home_without_default_lookup(self):
+        from v2.codex_terminals import CodexTerminals
+        terminal = CodexTerminals.__new__(CodexTerminals)
+        terminal.store = self.store
+        terminal.operations = Mock()
+        run, activation, chat = 'a'*32, 'b'*64, 'c'*64
+        binding = dict(self.binding,native_home={'id':'independent'})
+        self.store.db.put('activation',activation,dict(run=run,session_binding_id=chat))
+        self.store.db.put('node-session',chat,dict(workspace=self.workspace,binding=binding,
+                                                 native_session_id=self.sid))
+        use = (dict(id=run,workspace=self.workspace),None,None,dict(id=activation),None,binding,str(self.cwd))
+        with patch('v2.codex_terminals.workflow_use',return_value=use):
+            result = terminal.run_target(self.workspace,run,activation)
+        self.assertFalse(result['available'])
+        self.assertIn('独立原生 HOME',result['reason'])
+        terminal.operations.reader.listing.assert_not_called()
+        terminal.operations.resolve.assert_not_called()
