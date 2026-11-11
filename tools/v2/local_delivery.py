@@ -60,7 +60,7 @@ def package(platform, data):
         buffer = BytesIO()
         literals = [item.encode() for item in task_literals()]
         with ZipFile(buffer, 'w', compression=ZIP_STORED) as archive:
-            archive.writestr('devflower-delivery.json', canonical(manifest))
+            archive.writestr(ZipInfo('devflower-delivery.json'), canonical(manifest))
             for entry in entries:
                 name = entry['path']
                 parts = Path(name).parts

@@ -133,6 +133,7 @@ class WorkflowPortabilityTests(TestCase):
             self.assertEqual(package(platform,data),archive)
             with ZipFile(BytesIO(archive)) as files:
                 self.assertEqual(sorted(files.namelist()),['candidate/app.txt','devflower-delivery.json'])
+                self.assertTrue(all(member.date_time == (1980, 1, 1, 0, 0, 0) for member in files.infolist()))
                 manifest = json.loads(files.read('devflower-delivery.json'))
                 self.assertEqual(manifest['candidate_sha256'],identity['candidate_sha256'])
                 self.assertEqual(manifest['gate_activation'],activation)
