@@ -6,7 +6,7 @@
 - 依据：V1 README、docs/WORKBENCH.md、Issues #6/#9/#14/#16/#30/#64/#65/#132/#133、V1/V2 实际代码路径。
 - **C** 表示有对应代码实现入口，不表示达到 V1 全功能语义，更不表示真实账号与用户验收通过；**P** 表示部分能力；**M** 表示目标 V2 未提供。
 - 原始 V1 路径是追溯入口，不代表该 V1 功能本身已在真实环境充分验证；#编号为历史 Issue 需求来源。
-- 当前独立、真实多 Provider、自举的整体功能验收状态：**未完成**；不能据 CI 绿灯推定本矩阵要求已通过。
+- 最终独立产品验收按候选提交和需求 ID 记录，流程见 [Phase 7 Linux 候选](PHASE_7.md#7c-产品验收)。代码覆盖、合成运行、真实 CLI 与真实模型服务分别取证。
 
 ## 六模块实现基线
 
@@ -17,10 +17,10 @@
 | Agent 与 Provider | 15 | 12 | 1 | 2 | 80.0% |
 | 工作流设计器 | 15 | 15 | 0 | 0 | 100.0% |
 | Workflow Runtime | 15 | 15 | 0 | 0 | 100.0% |
-| 运行监控与研发自动化 | 15 | 13 | 2 | 0 | 86.7% |
-| **合计** | **87** | **81** | **3** | **3** | **93.1%** |
+| 运行监控与研发自动化 | 15 | 14 | 1 | 0 | 93.3% |
+| **合计** | **87** | **82** | **2** | **3** | **94.3%** |
 
-¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
+¹ 代码覆盖下界 = C / 总条目，P 不折算。功能验收需要对应候选的逐项证据。
 
 ## 原始需求逐项追踪
 
@@ -75,7 +75,7 @@
 | 追踪 | 范围 | 证据 |
 |---|---|---|
 | S11a | DevFlower 本地别名 | CODE_PRESENT、INTEGRATED、TESTED。单条事务按会话和工作空间保存，浏览器验证重开后保留。 |
-| S11b | Provider 原生命名写入 | 待实现。 |
+| S11b | Provider 原生命名写入 | CODE_PRESENT、INTEGRATED、TESTED。7A 第二批独立验收在真实受管 Codex UUID 上改名并回读。Claude 保留 DevFlower 本地别名。参见 [Phase 7 第二批证据](PHASE_7.md#第二批证据)。 |
 | S12a | 单条隐藏、归档、回收及恢复 | CODE_PRESENT、INTEGRATED、TESTED。已有 V2 浏览器夹具覆盖可逆分类与视图版本冲突。 |
 | S12b | 工作流整组回收 | CODE_PRESENT、INTEGRATED、TESTED。实际 Codex CLI 搭配本机响应夹具验证已核实分组、锁占用拒绝和整组提交；回收后可按单条恢复。 |
 
@@ -219,7 +219,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O10 | GitLab 任务与交付集成 | `#6` | `tools/v2/git_platform_adapters.py`、`tools/v2/git_platform.py` | C | P2 | 真实分支、Issue、MR、Pipeline 与作业。Trace 受项目权限控制，本机审核任务需明确授权 |
 | O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/verification.py`、`tools/orchestration/gate.py` | `tools/v2/development_evidence.py`、`tools/v2/designer_scheduler.py` | C | P1 | 固定 Git 源码与测试入口，隔离执行并保留实际进程证据，三名不同会话的 CLI 角色绑定同轮；仅 `ACCEPT` 通过 |
 | O12 | 执行费用/Token 用量 | `tools/studio/usage.py` | `tools/v2/run_summary.py` | P | P2 | unknown 不补零，provider 自报需标注 |
-| O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx` | `tools/v2/ui/style.css` | P | P1 | 模块级操作与 1280/1440/窄屏评分 |
+| O13 | 成熟工作台 UI/UX 和无障碍 | `tools/studio/workbench_ui/WorkspaceLayout.jsx`、`launcher/linux/install.sh` | `tools/v2/ui/index.jsx`、`tools/v2/ui/style.css`、`tools/devflower_v2_launch.py` | C | P1 | 首次打开、工作空间导航、面板开关、焦点恢复、深浅主题、宽窄屏与短窗口，以及 Linux 安装、停止、升级和原地址回读 |
 | O14 | 真实终端与运行监控联动 | `tools/studio/workbench_ui/NativeTerminal.jsx` | `tools/v2/codex_terminals.py`、`tools/v2/ui/RunInspector.jsx` | C | P1 | 从核验的运行激活定位相同原生 UUID 与已存在的 PTY。新建终端需要单独确认工作区读写 |
 | O15 | 完整自举研发场景验证 | `#132` | `tools/v2/development_graph.py`、`tools/v2/designer_scheduler.py`、`tests/v2_development_live.py` | C | P0 | 独立真实 CLI 开发、测试、审核、反馈修复、再验证与 Gate，绑定可丢弃 Git 候选与轮次证据 |
 

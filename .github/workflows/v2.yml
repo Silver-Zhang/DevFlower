@@ -116,7 +116,7 @@ jobs:
           git rev-parse HEAD > "$RUNNER_TEMP/v2-native-evidence/head.txt"
           git rev-parse HEAD^{tree} > "$RUNNER_TEMP/v2-native-evidence/tree.txt"
           sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap gcc libc6-dev
+          sudo apt-get install -y bubblewrap gcc libc6-dev desktop-file-utils
           if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
@@ -138,6 +138,7 @@ jobs:
           DEVFLOWER_REQUIRE_CLAUDE_SCOPE_TEST=1 python3 -B -m unittest discover -s tests -p test_v2_claude_agent_scope.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-claude-agent-scope.log"
           DEVFLOWER_REQUIRE_BWRAP_VERIFIER=1 python3 -B -m unittest discover -s tests -p test_v2_development_evidence.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-development-evidence.log"
           DEVFLOWER_REQUIRE_BWRAP_VERIFIER=1 python3 -B -m unittest discover -s tests -p test_v2_workflow_portability.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-workflow-portability.log"
+          python3 -B -m unittest discover -s tests -p test_v2_linux_desktop.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-linux-desktop.log"
           test -x /usr/bin/cc
           python3 -B -m unittest discover -s tests -p test_v2_codex_agent_scope.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-codex-agent-scope.log"
           unshare -Ur -m --propagation private python3 -B tests/v2_session_bind_mount.py 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-session-bind-mount.log"
