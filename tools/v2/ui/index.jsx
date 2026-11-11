@@ -953,7 +953,7 @@ function App(){
      <p className="field-note">所选文件文本会发送给本次运行的 Agent。文件权限由各 Agent 配置控制。</p>
      {taskFiles.map(file=><div key={file.path} className="task-file-row"><span>{file.path} · {file.bytes} B</span>
       <button aria-label={'移除任务文件 '+file.path} disabled={launching||Boolean(launchAttempt)}
-       onClick={()=>setTaskFiles(files=>files.filter(item=>item.path!==file.path))}>移除</button></div>)}
+       onClick={()=>{setTaskFiles(files=>files.filter(item=>item.path!==file.path));setNotice('已移除 '+file.path)}}>移除</button></div>)}
      <Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>
     </details>
    </div>}

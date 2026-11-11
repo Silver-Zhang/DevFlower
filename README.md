@@ -4,6 +4,10 @@
 
 DevFlower 同时保留最初的研发记录能力：工作区内保存工作流与历史，`project/*` 分支保存可以随 Git 追溯的任务、决策和验证摘要。业务源码仍放在各自的仓库中。
 
+## V2 Linux 工作台
+
+在 `v2/parity-integration` 源码目录中运行 `./launcher/linux/install-v2.sh --allow-root /absolute/path/to/project`，再从应用菜单打开 **DevFlower V2**。首次安装、原生 CLI 会话配置、停止与升级步骤见 [V2 Linux 桌面入口](docs/v2/LINUX_DESKTOP.md)。
+
 ## 快速启动
 
 目前实际验证的平台为 **Linux**。需要 Python 3.11+、Git、bubblewrap（`/usr/bin/bwrap`）、Landlock ABI ≥ 6，以及在本机安装、登录并配置好的 Codex 或 Claude Code CLI。原生 CLI 的具体功能以当前版本和实际探测结果为准。

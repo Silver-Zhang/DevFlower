@@ -455,6 +455,7 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await page.getByText('本次运行上下文 · 1 个文件',{exact:true}).waitFor();
   await page.getByLabel('移除任务文件 quick.txt',{exact:true}).click();
   await page.getByText('本次运行上下文',{exact:true}).waitFor();
+  await page.getByRole('status').filter({hasText:/^已移除 quick\.txt$/}).waitFor();
  });
  await test('compact-workbench-keyboard-navigation-and-reopen',async()=>{
   await page.setViewportSize({width:560,height:800});
