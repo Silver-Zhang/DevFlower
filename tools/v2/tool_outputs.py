@@ -17,8 +17,8 @@ MAX_OUTPUT_BYTES = 16000
 
 def output_path(value):
     relative = checked_path(value)
-    if relative.suffix != '.json':
-        raise Invalid('工具输出需要工作区内的新建 .json 文件路径。')
+    if len(relative.parts) != 1 or relative.suffix != '.json':
+        raise Invalid('工具输出需要工作区根目录下的新建 .json 文件名。')
     return relative
 
 

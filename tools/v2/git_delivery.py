@@ -28,6 +28,10 @@ CONFIG_KEYS = {'core.repositoryformatversion', 'core.filemode', 'core.bare', 'co
                'extensions.objectformat'}
 
 
+def bare_read(path, args, **options):
+    return git_read(path, ['--git-dir=.', *args], **options)
+
+
 def target_facts(path):
     identities = []
     for directory in (path, path/'objects', path/'refs'):
@@ -63,10 +67,11 @@ def target_facts(path):
         raw = os.read(config, 16001)
         if len(raw) > 16000 or os.fstat(config).st_nlink != 1:
             raise Blocked('交付 Git 配置无法核验。')
-    keys = git_read(path, ['config', '--no-includes', '--file', str(path/'config'), '--name-only', '--list']).splitlines()
-    if not set(keys) <= CONFIG_KEYS or git_read(path, ['rev-parse', '--is-bare-repository']).strip() != 'true':
+    keys = bare_read(path, ['config', '--no-includes', '--file', str(path/'config'), '--name-only', '--list']).splitlines()
+    if (not set(keys) <= CONFIG_KEYS or bare_read(path, ['rev-parse', '--is-bare-repository']).strip() != 'true'
+            or bare_read(path, ['rev-parse', '--absolute-git-dir']).strip() != str(path)):
         raise Blocked('交付目标需要独立的本机裸 Git 仓库。')
-    object_format = git_read(path, ['rev-parse', '--show-object-format']).strip()
+    object_format = bare_read(path, ['rev-parse', '--show-object-format']).strip()
     if object_format not in ('sha1', 'sha256'):
         raise Blocked('交付 Git 对象格式无法核验。')
     return {'identity': identities, 'config_sha256': digest(raw), 'oid_length': 40 if object_format == 'sha1' else 64}
@@ -88,10 +93,10 @@ def require_separate(path, protected):
                     raise Invalid('交付仓库不能使用其他授权位置的别名。')
 
 
-def direct_tip(path, ref):
-    if git_read(path, ['symbolic-ref', '--quiet', ref], optional=True) is not None:
+def direct_tip(path, ref, *, fd=None):
+    if bare_read(path, ['symbolic-ref', '--quiet', ref], optional=True, fd=fd) is not None:
         raise Conflict('交付分支需要直接 Git 引用。')
-    tip = git_read(path, ['rev-parse', '--verify', '--quiet', ref], optional=True)
+    tip = bare_read(path, ['rev-parse', '--verify', '--quiet', ref], optional=True, fd=fd)
     return tip.strip() if tip is not None else None
 
 
@@ -107,12 +112,12 @@ def materialize(blob, folder):
 
 
 class GitDelivery:
-    def __init__(self, platform, options):
+    def __init__(self, platform, options, *, native_homes=()):
         self.platform, self.store = platform, platform.store
         self.targets = {}
         if len(options) > 8:
             raise Invalid('最多登记八个本机 Git 交付目标。')
-        protected = [*protected_roots(self.store), *self.store.roots]
+        protected = [*protected_roots(self.store), *self.store.roots, *map(Path, native_homes)]
         for option in options:
             name, separator, value = option.partition('=')
             if not separator or not NAME.fullmatch(name) or name in self.targets:
@@ -144,9 +149,17 @@ class GitDelivery:
         if row['workspace'] != workspace:
             raise Conflict('交付意图不属于当前工作区。')
         if row['state'] == 'PUBLISHING':
-            path, target = self.target(row['target'])
-            if target == row['target_facts'] and direct_tip(path, row['ref']) == row['commit']:
-                row = self.store.db.change(KIND, key, {'state': 'COMPLETED'})
+            try:
+                path, target = self.target(row['target'])
+                with verified_directory(path) as directory:
+                    anchored = Path(f'/proc/self/fd/{directory}')
+                    if (target == row['target_facts']
+                            and StorageRootIdentity.from_fd(directory).fields() == target['identity'][0]
+                            and direct_tip(anchored, row['ref'], fd=directory) == row['commit']):
+                        self.target(row['target'])
+                        row = self.store.db.change(KIND, key, {'state': 'COMPLETED'})
+            except (Blocked, OSError, ValueError, subprocess.SubprocessError):
+                pass
         state = row['state'] if row['state'] in ('COMPLETED', 'FAILED_BEFORE_PUBLISH') else 'RECOVERY_REQUIRED'
         return dict(state=state, **{key: row[key] for key in ('run', 'target', 'ref', 'candidate_sha256', 'commit')})
 
@@ -173,7 +186,7 @@ class GitDelivery:
         parent = status['gate']['git_head']
         if not OID.fullmatch(parent) or len(parent) != target['oid_length']:
             raise Conflict('交付目标的 Git 对象格式与候选不同。')
-        git_read(path, ['cat-file', '-e', parent+'^{commit}'])
+        bare_read(path, ['cat-file', '-e', parent+'^{commit}'])
         ref = 'refs/heads/work/devflower-' + run
         if direct_tip(path, ref) is not None:
             raise Conflict('交付分支已经存在；不能覆盖。')
@@ -184,28 +197,32 @@ class GitDelivery:
                 raise Conflict('交付意图已登记，请核对原结果。')
             db.execute('INSERT INTO records VALUES(?,?,?)', (KIND, key, canonical(row).decode()))
         try:
-            with TemporaryDirectory(prefix='delivery-git-', dir=self.store.state/'flow-artifacts'/run) as scratch:
+            with (verified_directory(path) as directory,
+                  TemporaryDirectory(prefix='delivery-git-', dir=self.store.state/'flow-artifacts'/run) as scratch):
+                if StorageRootIdentity.from_fd(directory).fields() != target['identity'][0]:
+                    raise Conflict('本机 Git 交付目标目录已替换。')
+                anchored = Path(f'/proc/self/fd/{directory}')
                 candidate = Path(scratch)
                 manifest = materialize(archive, candidate)
                 self.target(data['target'])
-                tree = make_tree(path, candidate)
-                if committed_manifest_hash(path, tree) != manifest['candidate_sha256']:
+                tree = make_tree(anchored, candidate, pass_fds=(directory,), git_dir='.')
+                if committed_manifest_hash(anchored, tree, pass_fds=(directory,), git_dir='.') != manifest['candidate_sha256']:
                     raise Conflict('交付树与独立审核的候选不同。')
                 stamp = str(int(self.store.db.get('run', run)['created_at'])) + ' +0000'
                 env = dict(clean_env(), GIT_CONFIG_GLOBAL='/dev/null', GIT_AUTHOR_NAME='DevFlower',
                     GIT_AUTHOR_EMAIL='devflower@localhost', GIT_COMMITTER_NAME='DevFlower',
                     GIT_COMMITTER_EMAIL='devflower@localhost', GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
                 message = f'DevFlower verified candidate\n\nCandidate SHA-256: {manifest["candidate_sha256"]}\n'
-                commit = git(path, '-c', 'commit.gpgSign=false', 'commit-tree', tree, '-p', parent,
-                             env=env, data=message.encode())
-                if not OID.fullmatch(commit) or git_read(path, ['rev-parse', commit+'^']).strip() != parent:
+                commit = git(anchored, '--git-dir=.', '-c', 'commit.gpgSign=false', 'commit-tree', tree, '-p', parent,
+                             env=env, data=message.encode(), pass_fds=(directory,))
+                if not OID.fullmatch(commit) or bare_read(anchored, ['rev-parse', commit+'^'], fd=directory).strip() != parent:
                     raise Conflict('交付提交的父提交无法核验。')
                 _, current, checked = delivery_scope(self.platform, workspace, run)
                 if current != scope or checked != status or bind_workspace(self.store, workspace, require_origin=False) != scope:
                     raise Conflict('候选或独立 Gate 在交付前变化。')
                 self.target(data['target'])
                 self.store.db.change(KIND, key, {'commit': commit, 'state': 'PUBLISHING'}, states={'PREPARING'})
-                git_read(path, ['update-ref', '--no-deref', ref, commit, '0' * len(commit)])
+                bare_read(anchored, ['update-ref', '--no-deref', ref, commit, '0' * len(commit)], fd=directory)
         except (OSError, ValueError, Blocked, subprocess.SubprocessError):
             current = self.store.db.get(KIND, key)
             if current['state'] == 'PREPARING':

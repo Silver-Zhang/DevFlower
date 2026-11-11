@@ -57,7 +57,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     templates = WorkflowTemplates(store)
     assistant = Assistant(store, session_operations, runtime)
     git_platform = GitPlatform(store,runtime)
-    git_delivery = GitDelivery(git_platform, git_delivery_targets)
+    homes = getattr(getattr(getattr(runtime, 'cli_providers', None), 'homes', None), 'entries', {})
+    git_delivery = GitDelivery(git_platform, git_delivery_targets,
+                               native_homes=[row['home'] for row in homes.values()] if git_delivery_targets else ())
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
 

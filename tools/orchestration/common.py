@@ -61,10 +61,11 @@ def cli_probe_env(home=None):
     return dict(clean_env(home),DISABLE_AUTOUPDATER='1',DISABLE_UPDATES='1')
 
 
-def git(root, *args, env=None, data=None):
+def git(root, *args, env=None, data=None, pass_fds=()):
+    inherited = {'pass_fds': pass_fds} if pass_fds else {}
     result = subprocess.run(['git', '-C', str(root), *args], input=data,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            env=env or clean_env(), timeout=30)
+                            env=env or clean_env(), timeout=30, **inherited)
     if result.returncode:
         raise Blocked('git failed: ' + args[0])
     return result.stdout.decode().strip()

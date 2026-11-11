@@ -15,12 +15,14 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 from v2.development_evidence import current_candidate
-from v2.git_delivery import GitDelivery, direct_tip
+from v2.git_delivery import KIND as GIT_DELIVERY, GitDelivery, direct_tip
 from v2.git_workspace import git_read
 from v2.history_archives import HistoryArchives
 from v2.local_delivery import package
 from v2.recovery import project
 from v2.runtime import V2Runtime
+from v2.server import create_server
+from v2.session_operations import operation_id
 from v2.store import DraftStore
 from v2.workflow_templates import WorkflowTemplates, starter
 
@@ -36,16 +38,15 @@ class WorkflowPortabilityTests(TestCase):
 
     def test_workspace_json_output_uses_scoped_path_and_fences_uncertain_effects(self):
         root = self.workspaces[0]
-        (root/'output').mkdir()
         foreign = self.workspaces[1]/'protected.json'
         foreign.write_text('untouched')
-        (root/'escape').symlink_to(self.workspaces[1], target_is_directory=True)
+        (root/'escape.json').symlink_to(foreign)
         rt = V2Runtime(self.store, str(self.base/'no-provider'))
         graph = dict(version=1, name='Write checked JSON', nodes=[
             dict(id='Start', name='Start', kind='start', position={'x':0, 'y':0}, config_version=1,
                  config={'initial_data':'{"value":7}'}),
             dict(id='Write', name='Write', kind='tool', position={'x':160, 'y':0}, config_version=1,
-                 config={'tool':'write-file', 'permission':'workspace-write', 'path':'output/result.json'}),
+                 config={'tool':'write-file', 'permission':'workspace-write', 'path':'result.json'}),
             dict(id='End', name='End', kind='output', position={'x':320, 'y':0}, config_version=1,
                  config={'format':'json'}),
         ], edges=[
@@ -78,7 +79,7 @@ class WorkflowPortabilityTests(TestCase):
 
         draft = self.store.save(self.a, None, None, graph)
         run, success = finish(draft, 'write-result-approved')
-        file = root/'output/result.json'
+        file = root/'result.json'
         self.assertEqual(success['state'], 'COMPLETED',
                          [(row['node'], row.get('reason')) for row in self.store.db.list('activation')])
         self.assertEqual(success['run']['actual_calls'], 0)
@@ -91,7 +92,11 @@ class WorkflowPortabilityTests(TestCase):
         self.assertEqual(duplicate_destination['state'], 'FAILED')
         self.assertEqual(json.loads(file.read_bytes()), {'value':7})
 
-        graph['nodes'][1]['config']['path'] = 'escape/protected.json'
+        graph['nodes'][1]['config']['path'] = 'nested/result.json'
+        nested = self.store.save(self.a, None, None, graph)
+        with self.assertRaisesRegex(Invalid,'根目录'):
+            rt.launch(self.a,nested['id'],nested['revision'],'write-result-nested','')
+        graph['nodes'][1]['config']['path'] = 'escape.json'
         escaped = self.store.save(self.a, None, None, graph)
         _, refused = finish(escaped, 'write-result-outside')
         self.assertEqual(refused['state'], 'FAILED')
@@ -173,7 +178,7 @@ class WorkflowPortabilityTests(TestCase):
 
         def lost_reply(path, args, **options):
             result = git_read(path,args,**options)
-            if args[0] == 'update-ref':
+            if 'update-ref' in args:
                 updates.append(args)
                 raise TimeoutError('lost local ref acknowledgement')
             return result
@@ -190,6 +195,73 @@ class WorkflowPortabilityTests(TestCase):
         self.assertEqual(git(root, 'rev-parse', 'HEAD'),base)
         with self.assertRaises(Conflict):
             delivery.publish(dict(data,intent_key='second-git-delivery'))
+
+        next_run = 'e'*32
+        next_ref = 'refs/heads/work/devflower-'+next_run
+        next_data = dict(data, run=next_run, intent_key='swapped-target-delivery')
+        status['run'] = next_run
+        self.store.db.put('run', next_run, {'created_at': time.time()})
+        (self.store.state/'flow-artifacts'/next_run).mkdir()
+        substitute = self.base/'substitute.git'
+        displaced = self.base/'enrolled.git'
+        git(self.base, 'init', '-q', '--bare', str(substitute))
+        git(root, 'push', str(substitute), 'HEAD:refs/heads/main')
+
+        def swap_path(path, args, **options):
+            if 'update-ref' in args:
+                bare.rename(displaced)
+                substitute.rename(bare)
+            return git_read(path,args,**options)
+
+        with patch('v2.git_delivery.git_read', side_effect=swap_path):
+            self.assertEqual(delivery.publish(next_data)['state'],'RECOVERY_REQUIRED')
+        self.assertIsNone(direct_tip(bare,next_ref))
+        self.assertIsNotNone(direct_tip(displaced,next_ref))
+        bare.rename(substitute)
+        displaced.rename(bare)
+        self.assertEqual(delivery.read(self.a,next_data['intent_key'])['state'],'COMPLETED')
+
+        phantom_ref = 'refs/heads/work/devflower-'+'f'*32
+        git(bare, 'push', str(substitute), completed['ref']+':'+phantom_ref)
+        prior = self.store.db.get(GIT_DELIVERY, operation_id(self.a,data['intent_key']))
+        probe_intent = 'forged-ref-readback'
+        probe_id = operation_id(self.a,probe_intent)
+        self.store.db.put(GIT_DELIVERY,probe_id,dict(prior,id=probe_id,ref=phantom_ref,state='PUBLISHING'))
+
+        def spoof_readback(path, args, **options):
+            if 'symbolic-ref' in args and phantom_ref in args:
+                bare.rename(displaced)
+                substitute.rename(bare)
+            return git_read(path,args,**options)
+
+        with patch('v2.git_delivery.git_read', side_effect=spoof_readback):
+            self.assertEqual(delivery.read(self.a,probe_intent)['state'],'RECOVERY_REQUIRED')
+        self.assertIsNone(direct_tip(displaced,phantom_ref))
+        self.assertEqual(direct_tip(bare,phantom_ref),completed['commit'])
+
+    def test_local_git_delivery_refuses_parent_discovery_and_native_home(self):
+        parent = self.base/'parent.git'
+        subprocess.run(['/usr/bin/git','init','-q','--bare',str(parent)],check=True,umask=0o077)
+        child = parent/'child'
+        (child/'objects').mkdir(parents=True,mode=0o700)
+        (child/'refs').mkdir(mode=0o700)
+        child.chmod(0o700)
+        (child/'config').write_bytes((parent/'config').read_bytes())
+        with self.assertRaises(Blocked):
+            GitDelivery(SimpleNamespace(store=self.store), ['bad='+str(child)])
+
+        home = self.base/'account'
+        config = home/'.codex'
+        home.mkdir(mode=0o700)
+        config.mkdir(mode=0o700)
+        settings = config/'config.toml'
+        settings.write_text('model="fixture"\ncli_auth_credentials_store="file"\n')
+        settings.chmod(0o600)
+        nested = config/'destination.git'
+        subprocess.run(['/usr/bin/git','init','-q','--bare',str(nested)],check=True,umask=0o077)
+        runtime = V2Runtime(self.store, str(self.base/'no-provider'), native_homes=['codex:account='+str(home)])
+        with self.assertRaisesRegex(Invalid,'原生账户'):
+            create_server(self.store, runtime=runtime, git_delivery_targets=['bad='+str(nested)])
 
     def test_archive_checks_digest_and_never_registers_live_authority(self):
         archives = HistoryArchives(self.store)

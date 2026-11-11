@@ -54,23 +54,29 @@ def config_exists(root, key):
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=clean_env()).returncode == 0
 
 
-def make_tree(root, candidate):
+def make_tree(root, candidate, *, pass_fds=(), git_dir=None):
     """Private index, explicit byte blobs and mode: filters cannot transform source."""
+    inherited = {'pass_fds': pass_fds} if pass_fds else {}
+    repository = ('--git-dir='+git_dir,) if git_dir is not None else ()
     with tempfile.TemporaryDirectory(prefix='devflower-index-') as tmp:
         env = dict(clean_env(), GIT_INDEX_FILE=str(Path(tmp) / 'index'))
-        git(root, 'read-tree', '--empty', env=env)
+        git(root, *repository, 'read-tree', '--empty', env=env, **inherited)
         for e in manifest(candidate):
             p = Path(candidate) / e['path']
             content = os.fsencode(os.readlink(p)) if e['mode'] == '120000' else p.read_bytes()
-            blob = git(root, 'hash-object', '-w', '--stdin', data=content)
+            blob = git(root, *repository, 'hash-object', '-w', '--stdin', data=content, **inherited)
             record = f"{e['mode']} {blob}\t{e['path']}".encode() + b'\0'
-            git(root, 'update-index', '-z', '--index-info', data=record, env=env)
-        return git(root, 'write-tree', env=env)
+            git(root, *repository, 'update-index', '-z', '--index-info', data=record, env=env, **inherited)
+        return git(root, *repository, 'write-tree', env=env, **inherited)
 
 
-def committed_manifest_hash(root, tree):
+def committed_manifest_hash(root, tree, *, pass_fds=(), git_dir=None):
+    repository = ('--git-dir='+git_dir,) if git_dir is not None else ()
+    inherited = {'pass_fds': pass_fds} if pass_fds else {}
+
     def raw(*args):
-        p = subprocess.run(['git', '-C', str(root), *args], capture_output=True, env=clean_env(), timeout=30)
+        p = subprocess.run(['git', '-C', str(root), *repository, *args], capture_output=True,
+                           env=clean_env(), timeout=30, **inherited)
         if p.returncode:
             raise Blocked('cannot verify prospective commit tree')
         return p.stdout
