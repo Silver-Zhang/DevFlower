@@ -14,11 +14,11 @@
 |---|---:|---:|---:|---:|---:|
 | 工作空间 | 12 | 11 | 0 | 1 | 91.7% |
 | 会话中心 | 15 | 15 | 0 | 0 | 100.0% |
-| Agent 与 Provider | 15 | 11 | 2 | 2 | 73.3% |
+| Agent 与 Provider | 15 | 12 | 1 | 2 | 80.0% |
 | 工作流设计器 | 15 | 15 | 0 | 0 | 100.0% |
-| Workflow Runtime | 15 | 14 | 1 | 0 | 93.3% |
+| Workflow Runtime | 15 | 15 | 0 | 0 | 100.0% |
 | 运行监控与研发自动化 | 15 | 13 | 2 | 0 | 86.7% |
-| **合计** | **87** | **79** | **5** | **3** | **90.8%** |
+| **合计** | **87** | **81** | **3** | **3** | **93.1%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -121,7 +121,7 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | A02 | Claude Code 执行能力与模型目录 | `tools/studio/local_claude_adapter.py` | `tools/v2/cli_providers.py`、`tools/v2/claude_native_catalog.py` | C | P0 | 原生初始化给出模型与推理强度，受管进程使用本机配置 |
 | A03 | Copilot 模型目录与身份 | `tools/studio/copilot_adapter.py` | `tools/v2/copilot_catalog.py` | P | P1 | 目录与认证来源可证，不等于执行 |
 | A04 | Copilot 可执行 Agent 适配 | `tools/studio/copilot_adapter.py` | — | M | P2 | 仅真实支持的模式可执行 |
-| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/native_agent_profiles.py`、`tools/v2/cli_providers.py`、`tools/v2/ui/AgentManager.jsx` | P | P1 | 同一原生 HOME 内可选择获准的模型与强度配置，冻结来源，拒绝跨 Profile 续聊。独立 HOME 与账户选择尚缺 |
+| A05 | 同 Provider 多 Profile 选择 | `tools/studio/workbench_sessions.py` | `tools/v2/native_agent_profiles.py`、`tools/v2/native_agent_homes.py`、`tools/v2/ui/AgentManager.jsx` | C | P1 | 同 HOME 命名设置及独立 HOME 均可选择并固定身份。独立 HOME 支持 Ask 和经核验的同根续聊，拒绝旧 Agent 随同名登记换账户 |
 | A06 | Agent 身份、职责、背景和目标 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/agent_records.py`、`tools/v2/ui/AgentManager.jsx` | C | P0 | 角色模板与 Provider 分离，版本按工作区保存和重开 |
 | A07 | Ask / Plan / Agent 模式 | `tools/studio/workbench_ui/AgentPicker.jsx` | `tools/v2/cli_providers.py`、`tools/v2/codex_agent_plan.py` | C | P0 | 两种 CLI 的三种模式有原生映射，Codex 完整 Plan 转 Agent 需单独确认 |
 | A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | `tools/v2/agent_execution.py` | C | P0 | 核验原生来源、工作目录、UUID 及写租约，外部 Claude 保持只读 |
@@ -193,7 +193,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | R04 | 多路 Router 与 fallback | `tools/studio/routing.py` | `tools/v2/designer_graph.py` | C | P1 | 规则按冻结顺序求值；默认路由明确，无匹配且无默认时失败 |
 | R05 | 有界 Loop 与修订闭环 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/definitions.py` | C | P0 | 子图轮次、退出原因与每轮激活可追溯；运行时间和展开预算受限 |
 | R06 | Human Approval | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/runtime.py` | C | P1 | 本机单审核者按激活审批；拒绝、超时和恢复保留决定及调度边界 |
-| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/development_evidence.py`、`tools/v2/tool_artifacts.py`、`tools/v2/local_delivery.py` | P | P1 | 普通 Tool 可执行获准的隔离 JSON 校验，提供核验产物，Validation 分流成功与失败。独立 Gate 后可确认导出精确候选 ZIP。通用工作区写入及远端交付保持待实现 |
+| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/development_evidence.py`、`tools/v2/tool_outputs.py`、`tools/v2/git_delivery.py` | C | P1 | Tool 执行获准的隔离 JSON 校验或新建工作区 JSON 文件。Validation 按真实证据分流。独立 Gate 后人工确认精确候选 ZIP 或指定的本机裸 Git 工作分支。托管平台写入不在当前执行入口 |
 | R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行，循环子图与 Agent 版本同样冻结 |
 | R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 运行可读初始化、每轮、上游、实际发送文本和原生回执 |
 | R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/data_handoff.py`、`tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | C | P0 | 按连线传递选定嵌套字段或授权产物引用，接收前复核工作区、来源激活和实际文件摘要 |

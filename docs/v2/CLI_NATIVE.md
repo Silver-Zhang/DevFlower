@@ -45,7 +45,9 @@ Agent 配置按工作区保存。角色模板填充身份内容，执行权限�
 
 Claude 启动沿用私有配置中的原生写入批准。Codex 目录取自 `model/list`，Claude 取自无用户消息的原生初始化。界面分别标出 CLI 目录、原生配置、默认值和手工模型。Claude 可传递原生 `--max-budget-usd`，两种 CLI 的运行均受 V2 调用次数和超时约束。
 
-重复传入 `--native-agent-profile codex:NAME` 或 `--native-agent-profile claude:NAME=/path/to/.claude/settings-profile.json` 可登记命名 Profile。Codex 读取其原生 `~/.codex/NAME.config.toml`，Claude 使用当前原生配置根下的独立设置文件。文件需为本机用户拥有的 `0600` 普通文件。V2 只采用模型和推理强度，经已核验 CLI 参数发送，认证、服务路由和会话存储仍采用同一原生账户。会话续用核对创建 Profile 摘要。独立 HOME 或账户切换当前不可用，Codex Plan 使用默认配置。
+重复传入 `--native-agent-profile codex:NAME` 或 `--native-agent-profile claude:NAME=/path/to/.claude/settings-profile.json` 可登记命名 Profile。Codex 读取其原生 `~/.codex/NAME.config.toml`，Claude 使用当前原生配置根下的独立设置文件。文件需为本机用户拥有的 `0600` 普通文件。V2 只采用模型和推理强度，经已核验 CLI 参数发送，认证、服务路由和会话存储仍采用同一原生账户。会话续用核对创建 Profile 摘要。
+
+使用 `--native-agent-home codex:NAME=/absolute/private-home` 或 `--native-agent-home claude:NAME=/absolute/private-home` 登记已存在的独立原生 HOME。HOME 与原生配置目录需归本机用户所有，权限为 `0700`，且与工作区、源码和 V2 状态分开。Codex 使用文件型认证，Claude 使用该 HOME 原生认证和设置。Agent 保存账户身份摘要，启动和 worker 复核相同登记，同名换根需要重新保存 Agent。独立 HOME 目前支持 Ask 和精确的受管原生续聊。Plan、文件工具、命令、独立会话发送及 PTY 按各自 Provider 的默认账户能力开放。Codex Plan 使用默认 Profile。
 
 运行检查器显示冻结的调用上限、已登记调用和实际启动进程数，并分别显示节点超时及 Provider 实际报告的用量。未知结果保留恢复状态，同一请求不会自动重发。
 
@@ -66,7 +68,8 @@ Codex 使用原生 Skills 目录及精确文件引用。Claude Agent 在启动�
 - 每次运行最多同时调度两个只读 Agent。工作区写入 Agent 在该运行内独占 Agent 执行槽，同一原生会话仍由 V2 会话租约协调。ALL 要求全部配置输入成功。ANY 按冻结连线顺序选取首个可用输入，等候排在前面的未结算输入；后排分支可以独立完成。SELECTED 汇合已选分支。
 - Loop 冻结内嵌子图，保留每轮激活和输出。退出条件由代码判定；节点最多五轮、子图最多两层。编译限制展开后的调用次数和激活数量，运行继续受单节点超时与四小时总上限约束。
 - 本机单审核者通过已授权的 V2 会话批准或拒绝。运行等待时暂停后续调度。决策记录运行、冻结定义、激活与操作者。拒绝或超时终止后续调度。Tool 支持固定路径 UTF-8 只读预览与获准的 Python JSON 校验。校验入口、Git 绑定和期望值在启动时冻结。工具在无网络的只读候选快照中执行，通过时可读取带摘要的公开产物。
-- 本机交付包绑定已通过的独立 Gate、当前候选和明确下载确认。生成 ZIP 时重新核验候选和条目摘要，远端发布未接入此路径。
+- 用户可为 Tool 授权一个新的工作区 JSON 路径，保存上游结构化结果。系统在 Linux Landlock 边界内原子创建文件，并回读确认路径、大小和摘要。已有文件拒绝覆盖，未知效果保留在原激活中。
+- 本机交付绑定已通过的独立 Gate、当前候选和明确人工确认。可下载校验后的 ZIP，或通过 `--git-delivery-target NAME=/absolute/private-bare.git` 登记独立裸 Git 目标。目标归本机用户所有、目录权限为 `0700`，与所有工作区、原生 HOME 及 V2 状态分开，并已包含候选父提交。交付只创建该运行对应的新工作分支，使用固定目录身份回读实际 Git 提交。GitHub 和 GitLab 的托管写入当前没有产品入口。
 - 刷新只读回运行。服务重启继续观察原 worker。原 worker 已退出、冻结源码和检查点可核验时，用户可以显式继续同一运行。已核验的终结结果按激活恢复，外部发送或进程证据不明时保留待核验状态。替代 worker 沿用同一启动意图、文件租约及进程身份握手。
 
 ## 验证与发布门槛
