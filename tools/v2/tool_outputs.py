@@ -1,12 +1,16 @@
 """Publish a bounded workflow result to a newly authorized project file."""
+import errno
 import json
 import os
+from pathlib import Path
+import subprocess
 
 from orchestration.common import Blocked, canonical, digest
 from orchestration.privacy import redact
 from studio.graph import Invalid
 from studio.server import Conflict
 
+from . import tool_output_link
 from .data_handoff import task_literals
 from .project_files import ProjectFiles, checked_path
 from .run_inspector import RunInspector
@@ -17,8 +21,8 @@ MAX_OUTPUT_BYTES = 16000
 
 def output_path(value):
     relative = checked_path(value)
-    if len(relative.parts) != 1 or relative.suffix != '.json':
-        raise Invalid('工具输出需要工作区根目录下的新建 .json 文件名。')
+    if relative.suffix != '.json':
+        raise Invalid('工具输出需要工作区内的新建 .json 文件路径。')
     return relative
 
 
@@ -53,6 +57,20 @@ def require_parent(view, relative, parent):
     view.rules.validate()
 
 
+def publish_link(root, parent, temporary, name):
+    helper = str(Path(tool_output_link.__file__).resolve())
+    try:
+        result = subprocess.run(['/usr/bin/python3', '-I', '-B', helper, str(os.getpid()),
+            str(root), str(parent), str(temporary), name], pass_fds=(root, parent, temporary),
+            cwd='/', env={}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=5)
+    except OSError:
+        return tool_output_link.UNAVAILABLE
+    except subprocess.TimeoutExpired:
+        raise Blocked('未能核验隔离写入结果，请检查原激活。') from None
+    return result.returncode
+
+
 def write_result(rt, run_id, activation, node, value):
     rt.check_operator()
     run = rt.flow.get('run', run_id)
@@ -81,12 +99,16 @@ def write_result(rt, run_id, activation, node, value):
                 except (Blocked, Conflict, OSError):
                     rt.flow.change('activation', activation['id'], {'effect_uncertain': False}, states={'STARTING'})
                     raise
-                try:
-                    os.link(f'/proc/self/fd/{temporary.fileno()}', relative.name, dst_dir_fd=parent,
-                            follow_symlinks=True)
-                except FileExistsError:
+                result = publish_link(view.root_fd, parent, temporary.fileno(), relative.name)
+                if result in (errno.EEXIST, errno.EACCES, tool_output_link.UNAVAILABLE):
                     rt.flow.change('activation', activation['id'], {'effect_uncertain': False}, states={'STARTING'})
-                    raise Conflict('工作区输出文件已由其他写者创建。') from None
+                    if result == errno.EEXIST:
+                        raise Conflict('工作区输出文件已由其他写者创建。')
+                    if result == errno.EACCES:
+                        raise Blocked('隔离写入拒绝了当前目录，未创建文件。')
+                    raise Blocked('工作区输出需要可用的 Linux Landlock 隔离，未创建文件。')
+                if result != 0:
+                    raise Blocked('未能核验隔离写入结果，请检查原激活。')
                 os.fsync(parent)
                 with view.regular(relative.name, parent) as stored:
                     if (os.fstat(stored).st_ino != os.fstat(temporary.fileno()).st_ino

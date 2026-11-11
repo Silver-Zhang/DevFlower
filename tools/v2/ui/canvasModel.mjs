@@ -60,8 +60,9 @@ export function runtimeBlock(node){
     '':'交付 Gate 需要填写同一轮的四个角色节点 ID，权限选择未授予。';
   }
   if(config.tool==='write-file'){
-   return config.permission==='workspace-write'&&/^[^/\\]+\.json$/.test(config.path?.trim()||'')?
-    '':'请选择工作区读写权限并填写根目录下的新建 .json 文件名。';
+   const path=config.path?.trim()||'';
+   return config.permission==='workspace-write'&&/^[^/\\]+(?:\/[^/\\]+)*\.json$/.test(path)&&
+    !path.split('/').includes('..')?'':'请选择工作区读写权限并填写新建 .json 文件的相对路径。';
   }
   if(config.tool!=='read-file'||config.permission!=='workspace-read')return '仅支持固定工作区文件的只读预览。';
   if(!config.path?.trim())return '请指定固定的工作区相对文件路径。';

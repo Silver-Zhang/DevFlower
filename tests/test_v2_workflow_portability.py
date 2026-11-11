@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
 from orchestration.common import Blocked, canonical, digest
+from orchestration.sandbox import abi
 from studio.graph import Invalid
 from studio.server import Conflict
 from v2.development_evidence import current_candidate
@@ -24,6 +25,7 @@ from v2.runtime import V2Runtime
 from v2.server import create_server
 from v2.session_operations import operation_id
 from v2.store import DraftStore
+from v2 import tool_outputs
 from v2.workflow_templates import WorkflowTemplates, starter
 
 
@@ -36,8 +38,11 @@ class WorkflowPortabilityTests(TestCase):
         self.store = DraftStore(self.base/'state', self.workspaces)
         self.a, self.b = [self.store.open_workspace(str(path))['id'] for path in self.workspaces]
 
+    @skipUnless(abi() >= 6 or os.environ.get('DEVFLOWER_REQUIRE_BWRAP_VERIFIER') == '1',
+                'requires Linux Landlock ABI >= 6')
     def test_workspace_json_output_uses_scoped_path_and_fences_uncertain_effects(self):
         root = self.workspaces[0]
+        (root/'nested').mkdir()
         foreign = self.workspaces[1]/'protected.json'
         foreign.write_text('untouched')
         (root/'escape.json').symlink_to(foreign)
@@ -94,8 +99,9 @@ class WorkflowPortabilityTests(TestCase):
 
         graph['nodes'][1]['config']['path'] = 'nested/result.json'
         nested = self.store.save(self.a, None, None, graph)
-        with self.assertRaisesRegex(Invalid,'根目录'):
-            rt.launch(self.a,nested['id'],nested['revision'],'write-result-nested','')
+        _, nested_result = finish(nested, 'write-result-nested')
+        self.assertEqual(nested_result['state'], 'COMPLETED')
+        self.assertEqual(json.loads((root/'nested/result.json').read_bytes()), {'value':7})
         graph['nodes'][1]['config']['path'] = 'escape.json'
         escaped = self.store.save(self.a, None, None, graph)
         _, refused = finish(escaped, 'write-result-outside')
@@ -111,6 +117,72 @@ class WorkflowPortabilityTests(TestCase):
         self.assertEqual(recovered['provider_outcome'], 'not_sent')
         self.assertFalse(recovered['run']['resume_available'])
         self.assertEqual(recovered['nodes'][0]['state'], 'RECOVERY_REQUIRED')
+
+    @skipUnless(abi() >= 6 or os.environ.get('DEVFLOWER_REQUIRE_BWRAP_VERIFIER') == '1',
+                'requires Linux Landlock ABI >= 6')
+    def test_workspace_output_helper_refuses_parent_moved_outside(self):
+        rt, activation = self.output_activation()
+        parent = self.workspaces[0]/'nested'
+        outside = self.base/'outside'
+        parent.mkdir()
+        link = tool_outputs.publish_link
+
+        def move_before_link(*args):
+            parent.rename(outside)
+            parent.mkdir()
+            return link(*args)
+
+        with patch('v2.tool_outputs.publish_link', side_effect=move_before_link):
+            with self.assertRaisesRegex(Blocked, '隔离写入拒绝'):
+                tool_outputs.write_result(rt, 'tool-run', activation, {'path':'nested/result.json'}, {'value':7})
+        self.assertFalse((outside/'result.json').exists())
+        self.assertFalse((parent/'result.json').exists())
+        row = self.store.db.get('activation', activation['id'])
+        self.assertFalse(row['effect_uncertain'])
+        self.assertEqual(row['tool_output_intent']['path'], 'nested/result.json')
+
+    @skipUnless(abi() >= 6 or os.environ.get('DEVFLOWER_REQUIRE_BWRAP_VERIFIER') == '1',
+                'requires Linux Landlock ABI >= 6')
+    def test_workspace_output_helper_preserves_concurrent_file(self):
+        rt, activation = self.output_activation()
+        file = self.workspaces[0]/'result.json'
+        link = tool_outputs.publish_link
+
+        def create_before_link(*args):
+            file.write_text('other writer')
+            return link(*args)
+
+        with patch('v2.tool_outputs.publish_link', side_effect=create_before_link):
+            with self.assertRaisesRegex(Conflict, '其他写者'):
+                tool_outputs.write_result(rt, 'tool-run', activation, {'path':'result.json'}, {'value':7})
+        self.assertEqual(file.read_text(), 'other writer')
+        self.assertFalse(self.store.db.get('activation', activation['id'])['effect_uncertain'])
+
+    def test_workspace_output_has_no_unisolated_fallback(self):
+        rt, activation = self.output_activation()
+        with patch('v2.tool_outputs.subprocess.run', side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(Blocked, 'Landlock'):
+                tool_outputs.write_result(rt, 'tool-run', activation, {'path':'result.json'}, {'value':7})
+        self.assertFalse((self.workspaces[0]/'result.json').exists())
+        row = self.store.db.get('activation', activation['id'])
+        self.assertFalse(row['effect_uncertain'])
+        self.assertEqual(row['tool_output_intent']['path'], 'result.json')
+
+    def test_workspace_output_unknown_link_result_stays_reserved(self):
+        rt, activation = self.output_activation()
+        with patch('v2.tool_outputs.publish_link', return_value=-9) as link:
+            with self.assertRaisesRegex(Blocked, '未能核验'):
+                tool_outputs.write_result(rt, 'tool-run', activation, {'path':'result.json'}, {'value':7})
+            with self.assertRaisesRegex(Conflict, '已有记录'):
+                tool_outputs.write_result(rt, 'tool-run', activation, {'path':'result.json'}, {'value':7})
+            link.assert_called_once()
+        self.assertTrue(self.store.db.get('activation', activation['id'])['effect_uncertain'])
+
+    def output_activation(self):
+        self.store.db.put('run', 'tool-run', {'id':'tool-run', 'workspace':self.a, 'state':'RUNNING'})
+        activation = {'id':'tool-write', 'run':'tool-run', 'state':'STARTING'}
+        self.store.db.put('activation', activation['id'], activation)
+        return SimpleNamespace(store=self.store, flow=self.store.db, check_operator=lambda:None), activation
 
     def test_templates_preserve_placement_rebind_cas_and_restore(self):
         library = WorkflowTemplates(self.store)

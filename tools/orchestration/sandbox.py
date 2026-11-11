@@ -9,6 +9,7 @@ import ctypes
 import os
 from pathlib import Path
 import platform
+import stat
 
 LIBC = ctypes.CDLL(None, use_errno=True)
 READ = (1 << 0) | (1 << 2) | (1 << 3)
@@ -81,7 +82,7 @@ def enforce(read=(), write=()):
     restrict(read, write)
 
 
-def restrict(read=(), write=(), *, deny_network=False):
+def restrict(read=(), write=(), *, deny_network=False, write_fds=()):
     """Apply the same Landlock policy in an already isolated native child."""
     if abi() < 6:
         raise OSError('Landlock ABI >= 6 required')
@@ -90,6 +91,11 @@ def restrict(read=(), write=(), *, deny_network=False):
     if fd < 0:
         raise OSError(ctypes.get_errno(), 'landlock create')
     try:
+        def add_rule(handle, access):
+            rule = Beneath(access, handle)
+            if LIBC.syscall(445, fd, 1, ctypes.byref(rule), 0):
+                raise OSError(ctypes.get_errno(), 'landlock add')
+
         for paths, access in ((read, READ), (write, ALL)):
             for value in paths:
                 p = Path(value).resolve()
@@ -98,11 +104,13 @@ def restrict(read=(), write=(), *, deny_network=False):
                 handle = os.open(p, os.O_PATH | os.O_CLOEXEC)
                 try:
                     mask = access if p.is_dir() else access & ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 14) | (1 << 15))
-                    rule = Beneath(mask, handle)
-                    if LIBC.syscall(445, fd, 1, ctypes.byref(rule), 0):
-                        raise OSError(ctypes.get_errno(), 'landlock add')
+                    add_rule(handle, mask)
                 finally:
                     os.close(handle)
+        for handle in write_fds:
+            if not stat.S_ISDIR(os.fstat(handle).st_mode):
+                raise OSError('Landlock write descriptor must be a directory')
+            add_rule(handle, ALL)
         if LIBC.prctl(38, 1, 0, 0, 0) or LIBC.syscall(446, fd, 0):
             raise OSError(ctypes.get_errno(), 'landlock restrict')
         confine_processes(deny_network=deny_network)
