@@ -23,6 +23,7 @@ from .claude_session_profile import discover_cli, environment_identity, startup_
 from .claude_native_catalog import model_id, observe_native_catalog
 from .claude_agent_scope import scope_supported, scoped_environment
 from .native_history_config import unique_pairs
+from .native_agent_profiles import approved_paths, public_profile, read_profile, require_frozen_profile
 from .session_identity import StorageRootIdentity
 from .session_lease import CODEX_COORDINATION_VERSION
 
@@ -60,9 +61,10 @@ class CodexCLI:
     provider_id = 'codex'
     label = 'Codex CLI'
 
-    def __init__(self, provider, error):
+    def __init__(self, provider, error, profiles=None):
         self.provider = provider
         self.error = error
+        self.profiles = profiles or {}
 
     def observe(self):
         if self.provider is None:
@@ -121,14 +123,20 @@ class CodexCLI:
         if not self.provider or self.provider.version != CODEX_COORDINATION_VERSION or mode_permission not in access:
             raise Invalid('Codex 支持 Ask、仅规划的 Plan 和获准工作区读写的 Agent。')
         scope = access[mode_permission]
+        named = (selected_profile(self.provider_id,self.provider.config_root,self.profiles,agent['native_profile'])
+                 if agent.get('native_profile') else None)
         plan = agent['mode'] == 'Plan'
+        if named and plan:
+            raise Invalid('原生 Plan 使用默认 Codex 配置。')
         if plan:
             observed = self.provider.store.db.get(CATALOG, self.provider_id)
             if not observed.get('modes', {}).get('Plan', {}).get('enabled') or agent.get('skills'):
                 raise Invalid('请核验 Codex 原生 Plan，且为本次 Plan 关闭 Skills。')
         if scope and not os.access('/usr/bin/bwrap', os.X_OK):
             raise Invalid('本机 Bubblewrap 不可用，未开放工作区工具。')
-        model, effort = agent['model'], agent['effort']
+        model, effort = agent['model'],agent['effort']
+        if named:
+            model, effort = model or named['model'],effort or named['effort']
         if model is None or effort is None:
             row = self.provider.store.db.get(CATALOG, self.provider_id)
             default = (row.get('default_model') or {}).get('id')
@@ -146,6 +154,9 @@ class CodexCLI:
                            v2_codex_code_host_sha256=companion_identity(binding['executable']))
         if plan:
             binding['v2_agent_plan'] = True
+        if named:
+            binding['native_profile'] = named
+            binding['v2_development_untrusted'] = True
         return binding
 
     def command(self, binding, *, config=None, session_id=None, resume=False, output_schema=None):
@@ -162,20 +173,32 @@ class CodexCLI:
         if not self.provider:
             raise Blocked('已冻结的 Codex CLI 当前不可用。')
         self.provider.require_local(binding)
+        require_frozen_profile(binding)
 
     def transport(self, binding, limits, *, managed_resume=False):
+        require_frozen_profile(binding)
         if binding.get('v2_agent_plan') or binding.get('transition_from'):
             from .codex_agent_plan import CodexPlan
             return CodexPlan(binding, limits)
         return LocalCodex(binding, limits)
 
 
+def selected_profile(provider, root, profiles, name):
+    if name is None:
+        return None
+    path = profiles.get((provider,name))
+    if not path:
+        raise Invalid('此原生命名配置未由本机启动参数登记。')
+    return read_profile(provider,name,path,root)
+
+
 class ClaudeCLI:
     provider_id = 'claude'
     label = 'Claude Code'
 
-    def __init__(self, store):
+    def __init__(self, store, profiles=None):
         self.store = store
+        self.profiles = profiles or {}
 
     def profile(self, *, allow_unsupported=False):
         if os.environ.get('CLAUDE_CONFIG_DIR'):
@@ -212,7 +235,7 @@ class ClaudeCLI:
             row['modes']['Agent'] = mode(scoped, ['--restricted', '--permission-mode', 'acceptEdits'],
                                         '仅在已授权工作区使用文件工具和受控 Bash。' if scoped else
                                         '需要已核验的 Linux 隔离和本机 Claude API 认证配置。')
-            row['permissions'] = ['none', 'workspace-write'] if scoped else ['none']
+            row['permissions'] = ['none','workspace-read','workspace-write'] if scoped else ['none']
             root = Path(profile['config_root'])
             settings = {}
             try:
@@ -269,14 +292,19 @@ class ClaudeCLI:
 
     def binding(self, workspace, agent):
         profile = self.profile()
-        modes = {('Ask', 'none'): 'manual', ('Plan', 'none'): 'plan', ('Agent', 'workspace-write'): 'acceptEdits'}
-        native = modes.get((agent['mode'], agent.get('permission', 'none')))
+        modes = {('Ask','none'):'manual',('Plan','none'):'plan',('Ask','workspace-read'):'manual',
+                 ('Plan','workspace-read'):'plan',('Agent','workspace-write'):'acceptEdits'}
+        permission = agent.get('permission','none')
+        native = modes.get((agent['mode'],permission))
         if not native or native not in profile['permission_modes']:
             raise Invalid('此 Claude 工作模式尚未核验。')
-        scoped = native == 'acceptEdits'
+        scoped = permission in ('workspace-read','workspace-write')
         if scoped and not scope_supported():
             raise Invalid('本机 Bubblewrap 不可用，未开放 Claude 文件和命令工具。')
-        model, effort, budget = agent['model'], agent['effort'], agent.get('max_budget_usd')
+        named = selected_profile(self.provider_id,profile['config_root'],self.profiles,agent.get('native_profile'))
+        model, effort, budget = agent['model'],agent['effort'],agent.get('max_budget_usd')
+        if named:
+            model, effort = model or named['model'],effort or named['effort']
         if model is not None and not model_id(model):
             raise Invalid('Claude 模型格式无效。')
         if effort is not None and effort not in profile['efforts']:
@@ -303,8 +331,12 @@ class ClaudeCLI:
                        root_identity=StorageRootIdentity.capture(binding['config_root']).fields())
         if scoped:
             binding.update(v2_claude_scope=True, _metadata_guard=str(self.store.state))
+            if permission=='workspace-read':
+                binding['v2_claude_read_only'] = True
             scoped_environment(binding, env)
         binding['direct_environment_sha256'] = profile_identity(binding)
+        if named:
+            binding['native_profile'] = named
         return binding
 
     def require_local(self, binding):
@@ -314,6 +346,7 @@ class ClaudeCLI:
                 or StorageRootIdentity.capture(binding['config_root']).fields() != binding['root_identity']
                 or environment_identity(startup_environment(os.environ)) != binding['cli_environment_sha256']):
             raise Blocked('Claude 原生 CLI 或配置已变化，未发送任务。')
+        require_frozen_profile(binding)
 
     def command(self, binding, *, config=None, session_id=None, resume=False, output_schema=None):
         try:
@@ -331,9 +364,14 @@ class ClaudeCLI:
 
 
 class ProviderRegistry:
-    def __init__(self, store, codex=None, codex_error=None):
+    def __init__(self, store, codex=None, codex_error=None, *, native_profiles=()):
         self.store = store
-        self.adapters = {adapter.provider_id: adapter for adapter in (CodexCLI(codex, codex_error), ClaudeCLI(store))}
+        self.profiles = approved_paths(native_profiles,Path.home())
+        self.adapters = {adapter.provider_id:adapter for adapter in (
+            CodexCLI(codex,codex_error,self.profiles),ClaudeCLI(store,self.profiles))}
+
+    def selected(self, provider, name):
+        return selected_profile(provider,str(Path.home()/('.'+provider)),self.profiles,name)
 
     def adapter(self, provider):
         if not isinstance(provider, str) or provider not in self.adapters:
@@ -354,4 +392,10 @@ class ProviderRegistry:
                 row = empty(name, adapter.label)
             refreshed = row.get('refreshed_at')
             rows.append(dict(row, stale=bool(not refreshed or row.get('error') or time.time() - refreshed > 300)))
-        return {'providers': rows}
+        profiles = []
+        for provider,name in self.profiles:
+            try:
+                profiles.append(dict(public_profile(self.selected(provider,name)),available=True))
+            except READ_ERRORS:
+                profiles.append(dict(id=name,provider=provider,available=False))
+        return {'providers':rows,'profiles':profiles}

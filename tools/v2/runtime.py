@@ -34,6 +34,7 @@ from .agent_records import AgentRecords, KEY as AGENT_ID
 from .agent_execution import freeze_agent, prove_agent_history, require_agent_history, require_agent_scope
 from .native_writer_state import require_native_writer_idle
 from .definitions import compile_definition, source_manifest, ROOT
+from .execution_facts import failure_fact
 from .data_handoff import (freeze_task_files, has_output_contract, output_instruction, structured_output,
                            require_task_files_public, task_file_refs, task_selection, verify_artifacts)
 from .canvas_structure import node_kind
@@ -199,6 +200,9 @@ class V2Journal(Journal):
         self.s.db.change('activation', self.key, {'native_terminal_events': events[-3:],
             **({'native_turn_id': value['native_turn_id']} if value.get('native_turn_id') else {})})
 
+    def native_limit_event(self, value):
+        self.s.db.change('activation',self.key,{'native_limit':value})
+
     def native_tool_event(self, event):
         super().native_tool_event(dict(event, at=time.time()))
         activation = self.s.db.get('activation', self.key)
@@ -299,7 +303,7 @@ def activation_binding(definition, activation):
 
 
 class V2Runtime:
-    def __init__(self, store, executable=None, *, worker_run=None):
+    def __init__(self, store, executable=None, *, worker_run=None, native_profiles=()):
         self.store, self.flow, self.storage = store, store.db, store.state
         self.worker_run = worker_run
         self.provider_error = None
@@ -307,7 +311,7 @@ class V2Runtime:
         except (Blocked, OSError, subprocess.SubprocessError) as exc:
             self.provider = None
             self.provider_error = public_provider_error(exc)
-        self.cli_providers = ProviderRegistry(store, self.provider, self.provider_error)
+        self.cli_providers = ProviderRegistry(store,self.provider,self.provider_error,native_profiles=native_profiles)
         self.agents = AgentRecords(store, self.cli_providers)
 
     def catalog(self, refresh=False):
@@ -578,6 +582,22 @@ class V2Runtime:
                     except OSError: pass
 
     def native_turn(self, node, key, inputs, prefix, iteration):
+        try:
+            return self._native_turn(node,key,inputs,prefix,iteration)
+        except Exception as error:
+            run = self.flow.get('run',self.worker_run)
+            definition = self.flow.get('definition',run['definition_id'])
+            row = self.flow.get('activation',key)
+            binding = activation_binding(definition,row)
+            process = row.get('process_result') or {}
+            process = process.get('result',process)
+            fact = failure_fact(binding['provider'],error,process=process,uncertain=bool(row.get('effect_uncertain')),
+                sent=bool(row.get('input_sent_sha256')),terminal_failed=bool(row.get('terminal_failure_verified')),
+                native_limit=row.get('native_limit'))
+            self.flow.change('activation',key,{'execution_failure':fact})
+            raise Blocked(fact['reason']) from None
+
+    def _native_turn(self, node, key, inputs, prefix, iteration):
         self.check_operator()
         run = self.flow.get('run', self.worker_run); definition = self.flow.get('definition', run['definition_id'])
         with self.flow.tx() as db:
@@ -658,7 +678,13 @@ class V2Runtime:
                 journal.writer_sid = target
                 require_native_writer_idle(self.store, binding, target, ignore_chat=chat_key)
                 require_agent_history(self, binding)
-            limits = dict(step_timeout_seconds=node['timeout'], max_log_bytes=2_000_000)
+            deadline = run['created_at']+run['graph']['budget']['seconds']
+            available = deadline-time.time()
+            if available<=0:
+                raise Blocked('运行已达到时间预算')
+            timeout = min(node['timeout'],available)
+            self.flow.change('activation',key,{'effective_timeout_seconds':timeout})
+            limits = dict(step_timeout_seconds=timeout,max_log_bytes=2_000_000,run_deadline_at=deadline)
             transport = (self.cli_providers.adapter(provider).transport(binding, limits, managed_resume=bool(binding.get('resume_proof')))
                          if configured else LocalCodex(binding, limits))
             receipt = transport.start(prompt, cwd, artifacts, schema, journal, run['id'])
@@ -711,9 +737,7 @@ class V2Runtime:
                 self.flow.change('activation', key, {'effect_uncertain': False, 'terminal_failure_verified': True,
                     'failure_receipt': dict(session_id=row['observed_session'], native_turn_id=row.get('native_turn_id', 'unknown'),
                         process=process, terminal='turn.failed', requested_model=binding['model'], requested_effort=binding['effort'])})
-            reason = (str(exc) if isinstance(exc, SessionRefused) else public_provider_error(exc) if provider == 'codex'
-                      else 'Claude 原生执行或回执未通过核验。请检查本机配置与运行证据。')
-            raise Blocked(reason) from None
+            raise
         finally:
             journal.writer_gates.close()
 

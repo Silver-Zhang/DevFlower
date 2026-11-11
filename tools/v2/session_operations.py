@@ -21,15 +21,16 @@ from studio.native_codex_rpc import CodexRPC, metadata, metadata_guard
 from studio.native_local import native_busy
 from studio.server import Conflict
 from studio.session_sources import UUID
+from studio.usage import public_usage
 
+from .execution_facts import failure_fact
 from .claude_session_profile import discover_cli, environment_identity, legacy_endpoint_valid, startup_environment
-from .native_session_links import claim_key, claude_workflow_history, verified_workflow
+from .native_session_links import claim_key, claude_workflow_history, require_creation_profile, verified_workflow
 from .native_writer_state import require_native_writer_idle
 from .native_history_config import CONFIG_BYTES, private_bytes, unique_pairs
 from .native_session_views import verify_bytes
 from .native_sessions import HANDLE, REVISION, prove_file
 from .project_files import FileView, mount_id
-from .provider import public_provider_error
 from .session_identity import SessionLocator, SessionRefused, StorageRootIdentity, session_path, verified_directory
 from .session_lease import current_owner, production_session_gate
 
@@ -138,8 +139,12 @@ class OperationJournal:
         self.db.change(KIND, self.row['id'], {'input_step': step, 'input_sha256': sha})
 
     def native_terminal_event(self, event):
-        self.db.change(KIND, self.row['id'], {'terminal_event': {
-            key: event.get(key) for key in ('type', 'session_id', 'native_turn_id')}})
+        row = self.db.get(KIND,self.row['id'])
+        self.db.change(KIND,self.row['id'],{'terminal_count':row.get('terminal_count',0)+1,'terminal_event':{
+            key:event.get(key) for key in ('type','session_id','native_turn_id')}})
+
+    def native_limit_event(self, value):
+        self.db.change(KIND,self.row['id'],{'native_limit':value})
 
     def native_tool_event(self, _):
         raise Blocked('对话出现未获准的工具活动，已停止本机进程。')
@@ -198,6 +203,8 @@ class SessionOperations:
         result.update(state=state, reason=REASON_UNKNOWN if state == 'RECOVERY_REQUIRED' else row.get('reason'))
         if state == 'COMPLETED':
             result.update(handle=row['result_handle'], receipt=row['receipt'], reply=row['reply'])
+        if row.get('execution_failure'):
+            result['execution_failure'] = row['execution_failure']
         return result
 
     def _get(self, key):
@@ -230,7 +237,7 @@ class SessionOperations:
     def claude_history_state(self, binding, locator, record, db):
         """Reconcile an exact current record against V2's completed creation and last receipt."""
         scope = ('provider', 'project', 'cwd', 'cwd_identity', 'home', 'config_root', 'root_identity',
-                 'runtime_profile', 'cli_version', '_executable_sha256')
+                 'runtime_profile', 'cli_version', '_executable_sha256', 'native_profile')
         latest = None
         created = False
         rows = db.execute("""
@@ -318,6 +325,8 @@ class SessionOperations:
                     or locator.root_identity != source.profile.identity or locator.original_cwd != cwd
                     or record.source.profile.root != source.profile.root or len(record.cwd_evidence) != 1):
                 raise SessionRefused('LOCATOR_REFUSED')
+        if locator is not None:
+            require_creation_profile(self.store,approved['config_root'],locator.native_uuid,provider)
         if provider == 'codex':
             binding = dict(self.codex.binding(workspace, dict(provider=provider, model=model, effort=effort)), **approved)
         else:
@@ -500,8 +509,8 @@ class SessionOperations:
                         or any(result.get(key) != binding[key] for key in ('home', 'cwd', 'provider'))
                         or result.get('requested_model') != binding['model'] or result.get('requested_effort') != binding['effort']
                         or not isinstance(result['report'].get('reply'), str)
-                        or provider == 'codex' and final.get('terminal_event') != {
-                            'type': 'turn.completed', 'session_id': sid, 'native_turn_id': result.get('native_turn_id')}):
+                        or provider == 'codex' and (final.get('terminal_count',1)!=1 or final.get('terminal_event') != {
+                            'type':'turn.completed','session_id':sid,'native_turn_id':result.get('native_turn_id')})):
                     raise Blocked('原生终结回执无法关联到本次输入。')
                 actual, ref, _ = self.prove_after(binding, sid)
                 self.require_scope(binding)
@@ -510,16 +519,33 @@ class SessionOperations:
                     state='COMPLETED', effect_uncertain=False, result_handle=source.registry.handle(actual),
                     relative=str(ref.relative), native_after_sha256=ref.sha, reply=safe_text(result['report']['reply']),
                     receipt=dict(provider=provider, session_id=sid, native_turn_id=result.get('native_turn_id'),
-                                 requested_model=binding['model'], requested_effort=binding['effort']))
+                                 requested_model=binding['model'],requested_effort=binding['effort'],
+                                 usage=public_usage(result.get('usage'))))
             # The durable RUNNING state fences cooperating writers until the lease has released.
             self.store.db.change(KIND, row['id'], completion, states={'RUNNING'})
         except Exception as exc:
             current = self.store.db.get(KIND, row['id'])
             uncertain = bool(current.get('effect_uncertain') or journal.process_started)
-            reason = (str(exc) if isinstance(exc, SessionRefused) else public_provider_error(exc) if provider == 'codex'
-                      else 'Claude 原生请求无法启动。请检查本机配置和权限。')
-            self.store.db.change(KIND, row['id'], dict(state='RECOVERY_REQUIRED' if uncertain else 'NOT_SENT',
-                                                       reason=REASON_UNKNOWN if uncertain else reason))
+            step_key = current.get('process_step')
+            try:
+                step = self.store.db.get(STEP,step_key) if step_key else {}
+            except Invalid:
+                step = {}
+            process = step.get('data',{}) if step.get('status')=='EXITED' else {}
+            sent = bool(current.get('input_sha256')==row['prompt_sha256'] and current.get('input_step')==step_key)
+            terminal = current.get('terminal_event') or {}
+            failed = (provider=='codex' and current.get('terminal_count')==1 and sent
+                and terminal.get('type')=='turn.failed' and current.get('observed_session')
+                and terminal.get('session_id')==current['observed_session']
+                and type(process.get('exit')) is int and process['exit']!=0
+                and process.get('operation_id')==step_key and process.get('process')==current.get('process')
+                and not any(process.get(key) for key in ('timeout','cancelled','overflow'))
+                and not group_alive(current['process']))
+            fact = failure_fact(provider,exc,process=process,uncertain=uncertain,sent=sent,
+                                terminal_failed=failed,native_limit=current.get('native_limit'))
+            state = 'FAILED' if failed else 'RECOVERY_REQUIRED' if uncertain else 'NOT_SENT'
+            self.store.db.change(KIND,row['id'],dict(state=state,reason=fact['reason'],execution_failure=fact,
+                                                    effect_uncertain=uncertain and not failed))
         finally:
             self.slots.release()
 

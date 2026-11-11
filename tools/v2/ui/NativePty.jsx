@@ -49,9 +49,15 @@ export function NativePty({api, workspace, scope, catalog, refreshCatalog, onClo
  }
 
  async function inspect() {
+  if(scope?.id){
+   const exact=await request('output?'+new URLSearchParams({workspace:workspace.id,id:scope.id,after:0}));
+   if(alive.current&&!rowRef.current)select(exact);
+   return;
+  }
   const value = await request('list?' + new URLSearchParams({workspace: workspace.id}));
   if (!alive.current) return;
-  const active = value.terminals.filter(item => ACTIVE.has(item.state) && (!scope || item.handle === scope.handle));
+  const active = value.terminals.filter(item=>ACTIVE.has(item.state)
+   && (!scope||item.handle===scope.handle&&(!scope.id||item.id===scope.id)));
   setChoices(active);
   if (!rowRef.current && active.length === 1) select(active[0]);
  }
@@ -191,7 +197,7 @@ export function NativePty({api, workspace, scope, catalog, refreshCatalog, onClo
     if (choice) select(choice);
    }}><option value="">选择已开的终端</option>{choices.map((item, i) =>
     <option key={item.id} value={item.id}>终端 {i + 1} · {item.state}</option>)}</select></label>}
-  {scope && (!row || !ACTIVE.has(row.state)) && <div className="native-pty-actions">
+  {scope&&scope.start_available!==false&&(!row||!ACTIVE.has(row.state))&&<div className="native-pty-actions">
    <label className="field"><span>终端模型</span><select aria-label="终端模型" value={model} disabled={!!attempt}
     onChange={event => {setModel(event.target.value); setEffort('');}}>
     <option value="">选择模型</option>{models.map(item => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
@@ -204,8 +210,10 @@ export function NativePty({api, workspace, scope, catalog, refreshCatalog, onClo
    <button className="primary" disabled={busy || (!attempt && (!model || !efforts.includes(effort)))}
     onClick={() => action(start)}>{attempt ? '核对上次启动' : '打开工作区读写终端'}</button>
   </div>}
-  {scope && (!row || ['STARTING', 'RUNNING'].includes(row.state)) &&
+  {scope?.activation&&<p className="field-note">来自所选运行激活 · {scope.activation.slice(0,12)}</p>}
+  {scope&&scope.start_available!==false&&(!row||['STARTING','RUNNING'].includes(row.state))&&
    <p className="muted small">授权 Codex 读写当前工作区。关闭视图会保留终端，可重新连接。</p>}
+  {scope?.start_available===false&&!row&&<p className="muted small">正在查找此运行激活关联的已有终端。</p>}
   {!row && !scope && <p className="muted small">选择本工作空间的已有终端。</p>}
   {row && <p role="status" className="muted small">{row.reason || ({
    STARTING: '正在核验并启动终端…', RUNNING: owned(row) ? '此浏览器持有键盘' :

@@ -6,7 +6,8 @@ from studio.session_sources import UUID
 from .session_identity import SessionRefused
 
 
-def require_native_writer_idle(store, binding, target, *, ignore_operation=None, ignore_pty=None, ignore_chat=None):
+def require_native_writer_idle(store, binding, target, *, ignore_operation=None, ignore_pty=None, ignore_chat=None,
+                               ignore_title=None):
     """Run under the production writer lease, before starting a new effect."""
     if not isinstance(target, str) or not UUID.fullmatch(target):
         raise SessionRefused('LOCATOR_REFUSED')
@@ -14,14 +15,16 @@ def require_native_writer_idle(store, binding, target, *, ignore_operation=None,
     with store.db.tx(read=True) as db:
         operations = db.execute("""
             SELECT kind, id, data FROM records
-            WHERE kind IN ('native-session-operation', 'native-session-pty')
+            WHERE kind IN ('native-session-operation', 'native-session-pty', 'native-session-title')
             AND json_extract(data, '$.binding.provider')=?
             AND json_extract(data, '$.binding.config_root')=?
             AND ? IN (json_extract(data, '$.observed_session'), json_extract(data, '$.target'),
                       json_extract(data, '$.session_id'))
         """, (provider, root, target))
         for kind, ident, raw in operations:
-            if ident == (ignore_operation if kind == 'native-session-operation' else ignore_pty):
+            if (kind=='native-session-operation' and ident==ignore_operation
+                    or kind=='native-session-pty' and ident==ignore_pty
+                    or kind=='native-session-title' and ident==ignore_title):
                 continue
             row = json.loads(raw)
             if (row.get('state') == 'RECOVERY_REQUIRED' or row.get('effect_uncertain') is True

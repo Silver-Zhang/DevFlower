@@ -100,16 +100,16 @@ function EventFeed({api,workspace,run,activation,live}){
 }
 
 export function RunInspector({api,snapshot,trusted,selection,onSelect,children}){
- const [tab,setTab]=useState('detail'),[chosen,setChosen]=useState(''),[exportError,setExportError]=useState('');
+ const [tab,setTab]=useState('detail'),[chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');
  const [exporting,setExporting]=useState(false);
  const mounted=useRef(true);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
  const run=snapshot?.run,nodes=snapshot?.nodes||[];
- const exact=nodes.find(row=>row.id===chosen);
+ const eligible=selection?.node?nodes.filter(row=>row.node===selection.node||row.node.startsWith(selection.node+'/')):nodes;
+ const exact=eligible.find(row=>row.id===chosen);
  const activation=exact||nodes.find(row=>row.node===selection?.node);
  const scope=run&&{workspace:run.workspace,run:run.id};
  const live=trusted&&run&&snapshot.worker_alive&&!terminal.has(snapshot.state);
- const eligible=selection?.node?nodes.filter(row=>row.node===selection.node||row.node.startsWith(selection.node+'/')):nodes;
  const errors=nodes.filter(row=>['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(row.state));
  const detail=tab==='detail'&&children?.(activation);
  async function exportRun(){
@@ -141,6 +141,11 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
   {tab==='detail'&&(detail||<div className="run-inspector-overview">
    <dl><dt>运行</dt><dd>{run?.id||'读取中'}</dd><dt>登记</dt><dd>{date(run?.created_at)}</dd><dt>开始</dt><dd>{date(run?.started_at)}</dd>
     <dt>结束</dt><dd>{date(run?.finished_at)}</dd><dt>持久激活</dt><dd>{nodes.length}</dd></dl>
+   {run?.execution_budget&&<section aria-label="运行预算"><h3>运行预算</h3>
+    <dl><dt>已登记调用</dt><dd>{run.execution_budget.admitted_calls} / {run.execution_budget.calls}</dd>
+     <dt>已启动原生进程</dt><dd>{run.execution_budget.native_process_starts}</dd>
+     <dt>运行时间上限</dt><dd>{run.execution_budget.seconds} 秒</dd>
+     <dt>截止时间</dt><dd>{date(run.execution_budget.deadline_at)}</dd></dl></section>}
    {run?.reason&&<p className="error-text">{run.reason}</p>}
    {run?.resume_available&&<p className="field-note">运行状态区提供原检查点的恢复入口。</p>}
    {errors.map(row=><button key={row.id} onClick={()=>onSelect(row.node)}>{row.name||row.node} · {row.reason||'查看已记录错误'}</button>)}

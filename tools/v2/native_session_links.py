@@ -102,9 +102,26 @@ def verified_workflow(store, config_root, sid, provider='codex'):
         return dict(workspace=run['workspace'], cwd=cwd, home=frozen['home'],
                     group=digest(canonical(['v2-workflow-session-group', run['workspace'], definition['draft_id']])),
                     workflow=safe_text(definition['draft_document']['name'])[:160], agent=safe_text(node['name'])[:160],
-                    run=run['id'], activation=activation['id'], node=activation['node'], history=history)
+                    run=run['id'], activation=activation['id'], node=activation['node'], history=history,
+                    native_profile=profile_identity(frozen.get('native_profile')))
     except (OSError, ValueError, TypeError, KeyError, StopIteration, Blocked, Invalid):
         raise SessionRefused('RECOVERY_REQUIRED') from None
+
+
+def profile_identity(profile):
+    return {key:profile[key] for key in ('id','sha256')} if profile else None
+
+
+def require_creation_profile(store, config_root, sid, provider, requested=None):
+    from .session_identity import SessionRefused
+    try:
+        store.db.get('native-session-claim',claim_key(config_root,sid,provider))
+    except Invalid:
+        if requested:
+            raise SessionRefused('PROFILE_REFUSED') from None
+        return
+    if verified_workflow(store,config_root,sid,provider).get('native_profile')!=profile_identity(requested):
+        raise SessionRefused('PROFILE_REFUSED')
 
 
 def claude_workflow_history(store, db, binding, locator):

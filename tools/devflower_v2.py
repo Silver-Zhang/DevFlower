@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--no-browser', action='store_true', help='print private local URL')
     parser.add_argument('--codex-cli', help='explicit installed Codex executable; default: discover installed CLI')
     parser.add_argument('--native-history-config', help='private opt-in JSON for read-only native history')
+    parser.add_argument('--native-agent-profile',action='append',default=[],
+                        help='approved native model/effort layer: codex:NAME or claude:NAME=/private/settings.json')
     parser.add_argument('--native-session-writes', help='private opt-in JSON for standalone native session writes')
     parser.add_argument('--copilot-catalog-config', help='private opt-in GitHub Copilot catalog profile')
     args = parser.parse_args()
@@ -33,7 +35,7 @@ def main():
         store = DraftStore(args.state_dir, args.allow_root)
         with lease(store.state / 'v2-service.lock'):
             native = NativeSessions.from_path(store, args.native_history_config) if args.native_history_config else None
-            runtime = V2Runtime(store,args.codex_cli)
+            runtime = V2Runtime(store,args.codex_cli,native_profiles=args.native_agent_profile)
             if args.native_session_writes and native is None:
                 raise Invalid('原生会话写入同时需要 --native-history-config。')
             operations = (SessionOperations(store, native, runtime.provider, load_write_profiles(args.native_session_writes))

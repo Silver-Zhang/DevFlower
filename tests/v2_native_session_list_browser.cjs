@@ -119,6 +119,15 @@ async function main() {
   await page.goto(process.env.V2_URL);
   await visit('A');
 
+  await check('nested-settings-only-configuration', async () => {
+   await load();
+   await list.getByText('项目原生配置',{exact:true}).click();
+   await list.getByText('Claude Code · configured/.claude',{exact:true}).waitFor();
+   await list.getByText('settings.json · 仅配置',{exact:true}).waitFor();
+   assert.equal(await list.getByText('PRIVATE_SETTINGS_FIXTURE').count(),0);
+   await close.click();
+  });
+
   await check('preference-publication-and-verified-default-groups', async () => {
    const pending = await holdPreferences(page);
    await native.click();

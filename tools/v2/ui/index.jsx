@@ -8,6 +8,7 @@ import './style.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
+import {NativePty} from './NativePty.jsx';
 import {AgentManager} from './AgentManager.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
@@ -76,6 +77,18 @@ function RunEvidence({activation,node,trusted,onTransition}){const a=activation;
  {a?.data_contract&&a.output&&<details><summary>结构化输出与产物引用</summary>
   <pre>{readable({result:a.output.result,artifacts:a.output.artifacts})}</pre></details>}
  <h3>本次实际可见请求</h3><p className="field-note">包括 DevFlower 加入的格式要求与实际上游内容；这是本机发送文本，不代表服务端全部上下文。</p><pre aria-label="实际可见请求">{a?.actual_request??'尚无持久化请求'}</pre>
+ {a?.execution_limits&&<section aria-label="Agent 执行预算">
+  <h3>执行预算</h3>
+  <p>配置超时 {a.execution_limits.timeout_seconds??'未记录'} 秒
+   {a.effective_timeout_seconds!=null?' · 本次最多 '+Math.floor(a.effective_timeout_seconds)+' 秒':''}
+   {a.execution_limits.native_budget_usd?' · Claude 上限 $'+a.execution_limits.native_budget_usd:''}</p>
+  {a.receipt?.usage&&<p>{a.receipt.usage.total_cost_usd==='unknown'?'CLI 未报告费用':
+   a.receipt.usage.total_cost_usd!=null?'CLI 报告 $'+a.receipt.usage.total_cost_usd:'CLI 未报告费用'}
+   {a.receipt.usage.semantics==='session-cumulative-do-not-sum'?'（会话累计）':''}</p>}
+ </section>}
+ {a?.execution_failure&&<section aria-label="执行诊断"><h3>{a.execution_failure.reason}</h3>
+  <p>{a.execution_failure.effect==='not-sent'?'本次未发送。':a.execution_failure.effect==='terminal-failed'?
+   '原生终结失败已核验。':'Provider 结果待核验。'} {a.execution_failure.action}</p></section>}
  <h3>发送与回执</h3><p>{a?.input_sent_sha256?'请求字节已写入自有 CLI 进程':'尚无请求写入证据'}；{a?.receipt_verified?'原生终结回执已关联核验':a?.terminal_failure_verified?'原生终结失败已关联核验':'终结结果未确认'}。</p>
  <p className="field-note">请求：{a?.provider||node.provider||'unknown'} · {a?.model||node.model||'unknown'} / {a?.effort||node.effort||'unknown'}。实际模型：{a?.receipt?.resolved_model||'unknown'}；实际强度：{a?.receipt?.resolved_effort||'unknown'}。未报告的字段保持 unknown。</p>
  <details><summary>初始化、每轮与输出要求</summary><h3>初始化</h3><pre>{node.initial_prompt||'（空）'}</pre><h3>每轮</h3><pre>{node.round_prompt||'（空）'}</pre><h3>输出与交接</h3><pre>{node.output_prompt||'（空）'}</pre><h3>实际输入分节</h3><pre>{a?.request_sections?readable(a.request_sections):'尚无记录'}</pre></details>
@@ -131,6 +144,7 @@ function App(){
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
+ const [runTerminal,setRunTerminal]=useState(null),[linkedActivation,setLinkedActivation]=useState(null);
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
  const [taskFiles,setTaskFiles]=useState([]),[taskText,setTaskText]=useState('');
  const assistantOpener=useRef(null),gitOpener=useRef(null);
@@ -216,7 +230,7 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){setRunInspectorOpen(false);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
+ function showRun(id,w=workspaceRef.current,environment){setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
  function editDraft(){setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
   try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');const done=ended(response.state)&&ended(response.run.persisted_state??response.state);if(done)refreshRuns();return done}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
@@ -428,7 +442,7 @@ function App(){
   workspaceEpoch.current++;
   cancelBusy.current=null;setCancelling(false);
   setSideView('');
-  setAgentPanel(null);setAssistantFiles([]);setAssistantRun(null);
+  setAgentPanel(null);setAssistantFiles([]);setAssistantRun(null);setRunTerminal(null);setLinkedActivation(null);
   workspaceRef.current=w;setWorkspace(w);setDrafts(rows);setRuns([]);
   install(row?.graph||blank(),row);
  }
@@ -473,6 +487,14 @@ function App(){
  function closeFiles(){
   setSideView('');
   requestAnimationFrame(()=>filesOpener.current?.focus());
+ }
+ async function openRunTerminal(activation){
+  const current=runRef.current,w=workspaceRef.current;
+  if(!current||!w||activation.run!==current.id)return;
+  const target=await api('native-pty/run-target?'+new URLSearchParams({workspace:w.id,run:current.id,activation:activation.id}));
+  if(runRef.current?.epoch!==current.epoch||workspaceRef.current?.id!==w.id)return;
+  if(!target.available)throw Error(target.reason);
+  setRunTerminal(target);setSideView('run-pty');
  }
  function closeNative(){
   setSideView('');
@@ -915,7 +937,7 @@ function App(){
    <header><div><small>运行检查器</small><h2>{n?.name||(e?'交接记录':'运行详情')}</h2></div>
     <button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
    <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted}
-    selection={n?{node:n.id}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
+    selection={n?{node:n.id,activation:linkedActivation}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
     {current=>{
      if(!n&&!e&&!current)return null;
      const scoped={api,workspace:runSnapshot?.run?.workspace,run:runSnapshot?.run?.id,activation:current?.id};
@@ -939,6 +961,8 @@ function App(){
        onTransition={completedPlans.some(row=>row.id===current?.id)&&current.node===n?.id?guard(()=>openPlanApproval(current)):null}/>:
        <ControlEvidence activation={current} trusted={runTrusted}/>}
       {current?.started_at&&<details><summary>激活时间</summary><pre>{readable({started_at:current.started_at,finished_at:current.finished_at})}</pre></details>}
+      {current?.receipt_verified&&current.provider==='codex'&&status?.native_codex_terminal&&
+       <Button onClick={guard(()=>openRunTerminal(current))}>查看此激活的原生终端</Button>}
       {current?.task_files?.length>0&&<details><summary>本次所附任务文件</summary><pre>{readable(current.task_files)}</pre></details>}
       {current?.data_contract&&<p className="field-note" aria-label="输出合同结果">
        {current.data_contract.state==='PASSED'?'输出合同通过':'输出合同未通过'}{current.receipt_verified?' · 原生回执已核验':''}</p>}
@@ -1001,9 +1025,14 @@ function App(){
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} writeProviders={status?.native_session_writes}
     workflowLinks={status?.native_workflow_links} workflowTrash={status?.native_workflow_trash}
-    terminalAvailable={status?.native_codex_terminal} catalog={catalog} refreshCatalog={discover}
-    onWorkflow={link=>{showRun(link.run,workspace);setSelected(link.node.split('/')[0]);closeNative()}}
+    terminalAvailable={status?.native_codex_terminal} titleAvailable={status?.native_codex_title}
+    catalog={catalog} refreshCatalog={discover}
+    onWorkflow={link=>{showRun(link.run,workspace);setLinkedActivation(link.activation);setSelected(link.node.split('/')[0]);closeNative()}}
     isCurrent={()=>inWorkspace(workspace,panelEpoch)} onClose={closeNative}/>}
+  {workspace&&sideView==='run-pty'&&runTerminal&&<aside className="project-panel" aria-label="运行关联原生终端">
+   <NativePty key={runTerminal.activation} api={api} workspace={workspace} scope={runTerminal} catalog={catalog}
+    refreshCatalog={discover} onClose={()=>{setRunTerminal(null);setSideView('')}}/>
+  </aside>}
   {workspace&&agentPanel&&<AgentManager key={workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}

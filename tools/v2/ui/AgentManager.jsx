@@ -23,7 +23,7 @@ function Field({label, children}) {
 
 export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onRun, onClose, onChanged, visible}) {
  const [rows, setRows] = useState([]);
- const [providers, setProviders] = useState([]);
+ const [providers,setProviders]=useState([]),[profiles,setProfiles]=useState([]);
  const [record, setRecord] = useState(null);
  const [config, setConfig] = useState(null);
  const [sessions, setSessions] = useState(null);
@@ -43,7 +43,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   alive.current = true;
   Promise.all([api('agents?workspace=' + workspace.id), api('cli-providers')]).then(([items, catalog]) => {
    if (!alive.current) return;
-   setRows(items.agents); setProviders(catalog.providers);
+   setRows(items.agents);setProviders(catalog.providers);setProfiles(catalog.profiles||[]);
   }).catch(e => {if (alive.current) setError(e.message);});
   return () => {alive.current = false;};
  }, []);
@@ -71,16 +71,17 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  function change(fields) {setConfig(old => ({...old, ...fields}));}
  function changeProvider(provider) {
   change({provider, model: null, model_source: 'native_default', effort: null, mode: 'Ask', permission: 'none',
-   session: {kind: 'new'}, skills: [], subagents: 'disabled', max_budget_usd: null});
+   session:{kind:'new'},skills:[],subagents:'disabled',max_budget_usd:null,native_profile:null});
   setSessions(null); setSkills(null);
  }
  async function discover(provider) {
   const result = await api('cli-providers/discover', {provider});
-  if (alive.current) setProviders(result.providers);
+  if(alive.current){setProviders(result.providers);setProfiles(result.profiles||[])}
  }
  async function loadSessions() {
   const result = await api('agent-sessions?' + new URLSearchParams({
-   workspace: workspace.id, provider: config.provider, cwd: config.cwd}));
+   workspace:workspace.id,provider:config.provider,cwd:config.cwd,
+   ...(config.native_profile?{native_profile:config.native_profile}:{})}));
   if (alive.current) setSessions(result);
  }
  async function loadSkills() {
@@ -129,7 +130,9 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
    }
   });
  }
- const provider = providers.find(row => row.provider === config?.provider);
+ const provider = providers.find(row=>row.provider===config?.provider);
+ const nativeProfiles=profiles.filter(row=>row.provider===config?.provider);
+ const nativeProfile=nativeProfiles.find(row=>row.id===config?.native_profile);
  const isDirty = Boolean(config && (!record || JSON.stringify(config) !== JSON.stringify(record.config)));
  const model = provider?.models.find(item => item.id === config?.model);
  const efforts = model?.efforts?.length ? model.efforts : provider?.efforts ?? [];
@@ -170,6 +173,18 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
        </select></Field>
        <button type="button" onClick={() => action(() => discover(config.provider))}>发现本机 CLI</button>
       </div>
+      {(nativeProfiles.length>0||config.native_profile)&&<Field label="原生 Profile">
+       <select aria-label="原生 Profile" value={config.native_profile||''} onChange={event=>{
+        change({native_profile:event.target.value||null,model:null,model_source:'native_default',effort:null,
+         session:{kind:'new'}});setSessions(null);
+       }}>
+        <option value="">默认原生配置</option>
+        {config.native_profile&&!nativeProfile&&<option value={config.native_profile} disabled>{config.native_profile}（未登记）</option>}
+        {nativeProfiles.map(row=><option key={row.id} value={row.id} disabled={!row.available}>
+         {row.id}{row.available?'':'（核验未通过）'}</option>)}
+       </select></Field>}
+      {nativeProfile?.available&&<p className="field-note">
+       模型 {nativeProfile.model||'沿用默认'} · 推理强度 {nativeProfile.effort||'沿用默认'}</p>}
       <p className="field-note">{provider?.version || '尚未核验 CLI 版本'}
        {provider?.authenticated === true ? ' · 已观察到认证配置' : provider?.authenticated === false ? ' · CLI 未报告登录' : ''}
        {provider?.stale && provider?.refreshed_at ? ' · 发现记录待刷新' : ''}。{provider?.error || ''}</p>
@@ -180,7 +195,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
         const row = provider?.models.find(item => item.id === id);
         change({model: id && id !== 'manual' ? id : null, effort: null,
          model_source: id === 'manual' ? 'manual' : !id ? 'native_default' : row?.source === 'cli_catalog' ? 'catalog' : 'configured'});
-       }}><option value="">使用 CLI 默认{provider?.default_model ? '（' + provider.default_model.id + '）' : ''}</option>
+       }}><option value="">使用 CLI 默认{provider?.default_model ? '（' + (nativeProfile?.model||provider.default_model.id) + '）' : nativeProfile?.model?'（'+nativeProfile.model+'）':''}</option>
         {modelValue && modelValue !== 'manual' && !model && <option value={modelValue}>{modelValue}（待核验）</option>}
         {provider?.models.map(item => <option value={item.id} key={item.id}>{item.name} · {SOURCES[item.source] || item.source}</option>)}
         <option value="manual">手动输入模型（待核验）</option></select></Field>

@@ -5,6 +5,7 @@ import {NativeActivity} from './NativeActivity.jsx';
 import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
 import {NativeComposer} from './NativeComposer.jsx';
 import {NativePty} from './NativePty.jsx';
+import {NativeTitle} from './NativeTitle.jsx';
 import {groupKeyFor} from '../../studio/workbench_ui/session_groups.mjs';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
@@ -16,6 +17,7 @@ const COVERAGE = {
  source_alias: '检测到不安全的来源别名',
  source_budget: '会话来源数量超过预算',
  nested_unavailable: '部分项目子目录无法安全检查',
+ nested_config_unavailable: '部分项目原生配置无法核验',
  nested_depth_budget: '项目嵌套发现达到深度上限',
  entry_budget: '目录项数量达到上限',
  file_budget: '会话文件数量达到上限',
@@ -117,7 +119,7 @@ function compareRows(a, b, order) {
  return order === 'earliest' ? a.time - b.time : b.time - a.time;
 }
 
-export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, terminalAvailable, catalog,
+export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, terminalAvailable, titleAvailable, catalog,
  refreshCatalog, isCurrent, onClose, onWorkflow}) {
  const [list, setList] = useState(null);
  const [reading, setReading] = useState(null);
@@ -408,6 +410,12 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
      {list.coverage.reasons.length > 0 && <ul className="native-coverage-reasons">
       {list.coverage.reasons.map(reason => <li key={reason}>{COVERAGE[reason] || '部分来源未核实'}</li>)}
      </ul>}
+     {list.configurations?.length>0&&<details className="native-configurations"><summary>项目原生配置</summary>
+      <ul>{list.configurations.map(item=><li key={item.provider+':'+item.path}>
+       <strong>{PROVIDERS[item.provider]} · {item.path}</strong>
+       <small>{item.files.join('、')} · {item.history_directory?'发现历史目录':'仅配置'}</small>
+      </li>)}</ul>
+     </details>}
      <fieldset className="native-collections" ref={collectionGroup}>
       <legend>会话整理分类</legend>
       {COLLECTIONS.map(([id, label]) => <label key={id}>
@@ -475,6 +483,10 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
    {reading && <section className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
      <h3>{selectedView.alias || PROVIDERS[reading.row.provider]} · 只读</h3></header>
+    {reading.result&&titleAvailable&&reading.row.provider==='codex'&&canContinue&&
+     <NativeTitle key={reading.row.handle+':'+list.revision} api={api} workspace={workspace.id}
+      handle={reading.row.handle} revision={list.revision}/>}
+    {reading.result&&reading.row.provider==='claude'&&<p className="field-note">此处支持为 Claude 会话设置 DevFlower 本地别名。</p>}
     {reading.row.workflow && <div className="native-view-actions">
      <button onClick={() => onWorkflow(reading.row.workflow)}>查看工作流节点 · {reading.row.workflow.agent}</button>
     </div>}

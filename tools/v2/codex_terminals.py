@@ -34,8 +34,10 @@ from studio.session_sources import opened
 from studio.terminal_text import TerminalText
 
 from .codex_pty_gateway import CodexProtocol, PROFILE, UnixGateway
+from .native_session_links import workflow_use
+from .run_inspector import RUN
 from .project_files import mount_id, protected_roots
-from .session_identity import SessionRefused, StorageRootIdentity
+from .session_identity import SessionLocator, SessionRefused, StorageRootIdentity
 from .session_lease import CODEX_COORDINATION_VERSION, production_session_gate
 from .session_operations import operation_id
 
@@ -264,6 +266,54 @@ class CodexTerminals(NativeTerminals):
         rows = [row for row in self.store.db.list(self.record_kind) if row['workspace'] == workspace][:30]
         return {'terminals': [{key: value for key, value in self.snapshot(workspace, row['id']).items()
                                if key != 'output'} for row in rows]}
+
+    def run_target(self, workspace, run_id, activation_id):
+        self.store.workspace(workspace)
+        if not RUN.fullmatch(run_id) or not KEY.fullmatch(activation_id):
+            raise Invalid('请选择一次运行的明确激活。')
+        try:
+            activation = self.store.db.get('activation',activation_id)
+            chat = self.store.db.get('node-session',activation['session_binding_id'])
+            if activation['run']!=run_id or chat['workspace']!=workspace:
+                raise ValueError()
+            binding = chat['binding']
+            sid = chat['native_session_id']
+            if binding['provider']!='codex':
+                return {'available':False,'reason':'此 Provider 尚未开放原生终端。'}
+            with self.store.db.tx(read=True) as db:
+                run,_,_,actual,_,frozen,cwd = workflow_use(self.store,db,chat,binding['config_root'],sid,'codex')
+            if (run['id'],run['workspace'],actual['id'])!=(run_id,workspace,activation_id):
+                raise ValueError()
+        except (Invalid,OSError,ValueError,Blocked,KeyError,TypeError,StopIteration):
+            raise SessionRefused('LOCATOR_REFUSED') from None
+        with self.store.db.tx(read=True) as db:
+            exact = db.execute("""
+                SELECT id FROM records WHERE kind=? AND json_extract(data,'$.workspace')=?
+                    AND json_extract(data,'$.session_id')=?
+                    AND json_extract(data,'$.binding.cwd')=?
+                    AND json_extract(data,'$.binding.config_root')=?
+                    AND json_extract(data,'$.state') NOT IN ('COMPLETED','FAILED','CANCELLED')
+                LIMIT 2
+            """,(self.record_kind,workspace,sid,cwd,frozen['config_root'])).fetchall()
+        if len(exact)>1:
+            raise SessionRefused('RECOVERY_REQUIRED')
+        if exact:
+            terminal = self.snapshot(workspace,exact[0][0])
+            return {'available':True,'id':terminal['id'],'handle':terminal['handle'],'run':run_id,
+                    'activation':activation_id,'start_available':False}
+        if frozen.get('native_profile'):
+            return {'available':False,'reason':'此激活使用命名 CLI 配置，当前终端仅使用默认配置。'}
+        if cwd!=self.store.workspace(workspace)['path']:
+            return {'available':False,'reason':'此激活的原生工作目录不是当前工作区根，无法启动工作区终端。'}
+        listing = self.operations.reader.listing(workspace)
+        approved = self.operations.profiles['codex'][0]
+        expected = SessionLocator('codex',approved.profile.id,approved.profile.identity,cwd,workspace,sid)
+        handle = approved.registry.handle(expected)
+        locator,record = self.operations.resolve(workspace,handle,listing['revision'])
+        if locator!=expected or record.source.profile!=approved.profile:
+            raise SessionRefused('LOCATOR_REFUSED')
+        return {'available':True,'handle':handle,'revision':listing['revision'],'run':run_id,
+                'activation':activation_id,'start_available':True}
 
     def start(self, data):
         if set(data) != {'workspace', 'handle', 'revision', 'intent_key', 'model', 'effort', 'cols', 'rows'}:

@@ -129,3 +129,39 @@ pathlib.Path(sys.argv[2]).write_text('native transcript\\n')
             self.assertFalse(stage.exists())
             with self.assertRaises(Blocked), prepare_scope(binding, str(cwd), sid, False, fake):
                 self.fail('existing native UUID was reused')
+
+    def test_read_scope_denies_workspace_write_and_keeps_native_history_writable(self):
+        from studio.local_claude_adapter import claude_args
+        if not scope_supported() and not os.environ.get('DEVFLOWER_REQUIRE_CLAUDE_SCOPE_TEST'):
+            self.skipTest('requires Bubblewrap and Landlock')
+        self.assertTrue(scope_supported())
+        with TemporaryDirectory() as folder:
+            cwd,binding = self.fixture(folder)
+            (cwd/'input.txt').write_text('approved source')
+            binding.update(v2_claude_read_only=True,chat_only=True,agent_permission_mode='manual',
+                           model=None,effort=None)
+            sid = str(uuid.uuid4())
+            args = claude_args(binding,sid)
+            self.assertEqual(args[args.index('--tools')+1],'Read,Glob,Grep')
+            with prepare_scope(binding,str(cwd),sid,False,{'ANTHROPIC_API_KEY':'synthetic-key'}) as scope:
+                argv = scope.prefix[:scope.prefix.index('--restricted')]
+                self.assertIn('--ro-bind-fd',argv)
+                destination = argv[argv.index('claude-read')+1]+'/'+sid+'.jsonl'
+                code = r"""import pathlib,sys
+assert pathlib.Path('input.txt').read_text()=='approved source'
+for target in ('new.txt','input.txt','/proc/self/environ'):
+    try:
+        if target.startswith('/proc/'): pathlib.Path(target).read_text()
+        else: pathlib.Path(target).write_text('unauthorized')
+    except OSError: pass
+    else: raise AssertionError(target)
+sys.stdin.read()
+pathlib.Path(sys.argv[1]).write_text('native transcript\n')
+"""
+                result,_,err = execute([*argv,'-I','-c',code,destination],cwd,binding['home'],
+                    input_text='probe',timeout=15,isolate=False,backend='native-local',env_extra=scope.environment,
+                    pass_fds=scope.fds,process_attest=scope.attest)
+                self.assertEqual(result['exit'],0,err)
+                scope.publish_history()
+            self.assertEqual((cwd/'input.txt').read_text(),'approved source')
+            self.assertFalse((cwd/'new.txt').exists())

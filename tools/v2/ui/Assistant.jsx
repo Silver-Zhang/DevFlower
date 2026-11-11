@@ -7,7 +7,7 @@ import {ProposalDiff} from '../../studio/workbench_ui/ProposalDiff.jsx';
 const uid=()=>crypto.randomUUID().replaceAll('-','');
 const active=new Set(['SUBMITTING','RESERVED','RUNNING']);
 const labels={SUBMITTING:'正在登记本次发送',RESERVED:'等待原生执行',RUNNING:'正在回答',
- COMPLETED:'已收到原生回执',NOT_SENT:'未发送',RECOVERY_REQUIRED:'发送结果待核验'};
+ COMPLETED:'已收到原生回执',NOT_SENT:'未发送',FAILED:'原生终结失败',RECOVERY_REQUIRED:'发送结果待核验'};
 const outcomes={VERIFICATION_FAILED:'校验失败',REJECT:'Gate 拒绝',ACCEPT_WITH_LIMITATIONS:'Gate 有条件接受'};
 const route=(name,query)=>'assistant/'+name+(query?'?'+new URLSearchParams(query):'');
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);

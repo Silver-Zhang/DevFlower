@@ -19,6 +19,7 @@ from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
 from .native_sessions import NativeHistoryError, request_parameters
+from .native_session_title import NativeSessionTitles
 from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, WorkflowSessionTrash, action_parameters, list_parameters
 from .project_files import read_project
 from .session_identity import SessionRefused
@@ -42,6 +43,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
     terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
+    titles = (NativeSessionTitles(session_operations) if session_operations
+              and 'codex' in getattr(session_operations,'profiles',{})
+              and getattr(session_operations.codex,'version',None)==CODEX_COORDINATION_VERSION else None)
     inspector = RunInspector(store)
     assistant = Assistant(store, session_operations, runtime)
     git_platform = GitPlatform(store,runtime)
@@ -104,6 +108,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     params = parse_qs(query, keep_blank_values=True, max_num_fields=3)
                     if any(len(values) != 1 for values in params.values()):
                         raise Invalid('终端查询身份不明确。')
+                    if route=='run-target' and set(params)=={'workspace','run','activation'}:
+                        return self.reply(200,terminals.run_target(params['workspace'][0],params['run'][0],params['activation'][0]))
                     if route == 'list' and set(params) == {'workspace'}:
                         return self.reply(200, terminals.listing(params['workspace'][0]))
                     if (route == 'output' and set(params) == {'workspace', 'id', 'after'}
@@ -255,7 +261,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                               'execution_available': None if runtime and runtime.provider else False,
                               'native_history_available': native_sessions is not None,
                               'native_session_writes': session_operations.status() if session_operations else [],
-                              'native_codex_terminal': terminals is not None,
+                              'native_codex_terminal': terminals is not None, 'native_codex_title': titles is not None,
                               'native_workflow_links': bool(native_sessions and native_sessions.workflow_links),
                               'native_workflow_trash': workflow_trash is not None,
                               'execution_check': 'native capability and permissions are checked on explicit launch',
@@ -328,8 +334,18 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                                                        data['intent_key'], data['authorization'])
                 elif not post and path == '/api/v2/agent-skills' and set(query) == {'workspace', 'provider', 'cwd'}:
                     result = agents.skills(query['workspace'], query['provider'], query['cwd'])
-                elif not post and path == '/api/v2/agent-sessions' and set(query) == {'workspace', 'provider', 'cwd'}:
-                    result = agents.sessions(query['workspace'], query['provider'], query['cwd'])
+                elif not post and path=='/api/v2/agent-sessions' and {'workspace','provider','cwd'}<=set(query)<={
+                        'workspace','provider','cwd','native_profile'}:
+                    result = agents.sessions(query['workspace'],query['provider'],query['cwd'],query.get('native_profile'))
+                elif path=='/api/v2/session-title' and titles:
+                    if post and not query:
+                        result = titles.rename(data)
+                    elif not post and set(query)=={'workspace','handle','revision'}:
+                        result = titles.read(query['workspace'],query['handle'],query['revision'])
+                    else:
+                        raise Invalid('原生标题需要明确的会话身份。')
+                elif not post and path=='/api/v2/session-title-operation' and titles and set(query)=={'workspace','intent_key'}:
+                    result = titles.operation(query['workspace'],query['intent_key'],verify=True)
                 elif not post and path == '/api/v2/runs' and runtime:
                     result = inspector.clean(runtime.runs(query.get('workspace')))
                 elif not post and path == '/api/v2/run' and runtime:

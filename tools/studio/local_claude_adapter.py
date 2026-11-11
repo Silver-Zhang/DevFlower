@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from pathlib import Path
 import json
 import os
+import time
 import uuid
 from orchestration.adapters import CLI,native_errors
 from orchestration.common import Blocked,canonical,digest
@@ -29,16 +30,17 @@ def chat_only_args():
 def claude_args(binding, requested, *, resume=False, output_schema=None):
     chat_only = binding.get('chat_only') is True
     scoped = binding.get('v2_claude_scope') is True
+    read_only = binding.get('v2_claude_read_only') is True
     if scoped:
-        allowed = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash']
-        if binding.get('v2_agent_skills'):
+        allowed = ['Read','Glob','Grep'] if read_only else ['Read','Glob','Grep','Write','Edit','Bash']
+        if binding.get('v2_agent_skills') and not read_only:
             allowed.append('Skill')
         tools = ['--tools', ','.join(allowed), '--verbose']
     else:
         tools = chat_only_args() if chat_only else ['--tools', 'Read,Glob,Grep', '--strict-mcp-config',
             '--mcp-config', '{"mcpServers":{}}', '--setting-sources', 'user']
     mode = binding.get('agent_permission_mode', 'plan')
-    if (mode not in (('acceptEdits',) if scoped else ('manual', 'plan'))
+    if (mode not in (('acceptEdits',) if scoped and not read_only else ('manual','plan'))
             or 'agent_permission_mode' in binding and not chat_only):
         raise Blocked('Claude 工作模式与已核验工具范围不匹配。')
     args = [binding['executable'], '-p', '--output-format', 'stream-json' if scoped else 'json',
@@ -138,7 +140,12 @@ class LocalClaude:
         def launch(argv, env, **options):
             if store and callable(getattr(store,'check_before_spawn',None)):
                 store.check_before_spawn()
-            return execute(argv,cwd,b['home'],timeout=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300)),
+            timeout = min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
+            if 'run_deadline_at' in self.limits:
+                timeout = min(timeout,self.limits['run_deadline_at']-time.time())
+                if timeout<=0:
+                    raise Blocked('运行已达到时间预算')
+            return execute(argv,cwd,b['home'],timeout=timeout,
                 cap=self.limits['max_log_bytes'],input_text=prompt,store=store,run=run,isolate=False,backend='native-local',
                 env_extra=env,context={'provider':'claude','agent_role':b['role'],'transport':transport}, **options)
 
@@ -157,6 +164,15 @@ class LocalClaude:
                 options = {} if executable_fd is None else {'executable_fd': executable_fd}
                 process,out,err=launch(args, dict(native_environment(b), CLAUDE_CODE_MAX_RETRIES='0',
                                                  **self.credential_env), **options)
+        if chat_only and store and callable(getattr(store,'native_limit_event',None)):
+            try:
+                value = json.loads(out.splitlines()[-1] if scoped else out)
+                if (isinstance(value,dict) and value.get('type')=='result'
+                        and value.get('session_id')==requested and value.get('is_error') is True
+                        and value.get('subtype')=='error_max_budget_usd'):
+                    store.native_limit_event('error_max_budget_usd')
+            except (ValueError,IndexError,TypeError):
+                pass
         # Same native envelope/session verifier as the legacy CLI adapter.
         try:result=CLI('claude',b,self.limits).collect(process,out)
         except Blocked as exc:
@@ -184,7 +200,8 @@ class LocalClaude:
             store.finish(key, 'AGENT_COMPLETED', actual_session=requested, transport={'mode': transport}, **terminal)
         result.update(requested_model=b['model'],requested_effort=b['effort'],process=process,
             home=b['home'],cwd=cwd,provider='claude',
-            permission_mode=('native-acceptEdits/workspace-scope' if scoped else
+            permission_mode=(('native-read/workspace-scope' if b.get('v2_claude_read_only') else
+                'native-acceptEdits/workspace-scope') if scoped else
                 ('native-' + b.get('agent_permission_mode', 'plan') + '/no-tools') if chat_only else 'native-plan/read-tools'),
             transport={'mode':transport},raw_report_sha256=digest(canonical(result['report'])),adapter_version='native-local/1')
         return result

@@ -39,7 +39,7 @@ export function NativeComposer({api, workspace, providers, scope, catalog, refre
    setPrompt('');
    forget();
    onCompleted(result.handle);
-  } else if (result.state === 'NOT_SENT') {
+  } else if (['NOT_SENT','FAILED'].includes(result.state)) {
    forget();
   }
  }
@@ -133,5 +133,8 @@ export function NativeComposer({api, workspace, providers, scope, catalog, refre
    RESERVED: '已登记本次发送。', RUNNING: '原生回合执行中…',
    COMPLETED: '原生回执已核验。', UNREGISTERED: '当前服务未找到此发送记录。'
   })[status.state]}</p>}
+  {status?.execution_failure&&<p className="field-note">
+   {status.execution_failure.effect==='not-sent'?'本次未发送。':status.execution_failure.effect==='terminal-failed'?
+    '原生终结失败已核验。':'原生结果待核验。'} {status.execution_failure.action}</p>}
  </section>;
 }

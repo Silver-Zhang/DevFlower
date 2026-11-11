@@ -26,6 +26,9 @@ def fixture(base):
     state = base / 'state'
     for name in ('A', 'B'):
         (projects / name).mkdir(parents=True)
+    configured = projects/'A'/'configured'/'.claude'
+    configured.mkdir(parents=True)
+    (configured/'settings.json').write_text('{"model":"PRIVATE_SETTINGS_FIXTURE"}')
     aliases = {}
 
     def add(provider, source, workspace, number, timestamp, alias=None, action=None):
@@ -61,7 +64,7 @@ def fixture(base):
     add('claude', claude, 'A', 14, '2026-12-14T12:00:00Z')
     add('codex', codex, 'B', 15, '2026-12-20T05:00:00Z', '乙工作区标记')
     config = base / 'native-history.json'
-    config.write_text(json.dumps({'version': 1, 'discover_defaults': True, 'discover_nested': False, 'profiles': [
+    config.write_text(json.dumps({'version': 1, 'discover_defaults': True, 'discover_nested': True, 'profiles': [
         {'id': 'qa-source', 'provider': 'codex', 'anchor': str(isolated.parent), 'root': str(isolated)},
     ]}), encoding='utf-8')
     config.chmod(0o600)
@@ -156,7 +159,7 @@ def main():
         cases = results.get('cases', [])
         intervals = results.get('zeroTraffic', [])
         zero = bool(intervals) and all(item['count'] == 0 for item in intervals)
-        complete = browser_exit == 0 and len(cases) == 7 and all(item['status'] == 'PASS' for item in cases)
+        complete = browser_exit == 0 and len(cases) == 8 and all(item['status'] == 'PASS' for item in cases)
         result = {'complete': complete, 'cases': len(cases), 'browser_exit': browser_exit,
                   'native_tree_unchanged': not differences, 'native_differences': differences,
                   'durable_state_unchanged': unchanged, 'zero_request_intervals': intervals,

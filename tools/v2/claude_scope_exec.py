@@ -29,9 +29,11 @@ def main():
         env = dict(PATH='/usr/bin:/bin', HOME='/tmp', TMPDIR='/tmp', LANG='C.UTF-8',
                    GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_TERMINAL_PROMPT='0')
         os.execve('/usr/bin/bash', ['/usr/bin/bash', *args], env)
-    if mode == 'claude':
+    if mode in ('claude','claude-read'):
         history, executable, *argv = args
-        restrict((*RUNTIME, ROOT), (cwd, '/tmp', HOME + '/runtime', history, '/dev/null'))
+        read = (*RUNTIME, ROOT, cwd)
+        write = ('/tmp', HOME + '/runtime', history, '/dev/null')
+        restrict(read,write if mode=='claude-read' else (*write,cwd))
         # Bun needs the procfs mount for path lookup. Actual process files are
         # outside the Landlock allowlist, including this process's own env/fds.
         try:

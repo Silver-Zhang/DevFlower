@@ -452,3 +452,7 @@
 .task-file-row,.inspector .contract-editor>div {display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0;min-width:0}
 .task-file-row span {overflow-wrap:anywhere}
 .inspector .contract-editor input:not([type=checkbox]) {flex:1;min-width:8rem}
+
+.native-configurations,.native-title {margin:8px 0}
+.native-configurations small {display:block;overflow-wrap:anywhere}
+.native-title form {margin-top:8px}

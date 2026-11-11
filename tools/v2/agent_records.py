@@ -18,6 +18,8 @@ from studio.session_sources import opened
 
 from .cli_providers import EFFORT, model_id
 from .native_sessions import HANDLE, REVISION
+from .native_agent_profiles import PROFILE_ID
+from .native_session_links import require_creation_profile
 from .session_identity import StorageRootIdentity
 
 KIND = 'agent-config'
@@ -37,8 +39,10 @@ def matches(regex, value):
 
 
 def validate_agent(value):
-    if not isinstance(value, dict) or set(value) != FIELDS:
+    if not isinstance(value,dict) or not FIELDS<=set(value)<=FIELDS|{'native_profile'}:
         raise Invalid('Agent 配置字段缺失或不受支持。')
+    if value.get('native_profile') is not None and not matches(PROFILE_ID,value['native_profile']):
+        raise Invalid('原生命名配置无效。')
     for key, limit in TEXT.items():
         if not isinstance(value[key], str) or len(value[key]) > limit or '\0' in value[key]:
             raise Invalid('Agent 文本类型或长度无效。')
@@ -128,13 +132,17 @@ class AgentRecords:
         if (not profile or locator.provider != provider or locator.original_cwd != config['cwd']
                 or record.source.profile != profile[0].profile):
             raise Conflict('已有会话的 Provider、配置根或原工作目录与 Agent 不一致。')
+        named = self.providers.selected(provider,config.get('native_profile')) if config.get('native_profile') else None
+        require_creation_profile(self.store,profile[1]['config_root'],locator.native_uuid,provider,named)
         if provider == 'claude':
             binding = dict(profile[1], project=workspace, cwd=config['cwd'],
                            cwd_identity=StorageRootIdentity.capture(config['cwd']).fields(),
                            direct_environment_sha256=profile_identity(profile[1]))
+            if named:
+                binding['native_profile'] = named
             operations.require_claude_history(binding, locator, record)
 
-    def sessions(self, workspace, provider, cwd):
+    def sessions(self, workspace, provider, cwd, native_profile=None):
         self.directory(workspace, cwd)
         operations = self.session_operations
         if operations is None or provider not in operations.profiles:
@@ -151,7 +159,7 @@ class AgentRecords:
                 continue
             try:
                 locator = record.index.resolve(workspace, handle)
-                self.require_session_scope(workspace, {'provider': provider, 'cwd': cwd}, locator, record)
+                self.require_session_scope(workspace,{'provider':provider,'cwd':cwd,'native_profile':native_profile},locator,record)
             except (ValueError, Conflict, Blocked, OSError):
                 continue
             rows.append({key: item[key] for key in ('handle', 'provider', 'updated_at')})
@@ -160,6 +168,10 @@ class AgentRecords:
     def save(self, workspace, key, expected, value, session_revision=None):
         config = validate_agent(value)
         self.directory(workspace, config['cwd'])
+        if config.get('native_profile'):
+            if not self.providers:
+                raise Invalid('原生命名配置未启用。')
+            self.providers.selected(config['provider'],config['native_profile'])
         if (key is None and expected is not None or key is not None and not matches(KEY, key)
                 or expected is not None and not matches(HASH, expected)):
             raise Invalid('保存 Agent 需要当前配置版本。')
@@ -177,7 +189,7 @@ class AgentRecords:
                 self.verify_session(workspace, config, session_revision)
             else:
                 previous = self.get(workspace, key, expected)['config']
-                if any(previous[field] != config[field] for field in ('provider', 'cwd', 'session')):
+                if any(previous.get(field)!=config.get(field) for field in ('provider','cwd','session','native_profile')):
                     raise Invalid('已有会话绑定已变化，请重新选择并核验。')
         elif session_revision is not None:
             raise Invalid('新会话不需要已有会话版本。')

@@ -54,7 +54,7 @@ def freeze_agent(runtime, workspace, node):
     if provider == 'codex' or binding.get('v2_claude_scope'):
         binding['v2_agent_skills'] = []
     if config['skills']:
-        if provider == 'claude' and not binding.get('v2_claude_scope'):
+        if provider=='claude' and (not binding.get('v2_claude_scope') or binding.get('v2_claude_read_only')):
             raise Invalid('Claude Skills 仅用于获准工作区读写的 Agent 模式。')
         catalog = runtime.agents.skills(workspace, provider, str(cwd), authority=True)
         indexed = {row['id']: row for row in catalog['skills']}

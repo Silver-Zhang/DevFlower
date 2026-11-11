@@ -115,6 +115,21 @@ class NativeSessionTests(TestCase):
         self.assertEqual(snapshot(*native), before)
         self.assertEqual(self.state_files(), state_before)
 
+    def test_nested_native_settings_list_only_public_metadata(self):
+        codex = self.fixture['a']/'configured'/'.codex'
+        codex.mkdir(parents=True)
+        (codex/'config.toml').write_text('model="NESTED_CONFIG_LITERAL"')
+        claude = self.fixture['a']/'bad'/'.claude'
+        claude.mkdir(parents=True)
+        (claude/'settings.json').symlink_to(codex/'config.toml')
+        with self.running(self.service) as request:
+            code, listing = request('native-sessions?workspace='+self.a)
+        self.assertEqual(code,200)
+        self.assertIn({'provider':'codex','path':'configured/.codex','files':['config.toml'],
+                       'history_directory':False},listing['configurations'])
+        self.assertNotIn('NESTED_CONFIG_LITERAL',json.dumps(listing))
+        self.assertIn('nested_config_unavailable',listing['coverage']['reasons'])
+
     def test_http_auth_disabled_strict_queries_and_get_only(self):
         with self.running(None) as request:
             self.assertFalse(request('status')[1]['native_history_available'])

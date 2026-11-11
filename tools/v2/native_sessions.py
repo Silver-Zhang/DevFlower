@@ -11,14 +11,16 @@ import secrets
 import stat
 from threading import BoundedSemaphore, Lock
 import time
+import tomllib
 import unicodedata
 
 from orchestration.common import Blocked, canonical, digest
+from orchestration.privacy import redact
 from studio.agent_sessions import _visible, safe_text
 from studio.server import Conflict
 from studio.session_sources import read_session
 
-from .native_history_config import PROVIDERS, SourceSpec, load_history_config, startup_seed
+from .native_history_config import PROVIDERS, SourceSpec, load_history_config, startup_seed, unique_pairs
 from .project_files import FileView
 from .session_identity import (HANDLE, FixtureSession, LocatorIndex, ProfileRegistry, ReadProfile, SessionLocator,
                                SessionRefused, StorageRootIdentity, display_source, session_path, verified_directory)
@@ -46,6 +48,8 @@ UUID_FILE = re.compile(UUID_PART + r'\.jsonl')
 CODEX_FILE = re.compile(r'rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9-]+-' + UUID_PART
                         + '(?:_' + UUID_PART + r')?\.jsonl')
 LEAVES = {'codex': ('.codex', 'sessions'), 'claude': ('.claude', 'projects')}
+NESTED_CONFIGS = {'codex':('config.toml',),'claude':('settings.json','settings.local.json')}
+CONFIG_LIMIT = 64*1024
 EXCLUDED = frozenset(('node_modules', 'venv', '__pycache__'))
 ROOT_BOUNDS = (2000, 200, 32 * 1024 * 1024)
 SCAN_BOUNDS = (6000, 400, 64 * 1024 * 1024)
@@ -193,7 +197,32 @@ def path_name_valid(name):
             not any(unicodedata.category(char) in ('Cc', 'Cf', 'Cs') for char in name))
 
 
-def nested_specs(view, workspace_path, home, protected, deadline, reasons):
+def nested_configuration(view, child, provider, reasons):
+    names = []
+    with view.directory(child) as directory:
+        for name in NESTED_CONFIGS[provider]:
+            try:
+                with view.regular(name,directory) as fd:
+                    meta = os.fstat(fd)
+                    if not 0<meta.st_size<=CONFIG_LIMIT:
+                        raise ValueError()
+                    with os.fdopen(os.dup(fd),'rb') as stream:
+                        raw = stream.read(CONFIG_LIMIT+1)
+                    if len(raw)!=meta.st_size:
+                        raise ValueError()
+                text = raw.decode('utf-8')
+                value = tomllib.loads(text) if name.endswith('.toml') else json.loads(text,object_pairs_hook=unique_pairs)
+                if not isinstance(value,dict):
+                    raise ValueError()
+                names.append(name)
+            except FileNotFoundError:
+                pass
+            except (OSError,ValueError,Blocked,RecursionError):
+                reasons.add('nested_config_unavailable')
+    return names
+
+
+def nested_specs(view, workspace_path, home, protected, deadline, reasons, configurations):
     budget = Budget((NESTED_ENTRIES, 0, 0), deadline)
     specs = []
     if workspace_path in (Path('/'), home):
@@ -224,17 +253,27 @@ def nested_specs(view, workspace_path, home, protected, deadline, reasons):
                     if not stat.S_ISDIR(mode):
                         continue
                     if provider:
+                        settings = nested_configuration(view,child,provider,reasons)
                         leaf = child / LEAVES[provider][1]
                         try:
                             with view.directory(leaf) as fd:
                                 root_identity = StorageRootIdentity.from_fd(fd)
                         except FileNotFoundError:
-                            continue  # Settings-only .codex/.claude is not a history source.
-                        profile_id = 'nested-' + digest(canonical([provider, root_identity.fields()]))
-                        specs.append(SourceSpec(profile_id, provider, workspace_path,
-                                                workspace_path / leaf, '项目嵌套来源'))
-                        if len(specs) > ROOT_LIMIT:
-                            raise StopScan('source_budget')
+                            root_identity = None
+                        except (OSError,Blocked):
+                            root_identity = None
+                            reasons.add('nested_unavailable')
+                        if settings:
+                            if len(configurations)>=ROOT_LIMIT:
+                                raise StopScan('source_budget')
+                            configurations.append(dict(provider=provider,path=safe_text(child.as_posix()),
+                                                       files=settings,history_directory=root_identity is not None))
+                        if root_identity is not None:
+                            if len(specs)>=ROOT_LIMIT:
+                                raise StopScan('source_budget')
+                            profile_id = 'nested-' + digest(canonical([provider, root_identity.fields()]))
+                            specs.append(SourceSpec(profile_id, provider, workspace_path,
+                                                    workspace_path / leaf, '项目嵌套来源'))
                     elif len(child.parts) < NESTED_DEPTH:
                         walk(child)
                     else:
@@ -590,10 +629,11 @@ class NativeSessions:
         candidates = list(self.static)
         total = Budget(SCAN_BOUNDS, time.monotonic() + SCAN_SECONDS)
         rows, reads, links = {}, {}, {}
+        configurations = []
         try:
             with rooted_view(path, identity) as view:
                 if self.config.discover_nested:
-                    for spec in nested_specs(view, path, self.home, self.protected, total.deadline, reasons):
+                    for spec in nested_specs(view,path,self.home,self.protected,total.deadline,reasons,configurations):
                         try:
                             total.time()
                             candidates.append(self.register(spec))
@@ -631,6 +671,10 @@ class NativeSessions:
         sessions = sorted(rows.values(), key=lambda row: row['updated_at'] or '', reverse=True)
         result = {'workspace': workspace, 'revision': revision,
                   'coverage': {'state': state, 'reasons': sorted(reasons)}, 'sessions': sessions}
+        if configurations:
+            for item in configurations:
+                item['path'] = redact(item['path'],self.literals)
+            result['configurations'] = sorted(configurations,key=lambda item:(item['path'],item['provider']))
         return result, Snapshot(revision, time.monotonic() + SNAPSHOT_SECONDS, identity, reads, frozenset(rows), links)
 
     def supplement(self, workspace, path, view, sources, rows, reads, links, reasons):

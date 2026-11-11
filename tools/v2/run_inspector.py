@@ -32,7 +32,8 @@ NODE_FIELDS = ('id', 'run', 'node', 'name', 'kind', 'state', 'iteration', 'itera
                'input_sent_sha256', 'input_sent_bytes', 'input_sent_at', 'input_sent_operation_id',
                'initialization_included', 'receipt_verified', 'terminal_failure_verified', 'recovery_evidence',
                'provider_outcome', 'provider', 'model', 'effort', 'error_class', 'error_category', 'visible_error',
-               'output_instructions', 'passed', 'gate_verdict', 'data_contract', 'task_files')
+               'output_instructions', 'passed', 'gate_verdict', 'data_contract', 'task_files',
+               'execution_failure', 'effective_timeout_seconds')
 EVENT_FIELDS = ('kind', 'state', 'at', 'event_id', 'definition_id', 'workspace', 'node', 'activation', 'iteration_path',
                 'iteration', 'attempt', 'edge', 'handoff_id', 'source', 'target_activation', 'target_node',
                 'source_round', 'target_round', 'content_sha256', 'source_content_sha256', 'received_at',
@@ -173,8 +174,29 @@ class RunInspector:
             return value, None
         return None, dict(bytes=size, chars=len(encoded), sha256=digest(encoded.encode()))
 
-    def node(self, row, *, compatibility=False, limit=INLINE_BYTES):
+    def budget(self, run, definition):
+        limits = definition.get('graph',{}).get('budget',{})
+        if not isinstance(limits,dict) or not limits:
+            return None
+        result = dict(take(limits,('calls','seconds')),admitted_calls=run.get('calls',0),
+                      native_process_starts=run.get('actual_calls',0))
+        if type(limits.get('seconds')) is int and type(run.get('created_at')) in (int,float):
+            result['deadline_at'] = run['created_at']+limits['seconds']
+        return result
+
+    def node(self, row, *, definition=None, compatibility=False, limit=INLINE_BYTES):
         value = self.clean(take(row, NODE_FIELDS))
+        if definition is not None and row.get('kind')=='agent':
+            from .recovery import frozen_node
+            try:
+                spec = frozen_node(definition,row['node'])
+            except (KeyError,TypeError,StopIteration):
+                spec = {}
+            config = definition.get('agent_configs',{}).get(row['node'],{}).get('config',{})
+            limits = dict(timeout_seconds=spec.get('timeout'),native_budget_usd=config.get('max_budget_usd'))
+            if config.get('native_profile'):
+                limits['native_profile'] = self.text(config['native_profile'])
+            value['execution_limits'] = limits
         if compatibility and isinstance(row.get('process'), dict):
             value['process'] = self.clean(take(row['process'], OWNER_FIELDS))
         for field in ('receipt', 'failure_receipt'):
@@ -202,6 +224,8 @@ class RunInspector:
             item, fact = self.bounded(self.clean(value['run']['output']))
             run.update({'output_omitted': fact} if fact else {'output': item})
         definition = value['definition']
+        if budget := self.budget(run,definition):
+            run['execution_budget'] = budget
         public_def = self.clean(take(definition, ('id', 'draft_id', 'draft_revision', 'workspace', 'draft_document',
                                                  'graph', 'graph_sha256', 'designer_runtime')))
         if definition.get('task_files'):
@@ -215,7 +239,7 @@ class RunInspector:
         events = [self.event(event, value['run']['id'], nodes, compatibility=True) for event in value['events'][-100:]]
         limit = min(INLINE_BYTES, max(3000, 256000 // max(len(nodes), 1)))
         return dict(take(value, ('state', 'provider_outcome', 'worker_alive', 'worker_observation')),
-                    run=run, definition=public_def, nodes=[self.node(row, compatibility=True, limit=limit) for row in nodes.values()],
+                    run=run, definition=public_def, nodes=[self.node(row,definition=definition,compatibility=True,limit=limit) for row in nodes.values()],
                     events=events)
 
     def event(self, row, run, nodes, *, include_content=False, compatibility=False):
@@ -351,6 +375,8 @@ class RunInspector:
                 raise Conflict('冻结定义身份无法核验。')
             run_summary = self.clean(take(saved, RUN_FIELDS))
             run_summary['persisted_state'] = run_summary.pop('state')
+            if execution_budget := self.budget(run_summary,definition):
+                run_summary['execution_budget'] = execution_budget
             output, output_omitted = self.bounded(self.clean(saved.get('output')), 32000)
             if output_omitted:
                 run_summary['output_omitted'] = output_omitted
@@ -371,7 +397,7 @@ class RunInspector:
                     if len(blob) > RECORD_BYTES:
                         continue
                     row = json.loads(blob.read())
-                item = self.node(row, limit=12000)
+                item = self.node(row,definition=definition,limit=12000)
                 if 'receipt_verified' in item:
                     item['receipt_recorded_as_verified'] = item.pop('receipt_verified')
                 size = len(canonical(item)) + 1

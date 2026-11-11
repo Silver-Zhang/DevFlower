@@ -275,6 +275,9 @@ def prepare_scope(binding, cwd, sid, resume, inherited):
             or binding.get('provider') != 'claude' or binding.get('cwd') != cwd
             or not binding.get('_metadata_guard') or Path(cwd).is_relative_to('/run')):
         raise Blocked('Claude 工作区工具需要已核验的 Linux Bubblewrap 和 Landlock。')
+    read_only = binding.get('v2_claude_read_only') is True
+    if read_only and binding.get('v2_agent_skills'):
+        raise Blocked('Claude 只读工作区模式不加载 Skills。')
     auth = scoped_environment(binding, inherited)
     with ExitStack() as stack:
         directory = stack.enter_context(opened(cwd, directory=True))
@@ -289,7 +292,8 @@ def prepare_scope(binding, cwd, sid, resume, inherited):
         stack.callback(os.close, info)
         stack.callback(os.close, writer)
 
-        settings = dict(disableAllHooks=True, permissions={'allow': ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash',
+        tools = ['Read','Glob','Grep'] if read_only else ['Read','Glob','Grep','Write','Edit','Bash']
+        settings = dict(disableAllHooks=True, permissions={'allow': [*tools,
                               *[f'Skill({name})' for name in sorted(names)]]})
         wrapper = f'#!/bin/sh\nexec {PYTHON} -I {EXEC} bash "$@"\n'.encode()
         assets = {SHELL: ('0700', wrapper), SETTINGS: ('0400', canonical(settings)),
@@ -315,9 +319,9 @@ def prepare_scope(binding, cwd, sid, resume, inherited):
             args += ['--ro-bind', str(folder), target]
             plugins_args += ['--plugin-dir', target]
         args += ['--perms', '0500', '--file', str(image), CLAUDE,
-                 '--bind-fd', str(directory), cwd, '--bind-fd', str(history), destination,
+                 '--ro-bind-fd' if read_only else '--bind-fd', str(directory), cwd, '--bind-fd', str(history), destination,
                  '--info-fd', str(writer), '--remount-ro', '/', '--chdir', cwd,
-                 '--', PYTHON, '-I', EXEC, 'claude', destination, CLAUDE,
+                 '--', PYTHON, '-I', EXEC, 'claude-read' if read_only else 'claude', destination, CLAUDE,
                  '--restricted', '--permission-prompts', 'none', '--strict-mcp-config',
                  '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '', '--no-chrome',
                  '--settings', SETTINGS, *plugins_args]
