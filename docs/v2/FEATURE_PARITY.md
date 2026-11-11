@@ -12,13 +12,13 @@
 
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
-| 工作空间 | 12 | 7 | 2 | 3 | 58.3% |
+| 工作空间 | 12 | 8 | 2 | 2 | 66.7% |
 | 会话中心 | 15 | 12 | 3 | 0 | 80.0% |
-| Agent 与 Provider | 15 | 9 | 4 | 2 | 60.0% |
+| Agent 与 Provider | 15 | 10 | 3 | 2 | 66.7% |
 | 工作流设计器 | 15 | 14 | 0 | 1 | 93.3% |
-| Workflow Runtime | 15 | 13 | 2 | 0 | 86.7% |
+| Workflow Runtime | 15 | 14 | 1 | 0 | 93.3% |
 | 运行监控与研发自动化 | 15 | 12 | 2 | 1 | 80.0% |
-| **合计** | **87** | **67** | **13** | **7** | **77.0%** |
+| **合计** | **87** | **70** | **11** | **6** | **80.5%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -34,7 +34,7 @@
 | W04 | 不同工作空间状态隔离 | `tools/studio/workbench_runtime.py` | `tools/v2/store.py` | C | P0 | A/B 工作空间切换，草稿、事件、会话无串用 |
 | W05 | 项目文件树与目录浏览 | `tools/studio/workbench_ui/ProjectFiles.jsx` | `tools/v2/project_files.py` | C | P1 | 按目录打开、展开与返回，边界安全 |
 | W06 | 文本文件只读预览 | `tools/studio/workbench_ui/ProjectFiles.jsx` | `tools/v2/ui/ProjectFiles.jsx` | C | P1 | 正常文本、超限、二进制、拒绝路径均明确 |
-| W07 | 可配置的任务项目上下文与文件引用 | `tools/studio/project_files.py` | — | M | P0 | 任务引用所选文件并被真实 Agent 读取 |
+| W07 | 可配置的任务项目上下文与文件引用 | `tools/studio/project_files.py` | `tools/v2/data_handoff.py`、`tools/v2/ui/ProjectFiles.jsx` | C | P0 | 显式选择预览文件，启动冻结公开文本与摘要，实际请求和重开记录可核对 |
 | W08 | 远程工作空间与运行环境区分 | `#9` | — | M | P2 | 远程环境信息和凭据隔离正确 |
 | W09 | 嵌套目录原生配置发现 | `tools/studio/agent_sessions.py` | `tools/v2/native_sessions.py` | P | P1 | 嵌套 .claude/.codex 完整覆盖与覆盖统计 |
 | W10 | 工作流模板库与收藏 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | — | M | P1 | 模板新建、收藏、加载、修改不污染原版 |
@@ -127,7 +127,7 @@ API 使用现有 V2 本机令牌。发送为 `POST /api/v2/session-send`，提�
 | A08 | 新会话与已有会话切换 | `tools/studio/workbench_ui/SharedConversationOption.jsx` | `tools/v2/agent_execution.py` | C | P0 | 核验原生来源、工作目录、UUID 及写租约，外部 Claude 保持只读 |
 | A09 | 模型与推理强度配置 | `tools/studio/workbench_ui/ModelSelector.jsx` | `tools/v2/cli_providers.py`、`tools/v2/ui/AgentManager.jsx` | C | P1 | CLI 目录、用户默认、手工模型及逐模型推理强度独立显示 |
 | A10 | 初始化、每轮、输出交接 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/definitions.py` | C | P0 | 真实回合各部分独立可追溯 |
-| A11 | 结构化输出合同和字段选择 | `tools/studio/data_contracts.py` | `tools/v2/runtime.py` | P | P1 | Codex 沿用结构化回执，Claude 交接真实可见文本，自定义 schema 和字段选择待接入 |
+| A11 | 结构化输出合同和字段选择 | `tools/studio/data_contracts.py` | `tools/v2/data_handoff.py`、`tools/v2/runtime.py` | C | P1 | 配置必需字段和类型。Codex 解码结构化回执，Claude 解析真实可见 JSON；合同失败保留实际 Provider 回执 |
 | A12 | 节点工具与文件写入权限 | `tools/studio/agent_extensions.py` | `tools/v2/codex_agent_scope.py`、`tools/v2/claude_agent_scope.py` | C | P0 | 原生工作区读写与受控命令，验证越界、认证环境及不可用时的拒绝 |
 | A13 | Skills 发现与选择 | `tools/studio/agent_extensions.py` | `tools/v2/agent_records.py`、`tools/v2/claude_agent_scope.py` | C | P1 | Claude、Codex 原生选择及内容复核，Claude 区分工作区与用户级来源 |
 | A14 | 子 Agent 与托管子任务 | `tools/studio/managed_children.py` | — | M | P2 | 深度、数量、授权和回执正确 |
@@ -196,7 +196,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/project_files.py`、`tools/v2/development_evidence.py` | P | P1 | Validation 有通过和失败端口，Tool 支持授权文件只读，研发验证执行固定的只读 Python 测试及本机 Gate。通用 Tool 写入及远端交付保持待实现 |
 | R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行，循环子图与 Agent 版本同样冻结 |
 | R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 运行可读初始化、每轮、上游、实际发送文本和原生回执 |
-| R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | P | P0 | 支持公开输出、回答、摘要、结构化结果和仅顺序约束；任意字段合同与产物引用待实现 |
+| R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/data_handoff.py`、`tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | C | P0 | 按连线传递选定嵌套字段或授权产物引用，接收前复核工作区、来源激活和实际文件摘要 |
 | R11 | 运行事件持久化与投影 | `tools/studio/workbench_store.py` | `tools/v2/store.py`、`tools/v2/designer_scheduler.py` | C | P0 | 节点状态、循环轮次、审批、交接与激活身份可核验 |
 | R12 | 取消与确认状态 | `tools/studio/workbench_runtime.py` | `tools/v2/recovery.py` | C | P0 | 取消约束于本运行，自有进程身份核验失败时保留待核验 |
 | R13 | 暂停、继续与安全恢复 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/recovery.py` | C | P0 | 暂停拦截新调度；继续使用原运行；外部结果不明时停止并保留证据 |
