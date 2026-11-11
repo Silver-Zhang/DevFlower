@@ -12,13 +12,13 @@
 
 | 模块 | 条目 | 代码可见 C | 部分 P | 尚缺 M | 代码覆盖下界¹ |
 |---|---:|---:|---:|---:|---:|
-| 工作空间 | 12 | 9 | 1 | 2 | 75.0% |
+| 工作空间 | 12 | 11 | 0 | 1 | 91.7% |
 | 会话中心 | 15 | 15 | 0 | 0 | 100.0% |
 | Agent 与 Provider | 15 | 11 | 2 | 2 | 73.3% |
-| 工作流设计器 | 15 | 14 | 0 | 1 | 93.3% |
+| 工作流设计器 | 15 | 15 | 0 | 0 | 100.0% |
 | Workflow Runtime | 15 | 14 | 1 | 0 | 93.3% |
 | 运行监控与研发自动化 | 15 | 13 | 2 | 0 | 86.7% |
-| **合计** | **87** | **76** | **6** | **5** | **87.4%** |
+| **合计** | **87** | **79** | **5** | **3** | **90.8%** |
 
 ¹ 代码覆盖下界 = C / 总条目，P 不折算完成比例；这只是当前静态源码覆盖，不是最终产品完成率。对每条 C 仍需单独验证，未核验的功能验收计数为零。
 
@@ -37,8 +37,8 @@
 | W07 | 可配置的任务项目上下文与文件引用 | `tools/studio/project_files.py` | `tools/v2/data_handoff.py`、`tools/v2/ui/ProjectFiles.jsx` | C | P0 | 显式选择预览文件，启动冻结公开文本与摘要，实际请求和重开记录可核对 |
 | W08 | 远程工作空间与运行环境区分 | `#9` | — | M | P2 | 远程环境信息和凭据隔离正确 |
 | W09 | 嵌套目录原生配置发现 | `tools/studio/agent_sessions.py` | `tools/v2/native_sessions.py`、`tools/v2/ui/NativeSessions.jsx` | C | P1 | 分开显示仅有配置的目录与历史来源，范围或预算不足时显示覆盖限制 |
-| W10 | 工作流模板库与收藏 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | — | M | P1 | 模板新建、收藏、加载、修改不污染原版 |
-| W11 | 项目内设计迁移与历史归档 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py` | P | P1 | 迁移不重写原始历史，导入导出可读回 |
+| W10 | 工作流模板库与收藏 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | `tools/v2/workflow_templates.py`、`tools/v2/ui/index.jsx` | C | P1 | 工作区内保存、搜索、收藏及恢复。副本编辑不覆盖模板或原草稿 |
+| W11 | 项目内设计迁移与历史归档 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py`、`tools/v2/history_archives.py` | C | P1 | 草稿迁移及运行历史只读归档可跨工作区回读。校验文件摘要，保留源和覆盖信息，归档不获得运行或原生会话权限 |
 | W12 | 路径权限与保护范围 | `tools/studio/workspace_access.py` | `tools/v2/workspace_select.py` | C | P0 | symlink、protected、跨 workspace 不泄露 |
 
 ### 会话中心
@@ -171,7 +171,7 @@ Phase 3 收尾候选的证据按类型记录。
 | D10 | 统一节点库与 Agent 角色模板 | `tools/studio/workbench_ui/WorkflowLibrary.jsx` | `tools/v2/ui/CanvasNodes.jsx`、`tools/v2/ui/AgentManager.jsx` | C | P1 | 十类节点共用视觉与配置入口，Agent 模板继续由 Agent Manager 提供 |
 | D11 | Condition、Router、Merge、Loop 可编辑 | `tools/studio/workbench_ui/RouterEditor.jsx` | `tools/v2/canvas_types.json`、`tools/v2/ui/CanvasNodes.jsx` | C | P0 | 结构化判定、稳定分支、汇合策略与有界循环可配置并保存 |
 | D12 | Start、Human、Tool、Validation、Output 可编辑 | `tools/studio/workbench_ui/index.jsx` | `tools/v2/canvas_types.json`、`tools/v2/ui/CanvasNodes.jsx` | C | P1 | 初始数据、审批、工具权限、验证规则与输出配置可保存并检查 |
-| D13 | 工作流模板与示例复用 | `tools/studio/workflow_library.py` | — | M | P1 | 使用模板不修改源模板 |
+| D13 | 工作流模板与示例复用 | `tools/studio/workflow_library.py` | `tools/v2/workflow_templates.py` | C | P1 | 内置示例与版本模板生成独立草稿，保留画布及合同，重新选择工作区 Agent |
 | D14 | 草稿 CAS、节点配置版本和 Agent 引用隔离 | `tools/studio/workbench_store.py` | `tools/v2/store.py`、`tools/v2/documents.py` | C | P0 | 节点坐标和配置独立保存，Agent 引用固定版本，失效时明确要求重绑 |
 | D15 | 草稿传输与导入校验 | `tools/studio/project_files.py` | `tools/v2/draft_transfer.py`、`tools/v2/documents.py` | C | P1 | 旧格式保留，扩展字段往返一致，结构错误拒绝，未完成配置可保存 |
 
@@ -193,7 +193,7 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | R04 | 多路 Router 与 fallback | `tools/studio/routing.py` | `tools/v2/designer_graph.py` | C | P1 | 规则按冻结顺序求值；默认路由明确，无匹配且无默认时失败 |
 | R05 | 有界 Loop 与修订闭环 | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/definitions.py` | C | P0 | 子图轮次、退出原因与每轮激活可追溯；运行时间和展开预算受限 |
 | R06 | Human Approval | `tools/studio/workbench_scheduler.py` | `tools/v2/designer_scheduler.py`、`tools/v2/runtime.py` | C | P1 | 本机单审核者按激活审批；拒绝、超时和恢复保留决定及调度边界 |
-| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/designer_graph.py`、`tools/v2/project_files.py`、`tools/v2/development_evidence.py` | P | P1 | Validation 有通过和失败端口，Tool 支持授权文件只读，研发验证执行固定的只读 Python 测试及本机 Gate。通用 Tool 写入及远端交付保持待实现 |
+| R07 | 验证、工具与交付执行节点 | `tools/studio/workbench_graph.py` | `tools/v2/development_evidence.py`、`tools/v2/tool_artifacts.py`、`tools/v2/local_delivery.py` | P | P1 | 普通 Tool 可执行获准的隔离 JSON 校验，提供核验产物，Validation 分流成功与失败。独立 Gate 后可确认导出精确候选 ZIP。通用工作区写入及远端交付保持待实现 |
 | R08 | 冻结运行定义与源码身份 | `tools/studio/workbench_runtime.py` | `tools/v2/definitions.py` | C | P0 | 启动后草稿更改不影响该次执行，循环子图与 Agent 版本同样冻结 |
 | R09 | 请求分节与实际可见 Prompt | `tools/studio/workbench_graph.py` | `tools/v2/runtime.py` | C | P0 | 运行可读初始化、每轮、上游、实际发送文本和原生回执 |
 | R10 | 自定义 handoff 数据和字段合同 | `tools/studio/workbench_graph.py` | `tools/v2/data_handoff.py`、`tools/v2/designer_graph.py`、`tools/v2/designer_scheduler.py` | C | P0 | 按连线传递选定嵌套字段或授权产物引用，接收前复核工作区、来源激活和实际文件摘要 |
