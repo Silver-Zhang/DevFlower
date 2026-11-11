@@ -31,6 +31,10 @@ class Refused(ValueError):
     pass
 
 
+class BackendConfigRefused(Blocked):
+    pass
+
+
 def decoded(raw):
     result = json.loads(raw, object_pairs_hook=unique_pairs, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
     if not isinstance(result, dict):
@@ -60,11 +64,13 @@ def nothing(value):
 
 class CodexProtocol:
     """Every forwarded request is reconstructed. Replies never relay raw JSON."""
-    def __init__(self, binding, session, literals, on_effect, *, profile=PROFILE, on_resume=lambda: None, on_ready=lambda: None,
-                 on_shell_denied=lambda: None):
+    def __init__(self, binding, session, literals, on_effect, *, check_config, history_path, profile=PROFILE,
+                 on_resume=lambda: None, on_ready=lambda: None, on_shell_denied=lambda: None):
         self.binding, self.session, self.literals, self.on_effect = binding, session, literals, on_effect
         self.on_resume, self.on_ready = on_resume, on_ready
         self.on_shell_denied = on_shell_denied
+        self.check_config, self.history_path = check_config, history_path
+        self.resume_params = self.model_provider = None
         self.profile = profile
         self.pending, self.cursors = {}, {}
         self.turn_ids = set()
@@ -132,8 +138,11 @@ class CodexProtocol:
                 self.no_overrides(params, {'threadId', 'cwd', 'excludeTurns', 'initialTurnsPage'})
                 fixed.update(cwd=self.binding['cwd'], excludeTurns=True, permissions=self.profile, approvalPolicy='never',
                              runtimeWorkspaceRoots=[self.binding['cwd']], model=self.binding['model'])
-                self.on_resume()
+                # Attest the exact backend and cwd before releasing a native resume.
+                self.resume_params = fixed
                 self.resume_sent = True
+                method = 'config/read'
+                fixed = {'cwd': self.binding['cwd'], 'includeLayers': False}
             elif method in HISTORY and self.resumed:
                 limit = params.get('limit')
                 fixed['limit'] = 30 if limit is None else bounded_int(limit, minimum=1, maximum=100)
@@ -180,9 +189,12 @@ class CodexProtocol:
                 fixed['turnId'] = self.active_turn
             else:
                 raise Refused()
+        return self._backend_request(ident, method, fixed)
+
+    def _backend_request(self, front, method, params):
         self.request_no += 1
-        self.pending[self.request_no] = (ident, method)
-        return {'id': self.request_no, 'method': method, 'params': fixed}
+        self.pending[self.request_no] = (front, method)
+        return {'id': self.request_no, 'method': method, 'params': params}
 
     def no_overrides(self, params, structural, defaults=None):
         defaults = defaults or {}
@@ -289,7 +301,10 @@ class CodexProtocol:
             if (not isinstance(profile, dict) or profile.get('id') != self.profile or profile.get('extends') is not None
                     or raw.get('cwd') != self.binding['cwd']
                     or raw.get('runtimeWorkspaceRoots') != [self.binding['cwd']]
-                    or raw.get('approvalPolicy') != 'never' or raw.get('model') != self.binding['model']):
+                    or raw.get('approvalPolicy') != 'never' or raw.get('model') != self.binding['model']
+                    or raw.get('modelProvider') != self.model_provider
+                    or raw['thread'].get('modelProvider') != self.model_provider
+                    or raw['thread'].get('path') != self.history_path):
                 raise Refused()
             self.on_ready()
             self.resumed = True
@@ -323,12 +338,20 @@ class CodexProtocol:
             return {}
         raise Refused()
 
-    def backend(self, value):
+    def backend(self, value, forward):
         method, ident = value.get('method'), value.get('id')
         if method is None:
             if type(ident) is not int or ident not in self.pending:
                 raise Refused()
             front, request = self.pending.pop(ident)
+            if request == 'config/read':
+                result = value.get('result')
+                if 'error' in value or not isinstance(result, dict):
+                    raise BackendConfigRefused()
+                self.model_provider = self.check_config(result.get('config'))
+                self.on_resume()
+                forward(self._backend_request(front, 'thread/resume', self.resume_params))
+                return None
             if 'error' in value:
                 # Keep the turn uncertain whenever its send was already durable.
                 return {'id': front, 'error': {'code': -32000, 'message': '原生请求未确认。'}}
@@ -452,6 +475,10 @@ class UnixGateway:
         self.client.sendall(prefix + payload)
 
     def serve(self, backend, protocol, stopped):
+        def forward(value):
+            backend.stdin.write(canonical(value) + b'\n')
+            backend.stdin.flush()
+
         pending = bytearray()
         total = 0
         while not stopped():
@@ -474,8 +501,7 @@ class UnixGateway:
                     if 'result' in request:
                         self.send(canonical(request))
                     else:
-                        backend.stdin.write(canonical(request) + b'\n')
-                        backend.stdin.flush()
+                        forward(request)
             if backend.stdout in readable:
                 raw = os.read(backend.stdout.fileno(), 65536)
                 if not raw:
@@ -487,7 +513,7 @@ class UnixGateway:
                 while b'\n' in pending:
                     line, _, rest = pending.partition(b'\n')
                     pending[:] = rest
-                    value = protocol.backend(decoded(line))
+                    value = protocol.backend(decoded(line), forward)
                     if value is not None:
                         self.send(canonical(value))
             if total > WIRE_LIMIT:

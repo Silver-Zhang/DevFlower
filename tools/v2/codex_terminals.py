@@ -33,7 +33,7 @@ from studio.server import Conflict
 from studio.session_sources import opened
 from studio.terminal_text import TerminalText
 
-from .codex_pty_gateway import CodexProtocol, PROFILE, UnixGateway
+from .codex_pty_gateway import BackendConfigRefused, CodexProtocol, PROFILE, UnixGateway
 from .native_session_links import workflow_use
 from .run_inspector import RUN
 from .project_files import mount_id, protected_roots
@@ -49,6 +49,7 @@ FRONTEND_HOME = '/tmp/df-ui'
 PUBLIC = {'id', 'workspace', 'handle', 'provider', 'session_id', 'state', 'reason', 'output', 'next',
           'reset', 'process_alive', 'input_owner', 'input_generation', 'input_sequence', 'input_status'}
 SHELL_DENIED = '此终端已拒绝直接 Shell（!）命令。'
+CONFIG_UNVERIFIED = '终端未能确认固定 Provider 与已禁用的扩展，原生会话尚未恢复。'
 BACKEND_SUPERVISOR = '''
 import ctypes, os, signal, sys
 parent, fd = map(int, sys.argv[1:3])
@@ -115,7 +116,8 @@ def frontend_args(binding, directory, executable_reader, gateway_dir, socket_nam
                    '-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"']
 
 
-def backend_args(binding, provider_args, executable, profile, *, read_only=False, code_host=False):
+def backend_args(binding, provider_args, executable, profile, *, read_only=False, code_host=False,
+                 untrusted_project=False):
     cwd = binding['cwd']
     fields = {':root': 'deny', ':minimal': 'read', cwd: 'read' if read_only else 'write', executable: 'read'}
     filesystem = '{' + ','.join(json.dumps(key) + '=' + json.dumps(value) for key, value in fields.items()) + '}'
@@ -123,7 +125,7 @@ def backend_args(binding, provider_args, executable, profile, *, read_only=False
                  default_mode_request_user_input=False)
     if read_only:
         flags['unified_exec'] = False
-    trust_args = (untrusted_project_args(cwd) if binding.get('v2_development_untrusted') is True
+    trust_args = (untrusted_project_args(cwd) if untrusted_project or binding.get('v2_development_untrusted') is True
                   else ['-c', 'projects.' + json.dumps(cwd) + '.trust_level="untrusted"'])
     args = [executable, *provider_args,
             '-c', f'permissions.{profile}.filesystem={filesystem}',
@@ -138,13 +140,14 @@ def backend_args(binding, provider_args, executable, profile, *, read_only=False
     return args + ['app-server', '--listen', 'stdio://']
 
 
-def safe_backend_config(store, binding, image, *, disable_extensions=False):
+def safe_backend_config(store, binding, image, *, disable_extensions=False, untrusted_project=False):
     if os.path.lexists(Path(binding['config_root']) / '.env'):
         raise Blocked('终端尚不支持原生 Codex .env 配置。')
     if Path('/etc/codex').exists():
         raise Blocked('此主机的系统 Codex 配置尚未核验终端权限。')
     with metadata_guard(store.state, timeout=20) as remaining:
-        options = {'untrusted_project': binding['cwd']} if binding.get('v2_development_untrusted') is True else {}
+        options = ({'untrusted_project': binding['cwd']}
+                   if untrusted_project or binding.get('v2_development_untrusted') is True else {})
         with CodexRPC(binding['executable'], binding['home'], binding['config_root'], str(store.state),
                       timeout=remaining, executable_image=image, **options) as rpc:
             config = rpc.request('config/read', {'cwd': str(store.state), 'includeLayers': False})['config']
@@ -174,6 +177,23 @@ def configured_mcp(config):
                    for name, value in servers.items())):
         raise Blocked('Codex MCP 配置无法逐项禁用；未启动会话。')
     return servers
+
+
+def verify_backend_config(config, binding, startup_args, *, read_only, code_host=False):
+    features = config.get('features') if isinstance(config, dict) else None
+    disabled = {key for key, value in FEATURES.items() if not value}
+    disabled.update(('worktrees', 'default_mode_request_user_input'))
+    if read_only:
+        disabled.update(('shell_tool', 'unified_exec'))
+    expected_provider = {arg for arg in startup_args[1::2] if not arg.startswith('mcp_servers.')}
+    if (not isinstance(features, dict) or any(features.get(name) is not False for name in disabled)
+            or features.get('code_mode_host') is not code_host
+            or config.get('notify') != [] or config.get('agents')
+            or config.get('sqlite_home') not in (None, binding['config_root'])
+            or any(server.get('enabled') is not False for server in configured_mcp(config).values())
+            or set(provider_overrides(config)[1::2]) != expected_provider):
+        raise Blocked('Codex App Server 未确认固定 Provider 与禁用工作区外扩展；未启动会话。')
+    return config.get('model_provider') or 'openai'
 
 
 def pin_backend_image(root, image, stack):
@@ -369,7 +389,11 @@ class CodexTerminals(NativeTerminals):
                 self.operations.require_idle(binding, ignore=key, owner_kind=self.record_kind)
                 check_cancel()
                 image = held.enter_context(NativeImage(binding['executable'], expected_sha256=binding['_executable_sha256']))
-                approved_config = safe_backend_config(self.store, binding, image)
+                try:
+                    approved_config = safe_backend_config(self.store, binding, image, disable_extensions=True,
+                                                          untrusted_project=True)
+                except (Blocked, OSError, ValueError, KeyError, TypeError):
+                    raise BackendConfigRefused() from None
                 workspace = held.enter_context(opened(binding['cwd'], directory=True))
                 guarded_workspace(self.store, binding, workspace)
                 root = Path(held.enter_context(TemporaryDirectory(prefix='df-v2-pty-', dir='/tmp')))
@@ -383,7 +407,7 @@ class CodexTerminals(NativeTerminals):
                 profile = PROFILE + '_' + secrets.token_hex(16)
                 backend_env = dict(clean_env(binding['home']), CODEX_HOME=binding['config_root'], TMPDIR=str(scratch))
                 argv = [sys.executable, '-I', '-B', '-c', BACKEND_SUPERVISOR, str(os.getpid()), str(backend_fd),
-                        *backend_args(binding, approved_config, executable, profile)]
+                        *backend_args(binding, approved_config, executable, profile, untrusted_project=True)]
                 master, slave = pty.openpty()
                 held.callback(os.close, master)
                 reader = os.open('/proc/self/fd/' + str(image.fd), os.O_RDONLY | os.O_CLOEXEC)
@@ -425,6 +449,12 @@ class CodexTerminals(NativeTerminals):
                     verify_backend()
                     guarded_workspace(self.store, binding, workspace)
 
+                def check_config(config):
+                    try:
+                        return verify_backend_config(config, binding, approved_config, read_only=False)
+                    except (Blocked, ValueError, KeyError, TypeError):
+                        raise BackendConfigRefused() from None
+
                 def on_ready():
                     with self.lock:
                         check_cancel()
@@ -446,11 +476,14 @@ class CodexTerminals(NativeTerminals):
                 def bridge():
                     try:
                         protocol = CodexProtocol(binding, locator.native_uuid, secrets_found, on_effect,
+                                                 check_config=check_config,
+                                                 history_path=str(record.source.profile.root / record.ref.relative),
                                                  profile=profile, on_resume=check_effect_scope, on_ready=on_ready,
                                                  on_shell_denied=shell_denied)
                         gateway.serve(backend, protocol, closed.is_set)
                     except (OSError, EOFError, ValueError, TypeError, KeyError, Blocked, sqlite3.Error) as error:
-                        errors.append(type(error).__name__)
+                        errors.append(CONFIG_UNVERIFIED if isinstance(error, BackendConfigRefused) else
+                                      '原生终端协议或隔离未能维持，未自动重发。')
                     finally:
                         closed.set()
 
@@ -468,11 +501,14 @@ class CodexTerminals(NativeTerminals):
                             with self.lock:
                                 self._append(entry, raw)
                     if errors and not entry['cancelled']:
-                        failure = '原生终端协议或隔离未能维持，未自动重发。'
+                        failure = errors[0]
                     if entry.get('shell_denied') and not entry['cancelled']:
                         failure = SHELL_DENIED
             except (OSError, ValueError, TypeError, KeyError, Blocked, Conflict, sqlite3.Error, subprocess.SubprocessError) as error:
-                failure = str(error) if isinstance(error, SessionRefused) else '原生终端未能安全启动或维持。'
+                if isinstance(error, BackendConfigRefused):
+                    failure = CONFIG_UNVERIFIED
+                else:
+                    failure = str(error) if isinstance(error, SessionRefused) else '原生终端未能安全启动或维持。'
             finally:
                 if gateway_thread is not None:
                     closed.set()

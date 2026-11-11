@@ -12,14 +12,13 @@ import time
 from orchestration.common import Blocked, canonical, clean_env, digest
 from orchestration.privacy import credentials, redact
 from studio.agent_sessions import safe_text
-from studio.native_codex_exec import FEATURES, provider_overrides
 from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC
 from studio.session_sources import UUID, opened
 
 from .codex_code_mode import pin_code_mode_host
-from .codex_terminals import BACKEND_SUPERVISOR, backend_args, configured_mcp, guarded_workspace, pin_backend_image, reap
-from .codex_terminals import safe_backend_config, wait_owned
+from .codex_terminals import (BACKEND_SUPERVISOR, backend_args, guarded_workspace, pin_backend_image, reap,
+                              safe_backend_config, verify_backend_config, wait_owned)
 from .session_identity import SessionRefused
 
 
@@ -58,19 +57,7 @@ def await_mode_settings(rpc, binding, profile, sid, expected_mode):
 
 def require_effective_config(rpc, binding, startup_args, *, read_only, code_host=False):
     config = rpc.request('config/read', {'cwd': binding['cwd'], 'includeLayers': False}).get('config')
-    features = config.get('features') if isinstance(config, dict) else None
-    disabled = {key for key, value in FEATURES.items() if not value}
-    disabled.update(('worktrees', 'default_mode_request_user_input'))
-    if read_only:
-        disabled.update(('shell_tool', 'unified_exec'))
-    expected_provider = {arg for arg in startup_args[1::2] if not arg.startswith('mcp_servers.')}
-    if (not isinstance(features, dict) or any(features.get(name) is not False for name in disabled)
-            or features.get('code_mode_host') is not code_host
-            or config.get('notify') != [] or config.get('agents')
-            or config.get('sqlite_home') not in (None, binding['config_root'])
-            or any(server.get('enabled') is not False for server in configured_mcp(config).values())
-            or set(provider_overrides(config)[1::2]) != expected_provider):
-        raise Blocked('Codex App Server 未确认固定 Provider 与禁用工作区外扩展；未启动会话。')
+    verify_backend_config(config, binding, startup_args, read_only=read_only, code_host=code_host)
 
 
 class CodexPlan:

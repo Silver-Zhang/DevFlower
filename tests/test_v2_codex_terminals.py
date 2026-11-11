@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from orchestration.common import Blocked
 from studio.graph import Invalid
-from v2.codex_pty_gateway import CodexProtocol, Refused
+from v2.codex_pty_gateway import BackendConfigRefused, CodexProtocol, Refused
 from v2.codex_terminals import CodexTerminals, backend_args, guarded_workspace
 from v2.session_identity import StorageRootIdentity
 from v2.session_lease import CODEX_COORDINATION_VERSION
@@ -26,8 +26,12 @@ class CodexProtocolTests(unittest.TestCase):
         self.effects = []
         self.scope = Mock()
         self.ready = Mock()
+        self.check_config = Mock(return_value='fixture')
+        self.forward = Mock()
+        self.history = '/fixture/protected/store/history'
         self.protocol = CodexProtocol(dict(cwd=self.cwd, model='fixture', effort='low'),
                                       self.session, {self.literal}, self.effects.append,
+                                      check_config=self.check_config, history_path=self.history,
                                       on_resume=self.scope, on_ready=self.ready)
         self.next_id = 0
         self.reply(self.send('initialize', {}), {})
@@ -36,18 +40,28 @@ class CodexProtocolTests(unittest.TestCase):
         self.next_id += 1
         return self.protocol.input(dict(id=self.next_id, method=method, params=params))
 
+    def backend(self, response):
+        return self.protocol.backend(response, self.forward)
+
     def reply(self, request, result):
-        return self.protocol.backend(dict(id=request['id'], result=result))['result']
+        return self.backend(dict(id=request['id'], result=result))['result']
 
     def resume(self, **changes):
         raw = dict(thread=dict(id=self.session, sessionId=self.session, cwd=self.cwd,
-            path='/fixture/protected/store/history', preview=self.literal, originator=self.literal,
+            path=self.history, preview=self.literal, originator=self.literal,
             historyMode='paginated', createdAt=1, updatedAt=2, ephemeral=False, cliVersion='0.163.0',
             source='exec', status={'type': 'idle'}, modelProvider='fixture'),
             activePermissionProfile={'id': 'devflower'}, approvalPolicy='never',
-            model='fixture', cwd=self.cwd, runtimeWorkspaceRoots=[self.cwd])
+            model='fixture', modelProvider='fixture', cwd=self.cwd, runtimeWorkspaceRoots=[self.cwd])
         raw.update(changes)
-        request = self.send('thread/resume', {'threadId': self.session})
+        config_request = self.send('thread/resume', {'threadId': self.session})
+        self.assertEqual(config_request['method'], 'config/read')
+        self.assertEqual(config_request['params'], {'cwd': self.cwd, 'includeLayers': False})
+        self.scope.assert_not_called()
+        self.assertIsNone(self.backend(dict(id=config_request['id'], result={'config': {}})))
+        self.check_config.assert_called_once_with({})
+        request = self.forward.call_args.args[0]
+        self.assertEqual(request['method'], 'thread/resume')
         self.assertEqual(request['params']['runtimeWorkspaceRoots'], [self.cwd])
         self.scope.assert_called_once()
         return self.reply(request, raw)
@@ -75,6 +89,24 @@ class CodexProtocolTests(unittest.TestCase):
     def test_profile_response_must_match_before_readiness(self):
         with self.assertRaises(Refused):
             self.resume(activePermissionProfile={'id': 'untrusted'})
+        self.ready.assert_not_called()
+        self.assertEqual(self.effects, [])
+
+    def test_unattested_backend_never_receives_resume_or_turn(self):
+        config_request = self.send('thread/resume', {'threadId': self.session})
+        with self.assertRaises(Refused):
+            self.send('turn/start', {'threadId': self.session, 'input': [{'type': 'text', 'text': 'hello'}]})
+        self.check_config.side_effect = BackendConfigRefused()
+        with self.assertRaises(BackendConfigRefused):
+            self.backend(dict(id=config_request['id'], result={'config': {'model_provider': 'unverified'}}))
+        self.forward.assert_not_called()
+        self.scope.assert_not_called()
+        self.ready.assert_not_called()
+        self.assertEqual(self.effects, [])
+
+    def test_resume_rejects_changed_provider(self):
+        with self.assertRaises(Refused):
+            self.resume(modelProvider='unexpected')
         self.ready.assert_not_called()
         self.assertEqual(self.effects, [])
 
@@ -113,12 +145,12 @@ class CodexProtocolTests(unittest.TestCase):
         self.reply(request, {'turn': turn})
         with self.assertRaises(Refused):
             self.send('turn/start', params)
-        self.assertIsNone(self.protocol.backend(dict(method='item/agentMessage/delta',
+        self.assertIsNone(self.backend(dict(method='item/agentMessage/delta',
             params=dict(threadId=self.session, turnId=turn['id'], delta=self.literal))))
-        self.assertIsNone(self.protocol.backend(dict(method='turn/completed',
+        self.assertIsNone(self.backend(dict(method='turn/completed',
             params=dict(threadId='different', turn=dict(turn, status='completed')))))
         self.assertEqual(self.effects, [True])
-        result = self.protocol.backend(dict(method='turn/completed', params=dict(threadId=self.session,
+        result = self.backend(dict(method='turn/completed', params=dict(threadId=self.session,
             turn=dict(turn, status='completed', items=[dict(type='agentMessage', id='message',
                       phase='final_answer', text=self.literal)]))))
         self.assertNotIn(self.literal, str(result))
@@ -128,7 +160,7 @@ class CodexProtocolTests(unittest.TestCase):
         self.resume()
         params = {'threadId': self.session, 'input': [{'type': 'text', 'text': 'hello'}]}
         request = self.send('turn/start', params)
-        response = self.protocol.backend(dict(id=request['id'], error={'message': self.literal}))
+        response = self.backend(dict(id=request['id'], error={'message': self.literal}))
         self.assertNotIn(self.literal, str(response))
         with self.assertRaises(Refused):
             self.send('turn/start', params)
