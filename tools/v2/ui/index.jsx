@@ -11,7 +11,8 @@ import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {NativePty} from './NativePty.jsx';
 import {AgentManager} from './AgentManager.jsx';
-import {downloadDraftArchive, makeDraftArchive, readDraftArchive, sha256 as bytesSha256} from './draftTransfer.js';
+import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
+import {downloadPython,PythonPreview,ScriptRunMonitor} from './ScriptRunMonitor.jsx';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
 import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../studio/workbench_ui/canvas_editing.mjs';
@@ -63,9 +64,10 @@ function CanvasHandoffEdge(props){
  return <HandoffEdge {...props} geometry={props.data.route}/>;
 }
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:CanvasHandoffEdge};
-const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
-const durablyEnded=snapshot=>ended(snapshot?.state)&&ended(snapshot.run?.persisted_state??snapshot.state);
-const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
+const ended=state=>['COMPLETED','FAILED','STOPPED','CANCELLED'].includes(state);
+const durablyEnded=snapshot=>ended(snapshot?.state)&&ended(snapshot.run?.persisted_state??snapshot.state)||
+ (snapshot?.state==='RECOVERY_REQUIRED'&&snapshot.script?.active===false);
+const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',STOPPED:'脚本已停止',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
 function ControlEvidence({activation,trusted}){
@@ -161,7 +163,7 @@ function FitFrozenRun({nodes}){
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
- const [runInspectorOpen,setRunInspectorOpen]=useState(false);
+ const [runInspectorOpen,setRunInspectorOpen]=useState(false),[pythonPreview,setPythonPreview]=useState(null);
  const runViewToggle=useRef(null),nativeEscape=useRef(null),runsOpener=useRef(null);
  const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]);
  const [canvasMode,setCanvasMode]=useState('select'),[canvasFocused,setCanvasFocused]=useState(false),[minimap,setMinimap]=useState(false);
@@ -344,7 +346,9 @@ function App(){
  },[activeRun?.id,activeRun?.epoch]);
  async function cancelRun(){const value=runRef.current;if(!value||cancelBusy.current)return;cancelBusy.current=value;setCancelling(true);setError('');try{
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
-  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
+  if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice(result.script?
+   (result.script.cancel_requested?'脚本已记录取消请求。':'脚本状态：'+stateLabel(result.state)):
+   '已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}
  }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}}
  async function controlRun(action,extra={}){
   const value=runRef.current;
@@ -360,9 +364,10 @@ function App(){
  }
  async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
   try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:taskText};
+    if(nativeScript)attempt.execution='native-cli';
     if(taskFiles.length)attempt.task_files=taskFiles.map(({path,sha256})=>({path,sha256}));
     keepLaunch(attempt,w)}
-   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);setTaskFiles([]);setTaskText('');showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
+   const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);setTaskFiles([]);setTaskText('');showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);if(result.script)setRunInspectorOpen(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
   }catch(e){if(!e.uncertain&&e.status&&e.status<500&&inWorkspace(w,epoch)){
     // Even an explicit HTTP error can follow durable reservation (e.g. worker
     // publication refusal). Only a successful scoped list proving absence may
@@ -491,7 +496,7 @@ function App(){
    if(currentTransfer(ticket))cancelTransfer();
   }
  }
- async function exportPython(){
+ async function exportPython(preview=false){
   const selected=savedRef.current;
   if(!selected||dirtyRef.current)return;
   const ticket=beginTransfer();
@@ -501,14 +506,14 @@ function App(){
    const result=await api('drafts/export-python',{workspace:ticket.workspace.id,id:selected.id,
     revision:selected.revision,native_config:true});
    if(!currentTransfer(ticket))return;
-   if(result.workspace!==ticket.workspace.id||result.id!==selected.id||result.revision!==selected.revision
-    ||typeof result.source!=='string'||typeof result.filename!=='string'||!result.filename.endsWith('.py')
-    ||/[\/\\\0]/.test(result.filename))throw Error('导出文件身份无效，请重新读取工作流。');
-   const bytes=new TextEncoder().encode(result.source);
-   if(await bytesSha256(bytes)!==result.sha256)throw Error('导出脚本校验失败。');
+   if(result.workspace!==ticket.workspace.id||result.id!==selected.id||result.revision!==selected.revision)
+    throw Error('导出文件身份无效，请重新读取工作流。');
    if(currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected){
-    downloadFile(bytes,result.filename,'text/x-python;charset=utf-8');
-    setNotice('已导出 '+result.filename+'。在终端执行时沿用原生 CLI 配置与权限；GUI 脚本运行尚未启用。');
+    if(preview)setPythonPreview(result);
+    else{
+     await downloadPython(result,()=>currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected);
+     if(currentTransfer(ticket))setNotice('已导出 '+result.filename+'。');
+    }
    }
   }catch(failure){
    if(currentTransfer(ticket))setError(failure.message);
@@ -1028,15 +1033,25 @@ function App(){
   return()=>{alive=false};
  },[workspace?.id,viewMode,agentRefresh,selected,doc.nodes.some(node=>node.agent_id)]);
  const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching);
- const frozenGraph=readOnly?runSnapshot?.definition?.draft_document:null;
+ const scriptRun=runSnapshot?.script;
+ const frozenGraph=readOnly?(scriptRun?.document||runSnapshot?.definition?.draft_document):null;
  const shown=readOnly?(frozenGraph||blank()):doc;
- const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
+ const canExportRunSummary=readOnly&&!scriptRun&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const runRecord=runSnapshot?.run,runDefinition=runSnapshot?.definition;
  const runDraftId=readOnly&&runTrusted&&runRecord?.id===activeRun?.id&&runRecord?.workspace===workspace?.id&&
-  runDefinition?.workspace===workspace?.id&&runRecord?.definition_id===runDefinition?.id&&
-  runRecord?.draft_id===runDefinition?.draft_id?runRecord?.draft_id:null;
+  (scriptRun||runDefinition?.workspace===workspace?.id&&runRecord?.definition_id===runDefinition?.id&&
+  runRecord?.draft_id===runDefinition?.draft_id)?runRecord?.draft_id:null;
  const runSourceDraft=runDraftId&&drafts.find(row=>row.workspace===workspace?.id&&row.id===runDraftId);
- const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
+ const activation=id=>{
+  if(!scriptRun)return runSnapshot?.nodes?.find(a=>a.node===id);
+  if(!scriptRun.agents[id])return null;
+  const events=scriptRun.events||[];
+  const started=events.some(event=>event.node===id&&event.kind==='PROCESS_STARTED');
+  const failed=events.some(event=>event.node===id&&event.kind==='CLI_FAILED');
+  const cancelled=events.some(event=>event.node===id&&event.kind==='CANCELLED');
+  return {state:scriptRun.completed_nodes?.includes(id)?'COMPLETED':failed?'FAILED':cancelled?'CANCELLED':
+   started?(scriptRun.active?'RUNNING':'UNKNOWN'):'UNACTIVATED'};
+ },n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
   agentVersions.records?.get(n.agent_id):null;
  const edgeTarget=e&&activation(e.target);
@@ -1045,8 +1060,9 @@ function App(){
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
  const nativeScript=agentVersions?.workspace===workspace?.id&&doc.nodes.some(node=>
   agentVersions.records?.get(node.agent_id)?.config.execution==='native-cli');
- const launchBlock=nativeScript?'此工作流使用原生 CLI 配置，请先保存并导出 Python。GUI 脚本运行等待真实 CLI 验收。':doc.nodes.map(runtimeBlock).find(Boolean);
- const approval=runSnapshot?.nodes.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
+ const launchBlock=nativeScript?(taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':''):
+  doc.nodes.map(runtimeBlock).find(Boolean);
+ const approval=runSnapshot?.nodes?.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
  const typedActive=runTrusted&&runSnapshot?.run?.designer_runtime===1&&['RUNNING','WAITING_CONFIRMATION','PAUSED'].includes(runSnapshot.state);
  const inlineAgent=doc.nodes.some(node=>nodeKind(node)==='agent'&&!node.agent_id);
  const rfNodes=shown.nodes.map(node=>{
@@ -1080,7 +1096,7 @@ function App(){
   '使用「添加节点」准备输入或输出。拖动输出端口连接下游，再点击连线设置交接。':
   needsEndpoints?'使用「添加节点」补齐输入或输出，再检查工作流。':'');
  const startHint=launchAttempt?'核验此前的启动请求。':!workspace?'先打开工作空间。':!doc.nodes.length?
-  '添加节点后可以启动工作流。':launchBlock||(!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
+  '添加节点后可以启动工作流。':launchBlock||(!nativeScript&&!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
  function renderRunRows(){return runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(!sideView&&readOnly&&activeRun?.id===row.id?' active':'')}
     aria-current={!sideView&&readOnly&&activeRun?.id===row.id?'page':undefined} onClick={()=>{
      if(readOnly&&activeRun?.id===row.id){
@@ -1088,12 +1104,14 @@ function App(){
       setSideView('');setRunInspectorOpen(false);setDrawer(false);return;
      }
      showRun(row.id)
-    }}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}
+    }}><span>{row.name}<small>{stateLabel((activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)||(row.execution==='native-cli'?'原生脚本':'UNKNOWN'))} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}
   function renderRunInspector(wide){
    return <aside id={wide?'v2-run-evidence':undefined} tabIndex={wide?-1:undefined}
     className={wide?'inspector run-inspector run-evidence-workspace':'inspector run-inspector'} aria-label={wide?'运行检查器':n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):e?'连线配置':'运行检查器'}>
    <header><div>{!wide&&<small>运行检查器</small>}<h2>{wide?'运行证据':n?.name||(e?'交接记录':'运行详情')}</h2></div>
     {!wide&&<button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button>}</header>
+   {scriptRun?<ScriptRunMonitor key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api}
+    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target}/>:
    <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted} wide={wide}
     selection={n?{node:n.id,activation:linkedActivation}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
     {current=>{
@@ -1129,7 +1147,7 @@ function App(){
        <PayloadPages key={current.id+field} {...scoped} field={field}/>)}
      </>;
     }}
-   </RunInspector>
+   </RunInspector>}
    </aside>;
   }
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
@@ -1209,39 +1227,44 @@ function App(){
      <div className="task-context-content">
      <Field label="本次任务"><textarea rows={2} maxLength={20000} value={taskText} disabled={launching||Boolean(launchAttempt)}
       onChange={event=>setTaskText(event.target.value)}/></Field>
-     <p className="field-note">所选文件文本会发送给本次运行的 Agent。文件权限由各 Agent 配置控制。</p>
+     <p className="field-note">{nativeScript?'可在任务中引用项目相对路径，由原生 CLI 按其权限读取。':
+      '所选文件文本会发送给本次运行的 Agent。文件权限由各 Agent 配置控制。'}</p>
      {taskFiles.map(file=><div key={file.path} className="task-file-row"><span>{file.path} · {file.bytes} B</span>
       <button aria-label={'移除任务文件 '+file.path} disabled={launching||Boolean(launchAttempt)}
        onClick={()=>{setTaskFiles(files=>files.filter(item=>item.path!==file.path));setNotice('已移除 '+file.path)}}>移除</button></div>)}
-     <Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>
+     {!nativeScript&&<Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>}
      </div>
     </details>}
     <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
-    <Button icon={Download} disabled={!saved||dirty||!!busy||launching} onClick={exportPython}
+    <Button icon={Download} disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython()}
      title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python（原生 CLI）</Button>
-    <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
-    <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))}
-     title={startHint||'明确启动将调用所选模型；不自动重试'} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
+    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython(true)}>预览 Python</Button>}
+    <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot,...(nativeScript?{execution:'native-cli'}:{})});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
+    <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!nativeScript&&!status?.provider_available&&inlineAgent))}
+     title={startHint||(nativeScript?'启动将使用原生 CLI 配置和权限。':'明确启动将调用所选模型；不自动重试')} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
      onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
    </div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><div className="run-command-bar">
-   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">实际调用 {runSnapshot?.run?.actual_calls??'未知'} 次{!runTrusted?'（上次读取）':''}</span>
+   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动 CLI '+(scriptRun.events?.filter(event=>event.kind==='PROCESS_STARTED').length??'未知')+' 次':
+    '实际调用 '+(runSnapshot?.run?.actual_calls??'未知')+' 次'}{!runTrusted?'（上次读取）':''}</span>
    <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runInspectorOpen?'返回运行图':'运行检查器'}</Button>
-   <Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
-   <Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>
+   <Button disabled={!runSnapshot||cancelling||(scriptRun?(!runTrusted||!scriptRun.active||scriptRun.cancel_requested||ended(runSnapshot.state)):
+    (runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||ended(runSnapshot?.state))} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':scriptRun?.cancel_requested?'取消已请求':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
+   {!scriptRun&&<Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>}
    <Button onClick={guard(rereadRun)}>重新读取</Button>
    {runTrusted&&(runSourceDraft?
     <Button disabled={!!busy||launching} title={'打开来源工作流的可编辑草稿 · '+runSourceDraft.graph.name} onClick={editRunDraft}>编辑草稿</Button>:
     <Button disabled={!!busy||launching} title="本次运行没有可打开的来源草稿" onClick={returnToDraft}>返回当前草稿</Button>)}
-   <details className="run-export-menu"><summary>导出</summary>
+   {!scriptRun&&<details className="run-export-menu"><summary>导出</summary>
     {canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}
     <Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button>
-   </details>
+   </details>}
    {runTrusted&&runSnapshot?.state==='COMPLETED'&&runSnapshot.run?.output?.result?.gate_verdict==='ACCEPT'&&
     runSnapshot.definition?.graph?.development&&<LocalDelivery key={activeRun.id} api={api} workspace={workspace.id} run={activeRun.id}/>}
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
    {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}</div>
-   <p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p className="error-text">{runSnapshot.run.reason}</p>}
+   {!scriptRun&&<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>}
+   {(scriptRun?.reason||runSnapshot?.run?.reason)&&<p className="error-text">{scriptRun?.reason||runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
     {runSnapshot.nodes.filter(row=>runSnapshot.run.partial_failures.includes(row.id)).map(row=><p key={row.id}>{row.name} · {row.reason}</p>)}</details>}
    {approval&&<section className="approval-wait" aria-label="待人工审批"><h3>{approval.name}</h3><p>{approval.question}</p>
@@ -1252,7 +1275,7 @@ function App(){
      <Button disabled={!typedActive||cancelling} onClick={guard(()=>controlRun('approval',{activation:approval.id,decision:'reject'}))}>拒绝</Button>
     </div>}
    </section>}
-   <details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details></section>}
+   {!scriptRun&&<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details>}</section>}
    </div>}
    {!readOnly&&workspace&&startHint&&!launchAttempt&&doc.nodes.length>0&&<p id="v2-start-hint" className="phase5-note">{startHint}</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
@@ -1386,7 +1409,7 @@ function App(){
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
   {workspace&&filesOpen&&<ProjectFiles key={'files:'+workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
-   onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
+   onTaskAttach={!nativeScript&&!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='templates'&&<aside className="project-panel template-panel" onKeyDown={event=>{
    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSideView(templatesOpener)}
   }}>
@@ -1423,6 +1446,7 @@ function App(){
   {workspace&&agentPanel&&<AgentManager key={'agents:'+workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}
+  {pythonPreview&&<PythonPreview artifact={pythonPreview} onClose={()=>setPythonPreview(null)}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}
   {planApproval&&planApproval.workspace===workspace?.id&&<PlanApproval value={planApproval} busy={planBusy}
    error={planError} onClose={()=>setPlanApproval(null)} onConfirm={confirmPlan}/>}

@@ -239,7 +239,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
          value={config.timeout??''} onChange={event=>change({timeout:event.target.value===''?null:Number(event.target.value)})}/></Field>
        </fieldset>
       </details>
-      {record&&<p className="field-note">将此 Agent 加入画布后导出 Python 脚本运行。</p>}
+      {record&&<p className="field-note">将此 Agent 加入画布后可运行或导出 Python 脚本。</p>}
      </> : <>
      <fieldset ref={element=>{agentSections.current.identity=element}} tabIndex={-1} disabled={busy}><legend>身份与角色</legend>
       {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。角色模板可以代填角色。</p>}

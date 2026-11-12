@@ -138,23 +138,37 @@ class DraftStore:
             raise Invalid('新草稿不能携带旧版本')
         return key or secrets.token_hex(16), validate_draft(document)
 
-    def reserve_launch(self, workspace, intent_key, payload, definition_id):
-        """Future M2 must call this transaction BEFORE spawning any worker/native turn.
+    def launch_intent(self, workspace, intent_key, payload):
+        """Resolve an already reserved request without reopening the current draft."""
+        with self.db.tx(read=True) as db:
+            return self._launch_intent(db, workspace, intent_key, digest(canonical(payload)))
 
-        M1 exposes no launch HTTP endpoint and performs no execution side effects.
-        """
+    @staticmethod
+    def _launch_intent(db, workspace, intent_key, payload_sha):
+        row = db.execute('SELECT payload_sha,run_id,definition_id,state FROM launch_intents WHERE workspace=? AND intent_key=?',
+                         (workspace, intent_key)).fetchone()
+        if row:
+            if row[0] != payload_sha:
+                raise Conflict('重复启动键对应不同的请求')
+            return {'run_id': row[1], 'definition_id': row[2], 'state': row[3], 'created': False}
+
+    def reserve_launch(self, workspace, intent_key, payload, definition_id, *, publish=None):
+        """Commit the launch identity and its optional run record before spawning."""
         self.workspace(workspace)
-        if not isinstance(intent_key, str) or not 16 <= len(intent_key) <= 128:
+        if not isinstance(intent_key, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,128}', intent_key):
             raise Invalid('启动意图身份无效')
-        if not isinstance(definition_id, str) or len(definition_id) != 64 or any(c not in '0123456789abcdef' for c in definition_id):
+        if not isinstance(definition_id, str) or not re.fullmatch(r'[0-9a-f]{64}', definition_id):
             raise Invalid('执行定义身份无效')
         sha = digest(canonical(payload))
         with self.db.tx() as db:
-            row = db.execute('SELECT payload_sha,run_id,definition_id,state FROM launch_intents WHERE workspace=? AND intent_key=?', (workspace, intent_key)).fetchone()
-            if row:
-                if row[0] != sha or row[2] != definition_id:
+            prior = self._launch_intent(db, workspace, intent_key, sha)
+            if prior:
+                if prior['definition_id'] != definition_id:
                     raise Conflict('重复启动键对应不同的执行定义')
-                return {'run_id': row[1], 'definition_id': row[2], 'state': row[3], 'created': False}
+                return prior
             run = secrets.token_hex(16)
-            db.execute('INSERT INTO launch_intents VALUES(?,?,?,?,?,?,?)', (workspace, intent_key, sha, run, definition_id, 'RESERVED', time.time()))
+            if publish is not None:
+                publish(db, run)
+            db.execute('INSERT INTO launch_intents VALUES(?,?,?,?,?,?,?)',
+                       (workspace, intent_key, sha, run, definition_id, 'RESERVED', time.time()))
         return {'run_id': run, 'definition_id': definition_id, 'state': 'RESERVED', 'created': True}

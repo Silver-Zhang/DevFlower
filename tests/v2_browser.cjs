@@ -97,9 +97,15 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await page.getByLabel('关闭检查器',{exact:true}).click();
   const exportPython=page.getByRole('button',{name:'导出 Python（原生 CLI）',exact:true});
   assert(await exportPython.isDisabled(),'Unsaved canvas cannot export an older script');
-  assert(await page.getByRole('button',{name:'保存并启动',exact:true}).isDisabled(),'Native Agents cannot enter the managed runtime');
+  const preview=page.getByRole('button',{name:'预览 Python',exact:true});
+  assert(await preview.isDisabled(),'Unsaved canvas cannot preview an older script');
   await save();
-  assert(await page.getByRole('button',{name:'启动',exact:true}).isDisabled());
+  assert.equal(await page.getByRole('button',{name:'启动',exact:true}).getAttribute('title'),'启动将使用原生 CLI 配置和权限。');
+  await preview.click();
+  const previewDialog=page.getByRole('dialog',{name:'Python 脚本预览'});
+  await previewDialog.waitFor();
+  const previewSource=await previewDialog.locator('pre').textContent();
+  await previewDialog.getByRole('button',{name:'关闭预览'}).click();
   const exporting=page.waitForResponse(response=>response.url().endsWith('/drafts/export-python'));
   const downloading=page.waitForEvent('download');
   await exportPython.click();
@@ -110,6 +116,7 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   const script=path.join(out,'native-workflow.py');await download.saveAs(script);
   const bytes=fs.readFileSync(script);
   assert.equal(bytes.toString('utf8'),exported.source);
+  assert.equal(previewSource,exported.source);
   assert.equal(createHash('sha256').update(bytes).digest('hex'),exported.sha256);
   const dryRun=spawnSync('python3',[script,'--workspace',path.join(spaces,'A'),'--dry-run'],
    {cwd:out,encoding:'utf8',env:{...process.env,PYTHONPATH:''}});

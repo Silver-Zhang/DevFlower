@@ -163,7 +163,10 @@ class ExportTests(unittest.TestCase):
         result=self.run_script()
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(self.calls(),[])
-        self.assertFalse(self.run_dir.exists())
+        self.assertIn('Missing CLI: claude', result.stderr)
+        journal = [json.loads(line) for line in (self.run_dir/'events.jsonl').read_text().splitlines()]
+        self.assertEqual([row['kind'] for row in journal], ['RUN_STARTED', 'RUN_STOPPED'])
+        self.assertEqual(journal[-1]['status'], 'STOPPED')
 
     def test_failure_stops_downstream_without_retry(self):
         result=self.run_script(env=dict(self.env,FAIL_PROVIDER='codex'))

@@ -134,7 +134,7 @@ def _cancel_requested(fd):
     return True
 
 
-def inspect_run(manifest, directory, *, cancel=False):
+def inspect_run(manifest, directory, *, cancel=False, details=False):
     """Observe the same artifact, never replay it. Cancellation is cooperative.
 
     The live script holds a directory lock. No stored PID is ever signalled;
@@ -173,6 +173,8 @@ def inspect_run(manifest, directory, *, cancel=False):
             if events[0].get('script_sha256') != snapshot['script_sha256']:
                 # Refuse before accepting a cancellation request for another script.
                 raise PermissionError('Script content differs from the artifact that started this run.')
+            if details:
+                snapshot['events'] = events
             terminal = [row for row in events if row['kind'] in ('RUN_COMPLETED', 'RUN_STOPPED')]
             if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
                 raise WorkflowError('Terminal journal evidence is inconsistent.')
@@ -294,7 +296,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
     if executable is None:
         raise WorkflowError(argv[0] + ' CLI not found; no request sent.')
     argv[0] = executable
-    cwd = context['workspace'] / agent['cwd']
+    cwd = agent_directory(context['workspace'], agent)
     _event(context, 'CALL_INTENT', node=agent['id'], cwd=str(cwd), argv=argv)
     print('[' + agent['id'] + '] ' + agent['name'], file=sys.stderr)
     process = None
@@ -309,6 +311,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
                                        stderr=stderr, start_new_session=True)
             _event(context, 'PROCESS_STARTED', node=agent['id'], pid=process.pid)
             code = _wait(context, process, agent['timeout'])
+        _event(context, 'PROCESS_EXITED', node=agent['id'], returncode=code)
         if code != 0:
             _event(context, 'CLI_FAILED', node=agent['id'], returncode=code)
             raise WorkflowError(agent['id'] + ' exited with ' + str(code) + '; downstream not started.')
@@ -357,6 +360,24 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
         raise
 
 
+def agent_directory(workspace, agent):
+    path = (workspace / agent['cwd']).resolve()
+    if not path.is_relative_to(workspace) or not path.is_dir():
+        raise WorkflowError('Missing or out-of-project working directory for ' + agent['id'])
+    return path
+
+
+def prepare_calls(manifest, workspace, *, dry_run=False):
+    workspace = (workspace or Path.cwd()).resolve(strict=True)
+    if not workspace.is_dir():
+        raise WorkflowError('Workspace is not a directory.')
+    for agent in manifest['agents']:
+        agent_directory(workspace, agent)
+        if not dry_run and shutil.which(agent['provider']) is None:
+            raise WorkflowError('Missing CLI: ' + agent['provider'])
+    return workspace
+
+
 def script_main(manifest, run_workflow):
     parser = argparse.ArgumentParser(description=manifest['name'] + ' (native CLI workflow)')
     parser.add_argument('--workspace', type=Path, help='project root; defaults to current directory')
@@ -367,6 +388,7 @@ def script_main(manifest, run_workflow):
     mode.add_argument('--dry-run', action='store_true', help='show commands; no CLI, model or file changes')
     mode.add_argument('--status', action='store_true', help='read this artifact\'s existing run as JSON; never execute')
     mode.add_argument('--cancel', action='store_true', help='request cancellation of an active run; never replay')
+    parser.add_argument('--details', action='store_true', help='include the actual journal in --status/--cancel JSON')
     args = parser.parse_args()
     try:
         if os.name != 'posix':
@@ -374,27 +396,20 @@ def script_main(manifest, run_workflow):
         if args.status or args.cancel:
             if not args.run_dir or args.workspace is not None or args.task or args.task_file:
                 raise WorkflowError('--status/--cancel require --run-dir and accept no execution inputs.')
-            print(json.dumps(inspect_run(manifest, args.run_dir, cancel=args.cancel), ensure_ascii=False, indent=2))
+            snapshot = inspect_run(manifest, args.run_dir, cancel=args.cancel, details=args.details)
+            print(json.dumps(snapshot, ensure_ascii=False, indent=2))
             return 0
+        if args.details:
+            raise WorkflowError('--details requires --status or --cancel.')
         if args.task and args.task_file:
             raise WorkflowError('Choose --task or --task-file, not both.')
-        workspace = (args.workspace or Path.cwd()).resolve(strict=True)
-        if not workspace.is_dir():
-            raise WorkflowError('Workspace is not a directory.')
-        # Verify all departments before dispatching any of them.
-        for agent in manifest['agents']:
-            if not (workspace / agent['cwd']).is_dir():
-                raise WorkflowError('Missing working directory for ' + agent['id'])
-            if not args.dry_run and shutil.which(agent['provider']) is None:
-                raise WorkflowError('Missing CLI: ' + agent['provider'])
         if args.dry_run:
+            workspace = prepare_calls(manifest, args.workspace, dry_run=True)
             print(json.dumps({'name': manifest['name'], 'policy': manifest['policy'],
-                              'calls': [{'node': a['id'], 'cwd': str(workspace / a['cwd']),
+                              'calls': [{'node': a['id'], 'cwd': str(agent_directory(workspace, a)),
                                          'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
                                         for a in manifest['agents']]}, ensure_ascii=False, indent=2))
             return 0
-        task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
-        task = '\n\n'.join(part for part in (manifest['input'], task) if part)
         with _cancellation_signals() as cancellation:
             if args.run_dir:
                 directory = args.run_dir.absolute()
@@ -404,19 +419,22 @@ def script_main(manifest, run_workflow):
             with _run_directory(directory) as owner:
                 import fcntl
                 fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                context = {'workspace': workspace, 'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
+                context = {'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
                 print('Private run evidence: ' + str(directory), file=sys.stderr)
                 _write(directory / 'workflow.json', json.dumps(manifest, ensure_ascii=False, indent=2))
                 _event(context, 'RUN_STARTED', workflow=manifest['name'], script_sha256=_script_sha256())
                 try:
                     _check_cancel(context)
+                    context['workspace'] = prepare_calls(manifest, args.workspace)
+                    task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
+                    task = '\n\n'.join(part for part in (manifest['input'], task) if part)
                     answer = run_workflow(context, task)
                     _check_cancel(context)
                     _write(directory / 'result.txt', answer['answer'])
                     _check_cancel(context)
                     _event(context, 'RUN_COMPLETED', result_file=str(directory / 'result.txt'),
                            result_sha256=_evidence_sha256(owner, 'result.txt'))
-                except (WorkflowError, OSError) as error:
+                except (WorkflowError, OSError, UnicodeError) as error:
                     _event(context, 'RUN_STOPPED', reason=str(error), automatic_retry=False,
                            status='CANCELLED' if isinstance(error, WorkflowCancelled) else 'STOPPED')
                     raise

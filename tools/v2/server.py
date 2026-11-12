@@ -6,7 +6,7 @@ import secrets
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
-from devflower_export import ExportError, compile_workflow, read_saved
+from devflower_export import ExportError
 from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
@@ -28,6 +28,7 @@ from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, Workflow
 from .project_files import read_project
 from .session_identity import SessionRefused
 from .session_lease import CODEX_COORDINATION_VERSION
+from .script_runs import EXECUTION, ScriptRuns, compile_saved
 from .native_history_config import unique_pairs
 from .run_inspector import RunInspector, parameters as inspector_parameters
 from .tool_artifacts import read as read_tool_artifact
@@ -63,6 +64,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                                native_homes=[row['home'] for row in homes.values()] if git_delivery_targets else ())
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
+    scripts = ScriptRuns(store, agents)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -281,7 +283,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 query = {key: values[0] for key, values in parse_qs(urlsplit(self.path).query).items()}
                 if not post and path == '/api/v2/status':
                     result = {'stage': 'M2' if runtime else 'M1', 'channel': 'Development',
-                              'execution_supported': bool(runtime), 'provider_available': bool(runtime and runtime.provider),
+                              'execution_supported': True, 'provider_available': bool(runtime and runtime.provider),
                               'execution_available': None if runtime and runtime.provider else False,
                               'native_history_available': native_sessions is not None,
                               'native_session_writes': session_operations.status() if session_operations else [],
@@ -333,20 +335,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = store.save(data['workspace'], data['id'], data['expected'], data['document'])
                 elif post and path == '/api/v2/drafts/export-python' and not query and set(data) == {
                         'workspace', 'id', 'revision', 'native_config'}:
-                    # Same read-only snapshot and compiler as the terminal export.
-                    # This endpoint never starts a CLI or changes a saved contract.
-                    store.workspace(data['workspace'], existing_only=True)
-                    if not isinstance(data['revision'], str) or not data['revision']:
-                        raise Invalid('导出需要当前已保存工作流版本。')
-                    try:
-                        document, records, root = read_saved(store.state / 'v2.sqlite', data['workspace'], data['id'],
-                                                             expected_revision=data['revision'])
-                        filename, source = compile_workflow(document, records, root, native_config=data['native_config'])
-                    except ExportError as exc:
-                        raise Invalid(str(exc)) from None
-                    from hashlib import sha256
-                    result = dict(workspace=data['workspace'], id=data['id'], revision=data['revision'],
-                                  filename=filename, source=source, sha256=sha256(source.encode()).hexdigest())
+                    _, _, _, artifact = compile_saved(store, data['workspace'], data['id'], data['revision'],
+                                                       native_config=data['native_config'])
+                    result = dict(workspace=data['workspace'], id=data['id'], revision=data['revision'], **artifact)
                 elif not post and path == '/api/v2/workflow-templates' and set(query) == {'workspace'}:
                     result = templates.listing(query['workspace'])
                 elif not post and path == '/api/v2/workflow-template' and set(query) == {'workspace', 'id', 'revision'}:
@@ -361,6 +352,10 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = archives.read(query['workspace'], query['id'])
                 elif not post and path == '/api/v2/tool-artifact' and set(query) == {'workspace', 'run', 'activation'}:
                     result = read_tool_artifact(store, **query)
+                elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document', 'execution'}:
+                    if data['execution'] != EXECUTION:
+                        raise Invalid('执行方式无效。')
+                    result = scripts.check(data['workspace'], data['document'])
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
                     result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
@@ -401,8 +396,25 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         raise Invalid('原生标题需要明确的会话身份。')
                 elif not post and path=='/api/v2/session-title-operation' and titles and set(query)=={'workspace','intent_key'}:
                     result = titles.operation(query['workspace'],query['intent_key'],verify=True)
-                elif not post and path == '/api/v2/runs' and runtime:
-                    result = inspector.clean(runtime.runs(query.get('workspace')))
+                elif not post and path == '/api/v2/runs':
+                    workspace = query.get('workspace')
+                    result = scripts.list(workspace)
+                    if runtime:
+                        result.extend(inspector.clean(runtime.runs(workspace)))
+                elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):
+                    required = {'workspace', 'id'}
+                    extra = {'node'} if path.endswith('/evidence') else set()
+                    if not required <= query.keys() <= required | extra:
+                        raise Invalid('读取脚本证据需要明确的工作空间和运行身份。')
+                    record = scripts.get(query['workspace'], query['id'])
+                    if record is None:
+                        raise Invalid('找不到此脚本运行。')
+                    if path.endswith('/evidence'):
+                        result = scripts.evidence(record, query.get('node'))
+                        if stderr := result.get('stderr'):
+                            result['stderr'] = dict(stderr, text=inspector.text(stderr['text']))
+                    else:
+                        result = scripts.source(record)
                 elif not post and path == '/api/v2/local-delivery/preview' and runtime and set(query) == {'workspace', 'run'}:
                     result = local_delivery_preview(git_platform, **query)
                     result = dict(result, git_targets=sorted(git_delivery.targets),
@@ -413,8 +425,20 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = git_delivery.publish(data)
                 elif not post and path == '/api/v2/local-delivery/git-operation' and set(query) == {'workspace', 'intent_key'}:
                     result = git_delivery.read(**query)
-                elif not post and path == '/api/v2/run' and runtime:
-                    result = runtime.snapshot(query.get('workspace'),query.get('id'))
+                elif not post and path == '/api/v2/run':
+                    workspace, run_id = query.get('workspace'), query.get('id')
+                    record = scripts.get(workspace, run_id)
+                    if record is not None:
+                        result = scripts.snapshot(workspace, run_id, record=record)
+                    elif runtime:
+                        result = runtime.snapshot(workspace, run_id)
+                    else:
+                        raise Invalid('找不到此运行。')
+                elif post and path == '/api/v2/launch' and 'execution' in data:
+                    required = {'workspace', 'draft_id', 'revision', 'intent_key', 'task', 'execution'}
+                    if (not required <= set(data) <= required | {'task_files'} or data['execution'] != EXECUTION):
+                        raise Invalid('脚本启动需要明确的工作空间、草稿版本、任务和原生执行意图。')
+                    result = scripts.launch(**{key: value for key, value in data.items() if key != 'execution'})
                 elif post and path == '/api/v2/launch' and runtime:
                     required = {'workspace','draft_id','revision','intent_key','task'}
                     if not required <= set(data) <= required | {'task_files'}:
@@ -433,8 +457,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                                                       activation=data['activation'], decision=data['decision'])
                 elif post and path == '/api/v2/pause' and runtime and set(data) == {'workspace', 'run_id', 'paused'}:
                     result = runtime.control_designer(data['workspace'], data['run_id'], paused=data['paused'])
-                elif post and path == '/api/v2/cancel' and runtime and set(data)=={'workspace','run_id'}:
-                    result=runtime.cancel(data['workspace'],data['run_id'])
+                elif post and path == '/api/v2/cancel' and set(data) == {'workspace', 'run_id'}:
+                    workspace, run_id = data['workspace'], data['run_id']
+                    record = scripts.get(workspace, run_id)
+                    if record is not None:
+                        result = scripts.snapshot(workspace, run_id, record=record, cancel=True)
+                    elif runtime:
+                        result = runtime.cancel(workspace, run_id)
+                    else:
+                        raise Invalid('找不到此运行。')
                 else:
                     return self.reply(404, {'error': '此 V2 阶段没有该操作；未启动任务'})
                 if isinstance(result, dict) and {'run', 'definition', 'nodes', 'events'} <= result.keys():
@@ -448,11 +479,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 self.reply(409, {'error': str(exc)})
             except Blocked as exc:
                 self.reply(409, {'error':str(exc)})
+            except ExportError as exc:
+                self.reply(400, {'error': str(exc)})
             except (Invalid, ValueError, TypeError, KeyError, RecursionError):
                 # Domain errors are written for the user; parser exceptions are not.
                 import sys
                 exc = sys.exception()
                 self.reply(400, {'error': str(exc) if isinstance(exc, Invalid) else '请求格式无效，请刷新并重试'})
+            except (BrokenPipeError, ConnectionResetError):
+                return  # A closed browser request does not control the workflow.
             except (OSError, sqlite3.OperationalError):
                 self.reply(503, {'error': '本机读写失败，当前草稿仍保留在编辑器；请核对目录与权限后重试'})
 

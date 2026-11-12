@@ -2,8 +2,7 @@
 """Compile a saved sequential canvas into one standalone native-CLI Python file.
 
 Compilation is read-only and uses no model. This is an explicit native execution
-contract, not an export of V2 sandbox/session authority. The old GUI runner is
-unchanged until the new path has real-CLI acceptance evidence.
+contract with its own native CLI permissions. V2 managed execution is separate.
 """
 import argparse
 from contextlib import closing
