@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
-from threading import BoundedSemaphore, Thread
+from threading import BoundedSemaphore, Lock, Thread
 import time
 import uuid
 
@@ -33,6 +33,7 @@ from .native_sessions import HANDLE, REVISION, prove_file
 from .project_files import FileView, mount_id
 from .session_identity import SessionLocator, SessionRefused, StorageRootIdentity, session_path, verified_directory
 from .session_lease import current_owner, production_session_gate
+from .store import private_directory
 
 KIND = 'native-session-operation'
 STEP = 'native-session-step'
@@ -159,6 +160,7 @@ class SessionOperations:
         self.claude_env = {}
         self.codex_terminal = profiles.get('codex_terminal') is True
         self.initialize_journal(store)
+        private_directory(self.artifacts)
         for provider in PROVIDERS:
             if provider not in profiles:
                 continue
@@ -189,8 +191,8 @@ class SessionOperations:
     def initialize_journal(self, store):
         self.slots = BoundedSemaphore(4)
         self.owner = current_owner()
-        from .store import private_directory
-        self.artifacts = private_directory(store.state / 'session-artifacts')
+        self.artifacts = store.state / 'session-artifacts'
+        self.artifact_guard = Lock()
 
     def remember_claude_secrets(self, binding):
         literals = claude_secrets(binding, self.claude_env)
@@ -503,8 +505,9 @@ class SessionOperations:
                 if row['target'] is not None:
                     held.enter_context(production_session_gate(binding, locator, target=row['target']))
                 check()
-                artifacts = self.artifacts / row['id']
-                artifacts.mkdir(mode=0o700, parents=True, exist_ok=False)
+                with self.artifact_guard:
+                    artifacts = private_directory(self.artifacts) / row['id']
+                    artifacts.mkdir(mode=0o700)
                 limits = dict(step_timeout_seconds=300, max_log_bytes=2_000_000)
                 adapter = self.transport(binding, limits, managed_resume=locator is not None)
                 try:
