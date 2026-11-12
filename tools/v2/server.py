@@ -185,7 +185,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     lengths = self.headers.get_all('Content-Length', [])
                     if self.headers.get_all('Transfer-Encoding', []):
                         raise Invalid('助手请求需要有界正文。')
-                    if post and route in ('preview', 'send', 'apply', 'configure', 'refresh_models'):
+                    if post and route in ('preview', 'send', 'apply', 'configure', 'refresh_models', 'sources', 'source_excerpt',
+                                              'team_preview', 'team_confirm', 'preview_repair', 'launch_repair'):
                         size = int(lengths[0]) if len(lengths) == 1 else 0
                         if (query or not 0 < size <= 440000 or
                                 self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json'):
@@ -195,13 +196,17 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                             raise Invalid('助手请求不完整。')
                         data = json.loads(raw, object_pairs_hook=unique_pairs)
                         return self.reply(200, getattr(assistant, route)(data))
-                    if not post and route in ('history', 'conversation', 'diagnosis', 'settings'):
+                    if not post and route in ('history', 'conversation', 'diagnosis', 'settings', 'repair_status', 'repair_intent'):
                         if len(query)>1024 or lengths not in ([], ['0']):
                             raise Invalid('助手查询身份无效。')
-                        values = parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+                        values = parse_qs(query, keep_blank_values=True, strict_parsing=True,
+                                          max_num_fields=3 if route in ('repair_status','repair_intent') else 2)
                         required = {'workspace', 'conversation'} if route == 'conversation' else (
-                            {'workspace', 'run'} if route == 'diagnosis' else {'workspace'})
-                        allowed = required | {'before'} if route == 'history' else required
+                            {'workspace', 'run'} if route in ('diagnosis','repair_status','repair_intent') else {'workspace'})
+                        if route=='repair_intent':
+                            required.add('intent')
+                        extras = {'history':{'before'},'repair_status':{'verification'}}
+                        allowed = required | extras.get(route,set())
                         if not required <= values.keys() <= allowed or any(len(v)!=1 for v in values.values()):
                             raise Invalid('助手查询需要明确的工作区与对象。')
                         return self.reply(200, getattr(assistant, route)(**{key:value[0] for key,value in values.items()}))

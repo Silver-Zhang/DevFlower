@@ -212,9 +212,9 @@ Phase 4 验收覆盖设计、校验及持久化。顺序 Agent 链沿用现有�
 | O03 | 逐事件日志与完整追踪 | `tools/studio/run_journal.py` | `tools/v2/run_inspector.py`、`tools/v2/ui/RunInspector.jsx` | C | P1 | 分页按运行与激活隔离，日志与详情导出提供公开数据哈希及缺项标记 |
 | O04 | 节点实际请求和回执检查器 | `tools/studio/workbench_ui/trace_views.jsx` | `tools/v2/ui/RunInspector.jsx`、`tools/v2/ui/index.jsx` | C | P0 | 已发送请求、回执、轮次、耗时与激活身份可对应；长公开数据按哈希分页 |
 | O05 | 点击连线查看真实交接 | `tools/studio/workbench_ui/HandoffEdge.jsx` | `tools/v2/ui/index.jsx` | C | P0 | 实际边/源/目的 activation 一致 |
-| O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | `tools/v2/assistant.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 预览选择的工作区、草稿、文件和运行资料，原生回执及助手历史可读 |
-| O07 | AI 配置工作流提案和预览 | `tools/studio/configuration_assistant.py` | `tools/v2/assistant_proposals.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 比较前后图结构，当前草稿通过 Schema 校验后由用户明确应用，支持撤销 |
-| O08 | 运行错误诊断与问题定位 | `tools/studio/workflow_inspection.py` | `tools/v2/assistant.py`、`tools/v2/run_inspector.py` | C | P1 | 按原运行与激活定位错误和交接，提供修复方向并保留原执行事实 |
+| O06 | AI 助手与独立对话 | `tools/studio/workbench_ui/CanvasAssistant.jsx` | `tools/v2/assistant.py`、`tools/v2/ui/Assistant.jsx` | C | P1 | 刷新和选择原生配置，保存助手偏好，分别核对发现信息、所选项目上下文和双 Provider 真实回执 |
+| O07 | AI 团队与工作流提案和预览 | `tools/studio/configuration_assistant.py` | `tools/v2/assistant_proposals.py`、`tools/v2/assistant_teams.py` | C | P1 | 确认后原子保存 Agent 及固定版本的工作流绑定，重复确认不产生重复记录，普通画布修改支持撤销 |
+| O08 | 源码阅读、运行诊断与授权修复 | `tools/studio/workflow_inspection.py` | `tools/v2/assistant_sources.py`、`tools/v2/run_inspector.py`、`tools/v2/assistant_repairs.py` | C | P1 | 读取实际错误、激活及源码行号；经独立授权调用受管修复，保留原运行、前后文件指纹与验证运行 |
 | O09 | GitHub 任务与交付集成 | `tools/orchestration/github_delivery.py` | `tools/v2/git_platform_adapters.py`、`tools/v2/git_platform.py` | C | P1 | 真实分支、Issue、PR、按提交定位的 CI 和作业日志。显式授权创建本机审核任务，展示候选 Gate |
 | O10 | GitLab 任务与交付集成 | `#6` | `tools/v2/git_platform_adapters.py`、`tools/v2/git_platform.py` | C | P2 | 真实分支、Issue、MR、Pipeline 与作业。Trace 受项目权限控制，本机审核任务需明确授权 |
 | O11 | 自动测试、独立审核与交付 Gate | `tools/orchestration/verification.py`、`tools/orchestration/gate.py` | `tools/v2/development_evidence.py`、`tools/v2/designer_scheduler.py` | C | P1 | 固定 Git 源码与测试入口，隔离执行并保留实际进程证据，三名不同会话的 CLI 角色绑定同轮；仅 `ACCEPT` 通过 |

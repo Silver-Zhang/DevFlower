@@ -98,19 +98,24 @@ class WorkbenchStore:
         return [dict(json.loads(data), seq=seq) for seq, data in rows]
 
     def save(self, key, graph, expected, workspace=None):
+        with self.tx() as db:
+            return self.save_draft_in(db, key, graph, expected, workspace)
+
+    def save_draft_in(self, db, key, graph, expected, workspace):
         if (workspace is not None and (not isinstance(workspace,str) or not workspace.strip()) or
                 self.scoped_drafts and workspace is None):
             raise Invalid('保存需要明确的工作区；未分配的旧工作流只能新建工作区副本')
         revision = digest(canonical(graph)); value = dict(id=key, revision=revision, graph=graph)
         if workspace is not None: value['workspace'] = workspace
-        with self.tx() as db:
-            old = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (key,)).fetchone()
-            if (json.loads(old[0])['revision'] if old else None) != expected:
-                raise Conflict('工作流已由另一处保存；请重新加载后比较')
-            if old and json.loads(old[0]).get('workspace') != workspace:
-                raise Conflict('工作流归属未匹配；未分配的旧工作流只能新建副本，不能接管原件')
-            db.execute('INSERT OR IGNORE INTO drafts VALUES(?,?,?)', (key, revision, canonical(value).decode()))
-            db.execute("INSERT OR REPLACE INTO records VALUES('draft',?,?)", (key, canonical(value).decode()))
+        old = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (key,)).fetchone()
+        prior = json.loads(old[0]) if old else None
+        if (prior['revision'] if prior else None) != expected:
+            raise Conflict('工作流已由另一处保存；请重新加载后比较')
+        if prior and prior.get('workspace') != workspace:
+            raise Conflict('工作流归属未匹配；未分配的旧工作流只能新建副本，不能接管原件')
+        encoded = canonical(value).decode()
+        db.execute('INSERT OR IGNORE INTO drafts VALUES(?,?,?)', (key, revision, encoded))
+        db.execute("INSERT OR REPLACE INTO records VALUES('draft',?,?)", (key, encoded))
         return value
 
     def delete_draft(self, key, expected, workspace=None):

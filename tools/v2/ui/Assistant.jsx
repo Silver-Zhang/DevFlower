@@ -4,6 +4,9 @@ import remarkGfm from 'remark-gfm';
 import {History,Plus,Settings2,Sparkles,X} from 'lucide-react';
 import {ProposalDiff} from '../../studio/workbench_ui/ProposalDiff.jsx';
 import {PanelEmpty} from './WorkbenchFeedback.jsx';
+import {AssistantTeam} from './AssistantTeam.jsx';
+import {AssistantRepair} from './AssistantRepair.jsx';
+import {AssistantSourcePicker} from './AssistantSourcePicker.jsx';
 import {AssistantModelSettings,choicesFor,emptySelection,providerNames} from './AssistantModelSettings.jsx';
 
 const uid=()=>crypto.randomUUID().replaceAll('-','');
@@ -38,13 +41,20 @@ function Diagnosis({value}){
    {row.diagnostic_outcome&&<p>{outcomes[row.diagnostic_outcome]}{row.event_seq!=null&&' · 事件 #'+row.event_seq}</p>}
    {row.reason&&<p>{row.reason}{row.feedback_truncated&&' …'}</p>}<p>{row.advice}</p>
    {row.upstream.length>0&&<details><summary>实际记录的上游交接</summary><pre>{JSON.stringify(row.upstream,null,2)}</pre></details>}
+   {row.evidence&&Object.keys(row.evidence).length>0&&<details><summary>实际请求、配置与错误回执</summary>
+    {row.evidence.configuration&&<pre>{JSON.stringify(row.evidence.configuration,null,2)}</pre>}
+    {row.evidence.actual_request&&<><strong>实际 Prompt</strong><pre>{row.evidence.actual_request.text}</pre></>}
+    {row.evidence.inputs&&<><strong>实际交接内容</strong><pre>{row.evidence.inputs.text}</pre></>}
+    {row.evidence.failure&&<pre>{JSON.stringify(row.evidence.failure,null,2)}</pre>}
+    {row.evidence.provider_receipt&&<pre>{JSON.stringify(row.evidence.provider_receipt,null,2)}</pre>}
+   </details>}
    {row.inputs_paged&&<p>大输入可在运行检查器中分段查看。</p>}
   </article>)}
  </section>;
 }
 
 export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover,draft,files,onFiles,
- run,onRun,runs,onApply,onClose}){
+ run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose}){
  const storeKey='devflower-v2-assistant:'+storageKey+':'+workspace.id;
  const [conversation,setConversation]=useState(()=>localStorage.getItem(storeKey)||uid());
  const [view,setView]=useState('chat'),[record,setRecord]=useState(null),[history,setHistory]=useState([]);
@@ -53,7 +63,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const [legacy,setLegacy]=useState(providers.length>0),[legacyProvider,setLegacyProvider]=useState(providers.includes('codex')?'codex':providers[0]||'');
  const [legacyModel,setLegacyModel]=useState(''),[legacyEffort,setLegacyEffort]=useState('');
  const {catalog:configuredCatalog,chosen,canSend}=choicesFor(settings,selection);
- const [mode,setMode]=useState('chat'),[attachDraft,setAttachDraft]=useState(false),[path,setPath]=useState('');
+ const [mode,setMode]=useState(run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
+ const [inventory,setInventory]=useState(true);
  const [text,setText]=useState(''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
  const [retry,setRetry]=useState(false);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -62,7 +73,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const selectedModel=catalog?.models?.find(item=>item.id===legacyModel);
  const config=legacy?{provider:legacyProvider,model:legacyProvider==='codex'?legacyModel:null,
   effort:legacyProvider==='codex'?legacyEffort:null}:selection;
- const payload={workspace:workspace.id,conversation,...config,mode,text,draft:attachDraft?draft:null,files,run:run||null};
+ const payload={workspace:workspace.id,conversation,...config,mode:mode==='diagnosis'?'chat':mode,
+  text,draft:attachDraft?draft:null,files,run:run||null,...(legacy?{}:{inventory})};
  latest.current=payload;
  const turn=record?.turns?.at(-1),running=active.has(turn?.state),unknown=turn?.state==='RECOVERY_REQUIRED';
  const matching=preview&&(preview.payload.mode==='probe'?
@@ -99,7 +111,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   return()=>clearInterval(timer);
  },[running,view,conversation]);
  useEffect(()=>{
-  if(!draft&&attachDraft){setAttachDraft(false);setMode('chat')}
+  if(!draft&&attachDraft){setAttachDraft(false);if(mode==='proposal')setMode('chat')}
  },[Boolean(draft)]);
  async function read(id=conversation){
   if(loadFlight.current)return loaded.current;
@@ -173,12 +185,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    else setNotice('当前未查到原意图的回执。仍可重新核对，或另开对话。');
   }
  }
- function addFile(){
-  const value=path.trim();
-  if(value&&!files.includes(value)&&files.length<3){onFiles([...files,value]);setPath('')}
- }
  const valid=(legacy?!!legacyProvider&&(legacyProvider!=='codex'||(legacyModel&&legacyEffort)):canSend)
-  &&text.trim()&&(!attachDraft||draft)&&(mode!=='proposal'||attachDraft);
+  &&text.trim()&&(!attachDraft||draft)&&(mode!=='proposal'||attachDraft)&&(mode!=='diagnosis'||run);
  return <aside className="project-panel v2-assistant" aria-label="AI 助手" onKeyDown={event=>{
   if(event.key==='Escape'){event.stopPropagation();onClose()}
  }}>
@@ -203,17 +211,22 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   </section>:<>
    <div className="v2-assistant-scroll">
     <Diagnosis value={diagnosis}/>
+    {diagnosis&&<AssistantRepair key={diagnosis.run} api={api} workspace={workspace.id} diagnosis={diagnosis}
+     agents={settings?.identities||[]} files={files} runs={runs} perform={perform} busy={busy} onRun={onOpenRun}/>}
     <section role="log" aria-label="助手对话消息">
      {!record?.turns?.length&&!matching&&<PanelEmpty icon={Sparkles} title="与助手一起准备工作流"
       actions={(providers.length>0||canSend)&&<button disabled={busy||running||unknown||!!pending}
-       onClick={()=>setText(mode==='proposal'?'检查当前草稿的节点与交接，并建议一项可以审阅的改动。':'怎样设计两个 Agent 之间的输入与输出？')}>使用示例问题</button>}>
+       onClick={()=>setText(mode==='team'?'创建 Developer、Tester 和 Reviewer 团队。测试失败返回 Developer，审核通过后结束。':
+        mode==='proposal'?'检查当前草稿的节点与交接，并建议一项可以审阅的改动。':
+        mode==='diagnosis'?'为什么这个工作流执行失败了？请根据运行证据定位问题。':
+        '这个项目有哪些 Agent 和工作流？请结合当前草稿说明运行逻辑。')}>使用示例问题</button>}>
       <p>{providers.length||canSend?'提出问题或准备画布提案。发送前可以核对附件和内容。':
        '可先阅读运行诊断。发送消息前，请在助手模型设置中刷新目录并选择原生 CLI。'}</p>
      </PanelEmpty>}
      {record?.turns?.map(item=><article className="v2-assistant-turn" key={item.id}>
       <p className="assistant-user">{item.text}</p>
       <small>{item.provider} · {labels[item.state]||item.state}</small>
-      {item.reply&&(item.mode==='proposal'?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
+      {item.reply&&(['proposal','team'].includes(item.mode)?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
        <Markdown skipHtml remarkPlugins={[remarkGfm]}>{item.reply}</Markdown>)}
       {item.receipt&&<details><summary>Provider 回执</summary><dl>
        <dt>请求模型 / 强度</dt><dd>{item.receipt.requested_model||'原生默认'} / {item.receipt.requested_effort||'原生默认'}</dd>
@@ -226,6 +239,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
        <small>SHA-256 <code>{item.prompt_sha256}</code></small></details>}
      </article>)}
     </section>
+    {turn?.team&&<AssistantTeam key={turn.id} api={api} workspace={workspace.id} conversation={conversation}
+     turn={turn} draft={draft} busy={busy} perform={perform} onSaved={onSaveTeam} onOpenDraft={onOpenDraft}/>}
     {turn?.proposal_error&&<p role="alert" className="error-text">{turn.proposal_error}</p>}
     {turn?.proposal&&<section className="assistant-proposal" aria-label="画布提案">
      <h3>画布提案</h3><p>{turn.proposal.summary}</p>
@@ -241,6 +256,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      <p>将经本机 {providerNames[preview.payload.provider]} 使用已配置的服务。{preview.payload.mode==='probe'?'测试可能计费。':''}</p>
      {preview.context.config&&<p>{preview.context.config.native_profile||'默认 HOME'} · {preview.context.config.requested_model||'原生默认模型'} · {preview.context.config.requested_effort||'原生默认强度'}</p>}
      <p>附加草稿 {preview.context.draft?'1':'0'}、文件 {preview.context.files.length}、运行 {preview.context.run?'1':'0'}、已核验历史 {preview.context.previous_turns} 轮。</p>
+     {preview.context.inventory&&<p>已附加 {preview.context.inventory.agents} 个 Agent、{preview.context.inventory.workflows} 个工作流的概览。</p>}
+     {preview.context.files.length>0&&<ul>{preview.context.files.map(file=><li key={file.path}>
+      {file.path}:{file.start_line}–{file.end_line}{file.truncated?' · 节选':''}</li>)}</ul>}
      <details open><summary>本次发送的可见内容</summary><pre>{preview.prompt}</pre></details>
      <button className="primary" disabled={busy||!!pending} onClick={()=>perform(send)}>确认发送</button>
      <button disabled={busy} onClick={()=>setPreview(null)}>关闭发送预览</button>
@@ -259,7 +277,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
       {!configuredCatalog?.refreshed_at&&<small> · 待配置</small>}</div>}
      <label>工作方式<select aria-label="助手工作方式" value={mode} disabled={busy||running} onChange={event=>{
       setMode(event.target.value);if(event.target.value==='proposal')setAttachDraft(true)
-     }}><option value="chat">独立问答</option><option value="proposal" disabled={!draft}>画布提案</option></select></label>
+     }}><option value="chat">对话与项目理解</option><option value="team" disabled={legacy}>创建或修改 Agent 团队</option>
+      <option value="proposal" disabled={!draft}>画布提案</option><option value="diagnosis">运行诊断与授权修复</option></select></label>
     </div>
     {legacy&&legacyProvider==='codex'&&<div className="assistant-selects">
      <label>模型<select aria-label="助手模型" value={legacyModel} disabled={busy||running} onChange={event=>{setLegacyModel(event.target.value);setLegacyEffort('')}}>
@@ -270,18 +289,17 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      </select></label>
      <button disabled={busy||running} onClick={()=>perform(onDiscover)}>刷新模型</button>
     </div>}
-    <details>
+    <details open={mode==='diagnosis'?true:undefined}>
      <summary>本次上下文（{files.length} 个文件{run?'、1 次运行':''}{attachDraft?'、当前草稿':''}）</summary>
      <label className="assistant-checkbox"><input type="checkbox" disabled={!draft||mode==='proposal'||busy||running}
       checked={attachDraft} onChange={event=>setAttachDraft(event.target.checked)}/>附加当前草稿</label>
+     {!legacy&&<label className="assistant-checkbox"><input type="checkbox" disabled={busy||running}
+      checked={inventory} onChange={event=>setInventory(event.target.checked)}/>附加工作区 Agent 与工作流概览</label>}
      <label className="assistant-run-choice">运行证据<select aria-label="附加运行证据" value={run||''} disabled={busy||running} onChange={event=>onRun(event.target.value||null)}>
       <option value="">不附加</option>{runs.map(row=><option key={row.id} value={row.id}>{row.name} · {new Date(row.created_at*1000).toLocaleTimeString()}</option>)}
      </select></label>
-     <div className="assistant-file-input"><input aria-label="工作区相对文件路径" placeholder="例如 docs/plan.md" maxLength={512}
-      value={path} disabled={busy||running} onChange={event=>setPath(event.target.value)}/>
-      <button disabled={!path.trim()||files.length>=3||busy||running} onClick={addFile}>附加文件</button></div>
-     <ul>{files.map(file=><li key={file}><span>{file}</span><button aria-label={'移除附件 '+file} disabled={busy||running}
-      onClick={()=>onFiles(files.filter(item=>item!==file))}>移除</button></li>)}</ul>
+     <AssistantSourcePicker api={api} workspace={workspace.id} files={files} onFiles={onFiles}
+      busy={busy||running} perform={perform}/>
     </details>
     <textarea aria-label="助手消息" value={text} rows={3} maxLength={8000} disabled={busy||running||unknown||!!pending}
      onChange={event=>setText(event.target.value)} placeholder="输入问题或画布修改要求"/>

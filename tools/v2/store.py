@@ -125,6 +125,10 @@ class DraftStore:
         return row
 
     def save(self, workspace, key, expected, document):
+        key, graph = self.prepare_save(workspace, key, expected, document)
+        return self.db.save(key, graph, expected, workspace)
+
+    def prepare_save(self, workspace, key, expected, document):
         self.workspace(workspace)
         if key is not None and (not isinstance(key, str) or len(key) != 32 or any(c not in '0123456789abcdef' for c in key)):
             raise Invalid('草稿身份无效')
@@ -132,8 +136,7 @@ class DraftStore:
             raise Invalid('草稿版本无效')
         if key is None and expected is not None:
             raise Invalid('新草稿不能携带旧版本')
-        graph = validate_draft(document)
-        return self.db.save(key or secrets.token_hex(16), graph, expected, workspace)
+        return key or secrets.token_hex(16), validate_draft(document)
 
     def reserve_launch(self, workspace, intent_key, payload, definition_id):
         """Future M2 must call this transaction BEFORE spawning any worker/native turn.

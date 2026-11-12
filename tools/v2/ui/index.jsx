@@ -27,6 +27,7 @@ import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {GitWorkspace} from './GitWorkspace.jsx';
 import {Assistant} from './Assistant.jsx';
+import {filePath} from './AssistantSourcePicker.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
@@ -580,7 +581,7 @@ function App(){
  }
  function closeGit(){closeSideView(gitOpener)}
  function openAssistant({file,run}={}){
-  if(file)setAssistantFiles(list=>list.includes(file)?list:[...list,file].slice(-3));
+  if(file)setAssistantFiles(list=>list.some(item=>filePath(item)===file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
   setSideView('assistant');
  }
@@ -594,6 +595,30 @@ function App(){
   const result=await api('assistant/apply',data);
   if(!sameDraft())throw Error('验证期间草稿已变化，提案未应用。');
   edit(result.document);
+ }
+ async function saveAssistantTeam(data){
+  const w=workspaceRef.current,epoch=workspaceEpoch.current,gen=generation.current;
+  const sameDraft=()=>w&&inWorkspace(w,epoch)&&generation.current===gen&&viewModeRef.current==='draft'&&
+   same(data.draft?.document,docRef.current)&&data.draft?.id===(savedRef.current?.id??null)&&
+   data.draft?.revision===(savedRef.current?.revision??null);
+  if(data.draft&&(!sameDraft()||saving.current||launchBusy.current))throw Error('当前草稿已变化，团队提案未应用。');
+  const result=await api('assistant/team_confirm',data);
+  if(!w||!inWorkspace(w,epoch))return result;
+  if(result.updated&&sameDraft()){
+   edit(result.draft.graph);
+   savedRef.current=result.draft;setSaved(result.draft);remember(w,result.draft);
+  }
+  setAgentRefresh(value=>value+1);
+  await refreshDrafts(w);
+  return result;
+ }
+ function openAssistantDraft(row){
+  if(savedRef.current?.id===row.id&&savedRef.current?.revision===row.revision&&viewModeRef.current==='draft')return;
+  navigate(()=>openDraft(row),'打开助手保存的工作流');
+ }
+ function openAssistantRun(id){
+  const w=workspaceRef.current;
+  if(w)navigate(()=>showRun(id,w),'查看助手修复运行');
  }
  function closeFiles(){closeSideView(filesOpener)}
  async function openRunTerminal(activation){
@@ -1293,7 +1318,8 @@ function App(){
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
    files={assistantFiles} onFiles={setAssistantFiles} run={assistantRun} onRun={setAssistantRun} runs={runs}
-   onApply={applyAssistant} onClose={closeAssistant}/>}
+   onApply={applyAssistant} onSaveTeam={saveAssistantTeam} onOpenDraft={openAssistantDraft}
+   onOpenRun={openAssistantRun} onClose={closeAssistant}/>}
   {workspace&&runsOpen&&<main id="v2-runs" tabIndex={-1} className="project-panel run-list-workspace" aria-label="运行记录">
    <header className="project-panel-header"><div><h2>运行记录</h2><p className="field-note">{workspace.name}</p></div>
     <Button icon={RefreshCw} disabled={!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})}>刷新</Button>

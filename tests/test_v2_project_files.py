@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 import test_v2_drafts as fixtures
 from v2 import project_files
+from v2.assistant_sources import numbered_excerpt, search_sources
 
 
 class ProjectFilesTests(TestCase):
@@ -20,6 +21,38 @@ class ProjectFilesTests(TestCase):
         endpoint = 'project-file' if preview else 'project-files'
         query = urlencode({'workspace': workspace or self.wa, 'path': path})
         return self.request(f'/api/v2/{endpoint}?{query}', **request)
+
+    def test_assistant_source_discovery_uses_authorized_paths_and_physical_lines(self):
+        directory = self.a / 'src'
+        directory.mkdir()
+        (directory / 'logic.py').write_bytes(b'# test\r\ndef run_task():\r\n    return 1\r\n')
+        (self.a / '.gitignore').write_text('ignored.py\n', encoding='utf-8')
+        (self.a / 'ignored.py').write_text('run_task', encoding='utf-8')
+        (self.b / 'outside.py').write_text('run_task', encoding='utf-8')
+        (self.a / 'link.py').symlink_to(self.b / 'outside.py')
+        os.link(self.b / 'outside.py', self.a / 'hard.py')
+        matches = search_sources(self.store, self.wa, 'run_task')
+        self.assertEqual(matches['matches'], [{
+            'path': 'src/logic.py', 'kind': 'symbol', 'line': 2, 'text': 'def run_task():'}])
+        self.assertEqual(search_sources(self.store, self.wa, 'logic.py', 'src')['matches'], [
+            {'path': 'src/logic.py', 'kind': 'file'}])
+        source = project_files.read_project(self.store, self.wa, 'src/logic.py', preview=True)
+        excerpt = numbered_excerpt(source, 2, 1)
+        self.assertEqual((excerpt['text'], excerpt['start_line'], excerpt['end_line'], excerpt['total_lines']),
+                         ('2 | def run_task():', 2, 2, 3))
+        self.assertTrue(excerpt['truncated'])
+        with self.assertRaises(project_files.Invalid):
+            search_sources(self.store, self.wa, 'run_task', '../B')
+        with self.assertRaises(project_files.Invalid):
+            numbered_excerpt(source, True)
+
+    def test_assistant_source_discovery_reports_bounded_coverage(self):
+        for name in ('a.txt', 'b.txt'):
+            (self.a / name).write_text('keyword', encoding='utf-8')
+        with patch('v2.assistant_sources.MAX_PREVIEWS', 1):
+            result = search_sources(self.store, self.wa, 'keyword')
+        self.assertEqual([row['path'] for row in result['matches']], ['a.txt'])
+        self.assertTrue(result['truncated'])
 
     def test_http_scope_auth_and_explicit_other_registered_workspace(self):
         (self.a / 'readme.txt').write_text('A 中文 <b>literal</b>', encoding='utf-8')

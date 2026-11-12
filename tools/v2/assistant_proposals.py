@@ -6,6 +6,7 @@ from studio.agent_sessions import safe_text
 from studio.graph import Invalid
 
 from .canvas_structure import EDGE_EXTENSION, ID, fields, node_kind, text
+from .development_graph import contains_development
 from .documents import validate_draft
 from .native_history_config import unique_pairs
 
@@ -33,7 +34,7 @@ def _reject_constant(_):
     raise ValueError()
 
 
-def _parse(reply):
+def parse_envelope(reply):
     try:
         if not isinstance(reply, str) or len(reply.encode('utf-8')) > MAX_REPLY_BYTES:
             raise ValueError()
@@ -43,6 +44,11 @@ def _parse(reply):
                             parse_constant=_reject_constant)
     except (ValueError, UnicodeError, RecursionError):
         raise Invalid('助手没有返回有效且有界的 JSON 提案。') from None
+    return result
+
+
+def _parse(reply):
+    result = parse_envelope(reply)
     fields(result, {'summary', 'operations'}, {'summary', 'operations'})
     text(result['summary'], 1000, '提案说明')
     if not result['summary'].strip() or not isinstance(result['operations'], list) or not (
@@ -91,7 +97,7 @@ def proposal(base_document, reply_text):
     """Preserve the base and validate the final graph before presenting a diff."""
     value = _parse(reply_text)
     candidate = validate_draft(base_document)
-    has_approval = _has_approval(candidate)
+    protected = _has_approval(candidate) or contains_development(candidate)
     used_nodes = {node['id'] for node in candidate['nodes']}
     used_edges = {edge['id'] for edge in candidate['edges']}
     for operation in value['operations']:
@@ -103,8 +109,8 @@ def proposal(base_document, reply_text):
         ident = operation['id']
         if not isinstance(ident, str) or not ID.fullmatch(ident):
             raise Invalid('提案节点或连线身份无效。')
-        if has_approval and (op != 'update-node' or 'config' in operation):
-            raise Invalid('已有人工审批的流程只允许助手改名。请在画布中明确调整结构或配置。')
+        if protected and (op != 'update-node' or 'config' in operation):
+            raise Invalid('已有人工审批或受保护交付 Gate 的流程只允许助手改名。请在画布中明确调整结构或配置。')
 
         nodes, edges = candidate['nodes'], candidate['edges']
         if op == 'add-node':

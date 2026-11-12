@@ -416,6 +416,10 @@
  max-height:260px;overflow:auto;background:var(--studio-subtle-bg);padding:8px;border-radius:6px}
 .v2-assistant code,.v2-assistant li{overflow-wrap:anywhere}
 .assistant-preview,.assistant-proposal,.assistant-diagnosis{border:1px solid var(--studio-line);padding:10px 12px;border-radius:8px;margin:10px 0}
+.assistant-team-diagram{height:210px;margin:8px 0;border:1px solid var(--studio-line);border-radius:6px;overflow:hidden}
+.assistant-team-diagram .react-flow__node.assistant-diagram-node{width:165px;background:var(--studio-subtle-bg);border-color:var(--studio-line-strong);color:var(--studio-text)}
+.assistant-diagram-node small{display:block;color:var(--studio-muted)}
+.assistant-proposal fieldset,.assistant-preview fieldset{min-width:0}
 .assistant-preview button+button{margin-left:6px}
 .v2-assistant .assistant-feedback{padding:5px 12px}
 .v2-assistant .assistant-feedback.error-text{color:var(--studio-error)}

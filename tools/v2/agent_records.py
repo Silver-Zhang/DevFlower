@@ -194,6 +194,11 @@ class AgentRecords:
         return {'sessions': rows, 'revision': listing['revision']}
 
     def save(self, workspace, key, expected, value, session_revision=None):
+        result = self.prepare_save(workspace, key, expected, value, session_revision)
+        with self.store.db.tx() as db:
+            return self.save_prepared(db, result, expected)
+
+    def prepare_save(self, workspace, key, expected, value, session_revision=None):
         config = validate_agent(value)
         self.directory(workspace, config['cwd'])
         home_pin = None
@@ -237,17 +242,21 @@ class AgentRecords:
         result = dict(id=key, workspace=workspace, revision=revision, config=config)
         if home_pin:
             result['native_home_pin'] = home_pin
-        with self.store.db.tx() as db:
-            previous = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (KIND, key)).fetchone()
-            if previous:
-                prior = json.loads(previous[0])
-                if expected is None and prior['workspace'] == workspace and prior['revision'] == revision:
-                    return prior
-                if prior['workspace'] != workspace or prior['revision'] != expected:
-                    raise Conflict('Agent 已在另一处更改，请重新读取。')
-            elif expected is not None:
-                raise Conflict('Agent 已删除或不存在。')
-            db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)', (KIND, key, canonical(result).decode()))
+        return result
+
+    @staticmethod
+    def save_prepared(db, result, expected):
+        key, workspace, revision = (result[field] for field in ('id','workspace','revision'))
+        previous = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (KIND, key)).fetchone()
+        if previous:
+            prior = json.loads(previous[0])
+            if expected is None and prior['workspace'] == workspace and prior['revision'] == revision:
+                return prior
+            if prior['workspace'] != workspace or prior['revision'] != expected:
+                raise Conflict('Agent 已在另一处更改，请重新读取。')
+        elif expected is not None:
+            raise Conflict('Agent 已删除或不存在。')
+        db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)', (KIND, key, canonical(result).decode()))
         return result
 
     def remove(self, workspace, key, expected):

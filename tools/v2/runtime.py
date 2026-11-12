@@ -370,6 +370,9 @@ class V2Runtime:
         self.store.workspace(run['workspace'])
         if source_manifest() != definition['runtime_sources']:
             raise Blocked('运行源码与本次冻结候选不同；未发送任务')
+        if repair := definition.get('assistant_repair'):
+            from .assistant_repairs import require_source
+            require_source(self.store, run['workspace'], repair['source'])
         if run['graph'].get('development'):
             from .development_evidence import require_bound_source
             require_bound_source(self, run)
@@ -382,11 +385,12 @@ class V2Runtime:
                     raise Blocked(self.provider_error)
                 self.provider.require_local(binding)
 
-    def launch_agent(self, workspace, agent_id, revision, intent_key, task=''):
+    def launch_agent(self, workspace, agent_id, revision, intent_key, task='', *, assistant_repair=None):
         if not isinstance(agent_id, str) or not AGENT_ID.fullmatch(agent_id):
             raise Invalid('Agent 身份无效。')
         draft_id = digest(canonical(['v2-agent-direct', workspace, agent_id]))[:32]
-        return self.launch(workspace, draft_id, revision, intent_key, task, direct_agent=agent_id)
+        return self.launch(workspace, draft_id, revision, intent_key, task, direct_agent=agent_id,
+                           assistant_repair=assistant_repair)
 
     def launch_plan_agent(self, workspace, source_run, node, intent_key, authorization):
         if (not isinstance(source_run, str) or not AGENT_ID.fullmatch(source_run)
@@ -442,7 +446,8 @@ class V2Runtime:
         require_agent_scope(self, binding)
         return record, binding
 
-    def launch(self, workspace, draft_id, revision, intent_key, task='', *, direct_agent=None, plan_source=None, task_files=None):
+    def launch(self, workspace, draft_id, revision, intent_key, task='', *, direct_agent=None, plan_source=None,
+               task_files=None, assistant_repair=None):
         self.store.workspace(workspace)
         if not isinstance(draft_id,str) or not re.fullmatch(r'[0-9a-f]{32}',draft_id):
             raise Invalid('草稿身份无效')
@@ -482,6 +487,13 @@ class V2Runtime:
         definition = compile_definition(self.store, self.provider, workspace, draft, task,
                                         agent_binding=lambda node: transition or freeze_agent(self, workspace, node),
                                         provider_error=self.provider_error, task_files=files)
+        if assistant_repair is not None:
+            from .assistant_repairs import require_source
+            if direct_agent is None or plan_source is not None:
+                raise Invalid('助手修复需要已固定的单 Agent 执行。')
+            require_source(self.store, workspace, assistant_repair['source'])
+            definition['assistant_repair'] = assistant_repair
+            definition['id'] = digest(canonical({key: value for key, value in definition.items() if key != 'id'}))
         run_id = secrets.token_hex(16)
         run = dict(id=run_id, run=run_id, workspace=workspace, definition_id=definition['id'],
                    draft_id=draft_id, draft_revision=revision, graph=definition['graph'], graph_sha256=definition['graph_sha256'],
