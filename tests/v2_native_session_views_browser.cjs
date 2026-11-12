@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -46,13 +47,16 @@ async function main() {
   await body.getByText(marker, {exact: false}).waitFor();
  };
  const close = () => pane.getByRole('button', {name: '关闭原生会话', exact: true}).click();
+ const useActions = () => openReaderDisclosure(body, '会话操作');
  const confirm = async (name, submit) => {
+  await useActions();
   await action(name).click();
   const dialog = page.getByRole('dialog', {name, exact: true});
   await dialog.getByText('仅影响 DevFlower 列表。', {exact: true}).waitFor();
   await dialog.getByRole('button', {name: submit, exact: true}).click();
  };
  const rename = async alias => {
+  await useActions();
   await action('设置本地别名').click();
   const dialog = page.getByRole('dialog', {name: '设置本地别名', exact: true});
   await dialog.getByLabel('本地别名', {exact: true}).fill(alias);
@@ -97,7 +101,8 @@ async function main() {
     assert.equal(await rows(/迟到跨工作空间别名/).count(), 0);
     await select('隐藏');
     await openRow(/迟到跨工作空间别名/);
-    await action('取消隐藏').waitFor();
+    await useActions();
+   await action('取消隐藏').waitFor();
     assert.equal(postCount(), 0);
    });
    return;
@@ -111,6 +116,7 @@ async function main() {
    await rename('本地别名 <b>');
    await body.getByRole('heading', {name: '本地别名 <b> · 只读', exact: true}).waitFor();
    assert.equal(await body.locator('b').count(), 0);
+   await useActions();
    await action('隐藏').click();
    await rows(/本地别名/).waitFor({state: 'detached'});
    await select('隐藏');
@@ -128,10 +134,12 @@ async function main() {
    await body.waitFor({state: 'detached'});
    await select('回收站');
    await openRow(/本地别名/);
+   await useActions();
    await action('恢复到隐藏列表').click();
    await body.waitFor({state: 'detached'});
    await select('隐藏');
    await openRow(/本地别名/);
+   await useActions();
    await action('取消隐藏').click();
    await body.waitFor({state: 'detached'});
    await select('当前');
@@ -140,6 +148,7 @@ async function main() {
    await body.waitFor({state: 'detached'});
    await select('归档');
    await openRow(/本地别名/);
+   await useActions();
    await action('恢复到当前列表').click();
    await body.waitFor({state: 'detached'});
    await select('当前');
@@ -215,6 +224,7 @@ async function main() {
    await until(async () => await header.textContent() === 'A');
    await native.click();
    await openRow(/迟到跨工作空间别名/);
+   await useActions();
    await action('隐藏').click();
    await rows(/迟到跨工作空间别名/).waitFor({state: 'detached'});
   });

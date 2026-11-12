@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -67,6 +68,7 @@ async function main() {
  const recent = body.getByLabel('已加载消息', {exact: true});
  const parts = body.getByLabel('已核验消息片段', {exact: true});
  const format = body.getByRole('combobox', {name: '会话正文格式', exact: true});
+ const useFormat = async () => { await openReaderDisclosure(body, '会话操作'); return format; };
  const native = page.getByRole('button', {name: '原生会话', exact: true});
  const close = pane.getByRole('button', {name: '关闭原生会话', exact: true});
  const refresh = pane.getByRole('button', {name: '刷新原生会话', exact: true});
@@ -78,7 +80,7 @@ async function main() {
  const windowFilter = body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true});
  const read = async (provider = 'Codex') => {
   await row(provider).click();
-  await format.waitFor();
+  await (await useFormat()).waitFor();
  };
  const open = async (provider = 'Codex') => {
   await native.click();
@@ -89,6 +91,7 @@ async function main() {
   await until(async () => await header.textContent() === name);
  };
  const search = async text => {
+  await openReaderDisclosure(body, '查找消息');
   await find.fill(text);
   await find.press('Enter');
  };
@@ -159,7 +162,7 @@ async function main() {
   await open();
 
   await check('default-exact-text-and-allowed-markdown-structures', async () => {
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
    const baseline = await plainTexts(recent);
    for (const value of [expected.rich, expected.links, expected.raw, expected.exactLimit, expected.longWindow]) {
     assert(baseline.includes(value));
@@ -167,9 +170,9 @@ async function main() {
    assert.equal(baseline.filter(text => text === expected.duplicate).length, 2);
    assert.equal(await recent.locator('.native-markdown').count(), 0);
    await noRequests('toggle-and-render-900', async () => {
-    await format.focus();
+    await (await useFormat()).focus();
     await page.keyboard.press('End');
-    assert.equal(await format.inputValue(), 'markdown');
+    assert.equal(await (await useFormat()).inputValue(), 'markdown');
     await recent.locator('.native-markdown h1').getByText('Safe Markdown heading', {exact: true}).waitFor();
     await recent.locator('strong').getByText('strong fixture', {exact: true}).waitFor();
     await recent.locator('em').getByText('emphasis fixture', {exact: true}).waitFor();
@@ -184,7 +187,7 @@ async function main() {
     assert.equal(await recent.locator('pre code').filter({hasText: '<iframe src='}).count(), 1);
     assert.equal(await recent.locator('strong').getByText('DUPLICATE_MARKDOWN', {exact: true}).count(), 2);
     await audit(recent);
-    await format.focus();
+    await (await useFormat()).focus();
     await page.keyboard.press('Home');
     assert.deepEqual(await plainTexts(recent), baseline);
    });
@@ -193,7 +196,7 @@ async function main() {
   await check('dangerous-html-isolated-fallback-and-neutralized-media', async () => {
    const startUrl = page.url();
    await noRequests('dangerous-markdown-and-fallback', async () => {
-    await format.selectOption('markdown');
+    await (await useFormat()).selectOption('markdown');
     await recent.getByText(UNSAFE, {exact: true}).waitFor();
     const raw = recent.locator('article').filter({hasText: 'Raw HTML retains this syntax'});
     assert.equal(await raw.locator('pre').textContent(), expected.raw);
@@ -217,22 +220,23 @@ async function main() {
   });
 
   await check('recent-truncation-codepoints-and-second-provider', async () => {
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    await noRequests('window-cutoffs-and-original-filter', async () => {
     assert.equal(await recent.getByText(TRUNCATED, {exact: true}).count(), 3);
     const baseline = await plainTexts(recent);
     assert(baseline.includes(expected.exactLimit));
     assert(baseline.includes(expected.longWindow));
+    await openReaderDisclosure(body, '查找消息');
     await windowFilter.fill('**strong fixture**');
     await recent.locator('strong').getByText('strong fixture', {exact: true}).waitFor();
     assert.equal(await recent.locator('article').count(), 1);
     await windowFilter.clear();
    });
    await read('Claude Code');
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
    assert.deepEqual(await plainTexts(recent), [expected.claude, expected.exactLimit]);
    await noRequests('second-provider-complete-16000', async () => {
-    await format.selectOption('markdown');
+    await (await useFormat()).selectOption('markdown');
     await recent.locator('h2').getByText('Claude fixture heading', {exact: true}).waitFor();
     await recent.locator('strong').getByText('EXACT_LIMIT', {exact: true}).waitFor();
     assert.equal(await recent.getByText(TRUNCATED, {exact: true}).count(), 0);
@@ -244,7 +248,7 @@ async function main() {
    });
    await read('Claude Code');
    await noRequests('unknown-window-shape-falls-back', async () => {
-    await format.selectOption('markdown');
+    await (await useFormat()).selectOption('markdown');
     assert.equal(await recent.getByText(TRUNCATED, {exact: true}).count(), 2);
     assert.deepEqual(await plainTexts(recent), [expected.claude, expected.exactLimit]);
    });
@@ -253,21 +257,21 @@ async function main() {
   });
 
   await check('same-page-reassembly-and-cross-part-search', async () => {
-   await format.selectOption('markdown');
+   await (await useFormat()).selectOption('markdown');
    await search('JOINTSPLIT');
    await verified();
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    await parts.locator('strong').getByText('JOINTSPLIT', {exact: true}).waitFor();
    assert.equal(await parts.locator('article').count(), 1);
    assert.equal(await parts.getByText(INCOMPLETE, {exact: true}).count(), 0);
    await noRequests('same-page-format-toggle', async () => {
-    await format.selectOption('text');
+    await (await useFormat()).selectOption('text');
     const split = await plainTexts(parts);
     assert.equal(split.length, 2);
     assert.equal(split.join(''), expected.same);
     assert.equal(await parts.getByText(/片段 1\/2/).count(), 1);
     assert.equal(await parts.getByText(/片段 2\/2/).count(), 1);
-    await format.selectOption('markdown');
+    await (await useFormat()).selectOption('markdown');
     await parts.locator('strong').getByText('JOINTSPLIT', {exact: true}).waitFor();
     assert.equal(await parts.locator('article').count(), 1);
    });
@@ -275,14 +279,14 @@ async function main() {
    await verified();
    assert.equal(await parts.locator('strong').getByText('DUPLICATE_MARKDOWN', {exact: true}).count(), 2);
    await action('返回默认窗口').click();
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    await recent.locator('h1').getByText('Safe Markdown heading', {exact: true}).waitFor();
   });
 
   await check('cross-page-and-unknown-parts-stay-plain', async () => {
    await search('CROSS_PAGE_MATCH');
    await verified();
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    assert.equal(await parts.locator('.native-markdown').count(), 0);
    assert.equal(await parts.getByText(INCOMPLETE, {exact: true}).count(), 2);
    assert((await plainTexts(parts))[0].startsWith('**CROSS_PAGE_MATCH**'));
@@ -325,11 +329,11 @@ async function main() {
   await check('narrow-keyboard-switch-and-local-table-scroll', async () => {
    await page.setViewportSize({width: 600, height: 900});
    await noRequests('keyboard-and-table-600', async () => {
-    await format.focus();
+    await (await useFormat()).focus();
     await page.keyboard.press('Home');
-    assert.equal(await format.inputValue(), 'text');
+    assert.equal(await (await useFormat()).inputValue(), 'text');
     await page.keyboard.press('End');
-    assert.equal(await format.inputValue(), 'markdown');
+    assert.equal(await (await useFormat()).inputValue(), 'markdown');
     const table = recent.getByRole('region', {name: 'Markdown 表格', exact: true});
     assert(await table.evaluate(node => node.scrollWidth > node.clientWidth));
     await table.focus();
@@ -344,32 +348,32 @@ async function main() {
   });
 
   await check('page-query-and-session-late-results-keep-current-format', async () => {
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    const oldPage = await holdNext(page, PAGE);
    await action('浏览更早消息').click();
    await oldPage.ready();
    await read('Claude Code');
-   assert.equal(await format.inputValue(), 'text');
-   await format.selectOption('markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
+   await (await useFormat()).selectOption('markdown');
    await recent.locator('h2').getByText('Claude fixture heading', {exact: true}).waitFor();
    await oldPage.finish();
    assert.equal(await parts.count(), 0);
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    await recent.locator('h2').getByText('Claude fixture heading', {exact: true}).waitFor();
 
    await read();
-   assert.equal(await format.inputValue(), 'text');
-   await format.selectOption('markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
+   await (await useFormat()).selectOption('markdown');
    const oldSearch = await holdNext(page, SEARCH);
    await search('JOINTSPLIT');
    await oldSearch.ready();
    await action('浏览更早消息').click();
    await verified();
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
    await body.getByRole('heading', {name: '会话快照分页', exact: true}).waitFor();
    await oldSearch.finish();
    assert.equal(await body.getByRole('heading', {name: '可见会话搜索结果', exact: true}).count(), 0);
-   assert.equal(await format.inputValue(), 'markdown');
+   assert.equal(await (await useFormat()).inputValue(), 'markdown');
   });
 
   await check('workspace-close-refresh-and-collection-reset-format', async () => {
@@ -378,29 +382,29 @@ async function main() {
    await oldSearch.ready();
    await visit('B');
    await open();
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
    await oldSearch.finish();
    assert.equal(await parts.count(), 0);
    assert.deepEqual(await plainTexts(recent), ['DEFAULT_CODEX_B']);
 
-   await format.selectOption('markdown');
+   await (await useFormat()).selectOption('markdown');
    await close.click();
    await pane.waitFor({state: 'detached'});
    await open();
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
 
-   await format.selectOption('markdown');
+   await (await useFormat()).selectOption('markdown');
    await refresh.click();
    await body.waitFor({state: 'detached'});
    await read();
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
 
-   await format.selectOption('markdown');
+   await (await useFormat()).selectOption('markdown');
    await category('归档').check();
    await body.waitFor({state: 'detached'});
    await category('当前').check();
    await read();
-   assert.equal(await format.inputValue(), 'text');
+   assert.equal(await (await useFormat()).inputValue(), 'text');
   });
  } finally {
   await context.tracing.stop({path: path.join(out, 'markdown-trace.zip')});

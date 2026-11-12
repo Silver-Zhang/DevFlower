@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -27,7 +28,7 @@ async function main() {
   if (route.startsWith('/api/')) requests.push({route, method: request.method()});
  });
  await context.tracing.start({screenshots: true, snapshots: true});
- const pane = page.getByLabel('原生会话', {exact: true});
+ const pane = page.getByRole('main', {name: '原生会话', exact: true});
  const sessions = pane.getByLabel('会话列表', {exact: true});
  const opener = page.getByRole('button', {name: '原生会话', exact: true});
  const body = pane.getByLabel('会话正文', {exact: true});
@@ -91,6 +92,7 @@ async function main() {
    assert.equal(await sessions.getByRole('button').count(), 4);
    await read(defaultRow('Codex'), 'DEFAULT_CODEX_A <b>plain</b>');
    assert.equal(await body.locator('b').count(), 0);
+   await openReaderDisclosure(body, '查找消息');
    const filter = body.getByLabel('搜索当前可见窗口', {exact: true});
    await filter.fill('PRIVATE_');
    await body.getByText('当前窗口没有匹配内容。', {exact: true}).waitFor();
@@ -108,6 +110,57 @@ async function main() {
    await close();
    await until(() => opener.evaluate(element => element === document.activeElement));
    assert.equal(await draft.inputValue(), '合成已保存草稿');
+  });
+
+  await caseRun('wide-session-destination-preserves-dirty-draft-and-viewport', async () => {
+   const saved = page.getByLabel('工作流列表', {exact: true}).getByRole('button', {name: '合成已保存草稿', exact: true});
+   const viewport = () => page.locator('.react-flow__viewport').evaluate(node => node.style.transform);
+   const before = await viewport();
+   await page.getByRole('button', {name: '放大画布', exact: true}).click();
+   await until(async () => await viewport() !== before);
+   const zoomed = await viewport();
+   await draft.fill('切回时保留的草稿');
+   const reads = requests.filter(item => item.route === '/api/v2/draft').length;
+   const saves = requests.filter(item => item.route === '/api/v2/drafts/save').length;
+   await panel();
+   await read(defaultRow('Codex'), 'DEFAULT_CODEX_A <b>plain</b>');
+   assert.equal(await opener.getAttribute('aria-current'), 'page');
+   assert.equal(await saved.getAttribute('aria-current'), null);
+   const frame = await pane.boundingBox();
+   const listBox = await sessions.boundingBox();
+   const textBox = await body.boundingBox();
+   assert(frame.width > 1150 && listBox.width > 230 && textBox.width > 650);
+   assert(listBox.x + listBox.width <= textBox.x + 1);
+   assert.equal(await page.getByRole('main', {name: '工作流设计器'}).count(), 0);
+   assert.equal(await body.getByRole('searchbox').count(), 0);
+   assert.equal(await body.getByRole('combobox', {name: '会话正文格式', exact: true}).count(), 0);
+   const first = await body.getByText('DEFAULT_CODEX_A <b>plain</b>', {exact: true}).boundingBox();
+   assert(first.y + first.height < 400, 'The transcript begins in the first half of the viewport');
+   await page.screenshot({path: path.join(out, 'native-wide-reading.png')});
+   const skip = page.getByRole('button', {name: '跳至原生会话', exact: true});
+   await skip.focus();
+   await skip.press('Enter');
+   assert(await pane.evaluate(node => node === document.activeElement));
+   await page.keyboard.press('Control+s');
+   await saved.click();
+   await pane.waitFor({state: 'detached'});
+   assert.equal(await draft.inputValue(), '切回时保留的草稿');
+   assert.equal(await viewport(), zoomed);
+   assert.equal(requests.filter(item => item.route === '/api/v2/draft').length, reads);
+   assert.equal(requests.filter(item => item.route === '/api/v2/drafts/save').length, saves);
+   assert.equal(await saved.getAttribute('aria-current'), 'page');
+   await panel();
+   await read(defaultRow('Codex'), 'DEFAULT_CODEX_A <b>plain</b>');
+   await opener.focus();
+   await page.keyboard.press('Escape');
+   await body.waitFor({state: 'detached'});
+   await until(() => defaultRow('Codex').evaluate(element => element === document.activeElement));
+   await page.keyboard.press('Escape');
+   await pane.waitFor({state: 'detached'});
+   await until(() => opener.evaluate(element => element === document.activeElement));
+   await draft.fill('合成已保存草稿');
+   await page.getByRole('button', {name: '保存', exact: true}).click();
+   await until(async () => await page.locator('.save-state').innerText() === '已保存');
   });
 
   await caseRun('delay-selection-and-workspace-responses-stay-scoped', async () => {

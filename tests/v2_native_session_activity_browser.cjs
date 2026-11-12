@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -65,6 +66,8 @@ async function main() {
  const refresh = pane.getByRole('button', {name: '刷新原生会话', exact: true});
  const header = page.locator('.app-header button');
  const format = body.getByRole('combobox', {name: '会话正文格式', exact: true});
+ const showActions = () => openReaderDisclosure(body, '会话操作');
+ const showSearch = () => openReaderDisclosure(body, '查找消息');
  const find = body.getByRole('searchbox', {name: '搜索整个可见会话', exact: true});
  const category = name => list.getByRole('radio', {name, exact: true});
  const row = (provider, label = '默认来源') => list.getByRole('button', {name: new RegExp('^' + provider + ' 会话 .*' + label)});
@@ -133,6 +136,7 @@ async function main() {
    assert.equal(await format.count(), 0);
    await assertPublicOnly();
    await returned();
+   await showActions();
    assert.equal(await format.inputValue(), 'text');
    assert(await body.getByRole('button', {name: '设置本地别名', exact: true}).isVisible());
   });
@@ -194,7 +198,9 @@ async function main() {
   await check('return-before-late-result-preserves-search-format-and-page', async () => {
    await visit('A');
    await open();
+   await showActions();
    await format.selectOption('markdown');
+   await showSearch();
    await find.fill('SYNTHETIC_CODEX_TRANSCRIPT');
    await find.press('Enter');
    await body.getByRole('heading', {name: '可见会话搜索结果', exact: true}).waitFor();
@@ -207,7 +213,9 @@ async function main() {
    await returned();
    await held.finish();
    assert.equal(requests.length, before + 1);
+   await showActions();
    assert.equal(await format.inputValue(), 'markdown');
+   await showSearch();
    assert.equal(await find.inputValue(), 'SYNTHETIC_CODEX_TRANSCRIPT');
    await body.locator('.native-markdown strong').filter({hasText: 'SYNTHETIC_CODEX_TRANSCRIPT'}).waitFor();
 
@@ -219,6 +227,7 @@ async function main() {
    await full();
    await returned();
    assert.equal(requests.length, afterPage + 1);
+   await showActions();
    assert.equal(await format.inputValue(), 'markdown');
    assert.equal(await body.getByRole('heading', {name: '会话快照分页', exact: true}).count(), 1);
   });
@@ -258,7 +267,8 @@ async function main() {
     await change();
     await held.finish();
     assert.equal(await panel.count(), 0);
-    assert(await format.isVisible());
+    await showActions();
+   assert(await format.isVisible());
    }
   });
 

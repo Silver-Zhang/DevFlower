@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -76,7 +77,9 @@ async function main() {
   await row(provider).click();
   await window.getByText(marker, {exact: true}).waitFor();
  };
+ const showSearch = () => openReaderDisclosure(body, '查找消息');
  const search = async text => {
+  await showSearch();
   await query.fill(text);
   await query.press('Enter');
  };
@@ -102,6 +105,7 @@ async function main() {
   await open();
 
   await check('default-window-and-explicit-read-only-search', async () => {
+   await showSearch();
    const old = body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true});
    const count = historyCount();
    await old.fill('STRASSE');
@@ -221,6 +225,7 @@ async function main() {
    await open('Codex', 'WORKSPACE_B_VISIBLE_054');
    await oldPanel.finish();
    assert.equal(await parts.count(), 0);
+   await showSearch();
    assert.equal(await query.inputValue(), '');
   });
 

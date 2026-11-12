@@ -10,7 +10,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
   await page.goto(process.env.V2_URL);
   await page.locator('.workspace-link').getByText('A', {exact:true}).click();
   await page.getByRole('button',{name:'原生会话',exact:true}).click();
-  const panel = page.getByRole('complementary',{name:'原生会话'});
+  const panel = page.getByRole('main',{name:'原生会话'});
   const open = text => panel.getByRole('button',{name:text,exact:true}).click();
   await open('新建会话');
   await open('刷新 Codex 模型目录');

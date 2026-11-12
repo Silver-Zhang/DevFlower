@@ -63,10 +63,7 @@ export function NativeActivity({api, scope, isCurrent, children}) {
 
  return <>
   <div hidden={open}>
-   <div className="native-activity-entry">
-    <button ref={opener} onClick={readActivity}>工具活动</button>
-   </div>
-   {children}
+   {children(<button ref={opener} onClick={readActivity}>工具活动</button>)}
   </div>
   {open && <section aria-label="原生工具活动" className="native-activity" onKeyDown={event => {
    if (event.key === 'Escape') {

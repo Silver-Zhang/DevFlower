@@ -1,3 +1,4 @@
+const {openReaderDisclosure} = require('./v2_native_browser_controls.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -115,6 +116,7 @@ async function main() {
   await button.click();
   const nativeRequest = await request;
   await body.getByRole('heading', {name: title + ' · 只读', exact: true}).waitFor();
+  await openReaderDisclosure(body, '查找消息');
   await body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true}).waitFor();
   return new URL(nativeRequest.url()).searchParams.get('handle');
  };
@@ -247,6 +249,7 @@ async function main() {
     await query.fill('没有符合的词');
     await filteredEmpty.waitFor();
     await body.getByRole('status').filter({hasText: '当前阅读的会话不在筛选结果中。'}).waitFor();
+    await openReaderDisclosure(body, '查找消息');
     await body.getByRole('searchbox', {name: '搜索整个可见会话', exact: true}).waitFor();
     await sort.selectOption('earliest');
     await grouping.selectOption('activity');
@@ -324,6 +327,7 @@ async function main() {
    });
    await row(/乙工作区标记/).focus();
    await page.keyboard.press('Enter');
+   await openReaderDisclosure(body, '查找消息');
    await body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true}).waitFor();
    await page.keyboard.press('Escape');
    await body.waitFor({state: 'detached'});

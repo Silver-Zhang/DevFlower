@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {ArrowLeft, MessageSquareText, RefreshCw, X} from 'lucide-react';
 import {VisibleHistory} from './VisibleHistory.jsx';
 import {NativeActivity} from './NativeActivity.jsx';
@@ -121,7 +121,7 @@ function compareRows(a, b, order) {
 }
 
 export function NativeSessions({api, workspace, enabled, writeProviders = [], workflowLinks, workflowTrash, terminalAvailable, titleAvailable, catalog,
- refreshCatalog, isCurrent, onClose, onWorkflow}) {
+ refreshCatalog, isCurrent, onClose, onWorkflow, escapeRef}) {
  const [list, setList] = useState(null);
  const [reading, setReading] = useState(null);
  const [markdownSelection, setMarkdownSelection] = useState(null);
@@ -247,6 +247,13 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
    else closeButton.current?.focus();
   });
  }
+
+ useImperativeHandle(escapeRef, () => () => {
+  if (dialogAction || groupDialog) return true;
+  if (!reading) return false;
+  back();
+  return true;
+ });
 
  const preference = handle => views.get(handle) || DEFAULT_VIEW;
  const selectedView = reading ? preference(reading.row.handle) : DEFAULT_VIEW;
@@ -375,22 +382,13 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
   !normalized || isVisibleMessage(message) && message.text.toLocaleLowerCase().includes(normalized)) : null;
  const selection = selectionGeneration.current, listVersion = listGeneration.current, historyVersion = historyGeneration.current;
  const format = markdownSelection === selection ? 'markdown' : 'text';
- const defaultWindow = reading?.result && <>
-   <div className="native-window-controls">
-    <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
-     onChange={event => setQuery(event.target.value)}/></label>
-    <p className="muted small">{reading.result.truncated ? '当前内容已截断。' : ''}搜索仅匹配此处已加载的可见消息。</p>
-   </div>
-   <NativeMessages label="已加载消息" messages={visible} format={format} truncated={reading.result.truncated}
-    empty={normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}/>
+ const windowSearch = reading?.result && <>
+  <label className="field"><span>搜索当前可见窗口</span><input type="search" maxLength={200} value={query}
+   onChange={event => setQuery(event.target.value)}/></label>
+  <p className="muted small">{reading.result.truncated ? '当前内容已截断。' : ''}搜索仅匹配此处已加载的可见消息。</p>
  </>;
- return <aside className={'project-panel native-panel' + (reading ? ' has-preview' : '')} aria-label="原生会话"
-  onKeyDown={event => {
-   if (event.key === 'Escape' && reading && !dialogAction) {
-    event.stopPropagation();
-    back();
-   }
-  }}>
+ return <main id="v2-native-sessions" tabIndex={-1}
+  className={'project-panel native-panel' + (reading ? ' has-preview' : '')} aria-label="原生会话">
   <header className="project-panel-header">
    <div><h2>原生会话</h2><p className="muted small">{workspace.name} · {writeProviders.length ? '会话中心' : '只读 · 占用状态未核实'}</p>
     {refreshCue && <p role="status" className="muted small">{refreshCue}</p>}</div>
@@ -488,24 +486,20 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
      <div className="native-reader-heading"><h3>{selectedView.alias || reading.row.name || PROVIDERS[reading.row.provider]} · 只读</h3>
       <p className="field-note">{PROVIDERS[reading.row.provider]}</p></div></header>
-    {reading.result&&titleAvailable&&reading.row.provider==='codex'&&canContinue&&
-     <NativeTitle key={reading.row.handle+':'+list.revision} api={api} workspace={workspace.id}
-      handle={reading.row.handle} revision={list.revision}/>}
-    {reading.result&&reading.row.provider==='claude'&&<p className="field-note">此处支持为 Claude 会话设置 DevFlower 本地别名。</p>}
-    {reading.row.workflow && <div className="native-view-actions">
-     <button onClick={() => onWorkflow(reading.row.workflow)}>查看工作流节点 · {reading.row.workflow.agent}</button>
-    </div>}
-    {canContinue && <div className="native-view-actions">
-     <button onClick={() => { setTerminal(null); setComposer('resume'); }}>继续会话</button>
-    </div>}
-    {reading.result && writeProviders.includes(reading.row.provider) && <div className="native-view-actions">
-     {terminalAvailable && reading.row.provider === 'codex' && canContinue ?
-      <button onClick={() => { setComposer(false); setTerminal({handle: reading.row.handle, revision: list.revision}); }}>打开原生终端</button> :
-      <><button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
-       <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
-        ? 'Claude 终端接管暂不可用。' : '此 Codex 会话的终端暂未启用。'}</small></>}
-
-    </div>}
+    {(reading.row.workflow || canContinue || reading.result && writeProviders.includes(reading.row.provider)) &&
+     <div className="native-session-primary">
+      {reading.row.workflow && <button onClick={() => onWorkflow(reading.row.workflow)}>
+       查看工作流节点 · {reading.row.workflow.agent}</button>}
+      {canContinue && <button onClick={() => { setTerminal(null); setComposer('resume'); }}>继续会话</button>}
+      {reading.result && writeProviders.includes(reading.row.provider) &&
+       (terminalAvailable && reading.row.provider === 'codex' && canContinue ?
+        <button onClick={() => { setComposer(false); setTerminal({handle: reading.row.handle, revision: list.revision}); }}>
+         打开原生终端</button> : <>
+         <button disabled aria-describedby="native-terminal-blocked">打开原生终端</button>
+         <small className="muted" id="native-terminal-blocked">{reading.row.provider === 'claude'
+          ? 'Claude 终端接管暂不可用。' : '此 Codex 会话的终端暂未启用。'}</small>
+        </>)}
+     </div>}
     {reading.result && reading.row.claude_session_state && <p className="muted small">{{
      managed: 'DevFlower 受管会话。单写保证适用于参与租约的 DevFlower 操作。',
      EXTERNAL_SESSION: '外部 Claude 会话，仅可查看。',
@@ -519,27 +513,40 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
     {reading.result && <NativeActivity key={selection} api={api}
      scope={{workspace: workspace.id, handle: reading.row.handle, revision: list.revision}}
      isCurrent={() => isCurrent() && selectionGeneration.current === selection && listGeneration.current === listVersion}>
-     <div className="native-view-actions" aria-label="仅在 DevFlower 整理">
-      {['rename', selectedView.hidden ? 'unhide' : 'hide',
-       ...(selectedView.collection === 'active' ? ['archive', 'trash'] :
-          selectedView.collection === 'archived' ? ['trash', 'restore'] : ['restore'])].map(action =>
-       <button key={action} disabled={mutating} onClick={event => manage(action, event)}>
-        {action === 'restore' && selectedView.hidden ? '恢复到隐藏列表' : ACTIONS[action]}
-       </button>)}
-     </div>
-     {mutationError && <p className="error-text" role="alert">{mutationError}</p>}
-     <label className="field native-message-format"><span>会话正文格式</span>
-      <select value={format} onChange={event => setMarkdownSelection(event.target.value === 'markdown' ? selection : null)}>
-       <option value="text">纯文本</option><option value="markdown">Markdown</option>
-      </select>
-     </label>
-     {provider && provider !== reading.row.provider ? defaultWindow :
-      <VisibleHistory key={selection} api={api} format={format}
+     {activityButton => <>
+      <VisibleHistory key={selection + ':' + historyVersion} api={api} format={format}
+       fullHistory={!provider || provider === reading.row.provider}
        scope={{workspace: workspace.id, handle: reading.row.handle, revision: list.revision}}
        isCurrent={() => isCurrent() && selectionGeneration.current === selection
-        && listGeneration.current === listVersion && historyGeneration.current === historyVersion}>
-       {defaultWindow}
-      </VisibleHistory>}
+        && listGeneration.current === listVersion && historyGeneration.current === historyVersion}
+       activityButton={activityButton} windowSearch={windowSearch}
+       sessionActions={<details className="native-session-actions" name="native-reader-tools"><summary>会话操作</summary>
+        <div className="native-reader-disclosure">
+         {titleAvailable && reading.row.provider === 'codex' && canContinue &&
+          <NativeTitle key={reading.row.handle + ':' + list.revision} api={api} workspace={workspace.id}
+           handle={reading.row.handle} revision={list.revision}/>}
+         {reading.row.provider === 'claude' &&
+          <p className="field-note">此处支持为 Claude 会话设置 DevFlower 本地别名。</p>}
+         <div className="native-view-actions" aria-label="仅在 DevFlower 整理">
+          {['rename', selectedView.hidden ? 'unhide' : 'hide',
+           ...(selectedView.collection === 'active' ? ['archive', 'trash'] :
+              selectedView.collection === 'archived' ? ['trash', 'restore'] : ['restore'])].map(action =>
+           <button key={action} disabled={mutating} onClick={event => manage(action, event)}>
+            {action === 'restore' && selectedView.hidden ? '恢复到隐藏列表' : ACTIONS[action]}
+           </button>)}
+         </div>
+         <label className="field native-message-format"><span>会话正文格式</span>
+          <select value={format} onChange={event => setMarkdownSelection(event.target.value === 'markdown' ? selection : null)}>
+           <option value="text">纯文本</option><option value="markdown">Markdown</option>
+          </select>
+         </label>
+        </div>
+       </details>}>
+       {mutationError && <p className="error-text" role="alert">{mutationError}</p>}
+       <NativeMessages label="已加载消息" messages={visible} format={format} truncated={reading.result.truncated}
+        empty={normalized ? '当前窗口没有匹配内容。' : '此会话没有可显示的消息。'}/>
+      </VisibleHistory>
+     </>}
     </NativeActivity>}
    </section>}
   </div>
@@ -555,5 +562,5 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
    onCancel={() => setGroupDialog(null)} onConfirm={() => groupAction(groupDialog.group, groupDialog.expected)}/>}
   {dialogAction && <ViewDialog action={dialogAction.action} initialAlias={selectedView.alias} onCancel={dismissDialog}
    onConfirm={confirmView}/>}
- </aside>;
+ </main>;
 }

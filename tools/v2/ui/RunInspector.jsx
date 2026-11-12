@@ -122,8 +122,9 @@ function EventFeed({api,workspace,run,activation,live}){
  </section>;
 }
 
-export function RunInspector({api,snapshot,trusted,selection,onSelect,children}){
- const [tab,setTab]=useState('detail'),[chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');
+export function RunInspector({api,snapshot,trusted,selection,onSelect,wide=false,children}){
+ const uncertain=['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(snapshot?.state);
+ const [tab,setTab]=useState(wide&&!uncertain?'events':'detail'),[chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');
  const [exporting,setExporting]=useState(false);
  const mounted=useRef(true);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
@@ -134,6 +135,9 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
  const scope=run&&{workspace:run.workspace,run:run.id};
  const live=trusted&&run&&snapshot.worker_alive&&!terminal.has(snapshot.state);
  const errors=nodes.filter(row=>['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(row.state));
+ const errorActivations=errors.map(row=><button key={row.id} onClick={()=>{
+  if(wide){setChosen(row.id);setTab('detail')}else onSelect(row.node)
+ }}>{row.name||row.node} · 第 {roundText(row)} 轮 · {row.reason||'查看已记录错误'}</button>);
  const detail=tab==='detail'&&children?.(activation);
  async function exportRun(){
   if(!scope||exporting)return;
@@ -145,14 +149,20 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
   finally{if(mounted.current)setExporting(false)}
  }
  return <div className="inspector-content run-inspector-content">
-  <header className="run-inspector-head">
+  {(!wide||activation)&&<header className="run-inspector-head">
    <StatusBadge state={trusted?(activation?.state||snapshot?.state):'UNKNOWN'}/>
    <span>{activation?`第 ${roundText(activation)} 轮 · ${stateDuration(activation.started_at,activation.finished_at,activation.state)}`:
     run?stateDuration(run.started_at,run.finished_at,snapshot.state):'读取原运行'}</span>
-  </header>
+  </header>}
+  {wide&&trusted&&(errors.length>0||uncertain&&run?.reason)&&
+   <section className="run-evidence-issues" aria-label="失败与待核验激活">
+    {uncertain&&run?.reason&&<p className="error-text">{run.reason}</p>}
+    {errorActivations}
+   </section>}
   {activation?.native_profile_id&&<p className="field-note">独立原生 Profile {activation.native_profile_id}</p>}
+  <div className="run-inspector-toolbar">
   {eligible.length>0&&!selection?.edge&&<label className="field"><span>激活与轮次</span><select aria-label="激活与轮次"
-   value={activation?.id||''} onChange={event=>{setChosen(event.target.value);setTab('detail')}}>
+   value={activation?.id||''} onChange={event=>{setChosen(event.target.value);if(!wide)setTab('detail')}}>
    <option value="">{selection?.node?'当前画布节点':'整次运行'}</option>
    {eligible.map(row=><option key={row.id} value={row.id}>{row.name||row.node} · 第 {roundText(row)} 轮</option>)}
   </select></label>}
@@ -161,6 +171,7 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
     onClick={()=>setTab(key)}>{label}</button>)}
    <button disabled={!scope||exporting} onClick={exportRun}>{exporting?'正在导出…':'导出运行详情'}</button>
   </nav>
+  </div>
   {tab==='detail'&&trusted&&activation?.kind==='tool'&&<ToolResult key={activation.id} api={api} scope={scope} activation={activation}/>}
   {exportError&&<p role="alert" className="error-text">{exportError}</p>}
   {tab==='detail'&&(detail||<div className="run-inspector-overview">
@@ -171,9 +182,9 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,children})
      <dt>已启动原生进程</dt><dd>{run.execution_budget.native_process_starts}</dd>
      <dt>运行时间上限</dt><dd>{run.execution_budget.seconds} 秒</dd>
      <dt>截止时间</dt><dd>{date(run.execution_budget.deadline_at)}</dd></dl></section>}
-   {run?.reason&&<p className="error-text">{run.reason}</p>}
+   {!wide&&run?.reason&&<p className="error-text">{run.reason}</p>}
    {run?.resume_available&&<p className="field-note">运行状态区提供原检查点的恢复入口。</p>}
-   {errors.map(row=><button key={row.id} onClick={()=>onSelect(row.node)}>{row.name||row.node} · {row.reason||'查看已记录错误'}</button>)}
+   {!wide&&errorActivations}
   </div>)}
   {tab==='events'&&scope&&<EventFeed key={run.id+':'+(activation?.id||'all')} api={api} {...scope} activation={activation?.id} live={live}/>}
   {tab==='logs'&&<div className="run-inspector-logs">

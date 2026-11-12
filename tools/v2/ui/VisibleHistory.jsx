@@ -4,12 +4,13 @@ import {NativeMessages} from './NativeMessages.jsx';
 const STACK_LIMIT = 16;
 const FORBIDDEN_QUERY_CHAR = /[\p{Cc}\p{Cf}\p{Cs}]/u;
 
-export function VisibleHistory({api, scope, isCurrent, format, children}) {
+export function VisibleHistory({api, scope, isCurrent, format, fullHistory, activityButton, windowSearch, sessionActions, children}) {
  const [query, setQuery] = useState('');
  const [page, setPage] = useState(null);
  const generation = useRef(0);
  const heading = useRef(null);
  const browseButton = useRef(null);
+ const search = useRef(null);
  const queryLength = [...query].length;
  const canSearch = queryLength >= 1 && queryLength <= 200 && query.trim() && !FORBIDDEN_QUERY_CHAR.test(query);
 
@@ -19,6 +20,7 @@ export function VisibleHistory({api, scope, isCurrent, format, children}) {
   const request = ++generation.current;
   const pending = {mode, cursor, stack, submitted, loading: true};
   const current = () => isCurrent() && generation.current === request;
+  if (search.current) search.current.open = false;
   setPage(pending);
   requestAnimationFrame(() => { if (current()) heading.current?.focus(); });
   try {
@@ -45,17 +47,22 @@ export function VisibleHistory({api, scope, isCurrent, format, children}) {
 
  const browsing = page?.mode === 'browse';
  return <>
-  <div className="native-history-controls">
-   <div className="native-history-buttons">
-    <button ref={browseButton} onClick={() => read('browse', null, [], null)}>浏览更早消息</button>
-    {page && <button onClick={openWindow}>返回默认窗口</button>}
-   </div>
-   <form onSubmit={event => { event.preventDefault(); if (canSearch) read('search', null, [], query); }}>
-    <label className="field"><span>搜索整个可见会话</span>
-     <input type="search" maxLength={400} value={query} onChange={event => setQuery(event.target.value)}/>
-    </label>
-    <button type="submit" disabled={!canSearch}>搜索整个可见会话</button>
-   </form>
+  <div className="native-reader-tools" aria-label="正文工具">
+   {activityButton}
+   {fullHistory && <button ref={browseButton} onClick={() => read('browse', null, [], null)}>浏览更早消息</button>}
+   <details ref={search} className="native-message-search" name="native-reader-tools"><summary>查找消息</summary>
+    <div className="native-reader-disclosure">
+     {!page && windowSearch}
+     {fullHistory && <form onSubmit={event => { event.preventDefault(); if (canSearch) read('search', null, [], query); }}>
+      <label className="field"><span>搜索整个可见会话</span>
+       <input type="search" maxLength={400} value={query} onChange={event => setQuery(event.target.value)}/>
+      </label>
+      <button type="submit" disabled={!canSearch}>搜索整个可见会话</button>
+     </form>}
+    </div>
+   </details>
+   {sessionActions}
+   {page && <button onClick={openWindow}>返回默认窗口</button>}
   </div>
   {!page ? children : <section aria-labelledby="native-history-heading" className="native-history-page">
    <div className="native-history-summary">
