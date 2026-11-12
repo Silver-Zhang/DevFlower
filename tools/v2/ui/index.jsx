@@ -1183,7 +1183,9 @@ function App(){
      bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<section className="bound-agent" aria-label="已绑定的 Agent 配置">
      <h3>已绑定的 Agent 配置</h3>
-     {boundAgent&&<strong>{boundAgent.name}</strong>}
+     {boundAgent&&<strong>{boundAgent.config.name}</strong>}
+     <p className="field-note">{boundAgent&&(boundAgent.config.provider==='claude'?'Claude Code · ':'Codex CLI · ')}
+      版本 <code title={n.agent_revision}>{n.agent_revision?.slice(0,12)}</code></p>
      <p className="field-note">此节点引用已保存的 Agent 配置版本。</p>
      <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
      <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></section>:n.kind==='agent'?<>

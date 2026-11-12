@@ -68,7 +68,11 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await page.screenshot({path:path.join(out,'agent-manager-wide-saved.png')});
   await manager.getByRole('button',{name:'添加到画布',exact:true}).click();
   await node('首个配置夹具');
-  await page.getByLabel('Agent 配置',{exact:true}).getByText('此节点引用已保存的 Agent 配置版本。',{exact:true}).waitFor();
+  const bound=page.getByLabel('已绑定的 Agent 配置',{exact:true});
+  await bound.getByText('此节点引用已保存的 Agent 配置版本。',{exact:true}).waitFor();
+  await bound.getByText('首个配置夹具',{exact:true}).waitFor();
+  await bound.getByText(/Codex CLI · 版本/).waitFor();
+  assert.match(await bound.locator('code').textContent(),/^[0-9a-f]{12}$/);
   await page.locator('.canvas-guide').getByText(/拖动输出端口连接下游/).waitFor();
   await page.getByLabel('关闭检查器',{exact:true}).click();
   await page.getByLabel('撤销',{exact:true}).click();
