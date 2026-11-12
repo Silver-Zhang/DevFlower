@@ -1,7 +1,7 @@
 """Workspace and intent checks around the real V2 HTTP assistant API."""
 from concurrent.futures import ThreadPoolExecutor
 import json
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
@@ -9,6 +9,7 @@ import uuid
 
 import test_v2_execution as fixtures
 import test_v2_execution_http as http
+from v2.assistant import Assistant
 from v2.assistant_proposals import PROPOSAL_INSTRUCTIONS
 from v2.server import create_server
 
@@ -104,6 +105,33 @@ class AssistantTests(unittest.TestCase):
         self.assertIn('Verified fixture chat response',next_preview['prompt'])
         self.assertEqual(self.post('send',second)[0],200)
         self.assertTrue(all(row['handle'] is None for row in self.operations.calls))
+
+    def test_duplicate_send_replays_when_the_first_request_updates_the_preview_context(self):
+        self.initialize()
+        submitted, _ = self.confirm()
+        reached_prepare, release_prepare = Event(), Event()
+        original_prepare = Assistant.prepare
+
+        def hold_first_prepare(assistant, selection):
+            if not reached_prepare.is_set():
+                reached_prepare.set()
+                if not release_prepare.wait(5):
+                    raise AssertionError('Test never released duplicate prepare')
+            return original_prepare(assistant, selection)
+
+        with patch.object(Assistant, 'prepare', hold_first_prepare), ThreadPoolExecutor(max_workers=1) as pool:
+            delayed = pool.submit(self.post, 'send', submitted)
+            try:
+                self.assertTrue(reached_prepare.wait(5))
+                winner = self.post('send', submitted)
+            finally:
+                release_prepare.set()
+            replay = delayed.result(timeout=5)
+        self.assertEqual(winner[0], 200, winner)
+        self.assertEqual(replay[0], 200, replay)
+        self.assertEqual(replay[1]['id'], winner[1]['id'])
+        self.assertEqual(len(self.operations.calls), 1)
+        self.assertEqual(len(self.store.db.list('assistant-turn')), 1)
 
     def test_changed_file_and_unauthorized_paths_refuse_before_native_operation(self):
         self.initialize()

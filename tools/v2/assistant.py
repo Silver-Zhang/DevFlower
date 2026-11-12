@@ -569,14 +569,15 @@ class Assistant:
             return self.replay(old, request_sha)
         try:
             value = self.prepare({key:item for key,item in data.items() if key not in ('intent','preview_sha256')})
+            if value['sha256'] != data['preview_sha256']:
+                raise Conflict('消息、草稿、附件或运行证据已变化，请重新预览后确认发送。')
         except (Invalid, Conflict):
+            # The same send may have been registered while its context was prepared.
             with self.store.db.tx(read=True) as db:
                 old = read_row(db, TURN, key)
             if old:
                 return self.replay(old, request_sha)
             raise
-        if value['sha256'] != data['preview_sha256']:
-            raise Conflict('消息、草稿、附件或运行证据已变化，请重新预览后确认发送。')
         row = dict(id=key, workspace=workspace, conversation=conversation, intent=intent,
                    native_intent='assistant-'+uuid.uuid4().hex,
                    request_sha256=request_sha, owner=self.owner, provider=data['provider'], mode=data['mode'],
