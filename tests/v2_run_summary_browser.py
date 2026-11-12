@@ -61,8 +61,8 @@ def prepare(base):
             'edges': [],
         }
         draft = source.save(workspace, None, None, graph)
-        definition = dict(workspace=workspace, draft_document=draft['graph'], graph={'nodes': [], 'edges': []},
-                          task='PRIVATE_SUMMARY_FIXTURE')
+        definition = dict(workspace=workspace, draft_id=draft['id'], draft_revision=draft['revision'],
+                          draft_document=draft['graph'], graph={'nodes': [], 'edges': []}, task='PRIVATE_SUMMARY_FIXTURE')
         definition_id = digest(canonical(definition))
         definitions.append(definition_id)
         source.db.put('definition', definition_id, dict(definition, id=definition_id))
