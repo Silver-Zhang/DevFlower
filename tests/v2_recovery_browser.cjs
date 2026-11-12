@@ -55,7 +55,7 @@ async function proof(name,fn){try{await fn();await page.screenshot({path:path.jo
   await page.route(routePattern,hold);
   await until(()=>seen);
   await page.getByRole('button',{name:'关闭工作空间',exact:true}).click();
-  await page.getByRole('heading',{name:'把想法连接成工作流',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'打开项目，开始工作',exact:true}).waitFor();
   assert.equal(await page.getByLabel('运行状态',{exact:true}).count(),0);
   assert.deepEqual((await history()).map(r=>r.id),before);
   assert.equal((await snapshot()).run.worker.pid,owner.pid);

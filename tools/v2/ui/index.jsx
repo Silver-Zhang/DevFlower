@@ -898,6 +898,7 @@ function App(){
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
  const runState=runTrusted?(runSnapshot?.state||'UNKNOWN'):'UNKNOWN';
+ const exportNeedsSave=workspace&&!readOnly&&(!saved||dirty);
  const startHint=launchAttempt?'核验此前的启动请求。':!workspace?'先打开工作空间。':!doc.nodes.length?
   '添加节点后可以启动工作流。':launchBlock||(!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
@@ -953,7 +954,9 @@ function App(){
   <main id="v2-editor" tabIndex={-1} className="editor" aria-label="工作流设计器" data-mode={readOnly?'run':'draft'}>
    <div className="document-bar"><div className="document-title"><span className="document-icon"><Workflow size={17} aria-hidden="true"/></span>
     <div className="document-name"><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/>
-    <span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div>
+    <div className="document-meta"><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span>
+     {exportNeedsSave&&<small id="v2-export-hint">请先保存当前工作流，再导出已保存版本。</small>}
+    </div></div>
    </div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<>
     <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
     <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
@@ -970,7 +973,8 @@ function App(){
     <div className="header-spacer"/>
     <div className="draft-transfer">
     <Button icon={Upload} title="导入工作流" disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
-    <Button icon={Download} title={!saved||dirty?'保存工作流后可导出':'导出已保存工作流'} disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
+    <Button icon={Download} title={exportNeedsSave?'保存工作流后可导出':'导出已保存工作流'} aria-describedby={exportNeedsSave?'v2-export-hint':undefined}
+     disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
     <input ref={transferInput} hidden type="file" accept=".json,application/json" aria-label="选择工作流文件"
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
     </div>
