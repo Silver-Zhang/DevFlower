@@ -163,7 +163,7 @@ class CodexCLI:
             binding['v2_agent_plan'] = True
         if named:
             binding['native_profile'] = named
-        if named or isolated:
+        if named or isolated or scope == 'workspace-write':
             binding['v2_development_untrusted'] = True
         return binding
 

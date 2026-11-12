@@ -16,6 +16,7 @@ from studio.graph import Invalid
 from studio.local_claude_adapter import LocalClaude
 from studio.local_codex_adapter import LocalCodex
 from v2.cli_providers import ClaudeCLI, CodexCLI, ProviderRegistry, model_id
+from v2.session_lease import CODEX_COORDINATION_VERSION
 from v2.store import DraftStore
 
 
@@ -104,6 +105,28 @@ class CliProviderTests(unittest.TestCase):
             claude.command(dict(binding, v2_claude_scope=True), session_id=self.sid)
         with patch.object(claude, 'require_local'):
             self.assertIsInstance(claude.transport(binding, {}), LocalClaude)
+
+    def test_workspace_write_binding_pins_project_trust_without_changing_read_scope(self):
+        native = SimpleNamespace(version=CODEX_COORDINATION_VERSION, native_home=None,
+                                 binding=lambda *_args, **_kwargs: dict(
+                                     executable='/fixture/codex', account_sha256='bound-account',
+                                     direct_environment_sha256='bound-config'))
+        adapter = CodexCLI(native, None)
+        agent = dict(model='fixture', effort='low', timeout=60, model_source='manual')
+        with (patch('v2.cli_providers.os.access', return_value=True),
+              patch('v2.codex_code_mode.companion_identity', return_value='bound-companion')):
+            writer = adapter.binding('workspace', dict(agent, mode='Agent', permission='workspace-write'))
+            reader = adapter.binding('workspace', dict(agent, mode='Ask', permission='workspace-read'))
+            chat = adapter.binding('workspace', dict(agent, mode='Ask', permission='none'))
+        self.assertIs(writer['v2_development_untrusted'], True)
+        self.assertEqual(writer['v2_agent_scope'], 'workspace-write')
+        self.assertEqual(writer['role'], 'implementer')
+        self.assertEqual(writer['account_sha256'], 'bound-account')
+        self.assertEqual(writer['direct_environment_sha256'], 'bound-config')
+        self.assertEqual(writer['v2_codex_code_host_sha256'], 'bound-companion')
+        self.assertEqual(reader['v2_agent_scope'], 'read')
+        self.assertNotIn('v2_development_untrusted', reader)
+        self.assertNotIn('v2_development_untrusted', chat)
 
     def test_catalog_model_identifiers_cannot_echo_known_secrets_or_endpoints(self):
         self.assertEqual(model_id('gateway/custom-2026'), 'gateway/custom-2026')

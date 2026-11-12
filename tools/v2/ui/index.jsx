@@ -1149,7 +1149,7 @@ function App(){
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
-  {workspace&&filesOpen&&<ProjectFiles key={workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
+  {workspace&&filesOpen&&<ProjectFiles key={'files:'+workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
    onTaskAttach={!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='templates'&&<aside className="project-panel template-panel" onKeyDown={event=>{
    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSideView(templatesOpener)}
@@ -1175,7 +1175,7 @@ function App(){
    <NativePty key={runTerminal.activation} api={api} workspace={workspace} scope={runTerminal} catalog={catalog}
     refreshCatalog={discover} onClose={()=>{setRunTerminal(null);setSideView('')}}/>
   </aside>}
-  {workspace&&agentPanel&&<AgentManager key={workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
+  {workspace&&agentPanel&&<AgentManager key={'agents:'+workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}

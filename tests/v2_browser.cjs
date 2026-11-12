@@ -207,6 +207,29 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   assert.equal(await page.getByLabel('工作流列表',{exact:true}).getByText('p1a 应丢弃',{exact:true}).count(),0);
  });
 
+ await test('files-reopen-after-agent-manager-keeps-one-pane',async()=>{
+  const manager=page.getByRole('complementary',{name:'Agent 管理',exact:true});
+  const files=page.getByRole('complementary',{name:'项目文件',exact:true});
+  const close=page.getByRole('button',{name:'关闭项目文件',exact:true});
+  const preview=page.getByLabel('文件预览',{exact:true});
+  const entry=page.getByRole('button',{name:'文件',exact:true});
+  await page.getByRole('button',{name:'Agent 管理',exact:true}).click();
+  await manager.getByRole('button',{name:'关闭 Agent 管理',exact:true}).click();
+  await manager.waitFor({state:'hidden'});
+  await entry.click();
+  await files.getByRole('button',{name:'预览文件 quick.txt',exact:true}).click();
+  await preview.locator('pre').waitFor();
+  await close.click();
+  await entry.click();
+  assert.equal(await page.locator('aside[aria-label="项目文件"]').count(),1);
+  assert.equal(await files.count(),1);
+  assert.equal(await close.count(),1);
+  assert.equal(await preview.count(),0);
+  await files.getByRole('button',{name:'预览文件 quick.txt',exact:true}).waitFor();
+  await close.click();
+  await files.waitFor({state:'detached'});
+ });
+
  await test('p1a-file-tree-narrow-focus-and-pure-text',async()=>{
   const entry=page.getByRole('button',{name:'文件',exact:true});
   const panel=page.getByLabel('项目文件',{exact:true});
