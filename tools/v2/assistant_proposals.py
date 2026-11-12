@@ -5,7 +5,7 @@ import re
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
 
-from .canvas_structure import EDGE_EXTENSION, ID, fields, node_kind, text
+from .canvas_structure import EDGE_EXTENSION, ID, TYPES, fields, node_kind, text
 from .development_graph import contains_development
 from .documents import validate_draft
 from .native_history_config import unique_pairs
@@ -27,7 +27,13 @@ update-node 只接受 name 或要合并的 config。remove-node 移除节点及�
 connect 使用新的边 id，并填写 source、target、可选 source_port、target_port、transfer。
 remove-edge 删除指定边。ID 以字母开头，只使用字母、数字、下划线和连字符。
 已有节点和端口使用提供的身份。新 Agent 只能是未绑定草稿，已有 Agent 只可改名。
-保留现有工具、Agent 权限、循环子图及人工审批。含已有审批的图只提议改名。"""
+在已有连线上插入节点时，先移除原连线，保留原来两端所用端口，并明确填写两条新连线的端口。
+路由输出使用规则 id 或 fallback。validation 的 config.rules 为 JSON 条件文本，例如 {"field":"result.passed","op":"equals","value":true}。
+保留现有工具、Agent 权限、循环子图及人工审批。含已有审批的图只提议改名。
+新增节点使用以下端口 id（输入 → 输出）：""" + '\n' + '\n'.join(
+    f"{kind}: {', '.join(TYPES[kind]['inputs']) or '无'} → {', '.join(TYPES[kind]['outputs']) or '无'}"
+    for kind in sorted(NODE_KINDS)
+)
 
 
 def _reject_constant(_):

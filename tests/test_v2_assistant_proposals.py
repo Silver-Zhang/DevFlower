@@ -4,7 +4,7 @@ import json
 from unittest import TestCase
 
 from studio.graph import Invalid
-from v2.assistant_proposals import proposal
+from v2.assistant_proposals import PROPOSAL_INSTRUCTIONS, proposal
 
 
 def node(ident, kind, x=0, config=None):
@@ -28,6 +28,25 @@ def plan(*operations):
 
 
 class ProposalTests(TestCase):
+    def test_insert_validation_preserves_selected_router_branch_and_uses_pass_port(self):
+        self.assertIn('validation: in → pass, fail', PROPOSAL_INSTRUCTIONS)
+        condition = {'field': 'result.passed', 'op': 'equals', 'value': True}
+        base = graph(node('Route', 'router', config={'rules': [
+            {'id': 'accepted', 'label': 'Accepted', 'test': condition}]}), node('Finish', 'output', 600),
+            edges=[edge('original', 'Route', 'Finish', 'accepted')])
+        operations = [
+            dict(op='remove-edge', id='original'),
+            dict(op='add-node', id='Verify', kind='validation', name='Verify', config={'rules': json.dumps(condition)}),
+            dict(op='connect', **edge('before', 'Route', 'Verify', 'accepted')),
+        ]
+        with self.assertRaisesRegex(Invalid, '源节点没有所选输出端口'):
+            proposal(base, plan(*operations, dict(op='connect', **edge('after', 'Verify', 'Finish'))))
+        candidate = proposal(base, plan(
+            *operations, dict(op='connect', **edge('after', 'Verify', 'Finish', 'pass'))))['document']
+        self.assertEqual([(row['source_port'], row['target_port']) for row in candidate['edges']],
+                         [('accepted', 'in'), ('pass', 'in')])
+        self.assertEqual(base['edges'][0]['id'], 'original')
+
     def test_preview_adds_connects_removes_and_updates_without_editing_base(self):
         base = graph(node('Start', 'start'), node('Old', 'agent', 300), node('End', 'output', 600),
                      edges=[edge('old-in', 'Start', 'Old'), edge('old-out', 'Old', 'End')])
