@@ -54,7 +54,11 @@ async function test(){
  await page.getByLabel('文件夹路径',{exact:true}).fill(project);
  await button('前往').click();
  await button('打开此文件夹').click();
- await page.getByLabel('运行历史',{exact:true}).getByRole('button',{name:new RegExp(name)}).click();
+ await button('运行记录').click();
+ const records=page.getByRole('main',{name:'运行记录',exact:true});
+ assert.equal(await button('运行记录').getAttribute('aria-current'),'page');
+ await records.getByRole('button',{name:new RegExp(name)}).click();
+ await records.waitFor({state:'detached'});
  await page.getByLabel('运行状态',{exact:true}).getByText('已完成',{exact:true}).waitFor();
  const graph=page.locator('.canvas-region');
  const graphViewport=()=>graph.locator('.react-flow__viewport').evaluate(node=>node.style.transform);

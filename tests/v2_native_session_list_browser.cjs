@@ -328,7 +328,10 @@ async function main() {
    await row(/乙工作区标记/).focus();
    await page.keyboard.press('Enter');
    await openReaderDisclosure(body, '查找消息');
-   await body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true}).waitFor();
+   await body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true}).focus();
+   await page.keyboard.press('Escape');
+   assert(await body.isVisible());
+   assert(await body.getByText('查找消息', {exact: true}).evaluate(node=>node===document.activeElement));
    await page.keyboard.press('Escape');
    await body.waitFor({state: 'detached'});
    await until(() => row(/乙工作区标记/).evaluate(node => node === document.activeElement));

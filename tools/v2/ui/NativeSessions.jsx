@@ -151,7 +151,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
  const selectionGeneration = useRef(0);
  const historyGeneration = useRef(0);
  const closeButton = useRef(null);
- const backButton = useRef(null);
+ const backButton = useRef(null),reader = useRef(null);
  const opener = useRef(null);
  const actionOpener = useRef(null);
  const collectionGroup = useRef(null);
@@ -251,6 +251,12 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
  useImperativeHandle(escapeRef, () => () => {
   if (dialogAction || groupDialog) return true;
   if (!reading) return false;
+  const disclosure=reader.current?.querySelector('.native-reader-tools > details[open]');
+  if(disclosure){
+   disclosure.open=false;
+   disclosure.querySelector('summary')?.focus();
+   return true;
+  }
   back();
   return true;
  });
@@ -418,6 +424,15 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
        <small>{item.files.join('、')} · {item.history_directory?'发现历史目录':'仅配置'}</small>
       </li>)}</ul>
      </details>}
+     {groupError && <p role="alert" className="error-text">{groupError}</p>}
+     {notice && <p role="status" className="muted small">{notice}</p>}
+     <div className="native-list-search">
+      <label className="field"><span>筛选会话列表</span>
+       <input type="search" aria-describedby="native-list-filter-scope" value={listQuery}
+        onChange={event => setListQuery([...event.target.value].slice(0, 200).join(''))}/>
+      </label>
+      <small id="native-list-filter-scope" className="muted">仅筛选会话名称、Provider 和来源。</small>
+     </div>
      <fieldset className="native-collections" ref={collectionGroup}>
       <legend>会话整理分类</legend>
       {COLLECTIONS.map(([id, label]) => <label key={id}>
@@ -425,14 +440,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
         onChange={() => switchCollection(id)}/><span>{label}</span>
       </label>)}
      </fieldset>
-     {groupError && <p role="alert" className="error-text">{groupError}</p>}
-     {notice && <p role="status" className="muted small">{notice}</p>}
      <div className="native-list-options">
-      <label className="field"><span>筛选会话列表</span>
-       <input type="search" aria-describedby="native-list-filter-scope" value={listQuery}
-        onChange={event => setListQuery([...event.target.value].slice(0, 200).join(''))}/>
-      </label>
-      <small id="native-list-filter-scope" className="muted">仅筛选会话名称、Provider 和来源。</small>
       <label className="field"><span>Provider</span>
        <select aria-label="筛选会话 Provider" value={provider} onChange={event => filterProvider(event.target.value)}>
         <option value="">全部</option>{Object.entries(PROVIDERS).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -440,13 +448,13 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
       </label>
       <label className="field"><span>会话列表分组</span>
        <select value={grouping} onChange={event => setGrouping(event.target.value)}>
-        <option value="provider">按 Provider</option><option value="activity">按活动时间</option>
+        <option value="provider">Provider</option><option value="activity">按活动时间</option>
         {workflowLinks && <option value="workflow">按工作流</option>}
        </select>
       </label>
       <label className="field"><span>会话列表排序</span>
        <select value={order} onChange={event => setOrder(event.target.value)}>
-        <option value="latest">最近活动优先</option><option value="earliest">最早活动优先</option>
+        <option value="latest">最近活动</option><option value="earliest">最早活动</option>
         <option value="name">按名称</option>
        </select>
       </label>
@@ -482,7 +490,7 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
      })}
     </>}
    </nav>
-   {reading && <section className="project-preview native-window" aria-label="会话正文">
+   {reading && <section ref={reader} className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
      <div className="native-reader-heading"><h3>{selectedView.alias || reading.row.name || PROVIDERS[reading.row.provider]} · 只读</h3>
       <p className="field-note">{PROVIDERS[reading.row.provider]}</p></div></header>

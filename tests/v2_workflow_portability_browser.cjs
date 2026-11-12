@@ -134,6 +134,7 @@ print(json.dumps({"value": allowed, "denied": denied}))
  assert(!fs.existsSync(path.join(root,'.devflower')));
 
  const download=page.waitForEvent('download');
+ await page.locator('.run-export-menu > summary').click();
  await button('导出运行归档').click();
  const history=await download;
  const archive=path.join(out,history.suggestedFilename());

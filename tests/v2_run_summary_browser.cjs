@@ -1,3 +1,4 @@
+const {openWorkflowActions}=require('./v2_workflow_actions.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
@@ -70,9 +71,14 @@ async function visitWorkspace(name) {
  await settled(page);
  assert.equal(await page.locator('.app-header button').textContent(),name);
 }
+async function showRunExport() {
+ const menu=page.locator('.run-export-menu');
+ if(!await menu.evaluate(element=>element.open))await menu.locator('summary').click();
+}
 async function chooseRun(name) {
  const response = page.waitForResponse(reply=>onEndpoint(reply,endpoints.list));
  await page.getByLabel('运行历史',{exact:true}).getByRole('button',{name:new RegExp(name)}).click();
+ await showRunExport();
  await named(page,'导出运行摘要').waitFor();
  assert.equal((await response).status(),200);
  await settled(page);
@@ -304,6 +310,7 @@ async function readOnlyArchive(page, sourceText) {
  await named(page,'编辑草稿').click();
  const beforeWrongImport=requests.length;
  const wrongImport=page.waitForEvent('filechooser');
+ await openWorkflowActions(page);
  await named(page,'导入工作流').click();
  await (await wrongImport).setFiles({name:filename,mimeType:'application/json',buffer:downloaded});
  await page.getByText('工作流文件格式或编码无效。',{exact:true}).waitFor();

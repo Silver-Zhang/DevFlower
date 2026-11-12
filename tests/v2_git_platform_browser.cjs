@@ -29,6 +29,13 @@ async function run(){
  await open('A');
  await platform.getByRole('heading',{name:'GitHub',exact:true}).waitFor();
  await platform.getByText('example/one',{exact:true}).waitFor();
+ const frame=await page.getByRole('main',{name:'Git 平台',exact:true}).boundingBox();
+ const tabs=await platform.getByLabel('Git 平台视图',{exact:true}).boundingBox();
+ const detail=await platform.locator('.git-platform-scroll').boundingBox();
+ assert(frame.width>1050 && tabs.x+tabs.width<=detail.x+1);
+ assert.equal(await button('Git 平台').getAttribute('aria-current'),'page');
+ assert.equal(await page.getByRole('main',{name:'工作流设计器'}).count(),0);
+
  await button('分支').click();
  await platform.getByRole('button',{name:/work\/fixture/}).click();
  await platform.getByRole('heading',{name:'work/fixture',exact:true}).waitFor();

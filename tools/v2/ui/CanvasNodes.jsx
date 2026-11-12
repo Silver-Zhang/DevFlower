@@ -31,13 +31,12 @@ export function CanvasNodeCard({id,data,selected}){
  return <article className={'agent-card canvas-node'+(selected?' selected':'')} data-kind={kind} data-state={state}>
   <header><span className="agent-icon"><Icon size={18} aria-hidden="true"/></span><div>
    <strong title={n.name}>{n.name||'未命名节点'}</strong><small>{type.english}</small></div></header>
-  {agent&&<p>{n.agent_id?'已保存的 Agent 配置':n.model||(n.kind==='agent'?'选择已保存的 Agent 配置':'选择 Provider 与模型')}</p>}
   <div className={'canvas-node-ports'+(agent?' agent-ports':'')}>
    <PortRows node={n} direction="inputs"/><PortRows node={n} direction="outputs"/>
   </div>
   <footer>
    <span className="workbench-state" data-state={state}>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
-   <span title={issue||undefined}>{data.activation?data.activation.input_sent_sha256?'已写入 CLI':'冻结运行':issue||(agent?(n.agent_id?'固定版本':'独立会话'):'草稿')}</span>
+   <span title={issue||undefined}>{data.activation?data.activation.input_sent_sha256?'已写入 CLI':'':issue||(agent?(n.agent_id?'固定版本':n.model||''):'')}</span>
   </footer>
  </article>;
 }

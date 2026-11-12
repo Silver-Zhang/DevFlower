@@ -82,7 +82,7 @@ export function GitWorkspace({api,workspace,onClose}){
    else setNotice('当前未找到该任务。可明确使用同一审核意图再次提交。')
   });
  }
- return <aside className="project-panel git-platform-panel" aria-label="Git 平台" onKeyDown={event=>{
+ return <main id="v2-git" tabIndex={-1} className="project-panel git-platform-panel" aria-label="Git 平台" onKeyDown={event=>{
   if(event.key==='Escape'){event.stopPropagation();if(approval)setApproval(null);else onClose()}
  }}>
   <header className="project-panel-header">
@@ -182,5 +182,5 @@ export function GitWorkspace({api,workspace,onClose}){
     </section>}
    </div>}
   </div>
- </aside>;
+ </main>;
 }

@@ -1,3 +1,4 @@
+const {openWorkflowActions}=require('./v2_workflow_actions.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
 const assert = require('node:assert/strict');
 const {createHash} = require('node:crypto');
@@ -106,6 +107,7 @@ async function main() {
  };
  const choose = async file => {
   const pick = page.waitForEvent('filechooser');
+  await openWorkflowActions(page);
   await importButton().click();
   await (await pick).setFiles(file);
  };
@@ -166,6 +168,7 @@ async function main() {
   await check('actual-saved-download-is-exact-canonical-archive', async () => {
    const before = postCount(SAVE);
    const next = page.waitForEvent('download');
+   await openWorkflowActions(page);
    await exportButton().focus();
    await page.keyboard.press('Enter');
    const download = await next;
@@ -206,6 +209,7 @@ async function main() {
    await notice().waitFor();
    await waitName(source.name);
    assert.equal(await page.locator('.save-state').textContent(), '未保存');
+   await openWorkflowActions(page);
    assert(await exportButton().isDisabled());
    assert.equal(await rows().getByRole('button', {name: source.name, exact: true}).count(), 0);
    assert.equal(postCount(SAVE), beforeSave);
@@ -258,6 +262,7 @@ async function main() {
    await readSaved(fixture.bOriginal.graph.name);
    const saves = postCount(SAVE);
    await edit().fill('保留脏编辑');
+   await openWorkflowActions(page);
    assert(await exportButton().isDisabled());
    await page.getByText('请先保存当前工作流，再导出已保存版本。', {exact: true}).waitFor();
    await choose(copyFile);
@@ -337,6 +342,7 @@ async function main() {
 
    const downloadsBefore = downloads.length;
    const oldExport = await holdNext(page, DRAFT);
+   await openWorkflowActions(page);
    await exportButton().click();
    await oldExport.ready();
    await visit('B');
@@ -360,6 +366,7 @@ async function main() {
    await readSaved(fixture.aSpare.graph.name);
    await secondTab('A', fixture.aSpare.graph.name, '另一标签已更新');
    const before = downloads.length;
+   await openWorkflowActions(page);
    await exportButton().click();
    await page.getByRole('alert').filter({hasText: '当前已保存版本已变化，请重新打开工作流。'}).waitFor();
    assert.equal(downloads.length, before);
@@ -368,6 +375,7 @@ async function main() {
    await page.setViewportSize({width: 600, height: 900});
    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
    const pick = page.waitForEvent('filechooser');
+   await openWorkflowActions(page);
    await importButton().focus();
    await page.keyboard.press('Enter');
    await (await pick).setFiles([]);

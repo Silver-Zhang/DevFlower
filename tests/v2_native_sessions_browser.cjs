@@ -151,6 +151,18 @@ async function main() {
    assert.equal(await saved.getAttribute('aria-current'), 'page');
    await panel();
    await read(defaultRow('Codex'), 'DEFAULT_CODEX_A <b>plain</b>');
+   await openReaderDisclosure(body, '查找消息');
+   await body.getByRole('searchbox', {name: '搜索当前可见窗口', exact: true}).focus();
+   await page.keyboard.press('Escape');
+   assert(await body.isVisible());
+   const search=body.getByText('查找消息',{exact:true});
+   assert(await search.evaluate(node=>node===document.activeElement&&!node.closest('details').open));
+   await openReaderDisclosure(body, '会话操作');
+   await body.getByRole('combobox', {name: '会话正文格式', exact: true}).focus();
+   await page.keyboard.press('Escape');
+   assert(await body.isVisible());
+   const actions=body.getByText('会话操作',{exact:true});
+   assert(await actions.evaluate(node=>node===document.activeElement&&!node.closest('details').open));
    await opener.focus();
    await page.keyboard.press('Escape');
    await body.waitFor({state: 'detached'});

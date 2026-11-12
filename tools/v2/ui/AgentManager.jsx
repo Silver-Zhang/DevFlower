@@ -23,6 +23,7 @@ function Field({label, children}) {
 
 export function AgentManager({api, workspace, writeProviders, selectedNode, onBind, onRun, onClose, onChanged, visible}) {
  const [rows, setRows] = useState([]);
+ const [agentQuery,setAgentQuery]=useState('');
  const [providers,setProviders]=useState([]),[profiles,setProfiles]=useState([]);
  const [record, setRecord] = useState(null);
  const [config, setConfig] = useState(null);
@@ -144,27 +145,46 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const sessionRows = sessions?.sessions ?? [];
  const modelValue = config?.model_source === 'manual' ? 'manual' : config?.model ?? '';
  const missingIdentity = Boolean(config && (!config.name.trim() || !config.role.trim()));
+ const visibleRows=rows.filter(row=>[row.config.name,row.config.role,LABELS[row.config.provider]]
+  .some(value=>value.toLocaleLowerCase().includes(agentQuery.trim().toLocaleLowerCase())));
+ const agentSections=useRef({});
+ function focusSection(id){
+  const field=agentSections.current[id];
+  field?.scrollIntoView({block:'start'});
+  field?.focus({preventScroll:true});
+ }
  const editText = (label, key, rows) => <Field label={['name','role'].includes(key)?label+'（必填）':label}>{rows ? <textarea aria-label={label} rows={rows}
   value={config[key]} onChange={event => change({[key]: event.target.value})}/> : <input aria-label={label}
   required={key==='name'||key==='role'} ref={key==='name'?nameInput:undefined}
   value={config[key]} onChange={event => change({[key]: event.target.value})}/>}</Field>;
 
- return <aside className="agent-manager" aria-label="Agent 管理" hidden={!visible}
+ return <main id="v2-agents" tabIndex={-1} className="agent-manager" aria-label="Agent 管理" hidden={!visible}
   onKeyDown={event => {if (event.key === 'Escape') {event.stopPropagation(); onClose();}}}>
-  <header><div><h2>Agent 管理</h2><small>{workspace.name}</small></div>
+  <header><div><h2>Agent 管理</h2><small>{workspace.name}{selectedNode?' · 为当前画布节点选择配置':''}</small></div>
+   {(config||rows.length>0)&&<button type="button" className={!config?'primary':undefined} onClick={() => choose(null)} disabled={busy}><Plus size={15}/>新建 Agent</button>}
    <button ref={close} aria-label="关闭 Agent 管理" onClick={onClose}><X size={17}/></button></header>
   <div className="agent-manager-layout">
    <nav aria-label="已保存 Agent">
-    <button onClick={() => choose(null)} disabled={busy}><Plus size={15}/>新建 Agent</button>
-    {rows.map(row => <button key={row.id} aria-pressed={record?.id === row.id} onClick={() => choose(row)} disabled={busy}>
+    {rows.length>0&&<input type="search" aria-label="搜索已保存 Agent" placeholder="搜索 Agent"
+     value={agentQuery} onChange={event=>setAgentQuery(event.target.value)}/>}
+    {rows.length>0&&!visibleRows.length&&<p className="field-note">没有匹配的 Agent。</p>}
+    {visibleRows.map(row => <button key={row.id} aria-pressed={record?.id === row.id} onClick={() => choose(row)} disabled={busy}>
      <strong>{row.config.name}</strong><small>{row.config.role} · {LABELS[row.config.provider]}</small></button>)}
    </nav>
    {!config ? <div className="agent-manager-empty"><h3>{selectedNode?'为当前节点选择 Agent':'为工作流准备 Agent'}</h3>
     <p>保存配置后，可以将同一个 Agent 用在不同的工作流节点。</p>
-    <button type="button" className="primary" disabled={busy} onClick={() => choose(null)}>创建 Agent 配置</button></div> :
+    {!rows.length&&<button type="button" className="primary" disabled={busy} onClick={() => choose(null)}>新建 Agent</button>}</div> :
     <form onSubmit={save} aria-label="Agent 配置表单" aria-busy={busy}>
+     <div className="agent-form-heading">
+      <div><h3>{config.name.trim()||'新建 Agent 配置'}</h3><p className="field-note">{isDirty?'未保存的更改':'已保存的配置'}</p></div>
+      <div className="agent-form-sections" role="group" aria-label="配置章节">
+       <button type="button" onClick={()=>focusSection('identity')}>身份与模型</button>
+       <button type="button" onClick={()=>focusSection('prompt')}>Prompt</button>
+       <button type="button" onClick={()=>focusSection('tools')}>工具与权限</button>
+      </div>
+     </div>
      <div className="agent-form-scroll">
-     <fieldset disabled={busy}><legend>身份与角色</legend>
+     <fieldset ref={element=>{agentSections.current.identity=element}} tabIndex={-1} disabled={busy}><legend>身份与角色</legend>
       {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。角色模板可以代填角色。</p>}
       <div className="agent-manager-pair">{editText('Agent 名称', 'name')}
        <Field label="角色模板"><select aria-label="角色模板" value={config.template} onChange={event => {
@@ -172,10 +192,9 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
         change(template === 'custom' ? {template} : {template, role, responsibilities});
        }}>{Object.entries(TEMPLATES).map(([id, [label]]) => <option key={id} value={id}>{label || '自定义'}</option>)}</select></Field>
       </div>
-      {editText('角色', 'role')}{editText('职责', 'responsibilities', 2)}
-      {editText('背景', 'background', 2)}{editText('任务目标', 'goal', 2)}
+      {editText('角色', 'role')}
      </fieldset>
-     <fieldset disabled={busy}><legend>CLI 与会话</legend>
+     <fieldset disabled={busy}><legend>CLI 与模型</legend>
       <div className="agent-manager-pair">
        <Field label="Agent Provider"><select aria-label="Agent Provider" value={config.provider}
         onChange={event => changeProvider(event.target.value)}>
@@ -221,6 +240,15 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
       </div>
       {config.model_source === 'manual' && <Field label="自定义模型名"><input aria-label="自定义模型名" value={config.model ?? ''}
        onChange={event => change({model: event.target.value})}/></Field>}
+     </fieldset>
+     <fieldset ref={element=>{agentSections.current.prompt=element}} tabIndex={-1} disabled={busy}><legend>提示词</legend>
+      {editText('初始化提示词', 'initial_prompt', 3)}{editText('每轮提示词', 'round_prompt', 4)}
+      {editText('输出与交接要求', 'output_prompt', 3)}
+      <details className="agent-role-context"><summary>角色职责与上下文</summary>
+       {editText('职责', 'responsibilities', 2)}{editText('背景', 'background', 2)}{editText('任务目标', 'goal', 2)}
+      </details>
+     </fieldset>
+     <fieldset ref={element=>{agentSections.current.tools=element}} tabIndex={-1} disabled={busy}><legend>工具、权限与会话</legend>
       <div className="agent-manager-pair">
        <Field label="工作模式"><select aria-label="工作模式" value={config.mode} onChange={event => change({mode: event.target.value})}>
         {['Ask', 'Plan', 'Agent'].map(mode => <option value={mode} key={mode} disabled={mode !== 'Ask' && !provider?.modes[mode]?.enabled}>
@@ -245,10 +273,6 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
          {row.updated_at ? ' · ' + new Date(row.updated_at).toLocaleString() : ''}</option>)}</select></Field>
        <button type="button" disabled={!(isolated?nativeProfile.available:writeProviders?.includes(config.provider))} onClick={() => action(loadSessions)}>读取可绑定会话</button>
       </div>
-     </fieldset>
-     <fieldset disabled={busy}><legend>提示词</legend>
-      {editText('初始化提示词', 'initial_prompt', 3)}{editText('每轮提示词', 'round_prompt', 4)}
-      {editText('输出与交接要求', 'output_prompt', 3)}
      </fieldset>
      <details className="agent-advanced"><summary>Skills、子 Agent 与预算</summary>
       <button type="button" disabled={busy||isolated} onClick={() => action(loadSkills)}>发现 Skills</button>
@@ -279,11 +303,11 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      <footer>
       {error && <p className="error-text" role="alert">{error}</p>}
       {notice && <p className="field-note" role="status">{notice}</p>}
-      <button type="submit" className="primary" aria-describedby={missingIdentity?'agent-save-hint':undefined}
+      <button type="submit" className={isDirty?'primary':undefined} aria-describedby={missingIdentity?'agent-save-hint':undefined}
        disabled={busy || profileUnavailable || missingIdentity}>保存 Agent</button>
       <button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
        {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>
-      <button type="button" className="bind-agent" disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
+      <button type="button" className={'bind-agent'+(!isDirty&&record&&!profileUnavailable?' primary':'')} disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
        {selectedNode ? '用于当前节点' : '添加到画布'}</button>
       {record && (deleteAsk ? <>
        <button type="button" disabled={busy} onClick={remove}>确认删除配置</button>
@@ -293,5 +317,5 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
     </form>}
    {!config && error && <p className="error-text" role="alert">{error}</p>}
   </div>
- </aside>;
+ </main>;
 }
