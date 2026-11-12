@@ -520,6 +520,16 @@
     font-size: 12px;
   }
 }
+.nodes-outside .canvas-edit-tools > button[aria-label="适应画布"] {
+  background: var(--studio-primary-bg);
+  color: var(--studio-primary-fg);
+}
+@media (max-width: 760px) {
+  .nodes-outside .canvas-edit-tools > button[aria-label="适应画布"]::after {
+    content: attr(aria-label);
+    font-size: 12px;
+  }
+}
 @media (min-width: 761px) and (max-width: 1080px) {
   .v2-app.side-tool-open:has(> .provider-catalog-panel) {
     --dock-width: clamp(264px, 33vw, 338px);

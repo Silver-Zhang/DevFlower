@@ -121,7 +121,7 @@ export function AssistantTeam({api,workspace,conversation,turn,draft,busy,perfor
     {preview.agents.map(item=><AgentReview key={item.slot} item={item}/>)}
     {turn.team.kind==='development'&&<p className="field-note">{preview.verification?
      '独立验证入口 '+preview.verification.path+' · '+preview.verification.branch+' · '+preview.verification.entry_sha256.slice(0,12):
-     '此预览采用模型测试与审核。要加入确定性交付 Gate，先在发送上下文附加工作区 Python 测试，再在下方选为独立验证入口并填写期望 JSON。'}</p>}
+     '此预览采用模型测试与审核。确定性交付 Gate 需要附加工作区 Python 测试，并填写期望 JSON。'}</p>}
     <fieldset disabled={busy}>
      <legend>选择团队权限</legend>
      {preview.agents.map(item=><label key={item.slot} className="assistant-run-choice">{item.row.config.name}
@@ -132,7 +132,7 @@ export function AssistantTeam({api,workspace,conversation,turn,draft,busy,perfor
        {preview.available_permissions.map(key=><option key={key} value={key}>{permissions[key]}</option>)}
       </select><small>建议 {permissions[item.suggested_permission]}</small>
      </label>)}
-     {turn.team.kind==='development'&&chosen.Developer==='workspace-write'&&<div>
+     {turn.team.kind==='development'&&(chosen.Developer==='workspace-write'?<div>
       {suggested&&<button onClick={()=>{
        setTestPath(suggested.path);setExpected(JSON.stringify(suggested.expected,null,2));setApproved(false);
       }}>采用建议的验证文件和期望值</button>}
@@ -142,8 +142,9 @@ export function AssistantTeam({api,workspace,conversation,turn,draft,busy,perfor
       </select></label>
       {testPath&&<label>期望 JSON<textarea aria-label="验证期望 JSON" value={expected} maxLength={4000}
        onChange={event=>{setExpected(event.target.value);setApproved(false)}}/></label>}
+      <p className="field-note">验证器以 <code>python3 -I -B</code> 运行。请用明确的本地文件路径加载同目录代码。</p>
       {!turn.team.files.some(path=>path.endsWith('.py'))&&<p className="field-note">先附加工作区内的 Python 验证文件，再生成提案。</p>}
-     </div>}
+     </div>:<p className="field-note">为 Developer 选择工作区读写权限后，可以配置独立验证入口。</p>)}
      <button onClick={()=>perform(()=>review())} disabled={!!testPath&&!expected.trim()}>预览授权后的配置</button>
      {current&&<>
       <label className="assistant-checkbox"><input type="checkbox" checked={approved} onChange={event=>setApproved(event.target.checked)}/>

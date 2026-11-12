@@ -22,7 +22,7 @@ import {SidebarToggle} from '../../studio/workbench_ui/WorkspaceLayout.jsx';
 import {downloadFile,HistoryArchives} from './HistoryArchives.jsx';
 import {LocalDelivery} from './LocalDelivery.jsx';
 import {applySelection, canvasFragment, coordinate, layoutCanvas, pasteCanvasFragment} from './canvasEditing.mjs';
-import {detourEdge,routingBounds} from './canvasRouting.mjs';
+import {allNodesOutside,canvasGeometry,routeEdges,sameCanvasGeometry} from './canvasRouting.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
@@ -60,7 +60,7 @@ const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b))
 function Button({icon:Icon,children,...props}){return <button type="button" {...props}>{Icon&&<Icon size={16} aria-hidden="true"/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 function CanvasHandoffEdge(props){
- return <HandoffEdge {...props} geometry={detourEdge(props,props.data.bounds)}/>;
+ return <HandoffEdge {...props} geometry={props.data.route}/>;
 }
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:CanvasHandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
@@ -1030,7 +1030,9 @@ function App(){
    ...(measurements.has(node.id)?{measured:measurements.get(node.id)}:{})};
  });
  const shownNodes=new Map(shown.nodes.map(node=>[node.id,node]));
- const bounds=useMemo(()=>routingBounds(shown.nodes,measurements),[shown.nodes,measurements]);
+ const geometry=useStore(canvasGeometry,sameCanvasGeometry);
+ const outside=useStore(allNodesOutside);
+ const routes=useMemo(()=>routeEdges(shown.edges,geometry),[shown.edges,geometry]);
  const rfEdges=shown.edges.map(item=>{
   const {source,target}=item,sourceHandle=item.source_port??'out',targetHandle=item.target_port??'in';
   const output=ports(shownNodes.get(source),'outputs').find(([id])=>id===sourceHandle)?.[1]||sourceHandle;
@@ -1038,7 +1040,7 @@ function App(){
   return {id:item.id,type:'handoff',source,target,sourceHandle,targetHandle,selected:edgeSelection.includes(item.id),
    markerEnd:{type:MarkerType.ArrowClosed},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
    ariaLabel:shownNodes.get(source).name+' '+output+' → '+shownNodes.get(target).name+' '+input,
-   data:{bounds,hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
+   data:{route:routes.get(item.id),hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
@@ -1230,7 +1232,8 @@ function App(){
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
    <div className={'editor-view'+(readOnly&&runInspectorOpen?' showing-run-evidence':'')}>
-   <div ref={canvasRef} className={'canvas-region'+(!workspace?' showing-workspace-home':'')} inert={readOnly&&runInspectorOpen} aria-label="工作流画布" tabIndex={0}
+   <div ref={canvasRef} className={'canvas-region'+(!workspace?' showing-workspace-home':'')+
+    (!readOnly&&shown.nodes.length&&outside?' nodes-outside':'')} inert={readOnly&&runInspectorOpen} aria-label="工作流画布" tabIndex={0}
     onPointerDownCapture={event=>{
      if(taskContext.current?.open)taskContext.current.open=false;
      if(workflowMore.current?.open&&!workflowMore.current.contains(event.target))workflowMore.current.open=false;

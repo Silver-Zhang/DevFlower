@@ -122,6 +122,61 @@ async function run(){
  assert(await navigation.isVisible());
  assert.equal(requests.filter(([method,route])=>method==='POST'&&route.endsWith('/assistant/send')).length,2);
  assert(!requests.some(([method,route])=>method==='POST'&&['/launch','/drafts/save','/resume'].some(end=>route.endsWith(end))));
+ // Project a prior repair result without starting a Provider, and observe
+ // the real UI's new-preview request while keeping launch uncalled.
+ const priorRepair='1'.repeat(32),repairAgent='2'.repeat(32),revision='3'.repeat(64);
+ let repairState='RECOVERY_REQUIRED',repairSource,previewPosts=0,launchPosts=0;
+ await page.route('**/api/v2/assistant/settings?*',async route=>{
+  const response=await route.fetch(),value=await response.json();
+  value.identities=[{id:repairAgent,revision,name:'Saved repair agent',mode:'Agent',
+   permission:'workspace-write',session_kind:'new'}];
+  await route.fulfill({response,json:value});
+ });
+ await page.route('**/api/v2/assistant/diagnosis?*',async route=>{
+  const response=await route.fetch(),value=await response.json();
+  repairSource=value.run;
+  await route.fulfill({response,json:{...value,repair_run:priorRepair}});
+ });
+ await page.route('**/api/v2/assistant/repair_status?*',async route=>{
+  assert.equal(new URL(route.request().url()).searchParams.get('run'),priorRepair);
+  const file={path:'note.txt',sha256:'4'.repeat(64)};
+  await route.fulfill({json:{run:priorRepair,source_run:repairSource,state:repairState,
+   files:[{before:file,after:file,changed:false}]}});
+ });
+ await page.route('**/api/v2/assistant/preview_repair',async route=>{
+  previewPosts++;
+  const body=route.request().postDataJSON();
+  assert.equal(body.run,repairSource);
+  assert.equal(body.agent,repairAgent);
+  assert.equal(body.revision,revision);
+  assert.equal(body.authorization,undefined);
+  assert.equal(body.intent,undefined);
+  await route.fulfill({json:{evidence:{node:'Route',reason:'fixture'},agent:{name:'Saved repair agent',
+   provider:'codex',permission:'workspace-write',revision,cwd:workspace},
+   source:{branch:'fixture',head:'5'.repeat(40)},execution_task:body.task,files:[],sha256:'6'.repeat(64)}});
+ });
+ await page.route('**/api/v2/assistant/launch_repair',async route=>{launchPosts++;await route.abort()});
+ await page.setViewportSize({width:1280,height:840});
+ await button('诊断本次运行').click();
+ const repair=assistant.getByLabel('授权修复',{exact:true});
+ await repair.getByRole('status').filter({hasText:'RECOVERY_REQUIRED'}).waitFor();
+ assert.equal(await repair.getByRole('button',{name:'新建修复',exact:true}).count(),0);
+ repairState='COMPLETED';
+ await repair.getByRole('button',{name:'重新读取修复与验证',exact:true}).click();
+ await repair.getByText('所附文件的指纹均与修复前一致。',{exact:true}).waitFor();
+ await repair.getByRole('button',{name:'新建修复',exact:true}).click();
+ assert.equal(previewPosts,0);assert.equal(launchPosts,0);
+ await repair.getByLabel('受管修复 Agent',{exact:true}).selectOption(repairAgent);
+ await repair.getByText(/核对所选版本的每轮提示词/).waitFor();
+ await repair.getByLabel('明确的修复任务',{exact:true}).fill('修复失败用例并保留原记录');
+ await repair.getByRole('button',{name:'预览执行修复',exact:true}).click();
+ const approve=repair.getByRole('checkbox');
+ await approve.waitFor();
+ assert.equal(await approve.isChecked(),false);
+ assert.equal(await repair.getByRole('button',{name:'确认执行修复',exact:true}).isEnabled(),false);
+ assert.equal(previewPosts,1);assert.equal(launchPosts,0);
+ await page.screenshot({path:path.join(out,'assistant-new-repair-preview.png')});
+ console.log('PASS completed no-op opens a new repair preview with fresh approval and no launch');
  assert.deepEqual(errors,[]);
  console.log('PASS preview and selected attachment, lost send and 503 readback, proposal review and undo, history, read-only diagnosis');
 }

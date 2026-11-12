@@ -14,6 +14,7 @@ export function AssistantRepair({api,workspace,diagnosis,agents,files,runs,perfo
  const [result,setResult]=useState(null),[verification,setVerification]=useState('');
  const [pending,setPending]=useState(()=>sessionStorage.getItem(pendingKey));
  const [unregistered,setUnregistered]=useState(false);
+ const [newRepairOpened,setNewRepairOpened]=useState(false);
  const currentAgent=available.find(row=>row.id===agent);
  const input={workspace,run:diagnosis.run,activation,agent,revision:currentAgent?.revision||null,task,files:files.map(filePath)};
  const matching=preview&&JSON.stringify(preview.input)===JSON.stringify(input);
@@ -28,11 +29,11 @@ export function AssistantRepair({api,workspace,diagnosis,agents,files,runs,perfo
  }
  useEffect(()=>{
   let current=true;
-  if(diagnosis.repair_run){
+  if(diagnosis.repair_run&&!newRepairOpened){
    api(route({workspace,run:diagnosis.repair_run})).then(value=>{if(current&&!pending)setResult(value)},()=>{});
   }
   return()=>{current=false};
- },[diagnosis.repair_run]);
+ },[diagnosis.repair_run,newRepairOpened]);
  useEffect(()=>{
   if(!result?.run||terminal.has(result.state))return;
   let current=true;
@@ -65,6 +66,11 @@ export function AssistantRepair({api,workspace,diagnosis,agents,files,runs,perfo
   const value=await api(route({workspace,run:result.run,...(verification?{verification}:{})}));
   setResult(value);
  }
+ function openNewRepair(){
+  if(pending||result?.state!=='COMPLETED')return;
+  setNewRepairOpened(true);setResult(null);setVerification('');setPreview(null);setApproved(false);
+  setAgent('');setTask('');setActivation(failures[0]?.activation||'');
+ }
  if(diagnosis.state!=='FAILED'||!failures.length)return null;
  return <section className="assistant-proposal" aria-label="授权修复">
   <h3>授权修复</h3>
@@ -76,7 +82,10 @@ export function AssistantRepair({api,workspace,diagnosis,agents,files,runs,perfo
     <details><summary>修复前后指纹</summary><p>{item.before.sha256}</p><p>{item.after?.sha256||'当前不可读'}</p></details></li>)}</ul>
    <button disabled={busy} onClick={()=>onRun(result.run)}>查看修复运行</button>
    {result.state==='COMPLETED'&&<>
+    {result.files.length>0&&result.files.every(item=>item.changed===false)&&
+     <p className="field-note">所附文件的指纹均与修复前一致。</p>}
     <p>使用原工作流版本启动独立验证，然后选择验证运行。</p>
+    {!pending&&<button disabled={busy} onClick={openNewRepair}>新建修复</button>}
     <label>独立验证运行<select value={verification} onChange={event=>setVerification(event.target.value)}>
      <option value="">不选择</option>{runs.filter(row=>row.id!==result.run&&row.id!==result.source_run&&
       row.draft_id===diagnosis.draft_id&&row.draft_revision===diagnosis.draft_revision).map(row=>
@@ -101,6 +110,7 @@ export function AssistantRepair({api,workspace,diagnosis,agents,files,runs,perfo
     <label>受管修复 Agent<select aria-label="受管修复 Agent" value={agent} onChange={event=>setAgent(event.target.value)}>
      <option value="">请选择已保存 Agent</option>{available.map(row=><option key={row.id} value={row.id}>{row.name} · {row.revision.slice(0,10)}</option>)}
     </select></label>
+    {currentAgent&&<p className="field-note">请在 Agent 管理核对所选版本的每轮提示词。如果提示词禁止修改，请选择或另存允许修改的专用修复 Agent。</p>}
     <label>明确的修复任务<textarea aria-label="明确的修复任务" value={task} maxLength={8000} rows={3}
      onChange={event=>setTask(event.target.value)}/></label>
     <p className="field-note">本次已附加的 {files.length} 个文件将用于修复前后对照。</p>
