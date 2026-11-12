@@ -103,9 +103,13 @@ class CodexProvider:
             authenticated = bool(account.get('account')) or account.get('requiresOpenaiAuth') is False
             if not authenticated:
                 raise Blocked('Codex 未报告可用登录状态，请在原生客户端完成登录；不会切换账户或发送费用探针')
+            account_type = (account.get('account') or {}).get('type')
+            auth_source = {'apiKey':'native_api_key', 'chatgpt':'native_login',
+                           'chatgptAuthTokens':'native_login'}.get(
+                               account_type, 'native_provider' if account.get('requiresOpenaiAuth') is False else 'unknown')
             binding = self.base(rows[0]['id'], rows[0]['efforts'][0] if rows[0]['efforts'] else 'low')
             value = dict(id='codex', provider='codex', models=rows, source='Codex app-server model/list',
-                         at=time.time(), error=None, authenticated=True, inference_verified=False,
+                         at=time.time(), error=None, authenticated=True, auth_source=auth_source, inference_verified=False,
                          account_sha256=digest(canonical(account)), environment_sha256=direct_environment_identity(binding),
                          version=self.version, executable_sha256=self.image['sha256'],
                          **({'native_home_sha256':self.native_home['sha256']} if self.native_home else {}))

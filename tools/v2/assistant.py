@@ -9,7 +9,10 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 
+from .assistant_operations import AssistantOperations
+from .cli_providers import model_id, READ_ERRORS
 from .documents import validate_draft
+from .native_agent_profiles import EFFORT, PROFILE_ID
 from .project_files import read_project
 from .run_inspector import IDENT, RUN, RunInspector, take
 from .session_identity import SessionRefused
@@ -28,7 +31,10 @@ MAX_TURNS = 32
 MAX_FILES = 3
 MAX_PROMPT = 54000
 MAX_REPLY = 12000
-MODES = {'chat', 'proposal'}
+MODES = {'chat', 'proposal', 'probe'}
+PREFERENCES = 'assistant-preferences'
+PROBE = '连接测试：请只回复 DEVFLOWER_ASSISTANT_OK。'
+CONFIG = {'provider', 'native_profile', 'model', 'effort', 'identity'}
 SELECT = {'workspace', 'conversation', 'provider', 'model', 'effort', 'mode', 'text', 'draft', 'files', 'run'}
 
 
@@ -47,12 +53,89 @@ def clipped(text, cap):
 class Assistant:
     def __init__(self, store, operations, runtime):
         self.store, self.operations, self.runtime = store, operations, runtime
+        registry = getattr(runtime, 'cli_providers', None)
+        self.model_operations = AssistantOperations(store, registry) if registry else None
         self.inspector = RunInspector(store)
         self.owner = uuid.uuid4().hex
 
     def require_provider(self, provider):
         if not isinstance(provider, str) or not self.operations or provider not in self.operations.status():
             raise Invalid('此 Provider 尚未启用助手原生发送。请核对启动时批准的原生会话配置。')
+
+    def selected_identity(self, workspace, value):
+        if value is None:
+            return None
+        if (not isinstance(value, dict) or set(value) != {'id', 'revision'}
+                or not isinstance(value['revision'], str) or not IDENT.fullmatch(value['revision'])):
+            raise Invalid('请明确选择已保存的 Agent 配置版本。')
+        return self.runtime.agents.get(workspace, value['id'], value['revision'])
+
+    def selected_config(self, workspace, data):
+        if not self.model_operations:
+            raise Invalid('本机服务未提供原生 CLI 助手调用。')
+        selection = {key: data.get(key) for key in CONFIG}
+        provider, profile, model, effort = (selection[key] for key in ('provider','native_profile','model','effort'))
+        if (not isinstance(provider, str) or provider not in ('codex', 'claude')
+                or profile is not None and (not isinstance(profile, str) or not PROFILE_ID.fullmatch(profile))
+                or model is not None and (not model_id(model) or self.inspector.text(model) != model)
+                or effort is not None and (not isinstance(effort, str) or not EFFORT.fullmatch(effort))):
+            raise Invalid('请选择已登记的原生配置与 CLI 报告的模型和强度。')
+        identity = self.selected_identity(workspace, selection['identity'])
+        try:
+            binding, config = self.model_operations.config(workspace, selection)
+        except Invalid:
+            raise
+        except READ_ERRORS:
+            raise Invalid('本机 CLI 或原生配置无法核验，请刷新目录并核对原生认证。') from None
+        return binding, config, identity
+
+    def settings(self, workspace):
+        self.store.workspace(workspace)
+        with self.store.db.tx(read=True) as db:
+            preferences = read_row(db, PREFERENCES, workspace)
+            probes = db.execute("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.workspace')=? "
+                                "AND json_extract(data,'$.mode')='probe' ORDER BY rowid DESC LIMIT 12",
+                                (TURN, workspace)).fetchall()
+        registry = self.model_operations.registry if self.model_operations else None
+        listing = registry.listing() if registry else {'providers': [], 'profiles': []}
+        agents = self.runtime.agents.list(workspace)['agents'] if registry else []
+        fields = ('name','role','provider','model','effort','native_profile')
+        checks = []
+        for (raw,) in probes:
+            row = json.loads(raw)
+            value = self.public_turn(row)
+            checks.append({key: value.get(key) for key in ('state','created_at','config','receipt','reason')})
+        return self.inspector.clean(dict(**listing, preferences=preferences, checks=checks,
+            identities=[dict(id=row['id'], revision=row['revision'],
+                             **{key: row['config'].get(key) for key in fields}) for row in agents],
+            legacy_providers=self.operations.status() if self.operations else []))
+
+    def configure(self, data):
+        if not isinstance(data, dict) or set(data) != CONFIG | {'workspace'}:
+            raise Invalid('保存助手偏好需要工作区和原生配置。')
+        workspace = data['workspace']
+        self.store.workspace(workspace)
+        self.selected_config(workspace, data)
+        self.store.db.put(PREFERENCES, workspace, {key:data[key] for key in CONFIG})
+        return self.settings(workspace)
+
+    def refresh_models(self, data):
+        if (not self.model_operations or not isinstance(data, dict)
+                or set(data) != {'workspace','provider','native_profile'}):
+            raise Invalid('请选择要刷新的原生 CLI 配置。')
+        self.store.workspace(data['workspace'])
+        registry = self.model_operations.registry
+        provider, name = data['provider'], data['native_profile']
+        if (not isinstance(provider,str) or provider not in registry.adapters or name is not None
+                and (not isinstance(name,str) or not PROFILE_ID.fullmatch(name))):
+            raise Invalid('请选择已登记的原生 CLI 配置。')
+        if name is not None:
+            try:
+                registry.selected(provider, name)
+            except READ_ERRORS:
+                raise Invalid('请选择可用的已登记原生配置。') from None
+        registry.discover(provider, name if registry.homes.get(provider,name) else None)
+        return self.settings(data['workspace'])
 
     def conversation_rows(self, workspace, conversation):
         if not isinstance(conversation, str) or not RUN.fullmatch(conversation):
@@ -67,13 +150,14 @@ class Assistant:
         return chat, turns
 
     def native_status(self, row):
-        if self.operations is not None:
-            operation = self.operations.operation(row['workspace'], row['native_intent'])
+        operations = self.model_operations if row.get('config') else self.operations
+        if operations is not None:
+            operation = operations.operation(row['workspace'], row['native_intent'])
             if operation['state'] != 'UNREGISTERED':
                 return operation
         if row.get('dispatch_state') in ('NOT_SENT','RECOVERY_REQUIRED'):
             return {'state': row['dispatch_state'], 'reason': row['reason']}
-        if self.operations is not None and row['owner'] == self.owner:
+        if operations is not None and row['owner'] == self.owner:
             return {'state':'SUBMITTING', 'reason':None}
         return {'state':'RECOVERY_REQUIRED', 'reason':'原发送状态待核验。请查看本次记录。'}
 
@@ -82,6 +166,10 @@ class Assistant:
         value = self.inspector.clean({key: row[key] for key in ('id', 'intent', 'text', 'provider', 'mode', 'created_at',
                                                               'context', 'prompt_sha256')})
         value.update(state=operation['state'], reason=self.inspector.clean(operation.get('reason')))
+        if row.get('config'):
+            value['config'] = self.inspector.clean(row['config'])
+        if operation.get('execution_failure'):
+            value['execution_failure'] = self.inspector.clean(operation['execution_failure'])
         if with_proposal:
             value['prompt'] = self.inspector.text(row['prompt'])
         if operation['state'] == 'COMPLETED':
@@ -199,20 +287,27 @@ class Assistant:
                     resume_available=value['run'].get('resume_available',False))
 
     def prepare(self, data):
-        if not isinstance(data, dict) or set(data) != SELECT:
+        if not isinstance(data, dict) or set(data) not in (SELECT, SELECT | {'native_profile','identity'}):
             raise Invalid('助手请求需要明确的对话和上下文范围。')
         workspace, conversation, mode, provider, text = (data[key] for key in ('workspace','conversation','mode','provider','text'))
         workspace_row = self.store.workspace(workspace)
-        self.require_provider(provider)
+        binding = config = identity = None
+        if 'native_profile' in data:
+            binding, config, identity = self.selected_config(workspace, data)
+        else:
+            self.require_provider(provider)
         if (not isinstance(mode, str) or mode not in MODES or not isinstance(text, str) or not text.strip()
                 or '\0' in text or len(text.encode()) > 8000):
             raise Invalid('请输入有界的助手消息并选择工作方式。')
-        if provider == 'codex':
+        if not binding and provider == 'codex':
             if any(not isinstance(data[key], str) or not data[key].strip() or len(data[key])>200 or '\0' in data[key]
                    for key in ('model','effort')):
                 raise Invalid('请选择真实发现的 Codex 模型和强度。')
-        elif data['model'] is not None or data['effort'] is not None:
+        elif not binding and (data['model'] is not None or data['effort'] is not None):
             raise Invalid('Claude 助手使用启动时批准的 CLI 原生配置。')
+        if mode == 'probe' and (not binding or text != PROBE or data['draft'] is not None or data['files'] != []
+                                or data['run'] is not None or identity is not None):
+            raise Invalid('连接测试只发送固定短提示。')
         text = self.inspector.text(text)
         chat, previous = self.conversation_rows(workspace, conversation)
         if len(previous) >= MAX_TURNS:
@@ -229,7 +324,19 @@ class Assistant:
         scope = dict(name=self.inspector.text(workspace_row['name']))
         context = dict(workspace=scope, draft=None, files=[], run=None, previous_turns=0)
         sections = [('本机工作空间名称（数据）', scope)]
-        for row in previous[-4:]:
+        if config:
+            context['config'] = config
+        if identity:
+            fields = ('name', 'role', 'responsibilities', 'background', 'goal', 'initial_prompt',
+                      'round_prompt', 'output_prompt')
+            role = self.inspector.clean({key:identity['config'][key] for key in fields})
+            role = {key:clipped(value, 2400)[0] for key,value in role.items()}
+            sections.append(('用户选择的 Agent 身份和提示词（只用作对话角色）', role))
+        if mode == 'probe':
+            sections.clear()
+        for row in (previous[-4:] if mode != 'probe' else []):
+            if row['mode'] == 'probe':
+                continue
             old = self.native_status(row)
             if old['state'] == 'COMPLETED':
                 user, _ = clipped(self.inspector.text(row['text']), 1700)
@@ -264,12 +371,14 @@ class Assistant:
         if mode == 'proposal':
             from .assistant_proposals import PROPOSAL_INSTRUCTIONS
             guidance += '\n' + PROPOSAL_INSTRUCTIONS
-        prompt = guidance + '\n\n' + '\n\n'.join(title+'\n'+canonical(value).decode() for title,value in sections)
-        prompt += '\n\n用户本次明确请求\n' + text
+        prompt = text
+        if mode != 'probe':
+            prompt = guidance + '\n\n' + '\n\n'.join(title+'\n'+canonical(value).decode() for title,value in sections)
+            prompt += '\n\n用户本次明确请求\n' + text
         if len(prompt.encode()) > MAX_PROMPT:
             raise Invalid('所选上下文超过发送预算。请减少附件。')
         request_hash = digest(canonical([data, prompt, context]))
-        return dict(prompt=prompt, text=text, context=context, base=base, sha256=request_hash,
+        return dict(prompt=prompt, text=text, context=context, base=base, sha256=request_hash, binding=binding,
                     latest=chat['turns'][-1] if chat and chat['turns'] else None)
 
     def preview(self, data):
@@ -277,7 +386,8 @@ class Assistant:
         return {key:value[key] for key in ('prompt','context','sha256')}
 
     def send(self, data):
-        if not isinstance(data,dict) or set(data) != SELECT | {'intent','preview_sha256'}:
+        send_fields = SELECT | {'intent','preview_sha256'}
+        if not isinstance(data,dict) or set(data) not in (send_fields, send_fields | {'native_profile','identity'}):
             raise Invalid('发送需要明确确认的上下文和请求身份。')
         workspace, conversation, intent = (data[key] for key in ('workspace','conversation','intent'))
         self.store.workspace(workspace)
@@ -291,7 +401,7 @@ class Assistant:
         if old:
             return self.replay(old, request_sha)
         try:
-            value = self.prepare({key:data[key] for key in SELECT})
+            value = self.prepare({key:item for key,item in data.items() if key not in ('intent','preview_sha256')})
         except (Invalid, Conflict):
             with self.store.db.tx(read=True) as db:
                 old = read_row(db, TURN, key)
@@ -305,6 +415,8 @@ class Assistant:
                    request_sha256=request_sha, owner=self.owner, provider=data['provider'], mode=data['mode'],
                    text=value['text'], context=value['context'], base=value['base'], prompt=value['prompt'],
                    prompt_sha256=digest(value['prompt'].encode()), created_at=time.time())
+        if value['binding']:
+            row['config'] = value['context']['config']
         with self.store.db.tx() as db:
             old = read_row(db, TURN, key)
             if not old:
@@ -323,10 +435,14 @@ class Assistant:
                        intent_key=row['native_intent'], prompt=value['prompt'])
         if provider == 'codex':
             payload.update(model=data['model'], effort=data['effort'])
+        operations = self.model_operations if value['binding'] else self.operations
         try:
-            self.operations.send(payload)
+            if value['binding']:
+                operations.send_bound(value['binding'], row['native_intent'], value['prompt'], request_sha)
+            else:
+                operations.send(payload)
         except (Blocked, Invalid, Conflict, SessionRefused):
-            if self.operations.operation(workspace, row['native_intent'])['state'] == 'UNREGISTERED':
+            if operations.operation(workspace, row['native_intent'])['state'] == 'UNREGISTERED':
                 row = self.store.db.change(TURN,key,dict(dispatch_state='NOT_SENT',
                     reason='原生发送未登记。请检查选中的 Provider、模型目录和本机配置。'))
         except (OSError, sqlite3.Error, RuntimeError):

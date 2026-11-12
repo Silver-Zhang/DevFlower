@@ -56,7 +56,9 @@ async function run(){
  await dropped;
  await button('核对本次发送').waitFor();
  await page.unroute('**/api/v2/assistant/send',drop);
- await button('核对本次发送').click();
+ await button('关闭 AI 助手').click();
+ await button('AI 助手').click();
+ // Reopen reads the stored identity without submitting again.
  const proposal=assistant.getByLabel('画布提案',{exact:true});
  await proposal.getByText('Reviewed Agent',{exact:false}).first().waitFor();
  assert.equal(await preview.count(),0);

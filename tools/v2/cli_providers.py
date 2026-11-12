@@ -46,7 +46,7 @@ def mode(enabled, native_args, detail):
 
 
 def empty(provider, label, *, error=None):
-    return dict(provider=provider, label=label, version=None, installed=None, authenticated=None,
+    return dict(provider=provider, label=label, version=None, installed=None, authenticated=None, auth_source='unknown',
                 models=[], efforts=[], default_model=None, default_effort=None, modes={}, error=error,
                 inference_verified=False, native_budget=False, refreshed_at=None)
 
@@ -114,6 +114,7 @@ class CodexCLI:
             if native.native_home:
                 row['native_home_sha256'] = native.native_home['sha256']
             row.update(authenticated=True if catalog.get('authenticated') and not catalog.get('error') else None,
+                       auth_source=catalog.get('auth_source', 'unknown') if not catalog.get('error') else 'unknown',
                        catalog_available=bool(row['models']) and not catalog.get('error'),
                        error=catalog.get('error'), refreshed_at=time.time())
         except READ_ERRORS:
@@ -302,6 +303,15 @@ class ClaudeCLI:
             auth = json.loads(result.stdout, object_pairs_hook=unique_pairs)
             if result.returncode in (0, 1) and type(auth.get('loggedIn')) is bool:
                 row['authenticated'] = auth['loggedIn']
+                if row['authenticated']:
+                    method = auth.get('authMethod')
+                    if method in ('oauth', 'claude.ai', 'claude_ai', 'subscription'):
+                        row['auth_source'] = 'native_login'
+                    elif method in ('api_key', 'apiKey') or any(
+                            env.get(key) or configured_env.get(key) for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN')):
+                        row['auth_source'] = 'native_api_key'
+                    elif method in ('bedrock', 'vertex', 'foundry', 'third_party'):
+                        row['auth_source'] = 'native_provider'
             if self.native_home:
                 if (row['authenticated'] is not True or auth.get('configDirectory') != str(root)
                         or auth.get('projectsDirectory') != str(root/'projects')):

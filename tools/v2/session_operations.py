@@ -151,15 +151,14 @@ class OperationJournal:
 
 
 class SessionOperations:
+    authority = 'explicit-session-send'
+
     def __init__(self, store, reader, codex, profiles):
         self.store, self.reader, self.codex = store, reader, codex
         self.profiles = {}
         self.claude_env = {}
         self.codex_terminal = profiles.get('codex_terminal') is True
-        self.slots = BoundedSemaphore(4)
-        self.owner = current_owner()
-        from .store import private_directory
-        self.artifacts = private_directory(store.state / 'session-artifacts')
+        self.initialize_journal(store)
         for provider in PROVIDERS:
             if provider not in profiles:
                 continue
@@ -186,6 +185,12 @@ class SessionOperations:
                 self.remember_claude_secrets(binding)
             self.profiles[provider] = (source, binding)
         self.reader.managed_records = self.managed_records
+
+    def initialize_journal(self, store):
+        self.slots = BoundedSemaphore(4)
+        self.owner = current_owner()
+        from .store import private_directory
+        self.artifacts = private_directory(store.state / 'session-artifacts')
 
     def remember_claude_secrets(self, binding):
         literals = claude_secrets(binding, self.claude_env)
@@ -216,7 +221,7 @@ class SessionOperations:
     def operation(self, workspace, intent_key):
         self.store.workspace(workspace)
         row = self._get(operation_id(workspace, intent_key))
-        if row is None:
+        if row is None or row.get('authorization', SessionOperations.authority) != self.authority:
             return {'workspace': workspace, 'intent_key': intent_key, 'state': 'UNREGISTERED'}
         return self._public(row)
 
@@ -357,26 +362,32 @@ class SessionOperations:
         request_sha = digest(canonical(data))
         prior = self._get(key)
         if prior is not None:
-            if prior['request_sha256'] != request_sha:
+            if prior.get('authorization', SessionOperations.authority) != self.authority or prior['request_sha256'] != request_sha:
                 raise Conflict('同一发送意图对应不同请求。')
             return self._public(prior)
         binding, locator, record = self.prepare_binding(workspace, provider, handle, revision, data.get('model'), data.get('effort'))
+        return self.reserve(workspace, data['intent_key'], prompt, binding, handle, revision, locator, record,
+                            request_sha)
+
+    def reserve(self, workspace, intent, prompt, binding, handle, revision, locator, record, request_sha):
+        key = operation_id(workspace, intent)
+        provider = binding['provider']
         if not self.slots.acquire(blocking=False):
             raise Conflict('已有多个原生操作正在执行。请查询原操作后再提交。')
         started = False
         try:
             if provider == 'claude' and locator is None:
                 binding['new_session_id'] = str(uuid.uuid4())
-            row = dict(id=key, workspace=workspace, provider=provider, intent_key=data['intent_key'], handle=handle,
+            row = dict(id=key, workspace=workspace, provider=provider, intent_key=intent, handle=handle,
                        revision=revision, request_sha256=request_sha, prompt_sha256=digest(prompt.encode()),
-                       prompt_size=len(prompt.encode()), authorization='explicit-session-send', owner=self.owner,
+                       prompt_size=len(prompt.encode()), authorization=self.authority, owner=self.owner,
                        binding=binding, native_sha256=record.ref.sha if record else None,
                        target=binding['session_id'] or binding.get('new_session_id'), state='RESERVED', created=time.time())
             with self.store.db.tx() as db:
                 stored = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (KIND, key)).fetchone()
                 if stored:
                     prior = json.loads(stored[0])
-                    if prior['request_sha256'] != request_sha:
+                    if prior.get('authorization', SessionOperations.authority) != self.authority or prior['request_sha256'] != request_sha:
                         raise Conflict('同一发送意图对应不同请求。')
                     return self._public(prior)
                 db.execute('INSERT INTO records VALUES(?,?,?)', (KIND, key, canonical(row).decode()))
@@ -462,8 +473,10 @@ class SessionOperations:
                            ('standalone-native-claim', key, canonical({'operation': row['id']}).decode()))
         self.store.db.change(KIND, row['id'], {'observed_session': sid})
 
-    def prove_after(self, binding, sid):
-        source = self.profiles[binding['provider']][0]
+    def history_source(self, binding):
+        return self.profiles[binding['provider']][0]
+
+    def prove_after(self, binding, sid, source):
         if binding['provider'] == 'codex':
             thread = metadata(binding, binding['cwd'], 'thread/read', dict(threadId=sid, includeTurns=False))['thread']
             if thread['id'] != sid or thread.get('cwd') != binding['cwd']:
@@ -473,6 +486,10 @@ class SessionOperations:
             directory = re.sub('[^a-zA-Z0-9]', '-', binding['cwd'])
             relative = Path(directory) / (sid + '.jsonl')
         return prove_file(source, binding['project'], binding['cwd'], sid, relative)
+
+    def transport(self, binding, limits, *, managed_resume):
+        return LocalCodex(binding, limits) if binding['provider'] == 'codex' else LocalClaude(
+            binding, limits, credential_env=self.claude_env, managed_resume=managed_resume)
 
     def _execute(self, row, prompt, locator, record):
         binding = row['binding']
@@ -489,8 +506,7 @@ class SessionOperations:
                 artifacts = self.artifacts / row['id']
                 artifacts.mkdir(mode=0o700, parents=True, exist_ok=False)
                 limits = dict(step_timeout_seconds=300, max_log_bytes=2_000_000)
-                adapter = LocalCodex(binding, limits) if provider == 'codex' else LocalClaude(
-                    binding, limits, credential_env=self.claude_env, managed_resume=locator is not None)
+                adapter = self.transport(binding, limits, managed_resume=locator is not None)
                 try:
                     result = adapter.start(prompt, binding['cwd'], artifacts, None, journal, row['id'])
                 finally:
@@ -512,14 +528,17 @@ class SessionOperations:
                         or provider == 'codex' and (final.get('terminal_count',1)!=1 or final.get('terminal_event') != {
                             'type':'turn.completed','session_id':sid,'native_turn_id':result.get('native_turn_id')})):
                     raise Blocked('原生终结回执无法关联到本次输入。')
-                actual, ref, _ = self.prove_after(binding, sid)
+                source = self.history_source(binding)
+                actual, ref, _ = self.prove_after(binding, sid, source)
                 self.require_scope(binding)
-                source = self.profiles[provider][0]
                 completion = dict(
                     state='COMPLETED', effect_uncertain=False, result_handle=source.registry.handle(actual),
                     relative=str(ref.relative), native_after_sha256=ref.sha, reply=safe_text(result['report']['reply']),
                     receipt=dict(provider=provider, session_id=sid, native_turn_id=result.get('native_turn_id'),
                                  requested_model=binding['model'],requested_effort=binding['effort'],
+                                 resolved_model=result.get('resolved_model', 'unknown'),
+                                 resolved_effort=result.get('resolved_effort', 'unknown'),
+                                 raw_report_sha256=result.get('raw_report_sha256'), transport=result.get('transport'),
                                  usage=public_usage(result.get('usage'))))
             # The durable RUNNING state fences cooperating writers until the lease has released.
             self.store.db.change(KIND, row['id'], completion, states={'RUNNING'})
@@ -558,7 +577,7 @@ class SessionOperations:
         for (raw,) in rows:
             row = json.loads(raw)
             handle, provider = row['result_handle'], row['provider']
-            if handle in seen or provider not in self.profiles:
+            if row.get('authorization', SessionOperations.authority) != self.authority or handle in seen or provider not in self.profiles:
                 continue
             seen.add(handle)
             source, current = self.profiles[provider]

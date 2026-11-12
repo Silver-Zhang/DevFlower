@@ -37,7 +37,8 @@ class NativeSessionTitles:
                 raise SessionRefused('LOCATOR_REFUSED')
             return
         saved = self.store.db.get('native-session-operation',claim['operation'])
-        if (saved.get('state')!='COMPLETED' or saved.get('observed_session')!=sid
+        if (saved.get('authorization', 'explicit-session-send') != self.operations.authority or saved.get('state')!='COMPLETED'
+                or saved.get('observed_session')!=sid
                 or saved.get('receipt',{}).get('session_id')!=sid or saved.get('workspace')!=binding['project']
                 or any(saved['binding'].get(key)!=binding[key] for key in ('provider','home','config_root','cwd','root_identity'))):
             raise SessionRefused('LOCATOR_REFUSED')

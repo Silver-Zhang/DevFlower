@@ -150,6 +150,56 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(self.post('preview',dict(self.payload,text='second'))[0],409)
         self.assertEqual(len(self.operations.calls),1)
 
+    def test_workspace_preferences_probe_and_pinned_agent_are_independent_of_session_writes(self):
+        from v2.agent_records import KIND
+        from v2.assistant import PROBE
+        from v2.assistant_operations import AssistantOperations
+
+        # Configure through real HTTP against a synthetic already-discovered CLI binding.
+        server, self.token = create_server(self.store, runtime=self.rt)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.url = f'http://127.0.0.1:{server.server_port}/api/v2/'
+        self.chat = '7'*32
+        identity = {'id': 'a'*32, 'revision': 'b'*64}
+        role = dict(name='Assistant persona', role='Reader', responsibilities='Explain source',
+                    background='role-only marker', goal='Answer', initial_prompt='Use context',
+                    round_prompt='Show evidence', output_prompt='Cite lines', provider='claude',
+                    model='sonnet', effort='low', permission='workspace-write', skills=['do-not-attach'])
+        self.store.db.put(KIND, identity['id'], dict(identity, workspace=self.workspace, config=role))
+        selection = dict(provider='claude', native_profile=None, model='sonnet', effort='low', identity=identity)
+        data = dict(selection, workspace=self.workspace, conversation=self.chat, text='Read selected context',
+                    mode='chat', draft=None, files=[], run=None)
+        binding = dict(project=self.workspace, provider='claude', chat_only=True)
+        status = dict(state='COMPLETED', reply='fixture result', receipt={'provider':'claude','resolved_model':'fixture'})
+        def fake_config(workspace, selected):
+            self.assertEqual(workspace, self.workspace)
+            return binding, dict(selected, binding_sha256='1'*64, permission='none')
+        with patch.object(AssistantOperations, 'config', side_effect=fake_config), \
+                patch.object(AssistantOperations, 'operation', return_value=status), \
+                patch.object(AssistantOperations, 'send_bound', return_value=status) as send:
+            code, settings = self.post('configure', dict(selection, workspace=self.workspace))
+            self.assertEqual((code,settings['legacy_providers'],settings['preferences']), (200, [], selection))
+            self.assertEqual(self.request('assistant/settings?workspace='+self.workspace)[1]['preferences'],selection)
+            submitted, preview = self.confirm(data)
+            self.assertIn('role-only marker', preview['prompt'])
+            self.assertNotIn('workspace-write', preview['prompt'])
+            self.assertNotIn('do-not-attach', preview['prompt'])
+            self.assertEqual(self.post('send',submitted)[1]['receipt']['resolved_model'],'fixture')
+            self.assertEqual(self.post('send',submitted)[0],200)
+            send.assert_called_once()
+            self.assertEqual(send.call_args.args[0], binding)
+            self.assertEqual(send.call_args.args[2], preview['prompt'])
+            probe, probe_preview = self.confirm(dict(data, text=PROBE, mode='probe', identity=None),intent='2'*32)
+            self.assertEqual(probe_preview['prompt'], PROBE)
+            self.assertEqual(self.post('send',probe)[0],200)
+            self.assertEqual(self.request('assistant/settings?workspace='+self.workspace)[1]['checks'][0]['state'],'COMPLETED')
+            self.assertEqual(self.post('preview',dict(data, native_profile='/tmp/unapproved'))[0],400)
+            self.store.db.put(KIND, identity['id'], dict(id=identity['id'],revision='c'*64,
+                                                       workspace=self.workspace,config=role))
+            self.assertEqual(self.post('preview',data)[0],409)
+
     def test_diagnosis_uses_existing_failed_run_and_events_without_sending(self):
         self.initialize()
         with patch.object(self.rt,'spawn'):
