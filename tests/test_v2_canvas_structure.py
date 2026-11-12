@@ -64,6 +64,31 @@ class CanvasStructureTests(TestCase):
         self.assertTrue(any(item.get('code') == 'RUNTIME_TOOL_UNAVAILABLE' for item in issues))
         self.assertTrue(any(item.get('code') == 'RUNTIME_GRAPH_UNCONNECTED' for item in issues))
 
+    def test_top_level_start_summary_is_a_draft_issue_and_refuses_launch(self):
+        summary = dict(mode='summary', max_chars=16000)
+        doc = graph([node('Start', 'start', initial_data='{"summary":"nested under result"}'),
+                     node('Agent', 'agent', agent_id='1'*32, agent_revision='2'*64),
+                     node('End', 'output')],
+                    [edge('summary', 'Start', 'Agent', transfer=summary), edge('finish', 'Agent', 'End')])
+        saved = self.store.save(self.workspace, None, None, doc)
+        self.assertEqual(saved['graph'], doc)
+        issues = check_chain(doc)['issues']
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]['edge_id'], 'summary')
+        self.assertEqual(issues[0]['code'], 'START_SUMMARY_UNAVAILABLE')
+        binding = Mock(side_effect=AssertionError('never bind'))
+        with self.assertRaisesRegex(Invalid, '开始节点.*摘要'):
+            compile_definition(self.store, self.rt.provider, self.workspace, saved, agent_binding=binding)
+        binding.assert_not_called()
+        self.assertEqual(self.store.db.list('run'), [])
+
+        # A nested Start inherits the previous activation's envelope, which can
+        # have a real top-level summary even when its first iteration does not.
+        outer = graph([node('Start', 'start'), node('Loop', 'loop', body=doc, exit_condition=dict(field='result.ok', op='equals', value=True)),
+                       node('End', 'output')],
+                      [edge('seed', 'Start', 'Loop'), edge('out', 'Loop', 'End')])
+        self.assertEqual(check_chain(outer)['issues'], [])
+
     def test_typed_invalid_versions_ports_graph_and_permissions_are_rejected(self):
         rows = [node('Start', 'start'), node('A', 'agent'), node('B', 'agent'), node('C', 'condition'),
                 node('End', 'output')]

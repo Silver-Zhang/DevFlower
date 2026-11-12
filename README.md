@@ -90,7 +90,9 @@ Windows 的入口文件（`launcher/windows/`）只是占位：启动器会明�
 | 保存与复用 | 保存工作流、收藏模板、复用配置提交下一任务；历史按工作区和工作流组织 |
 | 研发交付 | 验证和交付节点需固定的受控外部执行器、当次授权及完整 Gate；普通本机入口不会自动获得提交、推送或发布权限 |
 
-内置助手使用独立模型 API，不借用 Codex 或 Claude Code 的 Agent。首次在右侧“AI 助手”的模型连接中配置自己的服务、模型与密钥后，连接会在本机持续保存；已有 DeepSeek 设置不因重启或切换工作区丢失。软件不附带付费 API 密钥或本地模型权重。
+V1 内置助手使用独立模型 API。在右侧“AI 助手”的模型连接中设置服务、模型和密钥后，连接会保存在本机。已有 DeepSeek 设置在重启或切换工作区后继续保留。软件不附带付费 API 密钥或本地模型权重。
+
+V2 助手使用本机的 Codex CLI 或 Claude Code，在助手模型设置中选择连接，认证由所选 CLI 管理。参见 [V2 助手使用指南](docs/v2/ASSISTANT.md)。
 
 目录发现、操作者登记和实际执行成功是不同证据。过期目录不能证明当前模型或强度不可用；真实调用失败会保留错误。提示词与上游输出不能扩大下游权限或批准交付。
 
@@ -101,7 +103,7 @@ Windows 的入口文件（`launcher/windows/`）只是占位：启动器会明�
 | 工作流、收藏模板与项目历史 | 普通工作区的 `.devflower/`；设计与模板使用 `library.sqlite` |
 | 助手已完成对话的阅读副本 | 工作区 `.devflower/assistant-<哈希>.json` |
 | 实时执行、进程、会话占用及授权状态 | 工作台本机私有状态目录；默认 `${XDG_STATE_HOME:-~/.local/state}/devflower/workbench` |
-| 助手 API 连接 | `${XDG_CONFIG_HOME:-~/.config}/devflower/devflower-agent-connection.json`，不写入项目或聊天 |
+| V1 助手 API 连接 | `${XDG_CONFIG_HOME:-~/.config}/devflower/devflower-agent-connection.json`，不写入项目或聊天 |
 | Codex / Claude Code 原生历史 | 各工具原有的 HOME 与配置根；不以复制聊天冒充会话同步 |
 | 可提交到 Git 的研发档案 | 独立 `project/<项目名>` 分支内的 `project/`，一任务一份五节 README 和必要机器记录 |
 

@@ -92,6 +92,9 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
  const type=nodeType(node);
  return <>
   <p className="session-note">{runtimeBlock(node)||'此节点由工作流调度器按已保存配置执行。'}</p>
+  {['condition','router','validation'].includes(nodeKind(node))&&<p className="field-note">
+   字段路径从上游节点数据读取。开始节点的初始 JSON 位于 <code>result</code> 下，例如用 <code>result.ok</code> 读取 <code>{'{"ok":true}'}</code> 中的 <code>ok</code>。
+  </p>}
   {Object.entries(type.fields).map(([key,field])=>{
    const tool=nodeKind(node)==='tool'?node.config.tool:null;
    const jsonTool=['verify-json','check-json'].includes(tool);

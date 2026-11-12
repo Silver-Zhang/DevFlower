@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from orchestration.common import Blocked
 from studio.graph import Invalid
 from studio.native_codex_exec import FEATURES
-from v2.codex_agent_plan import await_mode_settings, native_mode, require_effective_config, scope_matches
+from v2.codex_agent_plan import await_mode_settings, native_mode, reject_turn_interaction, require_effective_config, scope_matches
+from v2.execution_facts import PlanInputRequired, failure_fact
 from v2.runtime import V2Runtime
 
 
@@ -39,6 +40,32 @@ class CodexPlanTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(Blocked):
                 await_mode_settings(SimpleNamespace(next_event=lambda: invalid), self.binding, self.profile, self.sid, "plan")
+
+    def test_only_associated_plan_user_input_has_a_safe_recovery_diagnostic(self):
+        turn = '018f410e-d65d-7000-9000-123456789abd'
+        request = {'id': 5, 'method': 'item/tool/requestUserInput', 'params': {
+            'threadId': self.sid, 'turnId': turn, 'questions': [{'question': 'private question'}]}}
+        with self.assertRaises(PlanInputRequired) as error:
+            reject_turn_interaction(request, self.sid, turn, plan_only=True)
+        fact = failure_fact('codex', error.exception, uncertain=True, sent=True, process={'exit': 0})
+        self.assertEqual(fact['code'], 'PLAN_INPUT_REQUIRED')
+        self.assertEqual(fact['effect'], 'unknown')
+        self.assertTrue(fact['input_recorded'])
+        self.assertEqual(fact['process'], {'exit': 0})
+        self.assertNotIn('private question', str(fact))
+        self.assertIn('明确启动新 Plan', fact['action'])
+        for candidate, plan_only in (
+            (request, False),
+            (dict(request, params=dict(request['params'], threadId='different-session')), True),
+            (dict(request, params=dict(request['params'], turnId='previous-turn')), True),
+            (dict(request, method='item/commandExecution/requestApproval'), True),
+        ):
+            with self.subTest(candidate=candidate, plan_only=plan_only), self.assertRaises(Blocked) as generic:
+                reject_turn_interaction(candidate, self.sid, turn, plan_only=plan_only)
+            self.assertNotIsInstance(generic.exception, PlanInputRequired)
+        notification = dict(request)
+        notification.pop('id')
+        reject_turn_interaction(notification, self.sid, turn, plan_only=True)
 
     def test_effective_workspace_config_disables_extensions_and_keeps_the_operator_provider(self):
         features = dict.fromkeys(FEATURES, False)

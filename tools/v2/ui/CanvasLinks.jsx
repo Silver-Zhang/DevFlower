@@ -48,6 +48,7 @@ export function EdgeDraftConfig({edge,source,target,onUpdate,Field}){
    {Object.entries(transferModes).map(([id,label])=><option key={id} value={id}
     disabled={id==='artifacts'&&!source.artifact_paths?.length}>{label}</option>)}
   </select></Field>
+  {nodeKind(source)==='start'&&transfer.mode==='summary'&&<p className="error-text">顶层开始节点没有摘要。请选用“节点数据”或“结构化结果”。</p>}
   {transfer.mode==='fields'&&<ContractEditor label="交接" rows={transfer.fields} maxRows={32} maxFieldLength={200}
    onChange={fields=>onUpdate({transfer:fields.length?{...transfer,fields}:{mode,max_chars:transfer.max_chars}})}/>}
   {transfer.mode==='artifacts'&&<p className="field-note">传送已核验的相对路径、文件摘要与来源。接收时重新核对文件。</p>}

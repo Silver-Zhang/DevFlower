@@ -1,4 +1,4 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useNodesInitialized,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
 import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal,History,RefreshCw} from 'lucide-react';
@@ -21,7 +21,8 @@ import {WorkflowLibrary} from '../../studio/workbench_ui/WorkflowLibrary.jsx';
 import {SidebarToggle} from '../../studio/workbench_ui/WorkspaceLayout.jsx';
 import {downloadFile,HistoryArchives} from './HistoryArchives.jsx';
 import {LocalDelivery} from './LocalDelivery.jsx';
-import {applySelection, canvasFragment, coordinate, pasteCanvasFragment} from './canvasEditing.mjs';
+import {applySelection, canvasFragment, coordinate, layoutCanvas, pasteCanvasFragment} from './canvasEditing.mjs';
+import {detourEdge,routingBounds} from './canvasRouting.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
@@ -58,7 +59,10 @@ const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value
 const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
 function Button({icon:Icon,children,...props}){return <button type="button" {...props}>{Icon&&<Icon size={16} aria-hidden="true"/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
-const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
+function CanvasHandoffEdge(props){
+ return <HandoffEdge {...props} geometry={detourEdge(props,props.data.bounds)}/>;
+}
+const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:CanvasHandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
 const durablyEnded=snapshot=>ended(snapshot?.state)&&ended(snapshot.run?.persisted_state??snapshot.state);
 const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
@@ -202,7 +206,7 @@ function App(){
  const [catalog,setCatalog]=useState(null),[catalogBusy,setCatalogBusy]=useState(false),[runs,setRuns]=useState([]);
  const [viewMode,setViewMode]=useState('draft'),[activeRun,setActiveRun]=useState(null),[runSnapshot,setRunSnapshot]=useState(null),[runError,setRunError]=useState(''),[runTrusted,setRunTrusted]=useState(false);
  const [launching,setLaunching]=useState(false),[launchAttempt,setLaunchAttempt]=useState(null),[cancelling,setCancelling]=useState(false);
- const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),runListRead=useRef(0),environmentRef=useRef(null),cancelBusy=useRef(null);
+ const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),runListRead=useRef(0),draftListRead=useRef(0),environmentRef=useRef(null),cancelBusy=useRef(null);
  const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
  const viewModeRef=useRef(viewMode);viewModeRef.current=viewMode;
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
@@ -259,8 +263,9 @@ function App(){
  function inWorkspace(w,epoch){return workspaceRef.current?.id===w.id&&workspaceEpoch.current===epoch}
  async function refreshDrafts(w=workspaceRef.current){
   if(!w)return;
-  const epoch=workspaceEpoch.current,rows=await api('drafts?workspace='+w.id);
-  if(inWorkspace(w,epoch))setDrafts(rows);
+  const epoch=workspaceEpoch.current,ticket=++draftListRead.current;
+  const rows=await api('drafts?workspace='+w.id);
+  if(inWorkspace(w,epoch)&&draftListRead.current===ticket)setDrafts(rows);
  }
  async function refreshRuns(w=workspaceRef.current,{showError=false,launchIntent=null}={}){
   if(!w||workspaceRef.current!==w)return;
@@ -290,8 +295,17 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){if(primaryView)setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
- function editDraft(){if(primaryView)setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function showRun(id,w=workspaceRef.current,environment){if(primaryView)setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment);refreshDrafts(w).catch(()=>{})}
+ function returnToDraft(){if(primaryView)setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function editRunDraft(){
+  const run=runRef.current,source=runSourceDraft;
+  if(!source||run!==activeRun||viewModeRef.current!=='run')return;
+  if(savedRef.current?.id===source.id){returnToDraft();return}
+  navigate(async()=>{
+   if(runRef.current!==run||viewModeRef.current!=='run')return;
+   await openDraft(source,run);
+  },'打开运行来源草稿');
+ }
  async function rereadRun(){
   const value=runRef.current;
   if(!value)return;
@@ -708,7 +722,29 @@ function App(){
    setStatus(s=>({...s,workspaces:[w,...(s?.workspaces||[]).filter(x=>x.id!==w.id)]}));
   }finally{setBusy('')}
  }
- async function openDraft(row){const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current);setBusy('open');try{const result=await api('draft?workspace='+w.id+'&id='+row.id);if(gen!==generation.current||w.id!==workspaceRef.current?.id||!same(snapshot,docRef.current))throw Error('读取期间草稿已变化，未替换编辑器');install(result.graph,result);rememberRun({workspace:w.id},'draft');remember(w,result)}finally{setBusy('')}}
+ async function openDraft(row,sourceRun=null){
+  const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current);
+  const current=()=>!sourceRun||runRef.current===sourceRun&&viewModeRef.current==='run';
+  setBusy('open');
+  try{
+   let result;
+   try{result=await api('draft?'+new URLSearchParams({workspace:w.id,id:row.id}))}
+   catch(failure){
+    if(!current())return;
+    if(sourceRun&&[400,404,409].includes(failure.status)){
+     await refreshDrafts(w);
+     if(!current())return;
+     throw Error('无法打开本次运行的来源草稿。请核对工作流列表。');
+    }
+    throw failure;
+   }
+   if(!current())return;
+   if(gen!==generation.current||w.id!==workspaceRef.current?.id||!same(snapshot,docRef.current))
+    throw Error('读取期间草稿已变化，未替换编辑器');
+   if(result.workspace!==w.id||result.id!==row.id)throw Error('读取的工作流与所选草稿身份不一致。');
+   install(result.graph,result);rememberRun({workspace:w.id},'draft');remember(w,result);
+  }finally{setBusy('')}
+ }
  useEffect(()=>{
   setBusy('open');
   guard(async()=>{
@@ -810,6 +846,11 @@ function App(){
  function canvasCommand(action,ids=nodeSelection){
   if(!editable)return;
   setCanvasMenu(null);
+  if(action==='layout'){
+   setArrangeOpen(false);
+   edit(layoutCanvas(docRef.current,measurements));
+   return;
+  }
   if(action==='delete'){
    if(ids.length||edgeSelection.length){edit(removeSelection(docRef.current,ids,edgeSelection));closeInspector()}
    return;
@@ -965,6 +1006,11 @@ function App(){
  const frozenGraph=readOnly?runSnapshot?.definition?.draft_document:null;
  const shown=readOnly?(frozenGraph||blank()):doc;
  const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
+ const runRecord=runSnapshot?.run,runDefinition=runSnapshot?.definition;
+ const runDraftId=readOnly&&runTrusted&&runRecord?.id===activeRun?.id&&runRecord?.workspace===workspace?.id&&
+  runDefinition?.workspace===workspace?.id&&runRecord?.definition_id===runDefinition?.id&&
+  runRecord?.draft_id===runDefinition?.draft_id?runRecord?.draft_id:null;
+ const runSourceDraft=runDraftId&&drafts.find(row=>row.workspace===workspace?.id&&row.id===runDraftId);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
   agentVersions.records?.get(n.agent_id):null;
@@ -984,6 +1030,7 @@ function App(){
    ...(measurements.has(node.id)?{measured:measurements.get(node.id)}:{})};
  });
  const shownNodes=new Map(shown.nodes.map(node=>[node.id,node]));
+ const bounds=useMemo(()=>routingBounds(shown.nodes,measurements),[shown.nodes,measurements]);
  const rfEdges=shown.edges.map(item=>{
   const {source,target}=item,sourceHandle=item.source_port??'out',targetHandle=item.target_port??'in';
   const output=ports(shownNodes.get(source),'outputs').find(([id])=>id===sourceHandle)?.[1]||sourceHandle;
@@ -991,7 +1038,7 @@ function App(){
   return {id:item.id,type:'handoff',source,target,sourceHandle,targetHandle,selected:edgeSelection.includes(item.id),
    markerEnd:{type:MarkerType.ArrowClosed},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
    ariaLabel:shownNodes.get(source).name+' '+output+' → '+shownNodes.get(target).name+' '+input,
-   data:{hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
+   data:{bounds,hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
@@ -1080,7 +1127,7 @@ function App(){
    </div>
    <nav className="workspace-actions workspace-destinations" aria-label="工作区导航">
     <Button icon={Workflow} aria-current={!sideView&&!readOnly&&!saved?'page':undefined} onClick={()=>{
-     if(readOnly)editDraft();setSideView('');setDrawer(false);requestAnimationFrame(()=>document.getElementById('v2-editor')?.focus());
+     if(readOnly)returnToDraft();setSideView('');setDrawer(false);requestAnimationFrame(()=>document.getElementById('v2-editor')?.focus());
     }}>工作流</Button>
     <Button ref={agentOpener} icon={Bot} aria-current={sideView==='agents'?'page':undefined} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
     <Button ref={nativeOpener} icon={MessageSquare} aria-current={nativeOpen?'page':undefined} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
@@ -1094,7 +1141,7 @@ function App(){
    <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(!sideView&&!readOnly&&saved?.id===row.id?' active':'')}
     aria-current={!sideView&&!readOnly&&saved?.id===row.id?'page':undefined} disabled={!!busy} onClick={()=>{
      if(primaryView&&saved?.id===row.id){
-      if(readOnly)editDraft();else setSideView('');
+      if(readOnly)returnToDraft();else setSideView('');
       setDrawer(false);return;
      }
      navigate(async()=>{await openDraft(row);if(primaryView)setSideView('');setDrawer(false)},'打开其他工作流')
@@ -1152,7 +1199,9 @@ function App(){
    <Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
    <Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>
    <Button onClick={guard(rereadRun)}>重新读取</Button>
-   <Button onClick={editDraft}>编辑草稿</Button>
+   {runTrusted&&(runSourceDraft?
+    <Button disabled={!!busy||launching} title={'打开来源工作流的可编辑草稿 · '+runSourceDraft.graph.name} onClick={editRunDraft}>编辑草稿</Button>:
+    <Button disabled={!!busy||launching} title="本次运行没有可打开的来源草稿" onClick={returnToDraft}>返回当前草稿</Button>)}
    <details className="run-export-menu"><summary>导出</summary>
     {canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}
     <Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button>
@@ -1222,7 +1271,7 @@ function App(){
      mode={canvasMode} setMode={setCanvasMode} count={nodeSelection.length} disabled={!editable}
      undo={undo} redo={redo} canUndo={Boolean(past.length)} canRedo={Boolean(future.length)} command={canvasCommand}
      minimap={minimap} setMinimap={setMinimap} onFit={fitCanvas} zoomIn={()=>flow.zoomIn()} zoomOut={()=>flow.zoomOut()}
-     menuOpen={arrangeOpen} setMenuOpen={setArrangeOpen}/>}
+     menuOpen={arrangeOpen} setMenuOpen={setArrangeOpen} layout={shown.nodes.length>1}/>}
     {canvasMenu&&<CanvasContextMenu menu={canvasMenu} onAction={action=>canvasCommand(action,canvasMenu.ids)}
      onAdd={()=>openPicker(canvasMenu.position)} onFit={fitCanvas}/>}
     {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={nodeKinds} canChoose={()=>true}

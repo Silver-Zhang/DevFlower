@@ -121,7 +121,7 @@ export function AssistantTeam({api,workspace,conversation,turn,draft,busy,perfor
     {preview.agents.map(item=><AgentReview key={item.slot} item={item}/>)}
     {turn.team.kind==='development'&&<p className="field-note">{preview.verification?
      '独立验证入口 '+preview.verification.path+' · '+preview.verification.branch+' · '+preview.verification.entry_sha256.slice(0,12):
-     '此预览采用模型测试与审核。配置独立验证入口后可使用确定性交付 Gate。'}</p>}
+     '此预览采用模型测试与审核。要加入确定性交付 Gate，先在发送上下文附加工作区 Python 测试，再在下方选为独立验证入口并填写期望 JSON。'}</p>}
     <fieldset disabled={busy}>
      <legend>选择团队权限</legend>
      {preview.agents.map(item=><label key={item.slot} className="assistant-run-choice">{item.row.config.name}

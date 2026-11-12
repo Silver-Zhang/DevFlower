@@ -141,7 +141,7 @@ export function RunInspector({api,snapshot,trusted,selection,onSelect,wide=false
  const errors=nodes.filter(row=>['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(row.state));
  const errorActivations=errors.map(row=><button key={row.id} onClick={()=>{
   if(wide){setChosen(row.id);setTab('detail')}else onSelect(row.node)
- }}>{row.name||row.node} · 第 {roundText(row)} 轮 · {row.reason||'查看已记录错误'}</button>);
+ }}>{row.name||row.node} · 第 {roundText(row)} 轮 · {row.execution_failure?.code==='PLAN_INPUT_REQUIRED'?row.execution_failure.reason:row.reason||'查看已记录错误'}</button>);
  const detail=tab==='detail'&&children?.(activation);
  async function exportRun(){
   if(!scope||exporting)return;

@@ -23,7 +23,7 @@ def document_nodes(document, prefix=''):
             yield from document_nodes(node['config']['body'], path + '/')
 
 
-def graph_issues(document):
+def graph_issues(document, *, nested=False):
     nodes = document['nodes']
     edges = document['edges']
     issues = []
@@ -43,7 +43,7 @@ def graph_issues(document):
         issues.extend(dict(node_id=node['id'], field=field, message=node['name'] + '：' + problem)
                       for field, problem in config_issues(node))
         if kind == 'loop' and (body := node['config'].get('body')):
-            for issue in graph_issues(body):
+            for issue in graph_issues(body, nested=True):
                 path = node['id'] + '/' + issue['node_id'] if issue.get('node_id') else node['id']
                 issues.append(dict(issue, node_id=path, message=node['name'] + ' / ' + issue['message']))
         if kind == 'approval' and node['config'].get('policy', 'single-reviewer') != 'single-reviewer':
@@ -66,7 +66,13 @@ def graph_issues(document):
     explicit = any(node_kind(node) != 'agent' for node in nodes)
     incoming = {node['id']: [] for node in nodes}
     outgoing = {node['id']: [] for node in nodes}
+    by_id = {node['id']: node for node in nodes}
     for edge in edges:
+        source = by_id[edge['source']]
+        # Loop bodies can inherit a summary from their dynamic input envelope.
+        if not nested and node_kind(source) == 'start' and edge.get('transfer', {}).get('mode') == 'summary':
+            issues.append(dict(edge_id=edge['id'], code='START_SUMMARY_UNAVAILABLE',
+                               message=source['name'] + '：顶层开始节点没有摘要。请将连线交接改为“节点数据”或“结构化结果”。'))
         incoming[edge['target']].append(edge['source'])
         outgoing[edge['source']].append(edge['target'])
     for node in nodes:

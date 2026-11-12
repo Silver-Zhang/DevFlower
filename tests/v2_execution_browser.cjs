@@ -22,7 +22,7 @@ async function api(route,data){return page.evaluate(async({route,data})=>{const 
  await test('lost-launch-response-refresh-and-switch-reuses-intent',async()=>{
   let sent,committed;const lose=async route=>{sent=route.request().postDataJSON();const response=await route.fetch();assert.equal(response.status(),200);committed=await response.json();await route.abort('failed')};await page.route('**/api/v2/launch',lose);await (await launchButton()).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('启动结果未确认'));assert.equal(await page.getByRole('button',{name:'核验本次启动',exact:true}).count(),1);await page.screenshot({path:path.join(out,'launch-committed-response-lost.png')});await page.unroute('**/api/v2/launch',lose);
   await page.getByLabel('新建工作流',{exact:true}).click();await page.getByLabel('工作流名称',{exact:true}).fill('other draft after unknown');await save();await page.reload();await until(async()=>await page.getByLabel('工作流名称',{exact:true}).inputValue()==='other draft after unknown');
-  let retried;const retry=async route=>{retried=route.request().postDataJSON();const response=await route.fetch();await route.fulfill({response})};await page.route('**/api/v2/launch',retry);await page.getByRole('button',{name:'核验本次启动',exact:true}).click();await complete();assert.deepEqual(retried,sent);assert.equal((await api('runs?workspace='+sent.workspace)).length,2);await page.getByLabel('运行状态',{exact:true}).getByText('运行身份与冻结版本',{exact:true}).click();assert((await page.getByLabel('运行状态',{exact:true}).innerText()).includes(committed.run.id));await page.unroute('**/api/v2/launch',retry);await page.getByRole('button',{name:'编辑草稿',exact:true}).click();assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'other draft after unknown');
+  let retried;const retry=async route=>{retried=route.request().postDataJSON();const response=await route.fetch();await route.fulfill({response})};await page.route('**/api/v2/launch',retry);await page.getByRole('button',{name:'核验本次启动',exact:true}).click();await complete();assert.deepEqual(retried,sent);assert.equal((await api('runs?workspace='+sent.workspace)).length,2);await page.getByLabel('运行状态',{exact:true}).getByText('运行身份与冻结版本',{exact:true}).click();assert((await page.getByLabel('运行状态',{exact:true}).innerText()).includes(committed.run.id));await page.unroute('**/api/v2/launch',retry);await page.getByRole('button',{name:'工作流',exact:true}).click();assert.equal(await page.getByLabel('工作流名称',{exact:true}).inputValue(),'other draft after unknown');
  });
  await test('launch-before-send-uncertain-never-auto-retries',async()=>{
   await page.getByLabel('运行历史',{exact:true}).locator('button.workflow-link').last().click();await complete();await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await page.locator('nav[aria-label="工作流列表"] .workflow-link').filter({hasText:'新工作流'}).click();await until(async()=>await page.locator('.agent-card').count()===1);let calls=0;const block=route=>{calls++;return route.abort('failed')};await page.route('**/api/v2/launch',block);await (await launchButton()).click();await until(async()=>(await page.getByRole('alert').innerText()).includes('启动结果未确认'));await sleep(1200);assert.equal(calls,1);await page.unroute('**/api/v2/launch',block);await page.getByRole('button',{name:'核验本次启动',exact:true}).click();await complete();
@@ -383,6 +383,90 @@ with sqlite3.connect(database.as_uri()+'?mode=rw', uri=True) as db:
    if(fs.existsSync(moved)){fs.rmdirSync(location);fs.renameSync(moved,location)}
    fs.writeFileSync(path.join(out,'recent-workspace-identity.json'),JSON.stringify(observed,null,2));
   }
+ });
+ await test('run-edit-opens-its-saved-draft-and-preserves-editor-and-run-identities',async()=>{
+  const {id:workspace}=await api('workspaces/open',{path:path.join(process.env.V2_WORKSPACES,'B')});
+  assert(workspace);
+  const name=page.getByLabel('工作流名称',{exact:true});
+  const drafts=page.getByLabel('工作流列表',{exact:true}),history=page.getByLabel('运行历史',{exact:true});
+  const editSource=page.getByRole('button',{name:'编辑草稿',exact:true});
+  const draftButton=label=>drafts.getByRole('button',{name:label,exact:true});
+  const runButton=label=>history.locator('button.workflow-link').filter({hasText:label});
+  const pending=page.getByRole('dialog',{name:'未保存的草稿',exact:true});
+  const draft=label=>({version:1,name:label,nodes:[{id:'Agent',name:'Draft Agent',position:{x:80,y:100},
+   provider:'codex',model:'fixture-model',effort:'low',round_prompt:'Check draft identity'}],edges:[]});
+  const saveDraft=(document,row)=>api('drafts/save',{workspace,document,id:row?.id??null,expected:row?.revision??null});
+  const a=await saveDraft(draft('运行来源 Alpha')),b=await saveDraft(draft('运行来源 Beta'));
+  assert(a.id&&b.id,JSON.stringify({a,b}));
+  const launch=row=>api('launch',{workspace,draft_id:row.id,revision:row.revision,
+   intent_key:'fixture-run-source-'+row.id,task:''});
+  const ar=await launch(a),br=await launch(b);
+  assert(ar.run?.id&&br.run?.id);
+  const latest=await saveDraft(draft('Alpha 当前版本'),a);
+  assert.equal(latest.id,a.id);
+  await history.getByRole('button',{name:'刷新运行历史',exact:true}).click();
+  await runButton('运行来源 Beta').click();
+  await editSource.click();
+  await until(async()=>await name.inputValue()==='运行来源 Beta'&&await name.isEnabled());
+  await name.fill('Beta 保存后修改');
+  await runButton('运行来源 Alpha').click();
+  await complete();
+  assert.equal(await name.inputValue(),'运行来源 Alpha');
+  await editSource.click();
+  await pending.getByRole('button',{name:'取消切换',exact:true}).click();
+  assert.equal(await name.inputValue(),'运行来源 Alpha');
+  assert(await name.isDisabled());
+  await editSource.click();
+  await pending.getByRole('button',{name:'保存并继续',exact:true}).click();
+  await until(async()=>await name.inputValue()==='Alpha 当前版本'&&await name.isEnabled());
+  assert.equal((await api('draft?workspace='+workspace+'&id='+b.id)).graph.name,'Beta 保存后修改');
+  const frozen=await api('run?workspace='+workspace+'&id='+ar.run.id);
+  assert.equal(frozen.definition.draft_document.name,'运行来源 Alpha');
+  assert.equal(frozen.run.draft_revision,a.revision);
+
+  await draftButton('Beta 保存后修改').click();
+  await until(async()=>await name.inputValue()==='Beta 保存后修改'&&await name.isEnabled());
+  await name.fill('Beta 放弃的修改');
+  await runButton('运行来源 Alpha').click();
+  await editSource.click();
+  await pending.getByRole('button',{name:'放弃修改',exact:true}).click();
+  await until(async()=>await name.inputValue()==='Alpha 当前版本'&&await name.isEnabled());
+  assert.equal((await api('draft?workspace='+workspace+'&id='+b.id)).graph.name,'Beta 保存后修改');
+
+  let resume,held;
+  const blocked=new Promise(resolve=>{held=resolve}),release=new Promise(resolve=>{resume=resolve});
+  const exactRead=url=>url.pathname==='/api/v2/draft'&&url.searchParams.get('id')===a.id;
+  await draftButton('Beta 保存后修改').click();
+  await until(async()=>await name.inputValue()==='Beta 保存后修改'&&await name.isEnabled());
+  await runButton('运行来源 Alpha').click();
+  await complete();
+  await page.route(exactRead,async route=>{held();await release;await route.continue()});
+  try{
+   await editSource.click();
+   await blocked;
+   await runButton('运行来源 Beta').click();
+   await complete();
+   const response=page.waitForResponse(r=>exactRead(new URL(r.url())));
+   resume();
+   assert.equal((await response).status(),200);
+   await until(()=>editSource.isEnabled());
+   assert.equal(await name.inputValue(),'运行来源 Beta');
+   assert(await name.isDisabled());
+  }finally{resume();await page.unroute(exactRead)}
+
+  // The fixture represents historical data whose editable draft disappeared.
+  const {execFileSync}=require('node:child_process');
+  execFileSync('python',['-c',`import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as db:
+    removed=db.execute("DELETE FROM records WHERE kind='draft' AND id=?", (sys.argv[2],))
+    assert removed.rowcount == 1`,path.join(out,'state','v2.sqlite'),a.id]);
+  await runButton('运行来源 Alpha').click();
+  const fallback=page.getByRole('button',{name:'返回当前草稿',exact:true});
+  await fallback.waitFor();
+  assert.equal(await editSource.count(),0);
+  assert.equal(await name.inputValue(),'运行来源 Alpha');
+  await fallback.click();
+  assert.equal(await name.inputValue(),'Beta 保存后修改');
  });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

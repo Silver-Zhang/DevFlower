@@ -318,8 +318,7 @@
 .canvas-edit-tools button[aria-pressed=true] { background:var(--studio-selected); }
 .canvas-edit-tools > i { height:18px;border-left:1px solid var(--studio-line);margin:0 3px; }
 .canvas-edit-tools > span { padding:0 6px;font-size:11px;color:var(--studio-muted); }
-.arrange-menu { position:relative; }
-.arrange-menu [role=menu] { position:absolute;bottom:38px;left:0;display:grid;min-width:130px;padding:4px;border:1px solid var(--studio-line);border-radius:8px;background:var(--studio-bg);box-shadow:var(--studio-shadow); }
+.arrange-menu [role=menu] { position:absolute;bottom:calc(100% + 6px);right:0;display:grid;min-width:130px;max-height:60dvh;overflow:auto;padding:4px;border:1px solid var(--studio-line);border-radius:8px;background:var(--studio-bg);box-shadow:var(--studio-shadow); }
 .arrange-menu [role=menuitem] { justify-content:flex-start;border:0; }
 .canvas-region .react-flow__minimap { bottom:56px; }
 

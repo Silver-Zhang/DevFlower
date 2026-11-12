@@ -19,6 +19,7 @@ from studio.session_sources import UUID, opened
 from .codex_code_mode import pin_code_mode_host
 from .codex_terminals import (BACKEND_SUPERVISOR, backend_args, guarded_workspace, pin_backend_image, reap,
                               safe_backend_config, verify_backend_config, wait_owned)
+from .execution_facts import PlanInputRequired
 from .session_identity import SessionRefused
 
 
@@ -53,6 +54,17 @@ def await_mode_settings(rpc, binding, profile, sid, expected_mode):
                 or actual.get('reasoning_effort') != binding['effort']):
             raise Blocked('Codex CLI 未确认当前会话的原生 Plan 权限。')
         return
+
+
+def reject_turn_interaction(event, sid, turn, *, plan_only):
+    if not event.get('method') or 'id' not in event:
+        return
+    params = event.get('params')
+    if (plan_only and event['method'] == 'item/tool/requestUserInput' and type(event['id']) in (int, str)
+            and isinstance(params, dict)
+            and params.get('threadId') == sid and params.get('turnId') == turn):
+        raise PlanInputRequired()
+    raise Blocked('Codex 原生 Plan 请求进一步交互。本次未自动回答。')
 
 
 def require_effective_config(rpc, binding, startup_args, *, read_only, code_host=False):
@@ -163,9 +175,8 @@ class CodexPlan:
                         event = rpc.next_event()
                         if event is None:
                             continue
+                        reject_turn_interaction(event, sid, turn, plan_only=plan_only)
                         method, params = event.get('method'), event.get('params', {})
-                        if method and 'id' in event:
-                            raise Blocked('Codex 原生 Plan 请求进一步交互。本次未自动回答。')
                         if params.get('threadId') != sid:
                             continue
                         if method == 'item/completed' and params.get('turnId') == turn:
@@ -207,7 +218,7 @@ class CodexPlan:
             result = None
         if error or terminal != 'turn.completed' or not result or result['exit'] != 0 or not (plan or answer):
             journal.finish(request, 'AGENT_FAILED', error_category=transport)
-            if isinstance(error, SessionRefused):
+            if isinstance(error, (SessionRefused, PlanInputRequired)):
                 raise error
             raise Blocked('Codex 原生 Plan 未完成或结果未确认。未自动重发。') from None
         text = safe_text(redact(plan or answer, literals))

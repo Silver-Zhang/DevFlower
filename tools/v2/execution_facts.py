@@ -1,10 +1,16 @@
 """Public execution diagnostics from recorded effects and bounded native facts."""
 import re
 
+from orchestration.common import Blocked
+
 from .session_identity import SessionRefused
 
 PROCESS_FIELDS = ('exit','duration','timeout','cancelled','overflow')
 NATIVE_BUDGET_EXCEEDED = 'error_max_budget_usd'
+
+
+class PlanInputRequired(Blocked):
+    """The associated native Plan turn requested a user response."""
 
 
 def process_facts(process):
@@ -18,6 +24,9 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
     if isinstance(error,SessionRefused):
         code, reason = error.code, str(error)
         action = '刷新原会话并核对来源、历史和当前占用。'
+    elif isinstance(error, PlanInputRequired):
+        code, reason = 'PLAN_INPUT_REQUIRED', 'Codex 原生 Plan 在本次回合中请求补充信息。'
+        action = '本次未回答或重发。请核对原会话；如需继续，可补全任务信息后明确启动新 Plan。'
     elif native_limit==NATIVE_BUDGET_EXCEEDED:
         code, reason = 'NATIVE_USD_LIMIT', 'Claude CLI 报告已达到本次美元预算上限。'
         action = '查看原回执与已报告费用；需要新任务时先核对预算。'
