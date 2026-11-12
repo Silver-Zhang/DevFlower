@@ -1,147 +1,125 @@
-# Script-First：首批架构收敛与最小 Stable 边界
+# Script-First：唯一产品基准与最小 Stable
 
 ## 1. 目标与范围
 
-DevFlower 负责 Agent 之间的任务调度与成果交接。画布由固定编译器生成独立 Python，
-原生 CLI 自行使用 Tools、Skills、MCP 和子 Agent。编译不调用模型。
+DevFlower 是面向原生 Agent 的可视化工作流编译器。用户定义部门之间的协作，固定程序将画布
+编译为可独立执行的 Python；每个 Agent 自主组织内部工具、Skills、MCP 和子 Agent。
+**旧 Phase 0–7 / V1 功能矩阵是历史记录，不是新版必须保留的产品范围。**
 
-本批基线为 `218f0c3f7d50aea6f6da0434199b4c15c23e91f1`，其
-[V2 CI 两项任务通过](https://github.com/Silver-Zhang/DevFlower/actions/runs/43229827324)。
-仅修改 `v2/parity-integration`；不发布 Stable，不改 main/develop，不迁移或删除用户记录。
-本批交付简化配置、同一编译器的 GUI 导出及脚本可靠性修复，不替换尚未真实验收的 GUI 运行器。
+核心约束：画布自由组合；Python 是正式产物；直接使用原生 CLI；调度确定而模型行为不必确定；
+GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型框架或重复执行器。
+原生配置默认继承，模型与强度可选覆盖；不得擅自禁用内部能力，也不得擅自放宽原生权限。
 
-## 2. 做法与依赖证据
+首个 Minimal Stable 只要求：创建/保存/重开画布 → 导出 Python → 真实 Codex→Claude 顺序交接
+→ GUI 与外部终端运行同一脚本 → 查看实际结果、错误并安全取消。Condition、Router、Merge、
+有界 Loop、确定性 Tool 和原生多轮续聊均为后续扩展，**不是首个 Stable 的发布门槛**。
+开发/审核只是验收示例，不是固定产品角色。没有真实 CLI 与 GUI 闭环证据时不得发布 Stable。
 
-| 核心职责 | 实际模块 | 当前处理 |
+本批基线为 `9b42992113fe9020aa542e497296dee42a87bf03`，
+[基线 CI 两项通过](https://github.com/Silver-Zhang/DevFlower/actions/runs/43240359288)。
+仅修改 `v2/parity-integration`，不改 main/develop/Stable，不删除用户数据、会话、旧执行器或旧测试。
+
+## 2. 核心模块与依赖边界
+
+| 职责 | 实际实现 | 边界 |
 |---|---|---|
-| 画布编辑 | `ui/index.jsx`、`CanvasNodes.jsx`、`CanvasLinks.jsx`、React Flow | 保留节点、连线和保存行为 |
-| 结构校验 | `documents.py`、`canvas_structure.py`、`ui/canvasModel.mjs` | 保存结构与脚本可执行能力分开检查 |
-| Agent 存储 | `agent_records.py` → `records` 表 | 复用 ID、revision、幂等和工作区隔离 |
-| 确定性编译 | `tools/devflower_export.py` | GUI/终端共用；只依赖 Python 标准库 |
-| 原生调用及交接 | 内嵌 `tools/workflow_script_runtime.py` | 只依赖标准库、原生 `codex` / `claude` |
-| 脚本运行证据 | 私有运行目录中的 Prompt、stdout、stderr、answer、result、events | 新执行路径的事实来源 |
-| 旧 GUI 运行/展示 | `runtime.py` → `worker.py` → Scheduler；`run_inspector.py` | 兼容保留，尚未接管脚本日志 |
+| 画布与结构校验 | React Flow、Canvas 组件、`documents.py`、`canvas_structure.py` | 保存不调用模型 |
+| 配置保存 | `DraftStore`、`AgentRecords` | 保留 ID、版本和工作区校验 |
+| 脚本编译 | `tools/devflower_export.py` | GUI 下载与终端使用同一编译器 |
+| 顺序执行、交接、日志、状态与取消 | 内嵌 `tools/workflow_script_runtime.py` | 只依赖标准库和用户的原生 CLI |
+| 本地验收准备与独立检查 | `tools/devflower_script_acceptance.py` | 不代替产品执行器，不自动调用模型 |
+| 旧 GUI 运行与历史 | `V2Runtime`、worker/Scheduler、Run Inspector | 兼容保留，尚未切换为脚本执行 |
 
-```mermaid
-flowchart TD
-  C["React Flow 画布"] --> S["保存画布与 Agent 版本"]
-  S --> E["同一固定 Python 编译器"]
-  T["终端导出命令"] --> E
-  E --> P["独立 Python 产物"]
-  P --> N["原生 CLI 与文本交接"]
-  N --> L["Prompt、结果、事件日志"]
-  C -->|"旧受管配置兼容"| R["既有 V2 Runtime"]
-  R --> I["旧运行历史与检查器"]
-```
+核心链：画布及 Agent 版本 → 固定编译器 → 独立 `.py` → 原生 CLI → 最终回答与私有日志。
+未来 GUI 只需启动该产物并读取其状态；不得再翻译一遍图或另写调度器。
 
-最终 GUI 的运行也应启动该 Python 产物并读取其日志；不再另写调度器。
-目前图中旧运行分支仍在，不能称执行路径已经统一。
+V2 仍复用 Studio 的存储、UI 组件、theme 和依赖锁；旧运行器仍被 GUI、恢复和历史查询使用。
+AI 助手、Git 平台、自动建队/修复/交付不再扩展；需解除实际入口与钩子后才退出核心版本。
+新 `execution: native-cli` 配置继续拒绝进入旧受管执行器，旧授权检查不因本批而放宽。
+本批没有改 GUI JSX/CSS 或 bundle，也没有增加后台服务或运行数据库。
 
-## 3. 决策与实际修改
+## 3. 本批实现与可靠性语义
 
-### Agent 配置
+编译器版本为 **3**。文件名为 `名称_脚本内容SHA256前8位.py`：同名但内容不同的工作流不再
+因仅对名称取哈希而使用同一路径。同一输入与编译器产生相同字节；已有同名文件仍拒绝覆盖，
+短哈希只用于命名，运行证据使用完整 SHA-256。旧导出产物不会被改写。
 
-新建默认显式保存 `execution: native-cli`，常用配置为名称、Provider、工作目录、角色、
-任务 Prompt、输出与交接要求。模型、推理强度和超时可选，空值继承 CLI 默认配置或不设超时。
-新合同没有工具权限、Skills 哈希、子 Agent 开关、Ask/Plan 模式、受管会话或命名 HOME 字段。
-不探测这些内部能力，也不生成禁用能力或跳过原生保护的参数。
+生成脚本同时提供执行、`--dry-run`、`--status` 和 `--cancel`。后两者只操作显式指定的现有
+私有运行目录，不需要 CLI、项目目录、DevFlower 服务或 SQLite，也不会重新发送任务。
+`workflow.json` 与 RUN_STARTED 的完整脚本哈希绑定产物；节点回答和最终结果均记录内容哈希。
+状态查询核对完整终态及结果文件，不能仅凭 `result.txt` 存在判成功。元数据读取有长度限制，
+不跟随证据文件符号链接、不读取 FIFO。哈希用于一致性检查，不是同用户防篡改或业务正确性证明。
 
-旧记录仍按原字段读取、编辑和运行。兼容表单仅在选择旧记录或明确选择“旧受管配置”时出现。
-`freeze_agent` 在访问旧字段和预留运行意图前拒绝原生合同；旧修复/自动建队入口也明确拒绝。
-因此，本批移除了新建核心路径对这些能力控制的依赖，未删掉旧执行器需要的安全检查。
-
-### 同一编译产物
-
-画布的“导出 Python（原生 CLI）”请求已保存的工作流 ID 和 revision。后端使用终端相同的
-`read_saved` 和 `compile_workflow`，在同一 SQLite 查询事务内读取画布及匹配 Agent 版本。
-版本过期、跨工作区、未显式选择原生合同、不支持节点或字段时拒绝导出。下载包含源码哈希，
-浏览器若已编辑、切换工作区或改选草稿，则丢弃迟到的导出响应。导出不启动 CLI。
-
-SQLite 使用“现有数据库 + query_only”事务：禁止业务写入，允许 SQLite 完成正常 WAL
-辅助文件收尾。原来的 `mode=ro` 会遗留 `-wal/-shm`，使现有会话只读入口拒绝后续读取。
-测试核对业务记录不变，并在静止数据库夹具中核对数据库字节和文件列表不变；不承诺并发
-写入时 SQLite 的物理文件字节永远不变。
-
-编译器版本提升为 2，明确拒绝未知节点/连线/配置字段和未知配置版本；保留显式为 false
-等初始数据，执行 Start→Agent 的长度上限，不再静默忽略。超时必须可表示为有限正整数秒。
-
-### 取消与失败
-
-SIGINT/SIGTERM 只登记取消意图，避免子进程启动后、句柄返回前丢失清理机会。取消与超时
-停止本次启动的进程组；组长退出不能代替整个组退出，抗 TERM 的残留子进程随后被清理。
-非零退出和无法确认最终回答也清理本次进程组。取消记录 CANCELLED 和未知副作用，超时
-记录 UNKNOWN，均保留 RUN_STOPPED、不自动重试、不调用下游。结果写入期间取消也不能
-发布 RUN_COMPLETED。其他原生会话不受影响。
-
-### 保留与移除的边界
-
-| 模块 | 本批处理及删除前提 |
+| 状态 | 含义 |
 |---|---|
-| 旧 Agent 内部能力表单/适配 | 退出新建核心路径，保留旧记录兼容；对应旧执行器退出后再删 |
-| `runtime.py` / `worker.py` / Scheduler | 仍被 GUI 运行、恢复与历史读取使用；同脚本启动和日志读取接管后再退役 |
-| `tools/studio/` | V2 还复用 Store、CLI 原语、UI 组件、theme 与依赖锁；不能整目录删除 |
-| `assistant_*`、Git 平台/交付模块 | 不发展；仍有 server、UI、runtime 真实引用，需先解除入口和钩子 |
-| 旧测试与用户数据 | 未删除；旧合同仍在使用，对应回归继续运行 |
+| RUNNING | 观察到脚本持有该运行目录的锁，尚无有效终态 |
+| CANCEL_REQUESTED | 已写入幂等取消请求；不等于已取消 |
+| CANCELLED | 脚本处理取消并写出停止记录；不承诺回滚已产生的副作用 |
+| STOPPED | 脚本已停止，具体原因保留在日志；不自动重试 |
+| COMPLETED | 顺序调用和结果证据完整；不等于任务质量已获独立审核通过 |
+| RECOVERY_REQUIRED | 缺少终态、日志/结果损坏或其他证据不足；不自动恢复/重发 |
 
-## 4. 验证结果与限制
+活跃脚本持有运行目录锁，取消通过目录中的 `cancel.request` 协作完成，最终仍由原脚本清理
+自己启动的 CLI 进程组。不根据历史 PID 向任意进程发信号。脚本被强杀后，即使 CLI 子进程或
+远端请求可能仍在运行，也不伪称已取消或未执行。查询与重复取消不创建新的运行。
+不同运行目录隔离日志，但不保证两个 Agent 同时修改同一项目无冲突；本轮验收使用串行执行。
+实现按 Linux 本地文件系统验证，未扩展跨平台或分布式进程协调。
 
-核心测试命令（V2 模块需要 Linux 提供 seal 常量的 Python；本地使用 `/usr/bin/python3`）：
+日志保留 Prompt、stdout、stderr、answer、result 和 events；不把完整原生聊天作为默认交接。
+结构化产物合同、命名 Profile 映射、原生会话续用及非顺序图仍明确拒绝导出，不静默丢弃配置。
 
-```sh
-PYTHONPATH=tools /usr/bin/python3 -B -m unittest discover -s tests -p 'test_native_workflow_export.py' -v
-PYTHONPATH=tools /usr/bin/python3 -B -m unittest discover -s tests -p 'test_workflow_script_cancellation.py' -v
-PYTHONPATH=tools /usr/bin/python3 -B -m unittest discover -s tests -p 'test_v2_native_agent_contract.py' -v
-PYTHONPATH=tools /usr/bin/python3 -B -m unittest discover -s tests -p 'test_v2_script_export.py' -v
-```
+## 4. 验证与已知限制
 
-本批核心用例覆盖：确定性与独立执行、原生默认配置、精确交接、错误/超时/取消、进程组
-隔离、GUI/终端脚本逐字节一致、版本冲突、数据库记录保持及新合同拒绝旧执行器。
-其中本地子进程与模拟 CLI 仅证明传输和控制行为，不代表模型调用成功。
-新测试已加入原有 V2 CI，旧测试继续保留。UI bundle 由既有锁定依赖构建。
-
-本地最终代表回归 83 项全部通过：导出 25 项、取消 7 项、原生配置合同 9 项、GUI 导出
-HTTP 5 项，以及旧 Agent、助手修复/提案、画布保存/结构 37 项。分工代码复核发现的
-结果写入取消窗口和超大 timeout 溢出均已用反例修复并复核关闭。
-
-浏览器用例已覆盖原生简化表单、保存/绑定、旧入口禁用、实际 Python 下载、仓库外 dry-run
-及旧表单兼容。本地 Chromium 在启动前报 `socket() failed: Operation not permitted (1)`，
-本地执行用例数为 0；动态结果以对应提交的 GitHub CI 为准，不能以静态构建代替。
-
-真实 CLI 探测在本批开始时使用基线生成脚本执行一次：Codex 版本
-`codex-cli 0.167.0-alpha.4`，认证状态为 ChatGPT 登录；实际命令为
-`codex exec --output-last-message <run>/codex_probe/answer.txt -`，未覆盖模型或原生权限。
-CLI 在模型回答之前退出 1：
-
-```text
-Error: failed to initialize in-process app-server client: Read-only file system (os error 30)
-```
-
-事件为 RUN_STARTED → CALL_INTENT → PROCESS_STARTED → CLI_FAILED → RUN_STOPPED，未自动重发。
-当前环境没有 Claude executable、原生配置或认证环境。**真实 Codex→Claude 验收 BLOCKED**。
-原始日志留在本地，不将账户文件、Prompt 全量输出或私有会话日志提交仓库。
-
-## 5. 使用、过程记录与下一关口
-
-1. 基线核验：远端 `218f0c3`、干净云端工作副本、无开放 PR；提交前再次核对远端 HEAD。
-2. 依赖审查和首批实现：上述配置分流、同编译器导出、取消与输入合同修复。
-3. 针对性自验与分工代码复核：与真实 CLI 验收分开记录，不冒充 Claude 独立审核。
-4. 推送只允许快进更新 V2 集成分支；由对应提交 CI 验证完整回归，不自动发布。
-
-在 GUI 保存简单顺序画布后，点击“导出 Python（原生 CLI）”。终端也可导出同一产物：
+核心回归：
 
 ```sh
-python3 tools/devflower_export.py --database /path/to/v2.sqlite \
-  --workspace-id WORKSPACE_ID --draft-id DRAFT_ID \
-  --output-dir /existing/export-directory --native-config
-python3 /path/to/工作流_XXXXXXXX.py --workspace /path/to/project --dry-run
-python3 /path/to/工作流_XXXXXXXX.py --workspace /path/to/project --task '完成开发并审核'
+PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_native_workflow_export.py' -v
+PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_workflow_script_*.py' -v
+PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_native_agent_contract.py' -v
+PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_script_export.py' -v
 ```
 
-导出文件不覆盖现有同名产物。生成脚本可离开仓库执行，需 Python 3.11+ 及已配置的原生 CLI，
-不需要后台、数据库、浏览器或模型 SDK。本批按 POSIX/Linux 验证。`--run-dir` 指定尚不存在
-的私有日志目录；`--task-file` 可提供任务文本。每次执行为新运行，不暗中恢复或重发旧请求。
+新增回归覆盖同名产物区分、无 CLI 状态读取、取消幂等、子进程停止、死 owner、损坏日志/结果、
+符号链接/FIFO、取消与已有证据损坏同时发生、两份工作区独立执行，以及审核声称通过但实际
+算术测试失败的反例。新套件加入原有 V2 CI，不删除旧回归。
 
-首个 Stable 的剩余关口：在实际可用环境完成 Codex Developer→Claude Reviewer；让 GUI
-启动同一份产物、取消本次进程并展示脚本日志；再用外部终端重跑同一产物。之后才逐项加入
-Condition、有界循环、并行与 Merge。现阶段不支持这些图，也不支持已有受管会话续聊、
-命名 Profile 映射或结构化产物合同；编译器明确拒绝。不得据本批测试宣布最小 Stable 完成。
+本地验收工具只准备两个新 Git 测试目录和一份导出脚本，不改已有项目或账户配置；两个真实
+执行命令由用户显式运行。验证器检查实际生成的加法模块、上游最终回答的精确交接、交付令牌
+和审核文件；独立算术测试不接受 Agent 自报 PASS 代替。验证器会执行产出的 Python 模块，
+这是用户显式发起的本地测试，不是额外沙箱；不自动重跑失败的 CLI。
+
+本轮云端环境未安装 `codex` / `claude`。模拟 CLI 与真实本地子进程测试不是模型验收，不能
+据此启用 GUI 的原生运行入口。真实双 CLI、GUI 运行接线和用户本人验收仍未完成。
+上一批的真实 Codex 初始化失败属于历史证据，不冒充本轮调用结果。
+
+## 5. 本地交接与下一关口
+
+先确认原生 `codex`、`claude` 在本机可用，且用户自己的配置允许完成相应任务。非交互执行
+未必具有交互会话的同样权限行为；DevFlower 不添加跳过审批或禁用工具的参数。
+参考：[Codex 非交互说明](https://learn.chatgpt.com/docs/non-interactive-mode)、
+[Claude Code 配置](https://code.claude.com/docs/en/settings)。不要向仓库上传认证文件或私有日志。
+
+在更新后的仓库中准备验收包：
+
+```sh
+python3 tools/devflower_script_acceptance.py --prepare /tmp/devflower-local-acceptance
+```
+
+目标目录必须不存在。该命令仅准备并打印 dry-run、两次独立执行和最终验证命令，**不会调用模型**。
+核对后逐条执行打印的命令；两次执行使用同一脚本、不同的新测试目录。可在关闭 DevFlower 后
+执行第二次。任何一步失败都先查看日志，不将重复命令当成安全恢复。成功验证仍显示
+`gui_acceptance: NOT_RUN`，不自动授予 Stable 状态。
+
+对实际运行进行独立查询或取消：
+
+```sh
+python3 /path/to/code_review_HASH.py --status --run-dir /path/to/run-a
+python3 /path/to/code_review_HASH.py --cancel --run-dir /path/to/run-a
+```
+
+普通画布导出继续使用 GUI 按钮或 `tools/devflower_export.py --database ... --workspace-id ...
+--draft-id ... --output-dir ... --native-config`，可携带任务文本或 `--task-file`。
+每次执行创建新的私有运行目录；已有目录拒绝启动，不提供自动 resume。
+
+下一步只做：真实 Codex→Claude 成果交接验收 → GUI 启动同一产物并接入本产物的状态/取消
+→ 确认原执行链依赖已经迁移 → 分批删除重复执行器和非核心入口。之后再逐项扩展条件与循环。

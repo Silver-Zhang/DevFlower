@@ -7,11 +7,13 @@ they can contain project source and native CLI output and are not sanitized.
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -23,9 +25,9 @@ class WorkflowError(RuntimeError):
 
 
 class WorkflowCancelled(WorkflowError):
-    def __init__(self, signum):
-        self.signum = signum
-        super().__init__('Cancelled by ' + signal.Signals(signum).name
+    def __init__(self, signum, *, requested=False):
+        self.signum, self.requested = signum, requested
+        super().__init__('Cancelled by ' + ('run-directory request' if requested else signal.Signals(signum).name)
                          + '; inspect native logs before starting another run.')
 
 
@@ -50,6 +52,8 @@ def _check_cancel(context):
     signum = context.get('cancellation', {}).get('signal')
     if signum is not None:
         raise WorkflowCancelled(signum)
+    if _cancel_requested(context['directory_fd']):
+        raise WorkflowCancelled(signal.SIGTERM, requested=True)
 
 
 def _write(path, value):
@@ -63,6 +67,152 @@ def _event(context, kind, **data):
         stream.write(json.dumps(value, ensure_ascii=False) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _script_sha256():
+    return sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+@contextmanager
+def _run_directory(directory):
+    """Open only the caller-owned, private run directory; never create on read."""
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        meta = os.fstat(fd)
+        if meta.st_uid != os.geteuid() or (stat.S_IMODE(meta.st_mode) & 0o777) != 0o700:
+            raise WorkflowError('Run evidence must be in a private directory owned by this user (0700).')
+        yield fd
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _evidence_file(directory_fd, relative):
+    """Fixed evidence names only; no symlinks, pipes or unbounded metadata reads."""
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or '..' in parts:
+        raise WorkflowError('Invalid evidence path.')
+    parent = os.dup(directory_fd)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise WorkflowError('Evidence is not a regular file.')
+            yield stream
+    finally:
+        os.close(parent)
+
+
+def _evidence_bytes(fd, name):
+    with _evidence_file(fd, name) as stream:
+        value = stream.read(1_000_001)
+    if len(value) > 1_000_000:
+        raise WorkflowError('Evidence metadata exceeds the monitor read limit.')
+    return value
+
+
+def _evidence_sha256(fd, name):
+    with _evidence_file(fd, name) as stream:
+        digest = sha256()
+        for chunk in iter(lambda: stream.read(65536), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+
+def _cancel_requested(fd):
+    try:
+        meta = os.stat('cancel.request', dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(meta.st_mode):
+        raise WorkflowError('Cancellation request is not a regular file.')
+    return True
+
+
+def inspect_run(manifest, directory, *, cancel=False):
+    """Observe the same artifact, never replay it. Cancellation is cooperative.
+
+    The live script holds a directory lock. No stored PID is ever signalled;
+    after an owner crash an unfinished run remains RECOVERY_REQUIRED, even if
+    a native child or remote request might still be running.
+    """
+    import fcntl
+    directory = Path(directory).absolute()
+    with _run_directory(directory) as fd:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            active = True
+        else:
+            active = False
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        try:
+            saved = json.loads(_evidence_bytes(fd, 'workflow.json'))
+        except (ValueError, UnicodeError, RecursionError):
+            raise WorkflowError('Invalid run manifest; execution outcome is unknown.') from None
+        if saved != manifest:
+            raise WorkflowError('Run belongs to a different workflow artifact.')
+        snapshot = dict(status='RECOVERY_REQUIRED', active=active, automatic_retry=False,
+                        directory=str(directory), script_sha256=_script_sha256(), completed_nodes=[])
+        try:
+            raw = _evidence_bytes(fd, 'events.jsonl')
+            if not raw.endswith(b'\n'):
+                if not active:
+                    raise WorkflowError('Incomplete journal; execution outcome is unknown.')
+                raw = raw[:raw.rfind(b'\n') + 1]
+            events = [json.loads(line) for line in raw.splitlines()]
+            if not events or any(not isinstance(row, dict) or not isinstance(row.get('kind'), str) for row in events):
+                raise WorkflowError('Missing or malformed execution journal.')
+            if events[0]['kind'] != 'RUN_STARTED' or sum(row['kind'] == 'RUN_STARTED' for row in events) != 1:
+                raise WorkflowError('Run-start evidence is inconsistent.')
+            if events[0].get('script_sha256') != snapshot['script_sha256']:
+                # Refuse before accepting a cancellation request for another script.
+                raise PermissionError('Script content differs from the artifact that started this run.')
+            terminal = [row for row in events if row['kind'] in ('RUN_COMPLETED', 'RUN_STOPPED')]
+            if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
+                raise WorkflowError('Terminal journal evidence is inconsistent.')
+            if cancel and active and not terminal:
+                try:
+                    request = os.open('cancel.request', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                      0o600, dir_fd=fd)
+                except FileExistsError:
+                    pass  # Repeated requests never restart or signal another process.
+                else:
+                    os.close(request)
+                    os.fsync(fd)
+            snapshot['cancel_requested'] = _cancel_requested(fd)
+            completed = [row for row in events if row['kind'] == 'NODE_COMPLETED']
+            expected = [agent['id'] for agent in manifest['agents']]
+            if [row.get('node') for row in completed] != expected[:len(completed)] or len(completed) > len(expected):
+                raise WorkflowError('Node-completion evidence is inconsistent.')
+            for row in completed:
+                if _evidence_sha256(fd, row['node'] + '/answer.txt') != row.get('answer_sha256'):
+                    raise WorkflowError('Recorded node answer has changed: ' + row['node'])
+            snapshot['completed_nodes'] = [row['node'] for row in completed]
+            if terminal:
+                last = terminal[0]
+                if last['kind'] == 'RUN_COMPLETED':
+                    if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
+                        raise WorkflowError('Final result is missing or changed.')
+                    snapshot.update(status='COMPLETED', result_file=str(directory / 'result.txt'))
+                elif last.get('status') in ('CANCELLED', 'STOPPED'):
+                    snapshot.update(status=last['status'], reason=last.get('reason', ''))
+                else:
+                    raise WorkflowError('Unknown terminal state.')
+            elif active:
+                snapshot['status'] = 'CANCEL_REQUESTED' if snapshot['cancel_requested'] else 'RUNNING'
+            else:
+                snapshot['reason'] = 'Script owner is absent without a terminal record; native effects are unknown.'
+        except PermissionError:
+            raise
+        except (WorkflowError, OSError, ValueError, KeyError, TypeError, RecursionError) as error:
+            snapshot.update(status='RECOVERY_REQUIRED', reason=str(error))
+        return snapshot
 
 
 def native_command(agent, answer_path):
@@ -180,15 +330,17 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
             _event(context, 'UNKNOWN', node=agent['id'], reason='No verified final answer: ' + str(error))
             raise WorkflowError('CLI exited but final answer is unconfirmed; no automatic retry.') from None
         _check_cancel(context)
-        _event(context, 'NODE_COMPLETED', node=agent['id'], answer_file=str(directory / 'answer.txt'))
+        _event(context, 'NODE_COMPLETED', node=agent['id'], answer_file=str(directory / 'answer.txt'),
+               answer_sha256=_evidence_sha256(context['directory_fd'], agent['id'] + '/answer.txt'))
         return {'node': agent['id'], 'name': agent['name'], 'answer': answer}
     except (WorkflowCancelled, KeyboardInterrupt) as error:
         if process is not None:
             _stop(process)
         signum = error.signum if isinstance(error, WorkflowCancelled) else signal.SIGINT
         _event(context, 'CANCELLED', node=agent['id'], signal=signal.Signals(signum).name,
+               source='request' if getattr(error, 'requested', False) else 'signal',
                outcome='unknown' if process else 'not_sent', automatic_retry=False)
-        raise WorkflowCancelled(signum) from None
+        raise WorkflowCancelled(signum, requested=getattr(error, 'requested', False)) from None
     except subprocess.TimeoutExpired:
         if process is not None:
             _stop(process)
@@ -207,18 +359,26 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
 
 def script_main(manifest, run_workflow):
     parser = argparse.ArgumentParser(description=manifest['name'] + ' (native CLI workflow)')
-    parser.add_argument('--workspace', type=Path, default=Path.cwd(), help='project root; defaults to current directory')
+    parser.add_argument('--workspace', type=Path, help='project root; defaults to current directory')
     parser.add_argument('--task', default='', help='task supplied to all departments')
     parser.add_argument('--task-file', type=Path, help='UTF-8 task file; cannot combine with --task')
-    parser.add_argument('--run-dir', type=Path, help='new private evidence directory (must not already exist)')
-    parser.add_argument('--dry-run', action='store_true', help='show commands; no CLI, model or file changes')
+    parser.add_argument('--run-dir', type=Path, help='new private directory to execute, or an existing directory for --status/--cancel')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--dry-run', action='store_true', help='show commands; no CLI, model or file changes')
+    mode.add_argument('--status', action='store_true', help='read this artifact\'s existing run as JSON; never execute')
+    mode.add_argument('--cancel', action='store_true', help='request cancellation of an active run; never replay')
     args = parser.parse_args()
     try:
         if os.name != 'posix':
             raise WorkflowError('This first export driver is validated for POSIX/Linux only.')
+        if args.status or args.cancel:
+            if not args.run_dir or args.workspace is not None or args.task or args.task_file:
+                raise WorkflowError('--status/--cancel require --run-dir and accept no execution inputs.')
+            print(json.dumps(inspect_run(manifest, args.run_dir, cancel=args.cancel), ensure_ascii=False, indent=2))
+            return 0
         if args.task and args.task_file:
             raise WorkflowError('Choose --task or --task-file, not both.')
-        workspace = args.workspace.resolve(strict=True)
+        workspace = (args.workspace or Path.cwd()).resolve(strict=True)
         if not workspace.is_dir():
             raise WorkflowError('Workspace is not a directory.')
         # Verify all departments before dispatching any of them.
@@ -241,21 +401,25 @@ def script_main(manifest, run_workflow):
                 directory.mkdir(mode=0o700, parents=False, exist_ok=False)
             else:
                 directory = Path(tempfile.mkdtemp(prefix='devflower-script-'))
-            context = {'workspace': workspace, 'directory': directory, 'cancellation': cancellation}
-            print('Private run evidence: ' + str(directory), file=sys.stderr)
-            _write(directory / 'workflow.json', json.dumps(manifest, ensure_ascii=False, indent=2))
-            _event(context, 'RUN_STARTED', workflow=manifest['name'])
-            try:
-                _check_cancel(context)
-                answer = run_workflow(context, task)
-                _check_cancel(context)
-                _write(directory / 'result.txt', answer['answer'])
-                _check_cancel(context)
-                _event(context, 'RUN_COMPLETED', result_file=str(directory / 'result.txt'))
-            except (WorkflowError, OSError) as error:
-                _event(context, 'RUN_STOPPED', reason=str(error), automatic_retry=False,
-                       status='CANCELLED' if isinstance(error, WorkflowCancelled) else 'STOPPED')
-                raise
+            with _run_directory(directory) as owner:
+                import fcntl
+                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                context = {'workspace': workspace, 'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
+                print('Private run evidence: ' + str(directory), file=sys.stderr)
+                _write(directory / 'workflow.json', json.dumps(manifest, ensure_ascii=False, indent=2))
+                _event(context, 'RUN_STARTED', workflow=manifest['name'], script_sha256=_script_sha256())
+                try:
+                    _check_cancel(context)
+                    answer = run_workflow(context, task)
+                    _check_cancel(context)
+                    _write(directory / 'result.txt', answer['answer'])
+                    _check_cancel(context)
+                    _event(context, 'RUN_COMPLETED', result_file=str(directory / 'result.txt'),
+                           result_sha256=_evidence_sha256(owner, 'result.txt'))
+                except (WorkflowError, OSError) as error:
+                    _event(context, 'RUN_STOPPED', reason=str(error), automatic_retry=False,
+                           status='CANCELLED' if isinstance(error, WorkflowCancelled) else 'STOPPED')
+                    raise
         print(answer['answer'])
         return 0
     except (WorkflowError, OSError, UnicodeError) as error:
