@@ -14,8 +14,9 @@ async function api(route, data){
  const response=await fetch(new URL('/api/v2/'+route,address),{method:data?'POST':'GET',
   headers:{Authorization:'Bearer '+address.hash.slice(1),...(data?{'Content-Type':'application/json'}:{})},
   ...(data?{body:JSON.stringify(data)}:{})});
- assert.equal(response.status,200,route);
- return response.json();
+ const result=await response.json();
+ assert.equal(response.status,200,route+': '+(result.error||''));
+ return result;
 }
 
 async function test(){
@@ -23,10 +24,16 @@ async function test(){
  const name='Run Inspector fixture';
  const marker='DF_INSPECTOR_🟢';
  const node=(id,kind,x,config)=>({id,kind,name:id,config_version:1,config,position:{x,y:100}});
- const document={version:1,name,nodes:[
+ const link=(id,source,target,source_port='out')=>({id,source,target,source_port,target_port:'in'});
+ const matches={field:'result.marker',op:'equals',value:marker};
+ const document={version:1,name,viewport:{x:0,y:0,zoom:1},nodes:[
   node('Start','start',120,{initial_data:JSON.stringify({marker,payload:'🟢'.repeat(8300)})}),
-  node('Finish','output',450,{format:'text'})],edges:[
-  {id:'handoff',source:'Start',target:'Finish',source_port:'out',target_port:'in'}]};
+  node('Rule','condition',650,{expression:matches}),
+  node('Verify','router',1200,{rules:[{id:'match',label:'Matched',test:matches}]}),
+  node('Alternate','output',1850,{format:'text'}),
+  node('Finish','output',2400,{format:'text'})],edges:[
+  link('test','Start','Rule'),link('verify','Rule','Verify','true'),
+  link('alternate','Rule','Alternate','false'),link('handoff','Verify','Finish','match')]};
  const draft=await api('drafts/save',{workspace,id:null,expected:null,document});
  const run=(await api('launch',{workspace,draft_id:draft.id,revision:draft.revision,task:'',
   intent_key:'v2-inspector-browser-one'})).run.id;
@@ -62,8 +69,19 @@ async function test(){
  await page.getByLabel('运行状态',{exact:true}).getByText('已完成',{exact:true}).waitFor();
  const graph=page.locator('.canvas-region');
  const graphViewport=()=>graph.locator('.react-flow__viewport').evaluate(node=>node.style.transform);
+ await page.waitForFunction(()=>{
+  const canvas=document.querySelector('.canvas-region'),frame=canvas.getBoundingClientRect();
+  const cards=[...canvas.querySelectorAll('.canvas-node')];
+  return cards.length===5&&cards.every(card=>{
+   const box=card.getBoundingClientRect();
+   return box.width>0&&box.height>0&&box.left>=frame.left&&box.top>=frame.top&&
+    box.right<=frame.right&&box.bottom<=frame.bottom;
+  });
+ });
+ await page.screenshot({path:path.join(output,'run-first-fit-five-nodes.png')});
+
  const before=await graphViewport();
- await graph.locator('.react-flow__controls-zoomin').click();
+ await graph.locator('.react-flow__controls-zoomout').click();
  await page.waitForFunction(previous=>document.querySelector('.react-flow__viewport').style.transform!==previous,before);
  const zoomed=await graphViewport();
  await button('运行检查器').click();
@@ -75,13 +93,13 @@ async function test(){
  assert.equal(await graph.isVisible(),false);
  assert(await page.getByLabel('运行状态',{exact:true}).isVisible());
  await page.waitForFunction(()=>document.activeElement.id==='v2-run-evidence');
- assert.equal(await inspector.getByRole('button',{name:'事件',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(await inspector.getByRole('button',{name:'详情',exact:true}).getAttribute('aria-pressed'),'true');
  await inspector.getByRole('button',{name:'事件',exact:true}).click();
  await inspector.getByText('授权本次运行',{exact:true}).waitFor();
- await inspector.getByText('下游已接收',{exact:true}).waitFor();
+ await inspector.getByText('下游已接收',{exact:true}).first().waitFor();
  await page.screenshot({path:path.join(output,'run-timeline-desktop.png')});
  await inspector.getByLabel('激活与轮次',{exact:true}).selectOption({label:'Finish · 第 1 轮'});
- await inspector.getByRole('button',{name:'事件',exact:true}).click();
+ assert.equal(await inspector.getByRole('button',{name:'事件',exact:true}).getAttribute('aria-pressed'),'true');
  await inspector.getByText('下游已接收',{exact:true}).waitFor();
  assert.equal(await inspector.getByText('授权本次运行',{exact:true}).count(),0);
  const download=page.waitForEvent('download');
@@ -110,6 +128,25 @@ async function test(){
  assert.equal(await current.getAttribute('aria-current'),'page');
  assert.equal(await page.getByLabel('原生会话',{exact:true}).count(),0);
  assert.equal(await inspector.count(),0);
+ assert.equal(await graphViewport(),zoomed);
+ await button('诊断本次运行').click();
+ const assistant=page.getByLabel('AI 助手',{exact:true});
+ await assistant.waitFor();
+ const bounds=await assistant.boundingBox();
+ assert(bounds.width>=400&&bounds.width<=420);
+ assert.equal(await graphViewport(),zoomed);
+ await button('关闭 AI 助手').click();
+ assert.equal(await graphViewport(),zoomed);
+ const runRead=reply=>new URL(reply.url()).pathname==='/api/v2/run';
+ const reselected=page.waitForResponse(runRead);
+ await current.click();
+ assert.equal((await reselected).status(),200);
+ await page.getByLabel('运行状态',{exact:true}).getByText('已完成',{exact:true}).waitFor();
+ assert.equal(await graphViewport(),zoomed);
+ const refreshed=page.waitForResponse(runRead);
+ await button('重新读取').click();
+ assert.equal((await refreshed).status(),200);
+ await page.getByLabel('运行状态',{exact:true}).getByText('已完成',{exact:true}).waitFor();
  assert.equal(await graphViewport(),zoomed);
  await page.locator('.react-flow__node').filter({hasText:'Finish'}).click();
  const nodeInspector=page.getByLabel('节点配置',{exact:true});

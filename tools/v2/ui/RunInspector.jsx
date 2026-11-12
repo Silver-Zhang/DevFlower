@@ -124,7 +124,11 @@ function EventFeed({api,workspace,run,activation,live}){
 
 export function RunInspector({api,snapshot,trusted,selection,onSelect,wide=false,children}){
  const uncertain=['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(snapshot?.state);
- const [tab,setTab]=useState(wide&&!uncertain?'events':'detail'),[chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');
+ const initialTab=wide&&!uncertain&&snapshot?.state!=='COMPLETED'?'events':'detail';
+ const [selectedTab,setTab]=useState(wide&&!snapshot?null:initialTab);
+ const tab=selectedTab??initialTab;
+ const [chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');
+ useEffect(()=>{if(snapshot)setTab(current=>current??initialTab)},[Boolean(snapshot),initialTab]);
  const [exporting,setExporting]=useState(false);
  const mounted=useRef(true);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);

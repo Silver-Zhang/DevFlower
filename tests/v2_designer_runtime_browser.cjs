@@ -122,6 +122,14 @@ async function run() {
   assert.notEqual(first.nodes.find(row => row.node === 'Finish').state, 'COMPLETED');
   await action('批准').waitFor();
   await page.screenshot({path: path.join(output, 'approval-waiting.png')});
+  await action('运行检查器').click();
+  const inspector=page.getByLabel('运行检查器',{exact:true});
+  await inspector.getByText('等待人工审批',{exact:true}).waitFor();
+  assert.equal(await inspector.getByRole('button',{name:'事件',exact:true}).getAttribute('aria-pressed'),'true');
+  await inspector.getByRole('button',{name:'日志',exact:true}).click();
+  await inspector.getByLabel('激活与轮次',{exact:true}).selectOption({label:'Review · 第 1 轮'});
+  assert.equal(await inspector.getByRole('button',{name:'日志',exact:true}).getAttribute('aria-pressed'),'true');
+  await action('返回运行图').click();
   await page.reload();
   await action('批准').waitFor();
   assert.equal(pending(await details(activeRun)).id, review.id);

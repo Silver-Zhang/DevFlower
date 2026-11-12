@@ -842,3 +842,16 @@
 @media (min-width: 1081px) {
   .canvas-region > .canvas-edit-tools { left: 50%; width: max-content; transform: translateX(-50%); }
 }
+
+@media (min-width: 1000px) {
+  .v2-app.side-tool-open:has(> .v2-assistant) {
+    --dock-width: 412px;
+    grid-template-columns: var(--navigation-width) minmax(0, 1fr) var(--dock-width);
+  }
+  .v2-app > .v2-assistant {
+    position: relative;
+    inset: auto;
+    width: auto;
+    box-shadow: none;
+  }
+}

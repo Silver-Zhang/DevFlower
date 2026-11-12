@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
+import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useNodesInitialized,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
 import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal,History,RefreshCw} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
@@ -33,6 +33,7 @@ import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
 import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeBlock, transferModes} from './canvasModel.mjs';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
+const frozenFit={padding:.18,maxZoom:1.25};
 const blank=()=>({version:1,name:'新工作流',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1}});
 const TOKEN_KEY='devflower-v2-capability';
 let token=location.hash.slice(1)||sessionStorage.getItem(TOKEN_KEY)||'';
@@ -135,6 +136,22 @@ function PlanApproval({value,busy,error,onClose,onConfirm}){
 // Same controlled-measurement boundary as the existing workbench: geometry is
 // live view state, never part of the saved draft or undo history.
 function RepairHandles(){const update=useUpdateNodeInternals();const missing=useStore(s=>JSON.stringify([...s.nodeLookup.values()].filter(n=>!n.hidden&&n.measured.width>0&&n.measured.height>0&&!n.internals.handleBounds).map(n=>n.id)));useEffect(()=>{const ids=JSON.parse(missing);if(ids.length)update(ids)},[missing,update]);return null}
+function FitFrozenRun({nodes}){
+ const ready=useNodesInitialized(),flow=useReactFlow(),fitted=useRef(false);
+ useEffect(()=>{
+  if(!ready||!flow.viewportInitialized||fitted.current)return;
+  const current=new Map(flow.getNodes().map(node=>[node.id,node]));
+  if(current.size!==nodes.length||nodes.some(node=>{
+   const rendered=current.get(node.id);
+   return !rendered?.measured?.width||!rendered.measured.height||
+    rendered.position.x!==node.position.x||rendered.position.y!==node.position.y;
+  }))return;
+  fitted.current=true;
+  flow.fitView(frozenFit);
+ },[nodes,ready,flow]);
+ return null;
+}
+
 function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
@@ -885,7 +902,9 @@ function App(){
   }).catch(()=>{if(alive)setAgentVersions({workspace:id,failed:true})});
   return()=>{alive=false};
  },[workspace?.id,viewMode,agentRefresh,selected,doc.nodes.some(node=>node.agent_id)]);
- const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching),shown=readOnly?(runSnapshot?.definition?.draft_document||blank()):doc;
+ const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching);
+ const frozenGraph=readOnly?runSnapshot?.definition?.draft_document:null;
+ const shown=readOnly?(frozenGraph||blank()):doc;
  const canExportRunSummary=readOnly&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
  const activation=id=>runSnapshot?.nodes.find(a=>a.node===id),n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
@@ -929,7 +948,10 @@ function App(){
   '添加节点后可以启动工作流。':launchBlock||(!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
  function renderRunRows(){return runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(!sideView&&readOnly&&activeRun?.id===row.id?' active':'')}
     aria-current={!sideView&&readOnly&&activeRun?.id===row.id?'page':undefined} onClick={()=>{
-     if(readOnly&&activeRun?.id===row.id&&(primaryView||runInspectorOpen)){setSideView('');setRunInspectorOpen(false);setDrawer(false);return}
+     if(readOnly&&activeRun?.id===row.id){
+      if(!sideView&&!runInspectorOpen){clearRunSummary();guard(rereadRun)()}
+      setSideView('');setRunInspectorOpen(false);setDrawer(false);return;
+     }
      showRun(row.id)
     }}><span>{row.name}<small>{stateLabel(activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}
   function renderRunInspector(wide){
@@ -1132,9 +1154,9 @@ function App(){
      selectionOnDrag={editable&&canvasMode==='select'} selectionMode={SelectionMode.Partial}
      multiSelectionKeyCode={['Shift','Control','Meta']} panOnDrag={canvasMode==='pan'||readOnly?true:[1,2]}
      onMoveEnd={(_,viewport)=>{if(!editable)return;const next=copy(docRef.current);next.viewport={...viewport,x:coordinate(viewport.x),y:coordinate(viewport.y)};edit(next,false)}}
-     defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(runSnapshot):'draft:'+generation.current}
+     defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(frozenGraph):'draft:'+generation.current}
      minZoom={.2} maxZoom={2} deleteKeyCode={null} colorMode={theme} proOptions={{hideAttribution:true}}>
-     <RepairHandles/><Background gap={24} size={1}/>{readOnly&&<Controls showInteractive={false}/>}
+     <RepairHandles/>{frozenGraph?.nodes.length>0&&<FitFrozenRun nodes={frozenGraph.nodes}/>}<Background gap={24} size={1}/>{readOnly&&<Controls showInteractive={false}/>}
      {minimap&&<MiniMap pannable zoomable/>}
     </ReactFlow>
     {!readOnly&&workspace&&<EditorToolbar focused={canvasFocused} onFocus={()=>setCanvasFocused(value=>!value)}
