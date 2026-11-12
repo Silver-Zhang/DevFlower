@@ -319,8 +319,13 @@ def multi(driver):
     freeze_checker(driver.workspace)
     original = git(driver.workspace, 'rev-parse', 'HEAD')
     planner = driver.agent('Planner', 'codex', 'Plan', 'none',
-        'Produce a concise final plan for a Python doubler with two tests and an independent reviewer. '
-        'Include DF_MULTI_PLAN. Do not create or modify any file.', 'planner')
+        'Plan the frozen deliverable DF_MULTI_PLAN. Create only candidate.py, a standalone Python script that '
+        'reads one integer from argv and prints twice that integer. The independent existing check.py '
+        'runs the CLI with 2 and 5 and expects JSON cases [4,10]. Preserve check.py and Git. '
+        'Plan an intentional wrong n+1 first attempt to demonstrate the reject path, then a 2*n repair, '
+        'repeat the existing checker, and independently review against these criteria. Do not add '
+        'an importable API, test files, test framework, argument validation or other requirements. '
+        'Return the plan and do not create or modify any file.', 'planner')
     design = driver.run('multi-plan', flow('Plan development', [
         node('Start','start'), agent_node('Planner',planner), node('End','output')]), 'Plan the development fixture.')
     assert design['state'] == 'COMPLETED'
@@ -337,8 +342,10 @@ def multi(driver):
         driver.agent('Reviewer','claude','Ask','workspace-read',
             'Independently read candidate.py and check.py via native Read. Use actual verifier facts in the upstream input. '
             'Return one bare JSON object with verdict, candidate_sha256, feedback, copying exact candidate_sha256 from '
-            'the upstream result. On a failed test return REJECT and explain the repair. On passed tests and correct source '
-            'return ACCEPT. Do not edit files. A separate deterministic program decides delivery.', 'reviewer'),
+            'the upstream result. The agreed deliverable is the standalone CLI candidate.py, one integer from argv, '
+            'one doubled integer printed, and the unchanged existing check.py that expects cases [4,10]. '
+            'On failed tests or unmet agreed behavior return REJECT and explain the repair. On passed tests and '
+            'correct source return ACCEPT. Do not edit files. A separate deterministic program decides delivery.', 'reviewer'),
     ]
     result = driver.run('multi-gate', development_document(agents), plan_result)
     assert result['state'] == 'COMPLETED'
