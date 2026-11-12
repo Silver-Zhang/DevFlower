@@ -102,8 +102,11 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Referrer-Policy', 'no-referrer')
             self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # Only ignore a disconnect while writing the HTTP response.
 
         def dispatch(self, post=False):
             path = urlsplit(self.path).path
@@ -512,8 +515,6 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 import sys
                 exc = sys.exception()
                 self.reply(400, {'error': str(exc) if isinstance(exc, Invalid) else '请求格式无效，请刷新并重试'})
-            except (BrokenPipeError, ConnectionResetError):
-                return  # A closed browser request does not control the workflow.
             except (OSError, sqlite3.OperationalError):
                 self.reply(503, {'error': '本机读写失败，当前草稿仍保留在编辑器；请核对目录与权限后重试'})
 
