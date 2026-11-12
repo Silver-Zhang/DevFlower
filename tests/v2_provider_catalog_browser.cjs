@@ -206,8 +206,10 @@ async function storage(page) {
   const old=await holdPost(page,'old agent selection');
   try {
    assert.equal(old.origin,200);
+   const second=page.locator('.agent-card strong').getByText('Agent Fixture B',{exact:true});
+   await second.click({trial:true});
    const reread=page.waitForResponse(reply=>isReply(reply,'GET'));
-   await page.locator('.agent-card strong').getByText('Agent Fixture B',{exact:true}).click();
+   await second.click();
    assert.equal((await reread).status(),200);
    await settled(page);
    assert.equal((await update(page)).status(),200);

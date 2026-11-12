@@ -38,9 +38,11 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await manager.getByRole('button',{name:'添加到画布',exact:true}).click();
   await node('首个配置夹具');
   await page.getByLabel('Agent 配置',{exact:true}).getByText('此节点引用已保存的 Agent 配置版本。',{exact:true}).waitFor();
+  await page.locator('.canvas-guide').getByText(/拖动输出端口连接下游/).waitFor();
   await page.getByLabel('关闭检查器',{exact:true}).click();
   await page.getByLabel('撤销',{exact:true}).click();
   await until(async()=>await page.locator('.agent-card').count()===0);
+  assert.equal(await page.locator('.canvas-guide').count(),0);
  });
  await test('q02-partial-config-and-two-agent-chain',async()=>{await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await save();await page.reload();await until(async()=>await page.locator('.agent-card').count()===1);await node('Agent A');assert.equal(await page.getByLabel('Provider',{exact:true}).inputValue(),'');assert.equal(await page.getByLabel('请求模型',{exact:true}).inputValue(),'');await configure('提取','唯一标记 placeholder');await save();await page.getByLabel('关闭检查器',{exact:true}).click();await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await configure('整理','基于上游回答整理');await node('提取');await page.getByLabel('下游 Agent',{exact:true}).selectOption({label:'整理'});await page.getByRole('button',{name:'连接 Agent',exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await page.getByLabel('撤销',{exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===0);assert.equal(await page.locator('.react-flow__edge').count(),0);await page.getByLabel('重做',{exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await save();await page.reload();await until(async()=>await page.locator('.agent-card').count()===2);await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await node('提取');assert.equal(await page.getByLabel('初始化提示词',{exact:true}).inputValue(),'初始化 提取');assert.equal(await page.getByLabel('输出与交接要求',{exact:true}).inputValue(),'输出 提取');assert.equal(await page.getByLabel('请求模型',{exact:true}).inputValue(),'gpt-6.1-sol')});
  await test('q02-real-drag-undo-redo',async()=>{await page.getByLabel('关闭检查器',{exact:true}).click();const item=page.locator('.agent-card').filter({hasText:'提取'});const before=await item.boundingBox();await page.mouse.move(before.x+110,before.y+26);await page.mouse.down();await page.mouse.move(before.x+170,before.y+86,{steps:8});await page.mouse.up();const moved=await item.boundingBox();assert(moved.y-before.y>40);await page.getByLabel('撤销',{exact:true}).click();await until(async()=>Math.abs((await item.boundingBox()).y-before.y)<3);await page.getByLabel('重做',{exact:true}).click();await until(async()=>Math.abs((await item.boundingBox()).y-moved.y)<3);await save()});
@@ -315,6 +317,22 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await typed.getByLabel('路由字段 1',{exact:true}).fill('result.route');
   await add('Merge','merge');
   await typed.getByLabel('汇合策略',{exact:true}).selectOption('selected');
+  const fit=page.getByRole('button',{name:'适应画布',exact:true});
+  assert.equal(await fit.evaluate(button=>getComputedStyle(button,'::after').content),JSON.stringify('适应画布'));
+  const allNodesFit=()=>page.locator('.canvas-region').evaluate(canvas=>{
+   const frame=canvas.getBoundingClientRect(),nodes=[...canvas.querySelectorAll('.canvas-node')];
+   return nodes.length===5&&nodes.every(card=>{
+    const box=card.getBoundingClientRect();
+    return box.left>=frame.left&&box.top>=frame.top&&box.right<=frame.right&&box.bottom<=frame.bottom;
+   });
+  });
+  await fit.click();
+  await until(allNodesFit);
+  for(let i=0;i<5;i++)await page.getByRole('button',{name:'放大画布',exact:true}).click();
+  await until(async()=>!await allNodesFit());
+  await fit.focus();
+  await fit.press('Enter');
+  await until(allNodesFit);
   await add('Loop','loop');
   await typed.getByLabel('最多迭代次数',{exact:true}).fill('4');
   await typed.getByLabel('判定字段',{exact:true}).fill('result.done');
@@ -482,6 +500,12 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await panel.getByRole('button',{name:'附加到本次运行',exact:true}).click();
   await panel.getByRole('button',{name:'关闭项目文件',exact:true}).click();
   await page.getByText('本次运行上下文 · 1 个文件',{exact:true}).waitFor();
+  const context=page.locator('details.task-context');
+  await context.getByLabel('本次任务',{exact:true}).fill('画布切换后保留任务');
+  await page.locator('.canvas-region').click({position:{x:30,y:150}});
+  assert.equal(await context.evaluate(element=>element.open),false);
+  await page.getByText('本次运行上下文 · 1 个文件',{exact:true}).click();
+  assert.equal(await context.getByLabel('本次任务',{exact:true}).inputValue(),'画布切换后保留任务');
   await page.getByLabel('移除任务文件 quick.txt',{exact:true}).click();
   await page.getByText('本次运行上下文',{exact:true}).waitFor();
   await page.getByRole('status').filter({hasText:/^已移除 quick\.txt$/}).waitFor();

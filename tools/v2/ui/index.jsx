@@ -899,6 +899,12 @@ function App(){
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
  const runState=runTrusted?(runSnapshot?.state||'UNKNOWN'):'UNKNOWN';
  const exportNeedsSave=workspace&&!readOnly&&(!saved||dirty);
+ const disconnected=n&&nodeKind(n)==='agent'&&n.agent_id&&!doc.edges.some(edge=>edge.source===n.id||edge.target===n.id);
+ const needsEndpoints=doc.nodes.some(node=>nodeKind(node)!=='agent')&&
+  ['start','output'].some(kind=>!doc.nodes.some(node=>nodeKind(node)===kind));
+ const canvasGuide=!readOnly&&doc.nodes.length>0&&(disconnected||!doc.edges.length?
+  '使用「添加节点」准备输入或输出。拖动输出端口连接下游，再点击连线设置交接。':
+  needsEndpoints?'使用「添加节点」补齐输入或输出，再检查工作流。':'');
  const startHint=launchAttempt?'核验此前的启动请求。':!workspace?'先打开工作空间。':!doc.nodes.length?
   '添加节点后可以启动工作流。':launchBlock||(!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
@@ -1018,7 +1024,8 @@ function App(){
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
-   <div ref={canvasRef} className="canvas-region" aria-label="工作流画布" tabIndex={0}>
+   <div ref={canvasRef} className="canvas-region" aria-label="工作流画布" tabIndex={0}
+    onPointerDownCapture={()=>{if(taskContext.current?.open)taskContext.current.open=false}}>
     <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodeClick={inspectNode} onEdgeClick={inspectEdge}
      onPaneClick={closeInspector} onPaneContextMenu={event=>contextMenu(event)} onNodeContextMenu={contextMenu}
      onConnect={value=>connect(rfConnection(value))} onConnectEnd={explainConnection} onClickConnectEnd={explainConnection}
@@ -1056,7 +1063,10 @@ function App(){
     </div>}
    </div>
    {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id.split('/')[0]);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}</section>}
-   <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span><span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span></footer>
+   <footer className="editor-footer"><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span>
+    {canvasGuide?<span className="canvas-guide">{canvasGuide}</span>:
+     <span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span>}
+   </footer>
   </main>
   {readOnly&&(n||e||runInspectorOpen)&&<aside className="inspector run-inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):e?'连线配置':'运行检查器'}>
    <header><div><small>运行检查器</small><h2>{n?.name||(e?'交接记录':'运行详情')}</h2></div>

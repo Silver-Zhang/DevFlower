@@ -272,6 +272,8 @@
 .canvas-empty .empty-actions { margin-top: 3px; justify-content: flex-start; }
 .empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .editor-footer { min-height: 29px; height: auto; padding-inline: 14px; font-size: 11px; }
+.editor-footer:has(.canvas-guide) { gap: 5px 12px; flex-wrap: wrap; padding-block: 5px; }
+.editor-footer .canvas-guide { color: var(--studio-text); }
 .canvas-edit-tools { border-color: var(--studio-line); border-radius: 8px; }
 .canvas-edit-tools > button { min-width: 31px; min-height: 32px; }
 .canvas-edit-tools button[aria-pressed=true] { color: var(--studio-primary-bg); }
@@ -349,6 +351,7 @@
 .v2-app:has(> .inspector) { --dock-width: 342px; grid-template-columns: var(--navigation-width) minmax(0, 1fr) var(--dock-width); }
 .v2-app:has(> .project-panel, > .agent-manager:not([hidden])) { --dock-width: clamp(360px, 36vw, 570px); }
 .v2-app:has(> :is(.has-preview, .git-platform-panel, .agent-manager:not([hidden]))) { --dock-width: clamp(390px, 40vw, 660px); }
+.v2-app:has(> .provider-catalog-panel) { --dock-width: 338px; }
 .v2-app.side-tool-open > .inspector, .v2-app.canvas-focused > :is(.project-panel, .agent-manager) { display: none; }
 .v2-app > :is(.inspector, .project-panel, .agent-manager) {
   grid-column: 3;
@@ -511,6 +514,24 @@
     box-shadow: var(--studio-shadow);
   }
 }
+@media (min-width: 761px) {
+  .canvas-edit-tools > button[aria-label="适应画布"]::after {
+    content: attr(aria-label);
+    font-size: 12px;
+  }
+}
+@media (min-width: 761px) and (max-width: 1080px) {
+  .v2-app.side-tool-open:has(> .provider-catalog-panel) {
+    --dock-width: clamp(264px, 33vw, 338px);
+    grid-template-columns: var(--navigation-width) minmax(0, 1fr) var(--dock-width);
+  }
+  .v2-app > .provider-catalog-panel {
+    position: relative;
+    inset: auto;
+    width: auto;
+    box-shadow: none;
+  }
+}
 @media (max-width: 760px) {
   .v2-app, .v2-app:has(> .inspector) { grid-template-columns: minmax(0, 1fr); }
   .v2-app > .editor { grid-column: 1; }
@@ -552,7 +573,7 @@
   .notice { white-space: normal; overflow-wrap: anywhere; }
   .scrim { padding: 12px; }
   .dialog { padding: 16px; }
-  .editor-footer > span:last-child { display: none; }
+  .editor-footer > span:last-child:not(.canvas-guide) { display: none; }
 }
 @media (max-width: 620px) {
   .agent-manager-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
