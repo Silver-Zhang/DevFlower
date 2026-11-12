@@ -537,7 +537,16 @@
   .canvas-toolbar :is(.inline-agent, .draft-transfer button, .task-context > summary) { font-size: 12px; }
   .task-context-content { position: fixed; inset: 115px 8px auto; width: auto; }
   .v2-app > :is(.project-panel, .agent-manager) { inset: var(--chrome-height) 0 0; width: auto; }
-  .v2-app > .inspector { inset: auto 0 0; width: auto; max-height: 61dvh; border: 1px solid var(--studio-line); border-radius: 10px 10px 0 0; }
+  .v2-app > .inspector {
+    position: fixed;
+    grid-area: auto;
+    inset: auto 0 0;
+    z-index: 12;
+    width: auto;
+    max-height: 61dvh;
+    border: 1px solid var(--studio-line);
+    border-radius: 10px 10px 0 0;
+  }
   .canvas-empty { width: min(365px, calc(100% - 36px)); }
   .canvas-empty p { font-size: 13px; }
   .notice { white-space: normal; overflow-wrap: anywhere; }

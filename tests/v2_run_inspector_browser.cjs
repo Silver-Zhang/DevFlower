@@ -78,6 +78,15 @@ async function test(){
  await nodeInspector.getByText(/显示 1–8000/).waitFor();
  await page.setViewportSize({width:560,height:760});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ const narrowHeader=await page.locator('.app-header').boundingBox();
+ const narrowEditor=await page.getByRole('main',{name:'工作流设计器'}).boundingBox();
+ const narrowSheet=await nodeInspector.boundingBox();
+ assert.equal(narrowHeader.width,560,'Opening the Inspector must preserve the full navigation header');
+ assert.equal(narrowEditor.width,560,'The narrow sheet must not allocate an extra canvas column');
+ assert.equal(narrowSheet.width,560);
+ assert.equal(narrowSheet.y+narrowSheet.height,760);
+ assert(narrowSheet.y>=narrowHeader.y+narrowHeader.height,'The sheet must leave global navigation visible');
+ await button('关闭检查器').click({trial:true});
  await page.screenshot({path:path.join(output,'run-paged-output-narrow.png')});
  await button('关闭检查器').click();
  await page.reload();
