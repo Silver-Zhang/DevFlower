@@ -160,7 +160,7 @@ if tool == 'codex':
         print('fixture failure', file=sys.stderr)
         sys.exit(7)
     assert sys.argv[1:3] == ['exec', '--output-last-message']
-    Path(sys.argv[3]).write_text('IMPLEMENTED')
+    Path(sys.argv[3]).write_text('IMPLEMENTED DELIVERY_TOKEN=fixture-test-nonce')
 else:
     assert sys.argv[1:] == ['-p', '--output-format', 'json']
     assert 'IMPLEMENTED' in prompt
@@ -216,7 +216,7 @@ else:
                 self.assertEqual(persisted, {key: exported[key] for key in ('filename', 'source', 'sha256')})
                 _, details = self.http(service, 'script-run/evidence?' + query + '&node=Reviewer')
                 self.assertEqual(details['answer']['text'], 'REVIEWED')
-                self.assertEqual(json.loads(details['prompt']['text'].rsplit(' (data)\n', 1)[1])['answer'], 'IMPLEMENTED')
+                self.assertEqual(json.loads(details['prompt']['text'].rsplit(' (data)\n', 1)[1])['answer'], 'IMPLEMENTED DELIVERY_TOKEN=fixture-test-nonce')
                 self.assertEqual(self.http(service, 'script-run/evidence?' + query + '&node=../task.txt')[0], 400)
             self.assertEqual(len((self.project/'calls.jsonl').read_text().splitlines()), 2)
             other = self.root / 'terminal'

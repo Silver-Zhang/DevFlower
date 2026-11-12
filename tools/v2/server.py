@@ -1,9 +1,11 @@
 """Loopback-only V2 drafts, metadata and explicit frozen execution boundary."""
+from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import secrets
 import sqlite3
+from threading import Lock
 from urllib.parse import parse_qs, urlsplit
 
 from devflower_export import ExportError
@@ -11,14 +13,9 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .agent_records import AgentRecords
-from .assistant import Assistant
 from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
-from .copilot_catalog import CopilotCatalog
 from .documents import check_chain
-from .git_platform import GitPlatform, parameters as git_platform_parameters
-from .git_delivery import GitDelivery
 from .history_archives import HistoryArchives, MAX_BYTES as HISTORY_ARCHIVE_BYTES
-from .local_delivery import package as local_delivery_package, preview as local_delivery_preview
 from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
@@ -41,7 +38,6 @@ STATIC = Path(__file__).parent / 'static'
 def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None,
                   git_delivery_targets=()):
     token = secrets.token_urlsafe(32)
-    catalog = CopilotCatalog() if copilot_catalog is None else copilot_catalog
     if native_sessions is not None and runtime is not None:
         native_sessions.workflow_links = bool(runtime.provider or 'claude' in getattr(session_operations, 'profiles', {})
                                               or store.db.list('node-session'))
@@ -57,11 +53,38 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     inspector = RunInspector(store)
     archives = HistoryArchives(store, inspector)
     templates = WorkflowTemplates(store)
-    assistant = Assistant(store, session_operations, runtime)
-    git_platform = GitPlatform(store,runtime)
-    homes = getattr(getattr(getattr(runtime, 'cli_providers', None), 'homes', None), 'entries', {})
-    git_delivery = GitDelivery(git_platform, git_delivery_targets,
-                               native_homes=[row['home'] for row in homes.values()] if git_delivery_targets else ())
+    assistant = None
+    assistant_lock = Lock()
+
+    def assistant_service():
+        nonlocal assistant
+        with assistant_lock:
+            if assistant is None:
+                from .assistant import Assistant
+                assistant = Assistant(store, session_operations, runtime)
+            return assistant
+
+    @cache
+    def copilot_service():
+        if copilot_catalog is not None:
+            return copilot_catalog
+        from .copilot_catalog import CopilotCatalog
+        return CopilotCatalog()
+
+    @cache
+    def git_platform():
+        from .git_platform import GitPlatform
+        return GitPlatform(store, runtime)
+
+    @cache
+    def git_delivery():
+        from .git_delivery import GitDelivery
+        homes = getattr(getattr(getattr(runtime, 'cli_providers', None), 'homes', None), 'entries', {})
+        return GitDelivery(git_platform(), git_delivery_targets,
+                           native_homes=[row['home'] for row in homes.values()] if git_delivery_targets else ())
+
+    if git_delivery_targets:
+        git_delivery()  # Validate explicitly registered destinations at startup.
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
     scripts = ScriptRuns(store, agents)
@@ -100,7 +123,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     filename, mime = files[path]
                     return self.reply(200, (STATIC / filename).read_bytes(), mime)
                 if path == '/api/v2/provider-catalog/copilot':
-                    return self.reply(*catalog.request(self.path, self.headers, self.rfile, post=post))
+                    return self.reply(*copilot_service().request(self.path, self.headers, self.rfile, post=post))
                 if path.startswith('/api/v2/native-pty/'):
                     if terminals is None:
                         return self.reply(404, {'error': '当前主机或操作配置尚未启用原生终端。'})
@@ -167,8 +190,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     route = path.removeprefix('/api/v2/git-platform/')
                     query = urlsplit(self.path).query
                     if not post:
-                        params = git_platform_parameters(route,query,self.headers)
-                        return self.reply(200,git_platform.read(route,**params))
+                        from .git_platform import parameters
+                        params = parameters(route, query, self.headers)
+                        return self.reply(200, git_platform().read(route, **params))
                     if route != 'review':
                         return self.reply(405,{'error':'此处仅能创建本机审核任务。远端发布需要独立交付 Gate。'})
                     lengths = self.headers.get_all('Content-Length',[])
@@ -179,7 +203,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     raw = self.rfile.read(size)
                     if len(raw)!=size:
                         raise Invalid('审核任务请求不完整。')
-                    return self.reply(200,git_platform.review(json.loads(raw,object_pairs_hook=unique_pairs)))
+                    return self.reply(200,git_platform().review(json.loads(raw,object_pairs_hook=unique_pairs)))
                 if path.startswith('/api/v2/assistant/'):
                     route = path.rsplit('/', 1)[1]
                     if path != '/api/v2/assistant/' + route:
@@ -198,7 +222,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         if len(raw) != size:
                             raise Invalid('助手请求不完整。')
                         data = json.loads(raw, object_pairs_hook=unique_pairs)
-                        return self.reply(200, getattr(assistant, route)(data))
+                        return self.reply(200, getattr(assistant_service(), route)(data))
                     if not post and route in ('history', 'conversation', 'diagnosis', 'settings', 'repair_status', 'repair_intent'):
                         if len(query)>1024 or lengths not in ([], ['0']):
                             raise Invalid('助手查询身份无效。')
@@ -212,7 +236,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         allowed = required | extras.get(route,set())
                         if not required <= values.keys() <= allowed or any(len(v)!=1 for v in values.values()):
                             raise Invalid('助手查询需要明确的工作区与对象。')
-                        return self.reply(200, getattr(assistant, route)(**{key:value[0] for key,value in values.items()}))
+                        return self.reply(200, getattr(assistant_service(), route)(**{key:value[0] for key,value in values.items()}))
                     return self.reply(405, {'error': '助手操作方法无效。'})
                 if path in ('/api/v2/run-inspector/events', '/api/v2/run-inspector/payload',
                             '/api/v2/run-inspector/export'):
@@ -416,15 +440,17 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     else:
                         result = scripts.source(record)
                 elif not post and path == '/api/v2/local-delivery/preview' and runtime and set(query) == {'workspace', 'run'}:
-                    result = local_delivery_preview(git_platform, **query)
-                    result = dict(result, git_targets=sorted(git_delivery.targets),
+                    from .local_delivery import preview
+                    result = preview(git_platform(), **query)
+                    result = dict(result, git_targets=sorted(git_delivery().targets),
                                   git_ref='refs/heads/work/devflower-' + query['run'])
                 elif post and path == '/api/v2/local-delivery' and runtime and not query:
-                    return self.reply(200, local_delivery_package(git_platform, data), 'application/zip')
+                    from .local_delivery import package
+                    return self.reply(200, package(git_platform(), data), 'application/zip')
                 elif post and path == '/api/v2/local-delivery/git' and runtime and not query:
-                    result = git_delivery.publish(data)
+                    result = git_delivery().publish(data)
                 elif not post and path == '/api/v2/local-delivery/git-operation' and set(query) == {'workspace', 'intent_key'}:
-                    result = git_delivery.read(**query)
+                    result = git_delivery().read(**query)
                 elif not post and path == '/api/v2/run':
                     workspace, run_id = query.get('workspace'), query.get('id')
                     record = scripts.get(workspace, run_id)

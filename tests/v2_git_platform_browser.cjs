@@ -23,6 +23,7 @@ async function run(){
   await page.getByLabel('文件夹路径',{exact:true}).fill(path.join(process.env.V2_WORKSPACES,name));
   await button('前往').click();
   await button('打开此文件夹').click();
+  if(!await button('Git 平台').isVisible())await page.locator('.compatibility-tools > summary').click();
   await button('Git 平台').click();
  }
  await page.goto(process.env.V2_URL);

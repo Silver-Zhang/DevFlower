@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useRef,useState} from 'react';
+import React,{lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useNodesInitialized,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
 import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal,History,RefreshCw} from 'lucide-react';
@@ -21,19 +21,18 @@ import {EditorToolbar} from '../../studio/workbench_ui/EditorToolbar.jsx';
 import {WorkflowLibrary} from '../../studio/workbench_ui/WorkflowLibrary.jsx';
 import {SidebarToggle} from '../../studio/workbench_ui/WorkspaceLayout.jsx';
 import {downloadFile,HistoryArchives} from './HistoryArchives.jsx';
-import {LocalDelivery} from './LocalDelivery.jsx';
 import {applySelection, canvasFragment, coordinate, layoutCanvas, pasteCanvasFragment} from './canvasEditing.mjs';
 import {allNodesOutside,canvasGeometry,routeEdges,sameCanvasGeometry} from './canvasRouting.mjs';
 
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
-import {GitWorkspace} from './GitWorkspace.jsx';
-import {Assistant} from './Assistant.jsx';
-import {filePath} from './AssistantSourcePicker.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
 import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
 import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeBlock, transferModes} from './canvasModel.mjs';
+const Assistant=lazy(()=>import('./Assistant.jsx').then(module=>({default:module.Assistant})));
+const GitWorkspace=lazy(()=>import('./GitWorkspace.jsx').then(module=>({default:module.GitWorkspace})));
+const LocalDelivery=lazy(()=>import('./LocalDelivery.jsx').then(module=>({default:module.LocalDelivery})));
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const frozenFit={padding:.18,maxZoom:1.25};
@@ -625,7 +624,7 @@ function App(){
  }
  function closeGit(){closeSideView(gitOpener)}
  function openAssistant({file,run}={}){
-  if(file)setAssistantFiles(list=>list.some(item=>filePath(item)===file)?list:[...list,file].slice(-3));
+  if(file)setAssistantFiles(list=>list.some(item=>(typeof item==='string'?item:item.path)===file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
   setSideView('assistant');
  }
@@ -1198,11 +1197,16 @@ function App(){
    <div className="section-heading">工作空间工具</div>
    <nav className="workspace-actions supplementary-navigation" aria-label="工作空间工具">
     <Button ref={filesOpener} icon={FolderOpen} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
-    <Button ref={assistantOpener} icon={Sparkles} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
-    <Button ref={gitOpener} icon={GitBranch} aria-current={sideView==='git'?'page':undefined} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
     <Button ref={templatesOpener} icon={LibraryBig} aria-expanded={sideView==='templates'} onClick={()=>sideView==='templates'?closeSideView(templatesOpener):setSideView('templates')}>工作流模板</Button>
     <Button ref={archivesOpener} icon={Archive} aria-expanded={sideView==='archives'} onClick={()=>sideView==='archives'?closeSideView(archivesOpener):setSideView('archives')}>历史归档</Button>
-   </nav></>}
+   </nav>
+   <details className="compatibility-tools">
+    <summary>兼容工具</summary>
+    <nav className="workspace-actions supplementary-navigation" aria-label="兼容工具">
+    <Button ref={assistantOpener} icon={Sparkles} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
+    <Button ref={gitOpener} icon={GitBranch} aria-current={sideView==='git'?'page':undefined} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
+    </nav>
+   </details></>}
    {workspace&&<section className="run-history" aria-label="运行历史"><div className="section-heading"><span>运行历史</span><button disabled={!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})} aria-label="刷新运行历史">↻</button></div>{renderRunRows()}{!runs.length&&<p className="muted small empty-list">尚无运行记录</p>}</section>}
    {!!status?.workspaces?.length&&<div className="section-heading spaces">最近工作空间</div>}
    {status?.workspaces?.map(w=><button key={w.id} className="workspace-link" title={w.path}
@@ -1260,7 +1264,8 @@ function App(){
     <Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button>
    </details>}
    {runTrusted&&runSnapshot?.state==='COMPLETED'&&runSnapshot.run?.output?.result?.gate_verdict==='ACCEPT'&&
-    runSnapshot.definition?.graph?.development&&<LocalDelivery key={activeRun.id} api={api} workspace={workspace.id} run={activeRun.id}/>}
+    runSnapshot.definition?.graph?.development&&<Suspense><LocalDelivery key={activeRun.id} api={api}
+    workspace={workspace.id} run={activeRun.id}/></Suspense>}
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
    {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}</div>
    {!scriptRun&&<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>}
@@ -1408,7 +1413,7 @@ function App(){
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
-  {workspace&&filesOpen&&<ProjectFiles key={'files:'+workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={file=>openAssistant({file})}
+  {workspace&&filesOpen&&<ProjectFiles key={'files:'+workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={nativeScript?undefined:file=>openAssistant({file})}
    onTaskAttach={!nativeScript&&!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='templates'&&<aside className="project-panel template-panel" onKeyDown={event=>{
    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSideView(templatesOpener)}
@@ -1417,13 +1422,14 @@ function App(){
     graph={readOnly?null:doc} onUse={useTemplate} onUseTemplate={readTemplate} onClose={()=>closeSideView(templatesOpener)}/>
   </aside>}
   {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>closeSideView(archivesOpener)}/>}
-  {workspace&&sideView==='git'&&<GitWorkspace key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} onClose={closeGit}/>}
-  {workspace&&sideView==='assistant'&&<Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
+  {workspace&&sideView==='git'&&<Suspense><GitWorkspace key={workspace.id+':'+panelEpoch}
+   api={api} workspace={workspace} onClose={closeGit}/></Suspense>}
+  {workspace&&sideView==='assistant'&&<Suspense><Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
    files={assistantFiles} onFiles={setAssistantFiles} run={assistantRun} onRun={setAssistantRun} runs={runs}
    onApply={applyAssistant} onSaveTeam={saveAssistantTeam} onOpenDraft={openAssistantDraft}
-   onOpenRun={openAssistantRun} onClose={closeAssistant}/>}
+   onOpenRun={openAssistantRun} onClose={closeAssistant}/></Suspense>}
   {workspace&&runsOpen&&<main id="v2-runs" tabIndex={-1} className="project-panel run-list-workspace" aria-label="运行记录">
    <header className="project-panel-header"><div><h2>运行记录</h2><p className="field-note">{workspace.name}</p></div>
     <Button icon={RefreshCw} disabled={!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})}>刷新</Button>

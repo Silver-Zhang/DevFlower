@@ -9,7 +9,6 @@ from orchestration.store import lease
 from orchestration.common import Blocked
 from studio.graph import Invalid
 from v2.store import DraftStore
-from v2.copilot_catalog import CopilotCatalog
 from v2.server import create_server
 from v2.runtime import V2Runtime
 from v2.native_sessions import NativeSessions
@@ -44,7 +43,10 @@ def main(argv=None, *, ready=None):
                 raise Invalid('原生会话写入同时需要 --native-history-config。')
             operations = (SessionOperations(store, native, runtime.provider, load_write_profiles(args.native_session_writes))
                           if args.native_session_writes else None)
-            catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
+            catalog = None
+            if args.copilot_catalog_config:
+                from v2.copilot_catalog import CopilotCatalog
+                catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
             server, token = create_server(store, args.port, runtime=runtime, native_sessions=native, copilot_catalog=catalog,
                                           session_operations=operations, git_delivery_targets=args.git_delivery_target)
             with server:

@@ -1,27 +1,14 @@
 """Workspace-scoped Agent configuration. Saving an Agent never launches a CLI."""
 import json
-from itertools import islice
 from pathlib import Path
 import re
 import secrets
 
 from devflower_export import ExportError, validate_native_agent
 from orchestration.common import Blocked, canonical, digest
-from orchestration.privacy import credentials, redact
-from studio.agent_extensions import skill_files, skill_header
-from studio.agent_sessions import safe_text
 from studio.graph import Invalid
-from studio.model_registration import profile_identity
-from studio.native_codex_image import NativeImage
-from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.server import Conflict
-from studio.session_sources import opened
 
-from .cli_providers import EFFORT, model_id
-from .native_sessions import HANDLE, REVISION
-from .native_agent_profiles import PROFILE_ID
-from .native_session_links import require_creation_profile
-from .session_identity import StorageRootIdentity
 
 KIND = 'agent-config'
 KEY = re.compile(r'[0-9a-f]{32}')
@@ -52,6 +39,14 @@ def validate_agent(value):
             return validate_native_agent(value)
         except ExportError as error:
             raise Invalid(str(error)) from None
+    return _validate_managed_agent(value)
+
+
+def _validate_managed_agent(value):
+    from .cli_providers import EFFORT, model_id
+    from .native_agent_profiles import PROFILE_ID
+    from .native_sessions import HANDLE
+
     if not isinstance(value,dict) or not FIELDS<=set(value)<=FIELDS|{'native_profile'}:
         raise Invalid('Agent 配置字段缺失或不受支持。')
     if value.get('native_profile') is not None and not matches(PROFILE_ID,value['native_profile']):
@@ -136,6 +131,8 @@ class AgentRecords:
         return None
 
     def verify_session(self, workspace, config, revision):
+        from .native_sessions import REVISION
+
         home = self.independent_home(config['provider'],config.get('native_profile'))
         if home:
             from types import SimpleNamespace
@@ -155,6 +152,10 @@ class AgentRecords:
         return locator, record
 
     def require_session_scope(self, workspace, config, locator, record):
+        from studio.model_registration import profile_identity
+        from .native_session_links import require_creation_profile
+        from .session_identity import StorageRootIdentity
+
         operations = self.session_operations
         provider = config['provider']
         profile = operations.profiles.get(provider)
@@ -231,7 +232,17 @@ class AgentRecords:
                 if prior['revision'] == agent_revision(key,None,config,home_pin):
                     return prior
                 raise Conflict('此 Agent 保存意图已经使用。')
-        if not native and config['session']['kind'] == 'existing':
+        if not native:
+            self._verify_managed_authority(workspace, key, expected, config, home_pin, session_revision)
+        key = key or secrets.token_hex(16)
+        revision = agent_revision(key,expected,config,home_pin)
+        result = dict(id=key, workspace=workspace, revision=revision, config=config)
+        if home_pin:
+            result['native_home_pin'] = home_pin
+        return result
+
+    def _verify_managed_authority(self, workspace, key, expected, config, home_pin, session_revision):
+        if config['session']['kind'] == 'existing':
             if session_revision is not None or expected is None:
                 self.verify_session(workspace, config, session_revision)
             else:
@@ -242,16 +253,10 @@ class AgentRecords:
                     raise Invalid('已有会话绑定已变化，请重新选择并核验。')
         elif session_revision is not None:
             raise Invalid('新会话不需要已有会话版本。')
-        if not native and config['skills']:
+        if config['skills']:
             available = self.skills(workspace, config['provider'], config['cwd'])
             if not available['selectable'] or not set(config['skills']) <= {row['id'] for row in available['skills']}:
                 raise Conflict('Skill 来源或文件已变化，请重新发现并选择。')
-        key = key or secrets.token_hex(16)
-        revision = agent_revision(key,expected,config,home_pin)
-        result = dict(id=key, workspace=workspace, revision=revision, config=config)
-        if home_pin:
-            result['native_home_pin'] = home_pin
-        return result
 
     @staticmethod
     def save_prepared(db, result, expected):
@@ -281,6 +286,14 @@ class AgentRecords:
         return {'removed': key}
 
     def skills(self, workspace, provider, cwd, *, authority=False):
+        from itertools import islice
+        from orchestration.privacy import credentials, redact
+        from studio.agent_extensions import skill_files, skill_header
+        from studio.agent_sessions import safe_text
+        from studio.native_codex_image import NativeImage
+        from studio.native_codex_rpc import CodexRPC, metadata_guard
+        from studio.session_sources import opened
+
         path = self.directory(workspace, cwd)
         if provider not in PROVIDERS:
             raise Invalid('Skill Provider 不受支持。')

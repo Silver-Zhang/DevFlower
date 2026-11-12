@@ -865,3 +865,8 @@
     box-shadow: none;
   }
 }
+
+.compatibility-tools > summary {
+  cursor: pointer;
+  padding: 6px 10px;
+}

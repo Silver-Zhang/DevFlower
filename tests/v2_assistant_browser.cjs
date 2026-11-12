@@ -63,6 +63,7 @@ async function run(){
  await button('核对本次发送').waitFor();
  await page.unroute('**/api/v2/assistant/send',drop);
  await button('关闭 AI 助手').click();
+ if(!await button('AI 助手').isVisible())await page.locator('.compatibility-tools > summary').click();
  await button('AI 助手').click();
  // Reopen reads the stored identity without submitting again.
  const proposal=assistant.getByLabel('画布提案',{exact:true});
@@ -77,6 +78,7 @@ async function run(){
  await button('关闭 AI 助手').click();
  await page.getByLabel('撤销',{exact:true}).click();
  await page.locator('.canvas-node').filter({hasText:'Original Agent'}).waitFor();
+ if(!await button('AI 助手').isVisible())await page.locator('.compatibility-tools > summary').click();
  await button('AI 助手').click();
  await page.getByRole('button',{name:'助手会话历史',exact:true}).click();
  await assistant.getByLabel('助手会话列表',{exact:true}).getByRole('button',{name:/Rename AgentA/}).click();
