@@ -59,6 +59,7 @@ function Button({icon:Icon,children,...props}){return <button type="button" {...
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
+const durablyEnded=snapshot=>ended(snapshot?.state)&&ended(snapshot.run?.persisted_state??snapshot.state);
 const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
@@ -290,9 +291,42 @@ function App(){
  }
  function showRun(id,w=workspaceRef.current,environment){if(primaryView)setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment)}
  function editDraft(){if(primaryView)setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
- async function rereadRun(){const value=runRef.current;if(!value)return;if(runRead.current?.epoch===value.epoch)return;const ticket={epoch:value.epoch};runRead.current=ticket;
-  try{const response=await api('run?workspace='+value.workspace+'&id='+value.id);if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');const done=ended(response.state)&&ended(response.run.persisted_state??response.state);if(done)refreshRuns();return done}catch(e){if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。')}}finally{if(runRead.current===ticket)runRead.current=null}}
- useEffect(()=>{if(!activeRun)return;let closed=false,timer;const read=async()=>{const finished=await rereadRun();if(!closed&&!finished)timer=setTimeout(read,900)};read();return()=>{closed=true;clearTimeout(timer)}},[activeRun?.id,activeRun?.epoch]);
+ async function rereadRun(){
+  const value=runRef.current;
+  if(!value)return;
+  if(runRead.current?.epoch===value.epoch)return runRead.current.result;
+  const ticket={epoch:value.epoch};runRead.current=ticket;
+  ticket.result=(async()=>{
+   try{
+    const response=await api('run?workspace='+value.workspace+'&id='+value.id);
+    if(runRead.current!==ticket||runRef.current?.epoch!==value.epoch||workspaceRef.current?.id!==value.workspace)return;
+    summarySource.current=response;setRunSnapshot(response);setRuns(previous=>previous.map(row=>row.id===value.id?{...row,state:response.state,reason:response.run.reason}:row));setRunTrusted(true);setRunError('');
+    const done=durablyEnded(response);
+    if(done)refreshRuns();
+    return done;
+   }catch(e){
+    if(runRead.current===ticket&&runRef.current?.epoch===value.epoch){
+     summarySource.current=null;setRunTrusted(false);setRunError('运行状态未确认。'+e.message+' 重新读取只查询原运行，不启动或重发。');
+    }
+   }finally{if(runRead.current===ticket)runRead.current=null}
+  })();
+  return ticket.result;
+ }
+ useEffect(()=>{
+  if(!activeRun)return;
+  let closed=false,timer;
+  async function read(){
+   const finished=await rereadRun();
+   if(!closed&&!finished)timer=setTimeout(()=>{
+    if(closed||runRef.current?.epoch!==activeRun.epoch)return;
+    const latest=summarySource.current;
+    if(latest?.run?.id===activeRun.id&&latest.run.workspace===activeRun.workspace&&durablyEnded(latest))return;
+    read();
+   },900);
+  }
+  read();
+  return()=>{closed=true;clearTimeout(timer)};
+ },[activeRun?.id,activeRun?.epoch]);
  async function cancelRun(){const value=runRef.current;if(!value||cancelBusy.current)return;cancelBusy.current=value;setCancelling(true);setError('');try{
   const result=await api('cancel',{workspace:value.workspace,run_id:value.id});
   if(runRef.current?.epoch===value.epoch&&workspaceRef.current?.id===value.workspace){runRead.current=null;summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);setRunError('');refreshRuns();setNotice('已记录本次取消请求。仅停止本任务自有工作；Provider 结果依实际回执显示。')}

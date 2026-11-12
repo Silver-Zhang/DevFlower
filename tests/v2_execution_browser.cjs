@@ -57,6 +57,55 @@ async function api(route,data){return page.evaluate(async({route,data})=>{const 
   assert.equal(entered,1,'Durably completed run stops automatic polling');
   await page.unroute('**/api/v2/run?*',delay);
  });
+ await test('durable-manual-read-stops-an-already-scheduled-poll',async()=>{
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const latest=(await api('runs?workspace='+workspace)).sort((a,b)=>b.created_at-a.created_at)[0].id;
+  const history=page.getByLabel('运行历史',{exact:true});
+  await history.locator('button.workflow-link').last().click();
+  await complete();
+  await page.evaluate(()=>{
+   const original=window.setTimeout.bind(window);
+   const clock={scheduled:null,restore:()=>{window.setTimeout=original;clearTimeout(clock.scheduled?.id)}};
+   window.fixtureRunPoll=clock;
+   window.setTimeout=(callback,delay,...args)=>{
+    if(delay!==900||clock.scheduled)return original(callback,delay,...args);
+    const id=original(()=>{},30_000);
+    clock.scheduled={id,run:()=>callback(...args)};
+    return id;
+   };
+  });
+  let reads=0;
+  const pattern='**/api/v2/run?*';
+  const project=async route=>{
+   if(new URL(route.request().url()).searchParams.get('id')!==latest)return route.continue();
+   const response=await route.fetch();
+   const actual=await response.json();
+   assert.equal(actual.run.persisted_state,'COMPLETED');
+   if(++reads===1){
+    await route.fulfill({response,json:{...actual,state:'RUNNING',run:{...actual.run,persisted_state:'RUNNING'}}});
+   }else await route.fulfill({response});
+  };
+  await page.route(pattern,project);
+  try{
+   await history.locator('button.workflow-link').first().click();
+   await page.getByLabel('运行状态',{exact:true}).getByText('运行中',{exact:true}).waitFor();
+   await page.waitForFunction(()=>Boolean(window.fixtureRunPoll?.scheduled));
+   const reread=page.getByRole('button',{name:'重新读取',exact:true});
+   await reread.click();
+   await complete();
+   assert.equal(reads,2);
+   await page.evaluate(()=>{const clock=window.fixtureRunPoll;clock.restore();clock.scheduled.run()});
+   await sleep(100);
+   assert.equal(reads,2,'An already scheduled automatic callback skips a durably completed identity');
+   const explicit=page.waitForResponse(reply=>new URL(reply.url()).searchParams.get('id')===latest);
+   await reread.click();
+   assert.equal((await explicit).status(),200);
+   assert.equal(reads,3,'The operator can still reread a durably completed run');
+  }finally{
+   await page.unroute(pattern,project);
+   await page.evaluate(()=>{window.fixtureRunPoll?.restore();delete window.fixtureRunPoll});
+  }
+ });
  await test('actual-truncated-handoff-and-downstream-request',async()=>{
   await page.getByRole('button',{name:'编辑草稿',exact:true}).click();await node('Agent A');await page.getByLabel('Agent 名称',{exact:true}).fill('Long source');await page.getByLabel('关闭检查器',{exact:true}).click();await openWorkflowActions(page);await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await page.getByLabel('Provider',{exact:true}).selectOption('codex');await page.getByLabel('请求模型',{exact:true}).selectOption('fixture-model');await page.getByLabel('请求强度',{exact:true}).selectOption('low');await page.getByLabel('每轮提示词',{exact:true}).fill('use actual upstream');await node('Long source');await page.getByLabel('下游 Agent',{exact:true}).selectOption({label:'Agent B'});await page.getByRole('button',{name:'连接 Agent',exact:true}).click();await page.getByLabel('关闭检查器',{exact:true}).click();await (await launchButton()).click();await complete();await page.locator('.react-flow__edge').click();const content=await page.getByLabel('实际交接内容',{exact:true}).innerText();const input=JSON.parse(content);assert.equal(input.truncated,true);assert.equal(input.budget,16000);assert.equal(input.text.length,16000);await node('Agent B');const request=await page.getByLabel('实际可见请求',{exact:true}).innerText();assert(request.includes('"truncated": true'));assert(request.includes(JSON.stringify(input.text).slice(1,-1)),'Actual visible request contains the exact encoded transferred text');await page.screenshot({path:path.join(out,'downstream-actual-request.png')});for(const viewport of [{width:1440,height:900},{width:1280,height:800},{width:989,height:535}]){await page.setViewportSize(viewport);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.getByRole('button',{name:'编辑草稿',exact:true}).click({trial:true});await page.screenshot({path:path.join(out,'run-layout-'+viewport.width+'.png')})}
  });

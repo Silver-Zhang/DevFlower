@@ -124,7 +124,7 @@ function EventFeed({api,workspace,run,activation,live}){
 
 export function RunInspector({api,snapshot,trusted,selection,onSelect,wide=false,children}){
  const uncertain=['FAILED','RECOVERY_REQUIRED','CANCELLED'].includes(snapshot?.state);
- const initialTab=wide&&!uncertain&&snapshot?.state!=='COMPLETED'?'events':'detail';
+ const initialTab=wide&&(!snapshot||trusted&&!uncertain&&snapshot.state!=='COMPLETED')?'events':'detail';
  const [selectedTab,setTab]=useState(wide&&!snapshot?null:initialTab);
  const tab=selectedTab??initialTab;
  const [chosen,setChosen]=useState(selection?.activation||''),[exportError,setExportError]=useState('');

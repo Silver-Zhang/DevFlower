@@ -93,6 +93,7 @@ async function run(){
  assert.equal(await button('确认发送').count(),0);
  await button('关闭 AI 助手').click();
  await page.getByLabel('运行历史',{exact:true}).getByRole('button',{name:/Assistant diagnosis fixture/}).click();
+ await page.getByLabel('运行状态',{exact:true}).getByText('失败',{exact:true}).waitFor();
  await button('诊断本次运行').click();
  const diagnosis=assistant.getByLabel('运行只读诊断',{exact:true});
  await diagnosis.getByText(/没有匹配规则/).waitFor();
