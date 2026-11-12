@@ -456,7 +456,7 @@ with sqlite3.connect(database.as_uri()+'?mode=rw', uri=True) as db:
 
   // The fixture represents historical data whose editable draft disappeared.
   const {execFileSync}=require('node:child_process');
-  execFileSync('python',['-c',`import sqlite3,sys
+  execFileSync('python3',['-B','-c',`import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
     removed=db.execute("DELETE FROM records WHERE kind='draft' AND id=?", (sys.argv[2],))
     assert removed.rowcount == 1`,path.join(out,'state','v2.sqlite'),a.id]);
