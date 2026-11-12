@@ -1,10 +1,11 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
-import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose} from 'lucide-react';
+import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
+import './workbench.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
@@ -53,7 +54,7 @@ async function api(path,data,{raw=false,binary=false}={}){
 }
 const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
 const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
-function Button({icon:Icon,children,...props}){return <button {...props}>{Icon&&<Icon size={16}/>}<span>{children}</span></button>}
+function Button({icon:Icon,children,...props}){return <button type="button" {...props}>{Icon&&<Icon size={16} aria-hidden="true"/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:HandoffEdge};
 const ended=state=>['COMPLETED','FAILED','CANCELLED'].includes(state);
@@ -770,6 +771,7 @@ function App(){
     if(sideView==='agents'){closeAgents();return}
     if(sideView==='templates'){closeSideView(templatesOpener);return}
     if(sideView==='archives'){closeSideView(archivesOpener);return}
+    if(taskContext.current?.open){taskContext.current.open=false;taskContext.current.querySelector('summary')?.focus();return}
     closeInspector();
    }
    const letter=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
@@ -895,15 +897,23 @@ function App(){
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
- return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')}>
+ const runState=runTrusted?(runSnapshot?.state||'UNKNOWN'):'UNKNOWN';
+ const startHint=launchAttempt?'核验此前的启动请求。':!workspace?'先打开工作空间。':!doc.nodes.length?
+  '添加节点后可以启动工作流。':launchBlock||(!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
+ return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
+  (sideView?' side-tool-open':'')}>
+  <button type="button" className="skip-workbench" onClick={()=>document.getElementById('v2-editor')?.focus()}>
+   跳至工作流画布
+  </button>
   <SidebarToggle collapsed={!navigationOpen} onClick={toggleNavigation} ref={navigationToggle}
    aria-controls="v2-navigation" aria-expanded={navigationOpen}/>
   <header className="app-header">
-   <div className="brand"><Workflow size={21}/> DevFlower <span>V2</span></div>
-   <div className="header-spacer"/>
-   <label className="theme"><select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+   <div className="brand" translate="no"><span className="brand-mark"><Workflow size={19} aria-hidden="true"/></span><strong>DevFlower</strong><span className="brand-version">V2</span></div>
    <Button ref={workspacePicker} className="workspace-picker" icon={FolderOpen} disabled={!status||!!busy} onClick={showFolder}
     title={workspace?.path}>{workspace?workspace.name:'打开工作空间'}</Button>
+   <div className="header-spacer"/>
+   <span className="service-location">{status?'本机工作台':'等待读取本机服务'}</span>
+   <label className="theme"><SlidersHorizontal size={14} aria-hidden="true"/><select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
   </header>
   {compact&&navigationOpen&&<div className="navigation-shade" onClick={()=>{setDrawer(false);focusNavigation()}}/>}
   <aside ref={navigationPane} id="v2-navigation" className="navigation" aria-label="工作台导航" hidden={!navigationOpen}>
@@ -911,6 +921,7 @@ function App(){
     <div><strong>{workspace.name}</strong><div className="workspace-line" title={workspace.path}>{workspace.path}</div></div>
     <button aria-label="关闭工作空间" title="关闭工作空间" disabled={!!busy||launching} onClick={()=>navigate(closeWorkspace,'关闭工作空间')}><X size={15}/></button>
    </div>
+   <div className="section-heading">工作空间工具</div>
    <nav className="workspace-actions" aria-label="工作空间工具">
     <Button ref={filesOpener} icon={FolderOpen} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>
     <Button ref={agentOpener} icon={Bot} aria-expanded={sideView==='agents'} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
@@ -923,7 +934,7 @@ function App(){
    <nav aria-label="工作流列表">{drafts.map(row=><button key={row.id} className={'workflow-link'+(saved?.id===row.id?' active':'')} disabled={!!busy} onClick={()=>navigate(async()=>{await openDraft(row);setDrawer(false)},'打开其他工作流')}><Workflow size={16}/><span>{row.graph.name}</span></button>)}
     {!drafts.length&&<p className="muted small empty-list">尚无已保存的工作流</p>}
    </nav>
-   <nav className="workspace-actions" aria-label="模板与归档">
+   <nav className="workspace-actions supplementary-navigation" aria-label="模板与归档">
     <Button ref={templatesOpener} icon={LibraryBig} aria-expanded={sideView==='templates'} onClick={()=>sideView==='templates'?closeSideView(templatesOpener):setSideView('templates')}>工作流模板</Button>
     <Button ref={archivesOpener} icon={Archive} aria-expanded={sideView==='archives'} onClick={()=>sideView==='archives'?closeSideView(archivesOpener):setSideView('archives')}>历史归档</Button>
    </nav></>}
@@ -939,15 +950,33 @@ function App(){
    <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
     onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
   </aside>
-  <main className="editor"><div className="document-bar"><div><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<><Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button><Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button><Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))} title={launchBlock&&!launchAttempt?launchBlock:status?.provider_available?'明确启动将调用所选模型；不自动重试':catalog?.error||'执行不可用，编辑和保存仍可使用'} onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button></>}</div></div>
-   {workspace&&!readOnly&&<div className="draft-transfer">
-    <Button disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
-    <Button disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
+  <main id="v2-editor" tabIndex={-1} className="editor" aria-label="工作流设计器" data-mode={readOnly?'run':'draft'}>
+   <div className="document-bar"><div className="document-title"><span className="document-icon"><Workflow size={17} aria-hidden="true"/></span>
+    <div className="document-name"><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/>
+    <span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span></div>
+   </div><div className="document-actions">{readOnly?<Button onClick={editDraft}>编辑草稿</Button>:<>
+    <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
+    <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
+    <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))}
+     title={startHint||'明确启动将调用所选模型；不自动重试'} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
+     onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
+   </>}</div></div>
+   {(workspace||readOnly)&&<div className="canvas-toolbar" aria-label={readOnly?'运行操作':'画布操作'}>{readOnly?<>
+    {canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}
+    <Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button><Button onClick={guard(rereadRun)}>重新读取</Button>
+   </>:<>
+    <Button className="add-node" data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button>
+    <Button className="inline-agent" title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button>
+    <div className="header-spacer"/>
+    <div className="draft-transfer">
+    <Button icon={Upload} title="导入工作流" disabled={!!busy||launching} onClick={chooseArchive}>导入工作流</Button>
+    <Button icon={Download} title={!saved||dirty?'保存工作流后可导出':'导出已保存工作流'} disabled={!saved||dirty||!!busy||launching} onClick={exportDraft}>导出已保存工作流</Button>
     <input ref={transferInput} hidden type="file" accept=".json,application/json" aria-label="选择工作流文件"
      onChange={importArchive} onCancel={cancelArchiveChoice}/>
-    {(!saved||dirty)&&<small className="muted">请先保存当前工作流，再导出已保存版本。</small>}
+    </div>
     <details ref={taskContext} className="task-context" aria-label="本次运行上下文">
-     <summary>本次运行上下文{taskFiles.length>0?' · '+taskFiles.length+' 个文件':''}</summary>
+     <summary><Paperclip size={15} aria-hidden="true"/>本次运行上下文{taskFiles.length>0?' · '+taskFiles.length+' 个文件':''}<ChevronDown size={14} aria-hidden="true"/></summary>
+     <div className="task-context-content">
      <Field label="本次任务"><textarea rows={2} maxLength={20000} value={taskText} disabled={launching||Boolean(launchAttempt)}
       onChange={event=>setTaskText(event.target.value)}/></Field>
      <p className="field-note">所选文件文本会发送给本次运行的 Agent。文件权限由各 Agent 配置控制。</p>
@@ -955,18 +984,21 @@ function App(){
       <button aria-label={'移除任务文件 '+file.path} disabled={launching||Boolean(launchAttempt)}
        onClick={()=>{setTaskFiles(files=>files.filter(item=>item.path!==file.path));setNotice('已移除 '+file.path)}}>移除</button></div>)}
      <Button disabled={launching||Boolean(launchAttempt)} onClick={()=>setSideView('files')}>选择任务文件</Button>
+     </div>
     </details>
-   </div>}
-   <div className="canvas-toolbar"><span><span className="stage-dot"/>{readOnly?'冻结运行':'编辑草稿'}</span><small>{readOnly?'原草稿保留；此视图只查询本次运行':'添加节点并连接数据端口'}</small><div className="header-spacer"/>{readOnly?<>{canExportRunSummary&&<Button disabled={!!busy||!!pending} onClick={exportRunSummary}>导出运行摘要</Button>}<Button disabled={!runTrusted||!runSnapshot} onClick={guard(exportHistory)}>导出运行归档</Button><Button onClick={guard(rereadRun)}>重新读取</Button></>:<><Button data-node-library icon={Plus} disabled={!editable} onClick={event=>{const bounds=event.currentTarget.getBoundingClientRect();openPicker({x:bounds.left,y:bounds.bottom+6},false)}}>添加节点</Button><Button title="兼容旧草稿的内联 Agent；新配置请从节点库添加。" disabled={!editable} onClick={()=>addNode('agent',null,true)}>添加 Agent</Button></>}</div>
-   {!readOnly&&launchBlock&&<p className="phase5-note">{launchBlock} 当前图仍可编辑、保存和导出。</p>}
+   </>}</div>}
+   {!readOnly&&workspace&&startHint&&!launchAttempt&&doc.nodes.length>0&&<p id="v2-start-hint" className="phase5-note">{startHint}</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
-   {readOnly&&<section className="run-summary" aria-label="运行状态"><strong>{runTrusted?stateLabel(runSnapshot?.state||'UNKNOWN'):'状态未确认'}</strong><span>实际调用 {runSnapshot?.run?.actual_calls??'unknown'} 次{!runTrusted?'（上次读取）':''}</span><Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
-   <Button onClick={()=>{clearSelection();setRunInspectorOpen(true)}}>运行检查器</Button>
+   {readOnly&&<section className="run-summary" aria-label="运行状态"><div className="run-command-bar">
+   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">实际调用 {runSnapshot?.run?.actual_calls??'未知'} 次{!runTrusted?'（上次读取）':''}</span>
+   <Button className="inspect-run" onClick={()=>{setSideView('');clearSelection();setRunInspectorOpen(true)}}>运行检查器</Button>
+   <Button disabled={!runSnapshot||cancelling||(runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||['COMPLETED','FAILED','CANCELLED'].includes(runSnapshot?.state)} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
    <Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>
    {runTrusted&&runSnapshot?.state==='COMPLETED'&&runSnapshot.run?.output?.result?.gate_verdict==='ACCEPT'&&
     runSnapshot.definition?.graph?.development&&<LocalDelivery key={activeRun.id} api={api} workspace={workspace.id} run={activeRun.id}/>}
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
-   {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p>{runSnapshot.run.reason}</p>}
+   {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}</div>
+   <p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>{runSnapshot?.run?.reason&&<p className="error-text">{runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
     {runSnapshot.nodes.filter(row=>runSnapshot.run.partial_failures.includes(row.id)).map(row=><p key={row.id}>{row.name} · {row.reason}</p>)}</details>}
    {approval&&<section className="approval-wait" aria-label="待人工审批"><h3>{approval.name}</h3><p>{approval.question}</p>
@@ -1010,11 +1042,11 @@ function App(){
     {nodePicker&&<ConnectedNodePicker pending={nodePicker} kinds={nodeKinds} canChoose={()=>true}
      onChoose={kind=>addNode(kind,nodePicker.position)} onClose={()=>setNodePicker(null)}/>}
     {!shown.nodes.length&&<div className="canvas-empty">
-     <span className="empty-icon"><Workflow size={29}/></span>
-     <h1>{readOnly?'正在读取原运行':workspace?'从第一个 Agent 开始':'把想法连接成工作流'}</h1>
-     <p>{readOnly?'正在读取已保存的运行记录。':workspace?'添加 Agent 节点并绑定配置。保存后，可检查连线和权限，再启动运行。':'打开获准的项目文件夹，创建 Agent、连接工作流，并在本机运行。'}</p>
+     <span className="empty-icon"><Workflow size={29} aria-hidden="true"/></span>
+     <h1>{readOnly?'正在读取原运行':workspace?'开始设计工作流':'打开项目，开始工作'}</h1>
+     <p>{readOnly?'正在读取已保存的运行记录。':workspace?'创建或选择可复用的 Agent 配置，再将它添加到画布。连好输入与输出后，检查配置并启动。':'选择一个已授权的项目文件夹。工作流草稿、运行和会话都按工作空间管理。'}</p>
      {!readOnly&&<div className="empty-actions">
-      <Button className="primary" icon={workspace?Plus:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>addNode():showFolder}>{workspace?'添加第一个 Agent':'打开工作空间'}</Button>
+      <Button className="primary" icon={workspace?Bot:FolderOpen} disabled={!status||!!busy} onClick={workspace?()=>openAgents():showFolder}>{workspace?'配置第一个 Agent':'打开工作空间'}</Button>
       {workspace&&<Button icon={LibraryBig} onClick={()=>setSideView('templates')}>从模板开始</Button>}
      </div>}
     </div>}

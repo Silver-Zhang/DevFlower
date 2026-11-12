@@ -1,11 +1,11 @@
 import React,{useLayoutEffect} from 'react';
 import {Handle,Position,useUpdateNodeInternals} from '@xyflow/react';
-import {CheckCheck,FileCheck2,Flag,GitBranch,GitMerge,Repeat2,Settings2,Terminal,UserCheck,Workflow} from 'lucide-react';
+import {Bot,CheckCheck,FileCheck2,Flag,GitBranch,GitMerge,Repeat2,Terminal,UserCheck} from 'lucide-react';
 import {PredicateEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {canvasTypes,developmentExit,developmentRoles,draftConfigIssue,emptyPredicate,nodeKind,nodeType,ports,runtimeBlock} from './canvasModel.mjs';
 
 const predicateLimits={field:200,value:2000};
-const icons={start:Flag,agent:Workflow,condition:GitBranch,router:GitBranch,merge:GitMerge,loop:Repeat2,
+const icons={start:Flag,agent:Bot,condition:GitBranch,router:GitBranch,merge:GitMerge,loop:Repeat2,
  approval:UserCheck,tool:Terminal,validation:FileCheck2,output:CheckCheck};
 export const nodeKinds=Object.fromEntries(Object.entries(canvasTypes).map(([id,spec])=>[id,[spec.label,icons[id],spec.english]]));
 
@@ -24,18 +24,19 @@ function PortRows({node,direction}){
 export function CanvasNodeCard({id,data,selected}){
  const n=data.node,kind=nodeKind(n),type=nodeType(n),Icon=icons[kind],agent=kind==='agent';
  const issue=data.referenceIssue||draftConfigIssue(n);
+ const state=data.activation?.state||(issue?'NEEDS_CONFIG':agent&&n.agent_id?'BOUND':'DRAFT');
  const portsKey=JSON.stringify([ports(n,'inputs'),ports(n,'outputs')]);
  const update=useUpdateNodeInternals();
  useLayoutEffect(()=>{update(id)},[id,portsKey,update]);
- return <article className={'agent-card canvas-node'+(selected?' selected':'')} data-kind={kind}>
-  <header><span className="agent-icon"><Icon size={18}/></span><div><small>{type.english}</small>
-   <strong title={n.name}>{n.name||'未命名节点'}</strong></div><Settings2 size={15}/></header>
+ return <article className={'agent-card canvas-node'+(selected?' selected':'')} data-kind={kind} data-state={state}>
+  <header><span className="agent-icon"><Icon size={18} aria-hidden="true"/></span><div>
+   <strong title={n.name}>{n.name||'未命名节点'}</strong><small>{type.english}</small></div></header>
   {agent&&<p>{n.agent_id?'已保存的 Agent 配置':n.model||(n.kind==='agent'?'选择已保存的 Agent 配置':'选择 Provider 与模型')}</p>}
   <div className={'canvas-node-ports'+(agent?' agent-ports':'')}>
    <PortRows node={n} direction="inputs"/><PortRows node={n} direction="outputs"/>
   </div>
   <footer>
-   <span>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
+   <span className="workbench-state" data-state={state}>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
    <span title={issue||undefined}>{data.activation?data.activation.input_sent_sha256?'已写入 CLI':'冻结运行':issue||(agent?(n.agent_id?'固定版本':'独立会话'):'草稿')}</span>
   </footer>
  </article>;

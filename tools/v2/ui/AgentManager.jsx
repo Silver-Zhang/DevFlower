@@ -36,7 +36,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const [pendingRun, setPendingRun] = useState(null);
  const alive = useRef(true);
  const running = useRef(false);
- const close = useRef(null);
+ const close = useRef(null), nameInput = useRef(null);
  const newId = useRef(null);
 
  useEffect(() => {
@@ -67,6 +67,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   }
   setPendingRun(pending);
   setError(''); setNotice(''); setDeleteAsk(false);
+  if (!row) requestAnimationFrame(() => nameInput.current?.focus());
  }
  function change(fields) {setConfig(old => ({...old, ...fields}));}
  function changeProvider(provider) {
@@ -142,8 +143,10 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const efforts = model?.efforts?.length ? model.efforts : provider?.efforts ?? [];
  const sessionRows = sessions?.sessions ?? [];
  const modelValue = config?.model_source === 'manual' ? 'manual' : config?.model ?? '';
- const editText = (label, key, rows) => <Field label={label}>{rows ? <textarea aria-label={label} rows={rows}
+ const missingIdentity = Boolean(config && (!config.name.trim() || !config.role.trim()));
+ const editText = (label, key, rows) => <Field label={['name','role'].includes(key)?label+'（必填）':label}>{rows ? <textarea aria-label={label} rows={rows}
   value={config[key]} onChange={event => change({[key]: event.target.value})}/> : <input aria-label={label}
+  required={key==='name'||key==='role'} ref={key==='name'?nameInput:undefined}
   value={config[key]} onChange={event => change({[key]: event.target.value})}/>}</Field>;
 
  return <aside className="agent-manager" aria-label="Agent 管理" hidden={!visible}
@@ -156,10 +159,13 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
     {rows.map(row => <button key={row.id} aria-pressed={record?.id === row.id} onClick={() => choose(row)} disabled={busy}>
      <strong>{row.config.name}</strong><small>{row.config.role} · {LABELS[row.config.provider]}</small></button>)}
    </nav>
-   {!config ? <div className="agent-manager-empty"><h3>为工作流准备 Agent</h3>
-    <p>选择已保存的 Agent，或创建一份可复用配置。</p></div> :
-    <form onSubmit={save} aria-label="Agent 配置表单">
+   {!config ? <div className="agent-manager-empty"><h3>{selectedNode?'为当前节点选择 Agent':'为工作流准备 Agent'}</h3>
+    <p>保存配置后，可以将同一个 Agent 用在不同的工作流节点。</p>
+    <button type="button" className="primary" disabled={busy} onClick={() => choose(null)}>创建 Agent 配置</button></div> :
+    <form onSubmit={save} aria-label="Agent 配置表单" aria-busy={busy}>
+     <div className="agent-form-scroll">
      <fieldset disabled={busy}><legend>身份与角色</legend>
+      {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。角色模板可以代填角色。</p>}
       <div className="agent-manager-pair">{editText('Agent 名称', 'name')}
        <Field label="角色模板"><select aria-label="角色模板" value={config.template} onChange={event => {
         const template = event.target.value; const [role, responsibilities] = TEMPLATES[template];
@@ -267,16 +273,18 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
       <Field label="原生预算（美元）"><input aria-label="原生预算（美元）" inputMode="decimal" disabled={!provider?.native_budget}
        value={config.max_budget_usd ?? ''} onChange={event => change({max_budget_usd: event.target.value || null})}/></Field>
      </details>
-     {error && <p className="error-text" role="alert">{error}</p>}
-     {notice && <p className="field-note" role="status">{notice}</p>}
      {record && <Field label="本次 Agent 运行输入"><input aria-label="本次 Agent 运行输入" disabled={busy || !!pendingRun}
       value={pendingRun?.task ?? directTask} onChange={event => setDirectTask(event.target.value)}/></Field>}
+     </div>
      <footer>
-      <button type="submit" className="primary" disabled={busy || profileUnavailable || !config.name.trim() || !config.role.trim()}>保存 Agent</button>
+      {error && <p className="error-text" role="alert">{error}</p>}
+      {notice && <p className="field-note" role="status">{notice}</p>}
+      <button type="submit" className="primary" aria-describedby={missingIdentity?'agent-save-hint':undefined}
+       disabled={busy || profileUnavailable || missingIdentity}>保存 Agent</button>
       <button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
        {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>
-      <button type="button" disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
-       {selectedNode ? '用于当前节点' : '添加到工作流'}</button>
+      <button type="button" className="bind-agent" disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
+       {selectedNode ? '用于当前节点' : '添加到画布'}</button>
       {record && (deleteAsk ? <>
        <button type="button" disabled={busy} onClick={remove}>确认删除配置</button>
        <button type="button" onClick={() => setDeleteAsk(false)}>取消删除</button></> :

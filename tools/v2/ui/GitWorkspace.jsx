@@ -1,5 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {GitBranch,GitPullRequest,RefreshCw,X} from 'lucide-react';
+import {PanelEmpty} from './WorkbenchFeedback.jsx';
 
 const route=(name,query)=>'git-platform/'+name+'?'+new URLSearchParams(query);
 const uid=()=>crypto.randomUUID().replaceAll('-','');
@@ -95,7 +96,12 @@ export function GitWorkspace({api,workspace,onClose}){
   </nav>
   <div className="git-platform-scroll">
    {busy&&<p role="status" className="field-note">正在读取或核对记录…</p>}
-   {error&&<p role="alert" className="error-text">{error}</p>}
+   {error&&(repo?<p role="alert" className="error-text">{error}</p>:
+    <PanelEmpty icon={GitBranch} title="无法读取此工作区的仓库"
+     actions={<button disabled={busy} onClick={()=>openTab('repository')}>重试读取仓库</button>}>
+     <p>请确认当前文件夹属于 Git 工作树，并已配置可访问的 GitHub 或 GitLab origin。</p>
+     <p role="alert" className="error-text">{error}</p>
+    </PanelEmpty>)}
    {notice&&<p role="status" className="field-note">{notice}</p>}
    {pending&&<section className="git-review-pending" aria-label="待核对审核意图">
     <p>本机审核意图 · {changeName} #{pending.change}</p><Commit value={pending.head_sha}/>

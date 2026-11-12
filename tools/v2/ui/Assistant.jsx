@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {History,Plus,Sparkles,X} from 'lucide-react';
 import {ProposalDiff} from '../../studio/workbench_ui/ProposalDiff.jsx';
+import {PanelEmpty} from './WorkbenchFeedback.jsx';
 
 const uid=()=>crypto.randomUUID().replaceAll('-','');
 const active=new Set(['SUBMITTING','RESERVED','RUNNING']);
@@ -146,7 +147,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    <button ref={closing} aria-label="关闭 AI 助手" title="关闭 AI 助手" onClick={onClose}><X size={16}/></button>
   </header>
   {view==='history'?<section className="assistant-history" aria-label="助手会话列表">
-   {!history.length&&<p>当前工作空间没有助手对话。</p>}
+   {!history.length&&<PanelEmpty icon={History} title="还没有助手对话"><p>切回对话即可开始提问或准备画布提案。</p></PanelEmpty>}
    {history.map(row=><button key={row.id} onClick={()=>switchTo(row.id)}><span>{row.title}</span>
     <small>{new Date(row.updated_at*1000).toLocaleString()}</small></button>)}
    {before&&<button disabled={busy} onClick={()=>perform(()=>loadHistory(before))}>更早的助手对话</button>}
@@ -154,7 +155,12 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    <div className="v2-assistant-scroll">
     <Diagnosis value={diagnosis}/>
     <section role="log" aria-label="助手对话消息">
-     {!record?.turns?.length&&<p className="field-note">可以询问工作流，或生成一份待审阅的画布提案。</p>}
+     {!record?.turns?.length&&!matching&&<PanelEmpty icon={Sparkles} title="与助手一起准备工作流"
+      actions={providers.length>0&&<button disabled={busy||running||unknown||!!pending}
+       onClick={()=>setText(mode==='proposal'?'检查当前草稿的节点与交接，并建议一项可以审阅的改动。':'怎样设计两个 Agent 之间的输入与输出？')}>使用示例问题</button>}>
+      <p>{providers.length?'提出问题，或先预览画布提案的发送内容。应用提案前可以核对每项改动。':
+       '可先附加运行证据并阅读诊断。要发送消息，请在启动配置中启用受管 Codex 或 Claude 会话。'}</p>
+     </PanelEmpty>}
      {record?.turns?.map(item=><article className="v2-assistant-turn" key={item.id}>
       <p className="assistant-user">{item.text}</p>
       <small>{item.provider} · {labels[item.state]||item.state}</small>
@@ -222,7 +228,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     </details>
     <textarea aria-label="助手消息" value={text} rows={3} maxLength={8000} disabled={busy||running||unknown||!!pending}
      onChange={event=>setText(event.target.value)} placeholder="输入问题或画布修改要求"/>
-    <button disabled={!valid||busy||running||unknown||!!pending} onClick={()=>perform(showPreview)}>预览本次发送</button>
+    <button className="primary assistant-preview-action" disabled={!valid||busy||running||unknown||!!pending} onClick={()=>perform(showPreview)}>预览本次发送</button>
    </section>
   </>}
   {error&&<p className="error-text assistant-feedback" role="alert">{error}</p>}

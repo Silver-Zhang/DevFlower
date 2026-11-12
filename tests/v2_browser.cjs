@@ -12,19 +12,35 @@ async function node(name){await page.locator('.agent-card strong').getByText(nam
 async function configure(name,round){await page.getByLabel('Agent 名称',{exact:true}).fill(name);await page.getByLabel('Provider',{exact:true}).selectOption('codex');await page.getByLabel('请求模型',{exact:true}).fill('gpt-6.1-sol');await page.getByLabel('请求强度',{exact:true}).fill('low');await page.getByLabel('初始化提示词',{exact:true}).fill('初始化 '+name);await page.getByLabel('每轮提示词',{exact:true}).fill(round);await page.getByLabel('输出与交接要求',{exact:true}).fill('输出 '+name)}
 (async()=>{
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM,args:['--no-sandbox']});context=await browser.newContext({viewport:{width:1440,height:900}});page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/'))requests.push({method:r.method(),path:new URL(r.url()).pathname})});page.on('dialog',d=>d.accept());await context.tracing.start({screenshots:true,snapshots:true});await page.goto(process.env.V2_URL);
- await test('q01-blank-save-reopen',async()=>{await folder(path.join(spaces,'A'));await until(async()=>await page.locator('.app-header button').textContent()==='A');assert.equal(await page.locator('.agent-card').count(),0);await page.getByLabel('工作流名称',{exact:true}).fill('空白草稿');await save();await page.reload();await until(async()=>await page.getByLabel('工作流名称',{exact:true}).inputValue()==='空白草稿');assert.equal(await page.locator('.agent-card').count(),0);assert(await page.getByRole('button',{name:'启动',exact:true}).isDisabled())});
+ await test('q01-blank-save-reopen',async()=>{await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.textContent),'跳至工作流画布');await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>document.activeElement.id),'v2-editor');assert.equal(new URL(page.url()).hash,'');await folder(path.join(spaces,'A'));await until(async()=>await page.locator('.app-header button').textContent()==='A');assert.equal(await page.locator('.agent-card').count(),0);await page.getByLabel('工作流名称',{exact:true}).fill('空白草稿');await save();await page.reload();await until(async()=>await page.getByLabel('工作流名称',{exact:true}).inputValue()==='空白草稿');assert.equal(await page.locator('.agent-card').count(),0);assert(await page.getByRole('button',{name:'启动',exact:true}).isDisabled())});
  await test('short-workbench-first-actions-are-clickable',async()=>{
   for(const viewport of [{width:989,height:535},{width:560,height:610}]){
    await page.setViewportSize(viewport);
-   for(const name of ['添加第一个 Agent','从模板开始']){
+   for(const name of ['配置第一个 Agent','从模板开始']){
     await page.getByRole('button',{name,exact:true}).click({trial:true});
    }
-   const action=await page.getByRole('button',{name:'添加第一个 Agent',exact:true}).boundingBox();
+   const action=await page.getByRole('button',{name:'配置第一个 Agent',exact:true}).boundingBox();
    const toolbar=await page.locator('.canvas-edit-tools').boundingBox();
    assert(action.y+action.height<toolbar.y,'Empty canvas actions must clear the editing toolbar');
    await page.screenshot({path:path.join(out,`empty-actions-${viewport.width}.png`)});
   }
   await page.setViewportSize({width:1440,height:900});
+ });
+ await test('first-agent-configuration-to-canvas',async()=>{
+  await page.getByRole('button',{name:'配置第一个 Agent',exact:true}).click();
+  const manager=page.getByLabel('Agent 管理',{exact:true});
+  await manager.getByRole('button',{name:'创建 Agent 配置',exact:true}).click();
+  await manager.getByText('填写名称与角色后即可保存。角色模板可以代填角色。',{exact:true}).waitFor();
+  assert(await manager.getByRole('button',{name:'保存 Agent',exact:true}).isDisabled());
+  await manager.getByLabel('Agent 名称',{exact:true}).fill('首个配置夹具');
+  await manager.getByLabel('角色模板',{exact:true}).selectOption('reviewer');
+  await manager.getByRole('button',{name:'保存 Agent',exact:true}).click();
+  await manager.getByRole('button',{name:'添加到画布',exact:true}).click();
+  await node('首个配置夹具');
+  await page.getByLabel('Agent 配置',{exact:true}).getByText('此节点引用已保存的 Agent 配置版本。',{exact:true}).waitFor();
+  await page.getByLabel('关闭检查器',{exact:true}).click();
+  await page.getByLabel('撤销',{exact:true}).click();
+  await until(async()=>await page.locator('.agent-card').count()===0);
  });
  await test('q02-partial-config-and-two-agent-chain',async()=>{await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await save();await page.reload();await until(async()=>await page.locator('.agent-card').count()===1);await node('Agent A');assert.equal(await page.getByLabel('Provider',{exact:true}).inputValue(),'');assert.equal(await page.getByLabel('请求模型',{exact:true}).inputValue(),'');await configure('提取','唯一标记 placeholder');await save();await page.getByLabel('关闭检查器',{exact:true}).click();await page.getByRole('button',{name:'添加 Agent',exact:true}).click();await configure('整理','基于上游回答整理');await node('提取');await page.getByLabel('下游 Agent',{exact:true}).selectOption({label:'整理'});await page.getByRole('button',{name:'连接 Agent',exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await page.getByLabel('撤销',{exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===0);assert.equal(await page.locator('.react-flow__edge').count(),0);await page.getByLabel('重做',{exact:true}).click();await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await save();await page.reload();await until(async()=>await page.locator('.agent-card').count()===2);await until(async()=>await page.locator('.react-flow__edge').count()===1);assert.equal(await page.locator('.react-flow__edge').count(),1);await node('提取');assert.equal(await page.getByLabel('初始化提示词',{exact:true}).inputValue(),'初始化 提取');assert.equal(await page.getByLabel('输出与交接要求',{exact:true}).inputValue(),'输出 提取');assert.equal(await page.getByLabel('请求模型',{exact:true}).inputValue(),'gpt-6.1-sol')});
  await test('q02-real-drag-undo-redo',async()=>{await page.getByLabel('关闭检查器',{exact:true}).click();const item=page.locator('.agent-card').filter({hasText:'提取'});const before=await item.boundingBox();await page.mouse.move(before.x+110,before.y+26);await page.mouse.down();await page.mouse.move(before.x+170,before.y+86,{steps:8});await page.mouse.up();const moved=await item.boundingBox();assert(moved.y-before.y>40);await page.getByLabel('撤销',{exact:true}).click();await until(async()=>Math.abs((await item.boundingBox()).y-before.y)<3);await page.getByLabel('重做',{exact:true}).click();await until(async()=>Math.abs((await item.boundingBox()).y-moved.y)<3);await save()});

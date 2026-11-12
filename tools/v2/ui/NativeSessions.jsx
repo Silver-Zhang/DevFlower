@@ -6,6 +6,7 @@ import {NativeMessages, isVisibleMessage} from './NativeMessages.jsx';
 import {NativeComposer} from './NativeComposer.jsx';
 import {NativePty} from './NativePty.jsx';
 import {NativeTitle} from './NativeTitle.jsx';
+import {PanelEmpty} from './WorkbenchFeedback.jsx';
 import {groupKeyFor} from '../../studio/workbench_ui/session_groups.mjs';
 
 const PROVIDERS = {codex: 'Codex', claude: 'Claude Code'};
@@ -400,7 +401,10 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
   </header>
   <div className="project-panel-content">
    <nav className="project-tree native-list" aria-label="会话列表">
-    {!enabled && <p className="muted">本机尚未启用原生会话只读浏览。</p>}
+    {!enabled && <PanelEmpty icon={MessageSquareText} title="添加原生会话来源">
+     <p>本机尚未启用原生会话只读浏览。</p>
+     <p>停止桌面服务后运行 <code>devflower-v2 configure --native-history</code>，再重新打开。</p>
+    </PanelEmpty>}
     {loading && <p className="muted" role="status">正在检查已批准的会话来源…</p>}
     {listError && <p className="error-text" role="alert">{listError}</p>}
     {list && <>
@@ -482,7 +486,8 @@ export function NativeSessions({api, workspace, enabled, writeProviders = [], wo
    </nav>
    {reading && <section className="project-preview native-window" aria-label="会话正文">
     <header><button ref={backButton} aria-label="返回会话列表" title="返回会话列表" onClick={back}><ArrowLeft size={16}/></button>
-     <h3>{selectedView.alias || PROVIDERS[reading.row.provider]} · 只读</h3></header>
+     <div className="native-reader-heading"><h3>{selectedView.alias || reading.row.name || PROVIDERS[reading.row.provider]} · 只读</h3>
+      <p className="field-note">{PROVIDERS[reading.row.provider]}</p></div></header>
     {reading.result&&titleAvailable&&reading.row.provider==='codex'&&canContinue&&
      <NativeTitle key={reading.row.handle+':'+list.revision} api={api} workspace={workspace.id}
       handle={reading.row.handle} revision={list.revision}/>}
