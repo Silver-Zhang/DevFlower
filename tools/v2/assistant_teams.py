@@ -29,6 +29,7 @@ agents 每项必须包含 slot（字母开头的唯一 ID）、name、role、res
 initial_prompt、round_prompt、handoff_prompt、skills（最多 5 个仅建议的名称）、permission（仅建议 none / workspace-read / workspace-write）。
 名称、角色、背景、目标和所有 Prompt 用字符串。responsibilities 可为字符串或最多 8 项字符串的数组。
 所有提示词需结合用户的具体工作需求。给出实际交接内容、失败反馈与成功条件。模型、工作目录、会话和权限由 DevFlower 固定或供用户选择，不要在 JSON 添加相关字段。
+工作区写入需要用户明确选择权限并单独启动运行。不要在角色 Prompt 中要求已经按该权限启动的 Agent 再次询问同一项授权。保留用户明确要求的独立审批。
 开发、测试、审核三角色和失败返工的需求使用 kind:"development"，固定三个 slot Developer、Tester、Reviewer。不要输出 workflow 或 operations，DevFlower 会生成有界循环与交付节点。
 如果用户明确提供了已附加的验证 Python 文件及期望值，可以添加 verification_suggestion:{path,expected}。expected 是实际 JSON 值，不能猜测文件或预期结果。
 其他新团队使用 kind:"create" 并附 workflow（V2 version:1、name、nodes、edges）。
@@ -281,7 +282,12 @@ def stage(assistant, workspace, turn, plan, permissions, verification):
         role = 'developer' if slot=='Developer' else 'reviewer' if slot=='Reviewer' else 'custom'
         output = agent['handoff_prompt']
         if plan['kind']=='development' and slot=='Reviewer' and verification:
-            output += '\n本轮独立审核回执必须为 JSON 对象，精确含 verdict（ACCEPT、REJECT 或 ACCEPT_WITH_LIMITATIONS）、candidate_sha256（复制验证回执的候选摘要）、feedback（具体审核依据和待修复项）。'
+            output += (
+                '\n本轮独立审核回执必须为 JSON 对象，精确含 verdict（ACCEPT、REJECT 或 ACCEPT_WITH_LIMITATIONS）、'
+                'candidate_sha256 和 feedback（具体审核依据和待修复项）。'
+                '将本轮上游 Verify 冻结验证回执的 result.candidate_sha256 原样复制到 candidate_sha256。'
+                '该值是整份候选的摘要，单个文件的 SHA-256 与它属于不同的对象；不要用文件 SHA-256 替换或比对该值。'
+                '若缺少本轮 Verify 回执或回执显示 passed=false，请如实报告并拒绝。')
         if plan['kind']=='development' and slot in ('Tester','Reviewer') and not verification:
             output += '\n结构化结果必须含 accepted（布尔值）和 feedback（可执行的反馈文本）。测试或审核证据不足时 accepted=false，并说明缺失的证据。'
         model = config['requested_model']

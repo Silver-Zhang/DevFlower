@@ -321,7 +321,12 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(code,200,saved)
         by_name = {row['config']['name']:row['config'] for row in saved['agents']}
         self.assertEqual((by_name['Developer']['mode'],by_name['Reviewer']['permission']),('Agent','workspace-read'))
-        self.assertIn('candidate_sha256',by_name['Reviewer']['output_prompt'])
+        review = by_name['Reviewer']['output_prompt']
+        self.assertIn('Verify 冻结验证回执的 result.candidate_sha256 原样复制',review)
+        self.assertIn('单个文件的 SHA-256',review)
+        self.assertIn('passed=false',review)
+        self.assertNotIn('Verify 冻结验证回执',by_name['Developer']['output_prompt'])
+        self.assertIn('再次询问同一项授权',self.team_send.call_args.args[2])
         self.assertEqual(self.store.db.list('run'),[])
 
     def test_diagnosis_uses_existing_failed_run_and_events_without_sending(self):

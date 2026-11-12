@@ -66,12 +66,13 @@ export function AssistantModelSettings({settings,selection,onChange,onSave,onRef
    <p>{catalog?.version||'CLI 版本待检测'} · {catalog?.installed===false?'未安装':catalog?.installed?'已安装':'安装待检测'}</p>
    <p>认证 {catalog?.authenticated===true?'CLI 已报告可用':catalog?.authenticated===false?'CLI 未报告登录':'待核验'} · {authNames[catalog?.auth_source]||authNames.unknown}</p>
    {catalog?.error&&<p className="error-text">{catalog.error}</p>}
+   {catalog?.stale&&<p className="field-note">{catalog.refreshed_at?'当前模型目录已过期或不可用。':''}请刷新模型目录。</p>}
    {catalog?.model_note&&<p className="field-note">{catalog.model_note}</p>}
    <p role="status">{check?.state==='COMPLETED'?
-    '连接测试已收到原生回执 · '+(receipt?.resolved_model&&receipt.resolved_model!=='unknown'?receipt.resolved_model:'实际模型未由 CLI 报告')+
+    '上次连接测试已收到原生回执 · '+(receipt?.resolved_model&&receipt.resolved_model!=='unknown'?receipt.resolved_model:'实际模型未由 CLI 报告')+
     ' · '+new Date(check.created_at*1000).toLocaleString():
     check?'上次连接测试 '+check.state+(check.reason?' · '+check.reason:''):
-    catalog?.stale?'请刷新模型目录。':'目录已读取 · 当前选择尚无实际推理回执。'}</p>
+    catalog?.stale?'当前选择尚无实际推理回执。':'目录已读取 · 当前选择尚无实际推理回执。'}</p>
    <label>使用已保存 Agent 身份<select aria-label="助手 Agent 身份" value={selection.identity?.id||''}
     onChange={event=>{const row=identities.find(item=>item.id===event.target.value);
      onChange({...selection,identity:row?{id:row.id,revision:row.revision}:null})}}>

@@ -6,14 +6,18 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Thread
+import time
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from test_v2_assistant import FixtureOperations
 from v2_browser import redact_trace
 from v2_execution_browser import SyntheticProvider
+from v2.assistant import PROBE, TURN
+from v2.cli_providers import CATALOG, empty
 from v2.runtime import V2Runtime
 from v2.server import create_server
+from v2.session_operations import KIND, operation_id
 from v2.store import DraftStore
 
 
@@ -38,6 +42,16 @@ def main():
     operations = FixtureOperations()
     with patch('v2.runtime.CodexProvider',SyntheticProvider):
         runtime = V2Runtime(store,executable=str(out/'no-native-cli'))
+    historical = time.time()-600
+    store.db.put(CATALOG,'codex',dict(empty('codex','Codex CLI'),installed=True,version='fixture CLI',
+                                     authenticated=True,refreshed_at=historical))
+    intent = 'fixture-historical-probe'
+    store.db.put(KIND,operation_id(workspace,intent),dict(workspace=workspace,intent_key=intent,
+        provider='codex',authorization='explicit-assistant-send',state='COMPLETED',result_handle='fixture',
+        reply='DEVFLOWER_ASSISTANT_OK',receipt=dict(provider='codex',resolved_model='fixture-model')))
+    store.db.put(TURN,'a'*64,dict(id='a'*64,workspace=workspace,intent='b'*32,native_intent=intent,
+        provider='codex',mode='probe',text=PROBE,created_at=historical,context={},prompt_sha256='c'*64,
+        config=dict(provider='codex',native_profile=None,model=None,effort=None)))
     node = lambda id,kind,x,config: dict(id=id,name=id,kind=kind,config_version=1,config=config,position={'x':x,'y':80})
     failing = dict(version=1,name='Assistant diagnosis fixture',nodes=[
         node('Start','start',60,{}),node('Route','router',300,{'rules':[

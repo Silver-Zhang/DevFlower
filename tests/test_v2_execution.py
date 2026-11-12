@@ -74,6 +74,46 @@ class ExecutionTests(unittest.TestCase):
         self.store.save(self.workspace, self.draft['id'], self.draft['revision'], doc)
         self.assertEqual(self.store.db.get('definition', run['definition_id']), old)
 
+    def test_actual_request_reports_only_the_frozen_workspace_write_authorization(self):
+        title = '本次启动已授权的工作区写入'
+        cases = [
+            ('Agent', 'workspace-write', 'workspace-write', True),
+            ('Agent', 'workspace-write', 'read', False),
+            ('Ask', 'none', 'workspace-write', False),
+        ]
+        for index, (mode, permission, scope, authorized) in enumerate(cases, 1):
+            with self.subTest(mode=mode, permission=permission, frozen_scope=scope):
+                cwd = self.store.workspace(self.workspace)['path']
+                ident, revision = str(index)*32, str(index)*64
+                config = dict(name='Fixture', role='Developer', mode=mode, permission=permission,
+                              responsibilities='', background='', goal='', initial_prompt='Review request',
+                              round_prompt='Modify only after operator approval.', output_prompt='')
+                row = dict(id=ident, revision=revision, workspace=self.workspace, config=config)
+                self.store.db.put('agent-config',ident,row)
+                binding = dict(provider='codex', model='fixture', effort='low', cwd=cwd, cwd_identity=[],
+                               runtime_profile='fixture', root_identity=[], local_lock_root='/fixture',
+                               execution_mode=mode, v2_agent_scope=scope, home=str(self.root/'fixture-home'))
+                with patch.object(self.rt,'spawn'), patch('v2.runtime.freeze_agent', return_value=(row,binding)):
+                    run = self.rt.launch_agent(self.workspace,ident,revision,'fixture-write-prompt-'+str(index))['run']
+                self.rt.worker_run = run['id']
+                definition = self.store.db.get('definition',run['definition_id'])
+                node = next(item for item in definition['graph']['nodes'] if item['kind']=='agent')
+                activation = Scheduler(self.rt,run['id']).activation(node,'',0,())
+                adapter = Mock()
+                def record(prompt, cwd, artifacts, schema, journal, run_id):
+                    journal.visible_request(prompt)
+                    raise Blocked('fixture stops before native process')
+                adapter.transport.return_value.start.side_effect = record
+                with (patch.object(self.rt,'check_operator'),
+                      patch.object(self.rt.cli_providers,'adapter_for', return_value=adapter),
+                      self.assertRaisesRegex(Blocked,'fixture stops before native process')):
+                    self.rt._native_turn(node,activation['id'],[],'',0)
+                actual = self.store.db.get('activation',activation['id'])['actual_request']
+                self.assertIn('Modify only after operator approval.',actual)
+                self.assertEqual(title in actual,authorized)
+                if authorized:
+                    self.assertIn('独立的人工作业审批、任务中的其他明确批准条件以及原生沙箱限制仍然有效',actual)
+
     def test_scheduler_preserves_sent_uncertainty_after_dead_process(self):
         with patch.object(self.rt, 'spawn'):
             run = self.rt.launch(self.workspace, self.draft['id'], self.draft['revision'], 'synthetic-launch-key-3')['run']

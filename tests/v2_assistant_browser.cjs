@@ -35,6 +35,12 @@ async function run(){
  assert(dock.width>=400&&dock.width<=420);
  assert(graph.x+graph.width<=dock.x+1);
  assert(original.width-graph.width<=420);
+ await button('助手模型设置').click();
+ await assistant.getByText('当前模型目录已过期或不可用。请刷新模型目录。',{exact:true}).waitFor();
+ await assistant.getByText(/上次连接测试已收到原生回执 · fixture-model/).waitFor();
+ assert.equal(await button('测试真实推理').isEnabled(),false);
+ assert.equal(await button('刷新模型目录').isEnabled(),true);
+ await button('助手模型设置').click();
  await assistant.getByLabel('助手 Provider',{exact:true}).selectOption('claude');
  await assistant.getByLabel('助手工作方式',{exact:true}).selectOption('proposal');
  await assistant.getByLabel('助手消息',{exact:true}).fill('Rename AgentA to Reviewed Agent on the canvas.');

@@ -662,6 +662,15 @@ class V2Runtime:
                             else ['[$' + skill['name'] + '](' + skill['path'] + ')' for skill in skills])
                 parts.append({'title': '明确选择的原生 Skills', 'text': '\n'.join(
                     selected)})
+            scoped_write = (binding.get('v2_agent_scope') == 'workspace-write' if provider == 'codex' else
+                            provider == 'claude' and binding.get('v2_claude_scope') is True
+                            and not binding.get('v2_claude_read_only'))
+            if (config.get('mode'), config.get('permission'), binding.get('execution_mode')) == (
+                    'Agent', 'workspace-write', 'Agent') and scoped_write:
+                parts.append({'title': '本次启动已授权的工作区写入', 'text': (
+                    '操作员已明确启动此运行。冻结配置授权当前 Agent 在绑定的工作区范围内写入。'
+                    '任务若要求在该范围内修改前取得确认，本次启动已满足该项授权；请执行本轮任务，无需再次询问同一项权限。'
+                    '独立的人工作业审批、任务中的其他明确批准条件以及原生沙箱限制仍然有效。')})
         context = definition.get('task_files',[])
         if context:
             require_task_files_public(self.store,context)
