@@ -18,6 +18,11 @@ Before use, check which project-level skill directories your Codex build recogni
 - `verification-before-completion` — `obra/superpowers`, SKILL blob `7d45333cc4a49c57a80df6c1fe2fa777a207afbc`, MIT. A/C use to tie completion claims to exact commit, UI path, fresh evidence, and test scope. **Verification is proportional**: focused local tests per fix, one full CI per integrated module candidate, never a full remote CI per micro-edit.
 - `webapp-testing` — `anthropics/skills`, SKILL blob `4726215301db64a0cc4d41fc3219c61f37a30f4a`, Apache-2.0 license blob `4f881c52d1f72f4cfb720e339e2d35c3058d01a9`. C uses for browser user journeys and screenshots, reusing existing `tests/v2_*browser*` infrastructure where possible, not replacing it. Optional `scripts/with_server.py` is included but uses `subprocess.Popen(shell=True)`; only run literal trusted commands in a disposable test workspace, never on secrets or production state. Examples contain illustrative paths: adjust them before use.
 
+## Final workbench review skills
+
+- `ui-ux-pro-max` — MIT project adaptation of [UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/6ae86f61f520d6ca229d2f40e070410638c908c5/.claude/skills/ui-ux-pro-max). Includes the upstream quick reference and UX dataset. The project edition uses direct text search.
+- `web-design-guidelines` — Vercel's [Web Design Guidelines Skill](https://github.com/vercel-labs/agent-skills/tree/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/skills/web-design-guidelines). [Upstream declares MIT](https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/README.md#license). The Skill fetches the current public guideline for each review.
+
 ## Lean usage protocol
 
 1. Read only the skill needed for the current stage. A+B: module delivery; B: V1 port; B on repeatable defects: debugging; A/C at module gate: verification; C for UI testing: webapp-testing; B/C for visual design only: frontend-design.
