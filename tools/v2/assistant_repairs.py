@@ -105,6 +105,8 @@ def preview_repair(assistant, data):
         raise Conflict('所选激活没有已记录的失败证据。')
     agent = assistant.runtime.agents.get(workspace, data['agent'], data['revision'])
     config = agent['config']
+    if config.get('execution') == 'native-cli':
+        raise Blocked('原生 CLI Agent 请通过导出的 Python 脚本执行，不支持旧受管修复入口。')
     if (config['mode'], config['permission'], config['session']['kind']) != ('Agent', 'workspace-write', 'new'):
         raise Blocked('请选择已保存的工作区读写 Agent，并使用独立新会话。')
     assistant.runtime.agents.directory(workspace, config['cwd'])

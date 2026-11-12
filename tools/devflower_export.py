@@ -9,6 +9,7 @@ import argparse
 from contextlib import closing
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import pprint
 import re
@@ -18,6 +19,17 @@ import sys
 
 class ExportError(ValueError):
     pass
+
+
+NATIVE_AGENT_REQUIRED = {'execution', 'name', 'provider', 'cwd', 'role', 'round_prompt', 'output_prompt'}
+NATIVE_AGENT_FIELDS = NATIVE_AGENT_REQUIRED | {'model', 'effort', 'timeout'}
+# Explicit legacy conversion still requires --native-config. These are the
+# fields whose managed permission/session semantics the exporter understands.
+LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal', 'template',
+                       'provider', 'model', 'model_source', 'effort', 'mode', 'permission',
+                       'cwd', 'session', 'skills', 'subagents', 'timeout', 'max_budget_usd',
+                       'initial_prompt', 'round_prompt', 'output_prompt', 'native_profile'}
+NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 
 
 def canonical(value):
@@ -38,12 +50,61 @@ def identifier(value):
     return value
 
 
-def read_saved(database, workspace, draft_id):
+def known_fields(value, allowed, label):
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise ExportError(label + ' contains unsupported fields; no configuration was discarded.')
+
+
+def validate_timeout(value):
+    if value is None:
+        return
+    try:
+        if type(value) is int and value > 0 and math.isfinite(value):
+            return
+    except OverflowError:
+        pass
+    raise ExportError('timeout must be a finite positive integer in seconds or null.')
+
+
+def validate_native_agent(value):
+    """Small portable contract shared by storage and the standalone compiler.
+
+    No CLI discovery, account access, tool filtering or managed-session binding.
+    Do not normalize saved records: their exact bytes determine their revision.
+    """
+    known_fields(value, NATIVE_AGENT_FIELDS, 'Native Agent')
+    if not NATIVE_AGENT_REQUIRED <= value.keys() or value.get('execution') != 'native-cli':
+        raise ExportError('Native Agent requires execution=native-cli and its identity/Prompt fields.')
+    if value['provider'] not in ('codex', 'claude'):
+        raise ExportError('Native Agent requires Codex or Claude.')
+    for key, maximum in (('name', 160), ('cwd', 4096), ('role', 4000),
+                         ('round_prompt', 20000), ('output_prompt', 20000)):
+        if len(text(value[key], key)) > maximum:
+            raise ExportError(key + ' exceeds the saved text limit.')
+    if any(not value[key].strip() for key in ('name', 'role', 'cwd')):
+        raise ExportError('Native Agent name, role and working directory must not be empty.')
+    for key in ('model', 'effort'):
+        override = text(value.get(key), key, optional=True)
+        if override is not None and (not override.strip() or len(override) > 200):
+            raise ExportError(key + ' must be a nonempty override or null for the CLI default.')
+    validate_timeout(value.get('timeout'))
+    try:
+        canonical(value).encode('utf-8')
+    except (ValueError, UnicodeError):
+        raise ExportError('Native Agent contains invalid JSON or Unicode text.') from None
+    return value
+
+
+def read_saved(database, workspace, draft_id, *, expected_revision=None):
     """One SQLite read transaction; never starts services or writes product data."""
     database = Path(database).resolve(strict=True)
     if not database.is_file():
         raise ExportError('Choose the existing v2.sqlite file.')
-    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+    # Existing WAL databases need SQLite to remove its own read sidecars on
+    # close. mode=ro leaves -wal/-shm behind and breaks V2's history reader.
+    # mode=rw forbids creation of a missing database; query_only forbids all
+    # application writes while retaining SQLite's normal WAL housekeeping.
+    with closing(sqlite3.connect(database.as_uri() + '?mode=rw', uri=True)) as db:
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
         def record(kind, key):
@@ -54,6 +115,8 @@ def read_saved(database, workspace, draft_id):
         space, draft = record('workspace', workspace), record('draft', draft_id)
         if space.get('id') != workspace or draft.get('workspace') != workspace or draft.get('id') != draft_id:
             raise ExportError('Workspace/draft identity does not match.')
+        if expected_revision is not None and draft.get('revision') != expected_revision:
+            raise ExportError('Saved draft revision changed; reopen the workflow before exporting.')
         graph = draft['graph']
         if sha256(canonical(graph).encode()).hexdigest() != draft.get('revision'):
             raise ExportError('Saved draft revision does not match its content.')
@@ -72,6 +135,7 @@ def chain(document):
             or document['version'] != 1 or not isinstance(document.get('nodes'), list)
             or not isinstance(document.get('edges'), list) or not document['nodes']):
         raise ExportError('Expected a nonempty version-1 canvas document.')
+    known_fields(document, {'version', 'name', 'nodes', 'edges', 'viewport'}, 'Workflow')
     name = text(document.get('name'), 'Workflow name')
     if not name.strip():
         raise ExportError('Workflow name is empty.')
@@ -85,10 +149,21 @@ def chain(document):
         kind = node.get('kind', 'agent')
         if kind not in ('start', 'agent', 'output'):
             raise ExportError('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
+        if kind == 'agent':
+            allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
+                       else LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS)
+            known_fields(node, NODE_FIELDS | allowed | {'output_contract', 'artifact_paths'}, ident)
+            if 'agent_revision' in node and 'agent_id' not in node:
+                raise ExportError(ident + ': Agent revision requires its saved identity.')
+        else:
+            known_fields(node, NODE_FIELDS | {'config_version', 'config'}, ident)
+            if type(node.get('config_version', 1)) is not int or node.get('config_version', 1) != 1:
+                raise ExportError(ident + ': unsupported configuration version.')
         nodes[ident], incoming[ident], outgoing[ident] = node, [], []
     for edge in document['edges']:
         if not isinstance(edge, dict):
             raise ExportError('Invalid edge.')
+        known_fields(edge, {'id', 'source', 'target', 'source_port', 'target_port', 'transfer'}, 'Edge')
         ident = identifier(edge.get('id'))
         source, target = edge.get('source'), edge.get('target')
         if ident in edge_ids or source not in nodes or target not in nodes or source == target:
@@ -144,8 +219,9 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
             if not isinstance(config, dict) or set(config) - {'instructions', 'initial_data'}:
                 raise ExportError('Unsupported Start configuration.')
             instructions = text(config.get('instructions', ''), 'Start instructions')
-            data = json.loads(config.get('initial_data', '{}'))
-            initial = '\n\n'.join(value for value in (instructions, 'Initial data\n' + canonical(data) if data else '') if value)
+            raw_data = text(config.get('initial_data', ''), 'Start initial data')
+            data = 'Initial data\n' + canonical(json.loads(raw_data)) if raw_data.strip() else ''
+            initial = '\n\n'.join(value for value in (instructions, data) if value)
             continue
         if kind == 'output':
             config = node.get('config', {})
@@ -167,6 +243,13 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
             config = node
         if not isinstance(config, dict):
             raise ExportError(ident + ': invalid Agent configuration.')
+        if 'agent_id' in node:
+            known_fields(config, LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS, ident)
+        if 'execution' in config:
+            portable = {key: value for key, value in config.items() if key not in NODE_FIELDS - {'name'}}
+            # Node presentation metadata is separate from inline Agent settings.
+            portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths')}
+            validate_native_agent(portable)
         provider = config.get('provider')
         if provider not in ('codex', 'claude'):
             raise ExportError(ident + ': configure Codex or Claude.')
@@ -180,8 +263,7 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
         except ValueError:
             raise ExportError(ident + ': working directory is outside the exported project root.') from None
         timeout = config.get('timeout')
-        if timeout is not None and (type(timeout) is not int or timeout < 1):
-            raise ExportError(ident + ': timeout must be a positive integer or null.')
+        validate_timeout(timeout)
         budget = config.get('max_budget_usd')
         if budget is not None and (provider != 'claude' or not isinstance(budget, str)
                                    or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', budget) or float(budget) <= 0):
@@ -197,15 +279,18 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
         index = len(normalized)
         normalized.append(agent)
         transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
+        if previous is None and transfer.get('max_chars') is not None:
+            calls.append('    if len(task) > ' + repr(transfer['max_chars']) + ':\n'
+                         "        raise WorkflowError('Saved Start handoff limit exceeded; no request sent.')")
         source = 'None' if previous is None or transfer.get('mode') == 'none' else 'results[' + repr(previous) + ']'
         calls.append('    results[' + repr(ident) + '] = invoke_agent(context, WORKFLOW[\'agents\'][' + str(index)
                      + '], task, ' + source + ', ' + repr(transfer.get('max_chars')) + ')')
         previous = ident
-    manifest = dict(version=1, name=name, policy='native-cli (not the V2 managed sandbox)',
+    manifest = dict(version=1, compiler_version=2, name=name, policy='native-cli (not the V2 managed sandbox)',
                     input=initial, agents=normalized,
                     source_sha256=sha256(canonical(document).encode()).hexdigest())
     runtime = Path(__file__).with_name('workflow_script_runtime.py').read_text(encoding='utf-8')
-    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v1.\n'
+    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v2.\n'
     source += '# Native CLI settings/permissions apply. Review before execution. No GUI/service dependency.\n'
     source += runtime + '\n\nWORKFLOW = ' + pprint.pformat(manifest, width=100, sort_dicts=False) + '\n\n'
     source += 'def run_workflow(context, task):\n    results = {}\n' + '\n'.join(calls)

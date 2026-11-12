@@ -5,6 +5,8 @@
 用户已明确收敛目标：画布由固定编译器生成独立 Python 脚本，脚本编排原生 CLI Agent
 之间的任务与成果交接；Agent 内部工具、MCP、Skills 和子 Agent 优先沿用原生配置。
 暂停平台功能扩展和 UI 美化，不发起 V3 或全量目录搬迁。先读 `docs/v2/SCRIPT_FIRST.md`。
+新建 Agent 使用显式 `execution: native-cli` 简化合同，GUI 导出与终端共用固定编译器。
+旧记录保留原合同；原生配置禁止进入旧受管执行器。真实双 CLI 验收通过前不切 GUI 运行。
 本阶段仅在 `v2/parity-integration` 形成小步候选；不改 main/develop/Stable、不删旧实现。
 新的原生脚本合同必须明确 opt-in，不能悄悄放宽旧受管运行的权限，也不能凭模拟测试
 宣称真实 CLI 验收或 Stable 发布完成。以下历史研发规则及安全底线继续保留。

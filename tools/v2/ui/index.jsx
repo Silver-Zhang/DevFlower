@@ -11,7 +11,7 @@ import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {NativePty} from './NativePty.jsx';
 import {AgentManager} from './AgentManager.jsx';
-import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
+import {downloadDraftArchive, makeDraftArchive, readDraftArchive, sha256 as bytesSha256} from './draftTransfer.js';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
 import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../studio/workbench_ui/canvas_editing.mjs';
@@ -487,6 +487,31 @@ function App(){
    if(currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected)downloadDraftArchive(bytes);
   }catch{
    if(currentTransfer(ticket))setError('当前已保存版本已变化，请重新打开工作流。');
+  }finally{
+   if(currentTransfer(ticket))cancelTransfer();
+  }
+ }
+ async function exportPython(){
+  const selected=savedRef.current;
+  if(!selected||dirtyRef.current)return;
+  const ticket=beginTransfer();
+  if(!ticket)return;
+  setError('');setNotice('');
+  try{
+   const result=await api('drafts/export-python',{workspace:ticket.workspace.id,id:selected.id,
+    revision:selected.revision,native_config:true});
+   if(!currentTransfer(ticket))return;
+   if(result.workspace!==ticket.workspace.id||result.id!==selected.id||result.revision!==selected.revision
+    ||typeof result.source!=='string'||typeof result.filename!=='string'||!result.filename.endsWith('.py')
+    ||/[\/\\\0]/.test(result.filename))throw Error('导出文件身份无效，请重新读取工作流。');
+   const bytes=new TextEncoder().encode(result.source);
+   if(await bytesSha256(bytes)!==result.sha256)throw Error('导出脚本校验失败。');
+   if(currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected){
+    downloadFile(bytes,result.filename,'text/x-python;charset=utf-8');
+    setNotice('已导出 '+result.filename+'。在终端执行时沿用原生 CLI 配置与权限；GUI 脚本运行尚未启用。');
+   }
+  }catch(failure){
+   if(currentTransfer(ticket))setError(failure.message);
   }finally{
    if(currentTransfer(ticket))cancelTransfer();
   }
@@ -1018,7 +1043,9 @@ function App(){
  const actualInputs=e?(edgeTarget?.inputs||[]).filter(i=>i.edge===e.id&&i.source===e.source&&i.target_activation===edgeTarget.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const launchBlock=doc.nodes.map(runtimeBlock).find(Boolean);
+ const nativeScript=agentVersions?.workspace===workspace?.id&&doc.nodes.some(node=>
+  agentVersions.records?.get(node.agent_id)?.config.execution==='native-cli');
+ const launchBlock=nativeScript?'此工作流使用原生 CLI 配置，请先保存并导出 Python。GUI 脚本运行等待真实 CLI 验收。':doc.nodes.map(runtimeBlock).find(Boolean);
  const approval=runSnapshot?.nodes.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
  const typedActive=runTrusted&&runSnapshot?.run?.designer_runtime===1&&['RUNNING','WAITING_CONFIRMATION','PAUSED'].includes(runSnapshot.state);
  const inlineAgent=doc.nodes.some(node=>nodeKind(node)==='agent'&&!node.agent_id);
@@ -1190,6 +1217,8 @@ function App(){
      </div>
     </details>}
     <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
+    <Button icon={Download} disabled={!saved||dirty||!!busy||launching} onClick={exportPython}
+     title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python（原生 CLI）</Button>
     <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
     <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!status?.provider_available&&inlineAgent))}
      title={startHint||'明确启动将调用所选模型；不自动重试'} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}

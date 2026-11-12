@@ -321,6 +321,8 @@ def stage(assistant, workspace, turn, plan, permissions, verification):
                 row = service.get(workspace,agent_id,revision)
                 references[agent_id] = row
             config = row['config']
+            if config.get('execution') == 'native-cli':
+                raise Invalid('此草稿包含原生 CLI Agent，请在画布编辑并导出 Python；不适用旧受管团队更新。')
             bindings[path] = dict(id=agent_id,revision=revision,**{key:config.get(key) for key in (
                 'name','provider','model','effort','native_profile','mode','permission','initial_prompt',
                 'round_prompt','output_prompt')})

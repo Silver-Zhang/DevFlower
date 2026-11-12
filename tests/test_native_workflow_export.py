@@ -95,6 +95,45 @@ class ExportTests(unittest.TestCase):
         with self.assertRaisesRegex(export.ExportError,'native-config'):
             export.compile_workflow(graph())
 
+    def test_minimal_native_contract_inherits_cli_defaults(self):
+        doc=graph()
+        doc['nodes']=[dict(id=node['id'],execution='native-cli',name=node['name'],provider=node['provider'],
+                           cwd='.',role='Department',round_prompt=node['round_prompt'],output_prompt='Report findings')
+                      for node in doc['nodes']]
+        result=self.run_script(doc)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual([call['name'] for call in self.calls()],['codex','claude'])
+        for call in self.calls():
+            self.assertNotIn('--model',call['args'])
+            self.assertNotIn('--effort',call['args'])
+            self.assertNotIn('--tools',call['args'])
+        self.assertIn('DEVELOPER_RESULT',self.calls()[1]['prompt'])
+
+    def test_unknown_settings_and_versions_are_not_discarded(self):
+        for location, key, value in (
+            ('workflow','execution_mode','parallel'),('node','tools',['restricted']),
+            ('node','config',{'prompt':'otherwise lost'}),('edge','condition',False),
+        ):
+            doc=graph()
+            target=doc if location=='workflow' else doc['nodes'][0] if location=='node' else doc['edges'][0]
+            target[key]=value
+            with self.subTest(location=location,key=key),self.assertRaises(export.ExportError):
+                export.compile_workflow(doc,native_config=True)
+        for version in (True,0,2,'1'):
+            doc=graph();doc['nodes'].append({'id':'End','kind':'output','config_version':version})
+            doc['edges'].append({'id':'exit','source':'Reviewer','target':'End'})
+            with self.subTest(version=version),self.assertRaisesRegex(export.ExportError,'version'):
+                export.compile_workflow(doc,native_config=True)
+
+    def test_native_contract_cannot_carry_managed_internal_controls(self):
+        config=dict(execution='native-cli',name='Department',provider='codex',cwd='.',role='Developer',
+                    round_prompt='Do the task',output_prompt='Deliver')
+        self.assertIs(export.validate_native_agent(config),config)
+        for extra in ({'permission':'none'},{'subagents':'disabled'},{'skills':[]},
+                      {'session':{'kind':'new'}},{'native_profile':'managed-home'},{'execution':'other'}):
+            with self.subTest(extra=extra),self.assertRaises(export.ExportError):
+                export.validate_native_agent(dict(config,**extra))
+
     def test_independent_script_real_processes_and_exact_handoff(self):
         original=self.config.read_bytes()
         result=self.run_script(args=('--task','test user task'))
@@ -169,6 +208,24 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(self.calls()),1)
         self.assertEqual((self.run_dir/'Developer/answer.txt').read_text(),'DEVELOPER_RESULT')
 
+    def test_start_limit_applies_to_actual_task_before_first_call(self):
+        doc=graph()
+        doc['nodes'].append({'id':'Start','kind':'start','config':{'instructions':'12345','initial_data':''}})
+        doc['edges'].append({'id':'entry','source':'Start','target':'Developer','transfer':{'mode':'answer','max_chars':8}})
+        result=self.run_script(doc,args=('--task','6789'))
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('Start handoff limit',result.stderr)
+        self.assertEqual(self.calls(),[])
+        self.assertIn('RUN_STOPPED',(self.run_dir/'events.jsonl').read_text())
+
+    def test_false_initial_data_is_preserved(self):
+        doc=graph()
+        doc['nodes'].append({'id':'Start','kind':'start','config':{'initial_data':'false'}})
+        doc['edges'].append({'id':'entry','source':'Start','target':'Developer'})
+        result=self.run_script(doc)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('Initial data\nfalse',self.calls()[0]['prompt'])
+
     def test_typed_endpoints_and_scrambled_array(self):
         doc=graph()
         doc['nodes'] += [{'id':'Start','name':'输入','kind':'start','config':{'initial_data':'{"value":42}'}},
@@ -202,7 +259,7 @@ class ExportTests(unittest.TestCase):
     def test_reject_unportable_semantics(self):
         for change in ({'native_profile':'other'},{'skills':['opaque-hash']},{'mode':'Plan'},
                        {'session':{'kind':'existing','handle':'opaque'}},{'artifact_paths':['a.txt']},
-                       {'output_contract':[{'path':'x'}]},{'timeout':True}):
+                       {'output_contract':[{'path':'x'}]},{'timeout':True},{'timeout':10**400}):
             doc=graph();doc['nodes'][0].update(change)
             with self.subTest(change=change),self.assertRaises(export.ExportError):
                 export.compile_workflow(doc,native_config=True)
@@ -239,7 +296,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(),'keep')
 
     def test_saved_canvas_read_only_snapshot_and_pinned_agent(self):
-        doc=graph();cfg=doc['nodes'][0].copy();cfg['cwd']=str(self.project)
+        doc=graph();cfg={key:value for key,value in doc['nodes'][0].items() if key!='id'};cfg['cwd']=str(self.project)
         ident,revision='a'*32,'b'*64
         doc['nodes'][0]={'id':'Developer','name':'开发','kind':'agent','agent_id':ident,'agent_revision':revision}
         saved={'id':'draft','workspace':'workspace','graph':doc,'revision':sha256(export.canonical(doc).encode()).hexdigest()}
@@ -255,6 +312,8 @@ class ExportTests(unittest.TestCase):
         script=self.script(loaded,records)
         self.assertTrue(script.exists())
         self.assertEqual(database.read_bytes(),before)
+        with self.assertRaisesRegex(export.ExportError,'revision changed'):
+            export.read_saved(database,'workspace','draft',expected_revision='c'*64)
         records[ident]['revision']='c'*64
         with self.assertRaisesRegex(export.ExportError,'stale'):
             export.compile_workflow(loaded,records,root,native_config=True)

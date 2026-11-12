@@ -19,6 +19,8 @@ LEAF = {'codex': 'sessions', 'claude': 'projects'}
 def freeze_agent(runtime, workspace, node):
     row = runtime.agents.get(workspace, node['agent_id'], node['agent_revision'])
     config = row['config']
+    if config.get('execution') == 'native-cli':
+        raise Invalid('此 Agent 使用原生 CLI 脚本合同，请导出 Python 执行；GUI 脚本运行尚未启用。')
     provider = config['provider']
     if not config['round_prompt'].strip():
         raise Invalid('请在 Agent 配置填写每轮提示词。')

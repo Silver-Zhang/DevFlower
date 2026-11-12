@@ -1,6 +1,7 @@
 const {openWorkflowActions}=require('./v2_workflow_actions.cjs');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
 const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');
+const {createHash}=require('node:crypto');const {spawnSync}=require('node:child_process');
 const out=process.argv[2],rows=[],errors=[],requests=[];
 const spaces=process.env.V2_WORKSPACES;
 let browser,page,context;
@@ -39,6 +40,8 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await page.setViewportSize({width:1440,height:900});
  });
  await test('first-agent-configuration-to-canvas',async()=>{
+  const discoveryCount=()=>requests.filter(row=>/cli-providers|agent-skills|agent-sessions/.test(row.path)).length;
+  const beforeDiscovery=discoveryCount();
   await page.getByRole('button',{name:'配置第一个 Agent',exact:true}).click();
   const manager=page.getByRole('main',{name:'Agent 管理',exact:true});
   const frame=await manager.boundingBox();
@@ -49,23 +52,40 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await skip.press('Enter');
   assert(await manager.evaluate(node=>node===document.activeElement));
   await manager.getByRole('button',{name:'新建 Agent',exact:true}).click();
+  assert.equal(await manager.getByLabel('执行方式',{exact:true}).inputValue(),'native-cli');
+  for(const name of ['工作模式','工具权限','原生会话','子 Agent','角色模板','初始化提示词']){
+   assert.equal(await manager.getByLabel(name,{exact:true}).count(),0);
+  }
+  assert.equal(await manager.getByRole('button',{name:'运行此 Agent',exact:true}).count(),0);
+  await manager.getByText('Tools、Skills、MCP 和子 Agent 继承原生 CLI 配置。',{exact:true}).waitFor();
   await manager.getByRole('button',{name:'Prompt',exact:true}).click();
   assert.equal(await page.evaluate(()=>document.activeElement.querySelector('legend')?.textContent),'提示词');
-  await manager.getByLabel('每轮提示词',{exact:true}).fill('切换配置章节保留表单');
-  await manager.getByRole('button',{name:'工具与权限',exact:true}).click();
-  assert.equal(await page.evaluate(()=>document.activeElement.querySelector('legend')?.textContent),'工具、权限与会话');
-  assert.equal(await manager.getByLabel('每轮提示词',{exact:true}).inputValue(),'切换配置章节保留表单');
-  await manager.getByRole('button',{name:'身份与模型',exact:true}).click();
-  await manager.getByText('填写名称与角色后即可保存。角色模板可以代填角色。',{exact:true}).waitFor();
+  await manager.getByLabel('任务 Prompt',{exact:true}).fill('切换配置章节保留表单');
+  await manager.getByRole('button',{name:'身份与 CLI',exact:true}).click();
+  assert.equal(await page.evaluate(()=>document.activeElement.querySelector('legend')?.textContent),'身份与 CLI');
+  assert.equal(await manager.getByLabel('任务 Prompt',{exact:true}).inputValue(),'切换配置章节保留表单');
+  await manager.getByText('填写名称与角色后即可保存。',{exact:true}).waitFor();
   assert(await manager.getByRole('button',{name:'保存 Agent',exact:true}).isDisabled());
   await manager.getByLabel('Agent 名称',{exact:true}).fill('首个配置夹具');
-  await manager.getByLabel('角色模板',{exact:true}).selectOption('reviewer');
+  await manager.getByLabel('角色',{exact:true}).fill('评审者');
+  const saving=page.waitForRequest(request=>request.method()==='POST'&&request.url().endsWith('/agents/save'));
   await manager.getByRole('button',{name:'保存 Agent',exact:true}).click();
+  const saved=(await saving).postDataJSON().config;
+  assert.deepEqual(Object.keys(saved).sort(),['execution','name','provider','cwd','role','round_prompt','output_prompt','model','effort','timeout'].sort());
+  assert.equal(saved.execution,'native-cli');
+  assert.equal(saved.model,null);assert.equal(saved.effort,null);assert.equal(saved.timeout,null);
   await manager.getByLabel('搜索已保存 Agent',{exact:true}).fill('不匹配');
   await manager.getByText('没有匹配的 Agent。',{exact:true}).waitFor();
   await manager.getByLabel('搜索已保存 Agent',{exact:true}).clear();
-  await manager.getByRole('button',{name:/首个配置夹具/}).waitFor();
-  await page.screenshot({path:path.join(out,'agent-manager-wide-saved.png')});
+  await manager.getByRole('button',{name:/首个配置夹具/}).click();
+  assert.equal(await manager.getByLabel('执行方式',{exact:true}).count(),0,'Saved contracts are not silently converted');
+  assert.equal(await manager.getByLabel('任务 Prompt',{exact:true}).inputValue(),'切换配置章节保留表单');
+  assert.equal(discoveryCount(),beforeDiscovery,'Native configuration does not discover or filter CLI capabilities');
+  for(const theme of ['dark','light']){
+   await page.getByLabel('外观主题',{exact:true}).selectOption(theme);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   await page.screenshot({path:path.join(out,'native-agent-manager-'+theme+'.png')});
+  }
   await manager.getByRole('button',{name:'添加到画布',exact:true}).click();
   await node('首个配置夹具');
   const bound=page.getByLabel('已绑定的 Agent 配置',{exact:true});
@@ -75,6 +95,33 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   assert.match(await bound.locator('code').textContent(),/^[0-9a-f]{12}$/);
   await page.locator('.canvas-guide').getByText(/拖动输出端口连接下游/).waitFor();
   await page.getByLabel('关闭检查器',{exact:true}).click();
+  const exportPython=page.getByRole('button',{name:'导出 Python（原生 CLI）',exact:true});
+  assert(await exportPython.isDisabled(),'Unsaved canvas cannot export an older script');
+  assert(await page.getByRole('button',{name:'保存并启动',exact:true}).isDisabled(),'Native Agents cannot enter the managed runtime');
+  await save();
+  assert(await page.getByRole('button',{name:'启动',exact:true}).isDisabled());
+  const exporting=page.waitForResponse(response=>response.url().endsWith('/drafts/export-python'));
+  const downloading=page.waitForEvent('download');
+  await exportPython.click();
+  const response=await exporting;assert.equal(response.status(),200);
+  const exported=await response.json(),download=await downloading;
+  assert.equal(download.suggestedFilename(),exported.filename);
+  assert.match(exported.filename,/^空白草稿_[0-9a-f]{8}\.py$/);
+  const script=path.join(out,'native-workflow.py');await download.saveAs(script);
+  const bytes=fs.readFileSync(script);
+  assert.equal(bytes.toString('utf8'),exported.source);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),exported.sha256);
+  const dryRun=spawnSync('python3',[script,'--workspace',path.join(spaces,'A'),'--dry-run'],
+   {cwd:out,encoding:'utf8',env:{...process.env,PYTHONPATH:''}});
+  assert.equal(dryRun.status,0,dryRun.stderr);
+  const plan=JSON.parse(dryRun.stdout);assert.equal(plan.calls.length,1);
+  assert.equal(plan.calls[0].argv[0],'codex');
+  assert.equal(discoveryCount(),beforeDiscovery,'Export and standalone dry-run never discover native capabilities');
+  for(const theme of ['dark','light']){
+   await page.getByLabel('外观主题',{exact:true}).selectOption(theme);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   await page.screenshot({path:path.join(out,'native-python-export-'+theme+'.png')});
+  }
   await page.getByLabel('撤销',{exact:true}).click();
   await until(async()=>await page.locator('.agent-card').count()===0);
   assert.equal(await page.locator('.canvas-guide').count(),0);
@@ -363,6 +410,10 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   await agent.getByRole('button',{name:'选择 Agent 配置版本',exact:true}).click();
   const manager=page.getByRole('main',{name:'Agent 管理',exact:true});
   await manager.getByRole('button',{name:'新建 Agent',exact:true}).click();
+  await manager.getByLabel('执行方式',{exact:true}).selectOption('managed');
+  await manager.getByRole('button',{name:'工具与权限',exact:true}).click();
+  assert.equal(await page.evaluate(()=>document.activeElement.querySelector('legend')?.textContent),'工具、权限与会话');
+  await manager.getByRole('button',{name:'身份与模型',exact:true}).click();
   await manager.getByLabel('Agent 名称',{exact:true}).fill('已保存 Agent 样例');
   await manager.getByLabel('角色模板',{exact:true}).selectOption('reviewer');
   await manager.getByLabel('每轮提示词',{exact:true}).fill('Synthetic designer-only fixture');

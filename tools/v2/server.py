@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
+from devflower_export import ExportError, compile_workflow, read_saved
 from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
@@ -330,6 +331,22 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = store.draft(query.get('workspace'), query.get('id'))
                 elif post and path == '/api/v2/drafts/save' and set(data) == {'workspace', 'id', 'expected', 'document'}:
                     result = store.save(data['workspace'], data['id'], data['expected'], data['document'])
+                elif post and path == '/api/v2/drafts/export-python' and not query and set(data) == {
+                        'workspace', 'id', 'revision', 'native_config'}:
+                    # Same read-only snapshot and compiler as the terminal export.
+                    # This endpoint never starts a CLI or changes a saved contract.
+                    store.workspace(data['workspace'], existing_only=True)
+                    if not isinstance(data['revision'], str) or not data['revision']:
+                        raise Invalid('导出需要当前已保存工作流版本。')
+                    try:
+                        document, records, root = read_saved(store.state / 'v2.sqlite', data['workspace'], data['id'],
+                                                             expected_revision=data['revision'])
+                        filename, source = compile_workflow(document, records, root, native_config=data['native_config'])
+                    except ExportError as exc:
+                        raise Invalid(str(exc)) from None
+                    from hashlib import sha256
+                    result = dict(workspace=data['workspace'], id=data['id'], revision=data['revision'],
+                                  filename=filename, source=source, sha256=sha256(source.encode()).hexdigest())
                 elif not post and path == '/api/v2/workflow-templates' and set(query) == {'workspace'}:
                     result = templates.listing(query['workspace'])
                 elif not post and path == '/api/v2/workflow-template' and set(query) == {'workspace', 'id', 'revision'}:

@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import secrets
 
+from devflower_export import ExportError, validate_native_agent
 from orchestration.common import Blocked, canonical, digest
 from orchestration.privacy import credentials, redact
 from studio.agent_extensions import skill_files, skill_header
@@ -46,6 +47,11 @@ def agent_revision(key, expected, config, home_pin):
 
 
 def validate_agent(value):
+    if isinstance(value, dict) and 'execution' in value:
+        try:
+            return validate_native_agent(value)
+        except ExportError as error:
+            raise Invalid(str(error)) from None
     if not isinstance(value,dict) or not FIELDS<=set(value)<=FIELDS|{'native_profile'}:
         raise Invalid('Agent 配置字段缺失或不受支持。')
     if value.get('native_profile') is not None and not matches(PROFILE_ID,value['native_profile']):
@@ -201,6 +207,9 @@ class AgentRecords:
     def prepare_save(self, workspace, key, expected, value, session_revision=None):
         config = validate_agent(value)
         self.directory(workspace, config['cwd'])
+        native = config.get('execution') == 'native-cli'
+        if native and session_revision is not None:
+            raise Invalid('原生 CLI 脚本使用新会话，不接受受管会话版本。')
         home_pin = None
         if config.get('native_profile'):
             if not self.providers:
@@ -222,7 +231,7 @@ class AgentRecords:
                 if prior['revision'] == agent_revision(key,None,config,home_pin):
                     return prior
                 raise Conflict('此 Agent 保存意图已经使用。')
-        if config['session']['kind'] == 'existing':
+        if not native and config['session']['kind'] == 'existing':
             if session_revision is not None or expected is None:
                 self.verify_session(workspace, config, session_revision)
             else:
@@ -233,7 +242,7 @@ class AgentRecords:
                     raise Invalid('已有会话绑定已变化，请重新选择并核验。')
         elif session_revision is not None:
             raise Invalid('新会话不需要已有会话版本。')
-        if config['skills']:
+        if not native and config['skills']:
             available = self.skills(workspace, config['provider'], config['cwd'])
             if not available['selectable'] or not set(config['skills']) <= {row['id'] for row in available['skills']}:
                 raise Conflict('Skill 来源或文件已变化，请重新发现并选择。')

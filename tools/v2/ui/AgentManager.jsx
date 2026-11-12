@@ -12,7 +12,9 @@ const SOURCES = {cli_catalog: 'CLI 目录', cli_alias: 'CLI 别名', configured_
  native_config: '原生配置', cli_configured: '原生配置'};
 const PERMISSIONS = {'none': '仅对话（无工具）', 'workspace-read': '读取工作区', 'workspace-write': '读写工作区',
  'controlled-command': '受控命令', 'native': 'CLI 原生权限', 'manual': '人工确认'};
-const fresh = workspace => ({name: '', role: '', responsibilities: '', background: '', goal: '', template: 'custom',
+const fresh = workspace => ({execution: 'native-cli', name: '', provider: 'codex', cwd: workspace.path,
+ role: '', round_prompt: '', output_prompt: '', model: null, effort: null, timeout: null});
+const freshManaged = workspace => ({name: '', role: '', responsibilities: '', background: '', goal: '', template: 'custom',
  provider: 'codex', model: null, model_source: 'native_default', effort: null, mode: 'Ask', permission: 'none',
  cwd: workspace.path, session: {kind: 'new'}, skills: [], subagents: 'disabled', timeout: 300, max_budget_usd: null,
  initial_prompt: '', round_prompt: '', output_prompt: ''});
@@ -39,15 +41,27 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const running = useRef(false);
  const close = useRef(null), nameInput = useRef(null);
  const newId = useRef(null);
+ const catalogLoaded = useRef(false);
+ const isNative = config?.execution === 'native-cli';
 
  useEffect(() => {
   alive.current = true;
-  Promise.all([api('agents?workspace=' + workspace.id), api('cli-providers')]).then(([items, catalog]) => {
+  api('agents?workspace=' + workspace.id).then(items => {
    if (!alive.current) return;
-   setRows(items.agents);setProviders(catalog.providers);setProfiles(catalog.profiles||[]);
+   setRows(items.agents);
   }).catch(e => {if (alive.current) setError(e.message);});
   return () => {alive.current = false;};
  }, []);
+ useEffect(() => {
+  if (!config || isNative || catalogLoaded.current) return;
+  let current = true;
+  api('cli-providers').then(catalog => {
+   if (!alive.current || !current) return;
+   catalogLoaded.current = true;
+   setProviders(catalog.providers); setProfiles(catalog.profiles || []);
+  }).catch(e => {if (alive.current && current) setError(e.message);});
+  return () => {current = false;};
+ }, [Boolean(config), isNative]);
  useEffect(() => {if (visible) close.current?.focus();}, [visible]);
 
  async function action(fn) {
@@ -71,7 +85,17 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   if (!row) requestAnimationFrame(() => nameInput.current?.focus());
  }
  function change(fields) {setConfig(old => ({...old, ...fields}));}
+ function changeExecution(execution) {
+  setConfig(old => {
+   const next = execution === 'native-cli' ? fresh(workspace) : freshManaged(workspace);
+   for (const key of ['name', 'provider', 'cwd', 'role', 'round_prompt', 'output_prompt', 'model', 'effort']) next[key] = old[key];
+   if (execution !== 'native-cli' && next.model) next.model_source = 'manual';
+   return next;
+  });
+  setSessions(null); setSkills(null); setError(''); setNotice('');
+ }
  function changeProvider(provider) {
+  if (isNative) {change({provider, model: null, effort: null}); return;}
   change({provider, model: null, model_source: 'native_default', effort: null, mode: 'Ask', permission: 'none',
    session:{kind:'new'},skills:[],subagents:'disabled',max_budget_usd:null,native_profile:null});
   setSessions(null); setSkills(null);
@@ -96,8 +120,8 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  async function save(event) {
   event.preventDefault();
   await action(async () => {
-   const changedSession = config.session.kind === 'existing'
-    && (config.session.handle !== record?.config.session.handle || config.provider !== record?.config.provider
+   const changedSession = !isNative && config.session.kind === 'existing'
+    && (config.session.handle !== record?.config.session?.handle || config.provider !== record?.config.provider
      || config.cwd !== record?.config.cwd || config.native_profile !== record?.config.native_profile);
    const saved = await api('agents/save', {workspace: workspace.id, id: newId.current, expected: record?.revision ?? null,
     config, session_revision: changedSession ? sessions?.revision ?? null : null});
@@ -115,6 +139,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  }
  function runKey(id) {return 'df-agent-launch:' + workspace.id + ':' + id;}
  async function launch() {
+  if (isNative) return;
   await action(async () => {
    const data = pendingRun || {workspace: workspace.id, id: record.id, revision: record.revision,
     intent_key: crypto.randomUUID(), task: directTask};
@@ -178,12 +203,44 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      <div className="agent-form-heading">
       <div><h3>{config.name.trim()||'新建 Agent 配置'}</h3><p className="field-note">{isDirty?'未保存的更改':'已保存的配置'}</p></div>
       <div className="agent-form-sections" role="group" aria-label="配置章节">
-       <button type="button" onClick={()=>focusSection('identity')}>身份与模型</button>
+       <button type="button" onClick={()=>focusSection('identity')}>{isNative?'身份与 CLI':'身份与模型'}</button>
        <button type="button" onClick={()=>focusSection('prompt')}>Prompt</button>
-       <button type="button" onClick={()=>focusSection('tools')}>工具与权限</button>
+       {!isNative&&<button type="button" onClick={()=>focusSection('tools')}>工具与权限</button>}
       </div>
      </div>
      <div className="agent-form-scroll">
+     {!record&&<Field label="执行方式"><select aria-label="执行方式" disabled={busy}
+      value={isNative?'native-cli':'managed'} onChange={event=>changeExecution(event.target.value)}>
+      <option value="native-cli">原生 CLI 脚本</option>
+      <option value="managed">旧受管配置（兼容）</option>
+     </select></Field>}
+     {isNative ? <>
+      <fieldset ref={element=>{agentSections.current.identity=element}} tabIndex={-1} disabled={busy}><legend>身份与 CLI</legend>
+       {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。</p>}
+       {editText('Agent 名称', 'name')}
+       <Field label="Agent Provider"><select aria-label="Agent Provider" value={config.provider}
+        onChange={event=>changeProvider(event.target.value)}>
+        {Object.entries(LABELS).map(([id,label])=><option key={id} value={id}>{label}</option>)}
+       </select></Field>
+       {editText('Agent 工作目录', 'cwd')}{editText('角色', 'role')}
+       <p className="field-note">Tools、Skills、MCP 和子 Agent 继承原生 CLI 配置。</p>
+      </fieldset>
+      <fieldset ref={element=>{agentSections.current.prompt=element}} tabIndex={-1} disabled={busy}><legend>提示词</legend>
+       {editText('任务 Prompt', 'round_prompt', 4)}{editText('输出与交接要求', 'output_prompt', 3)}
+      </fieldset>
+      <details className="agent-advanced"><summary>模型与超时覆盖（可选）</summary>
+       <fieldset disabled={busy}><legend>可选覆盖</legend>
+        <p className="field-note">模型和推理强度留空时使用 CLI 默认值；超时留空时不设时限。</p>
+        <Field label="Agent 模型"><input aria-label="Agent 模型" value={config.model??''}
+         onChange={event=>change({model:event.target.value||null})}/></Field>
+        <Field label="Agent 推理强度"><input aria-label="Agent 推理强度" value={config.effort??''}
+         onChange={event=>change({effort:event.target.value||null})}/></Field>
+        <Field label="Agent 超时（秒）"><input aria-label="Agent 超时（秒）" type="number" min="1" step="1"
+         value={config.timeout??''} onChange={event=>change({timeout:event.target.value===''?null:Number(event.target.value)})}/></Field>
+       </fieldset>
+      </details>
+      {record&&<p className="field-note">将此 Agent 加入画布后导出 Python 脚本运行。</p>}
+     </> : <>
      <fieldset ref={element=>{agentSections.current.identity=element}} tabIndex={-1} disabled={busy}><legend>身份与角色</legend>
       {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。角色模板可以代填角色。</p>}
       <div className="agent-manager-pair">{editText('Agent 名称', 'name')}
@@ -299,14 +356,15 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      </details>
      {record && <Field label="本次 Agent 运行输入"><input aria-label="本次 Agent 运行输入" disabled={busy || !!pendingRun}
       value={pendingRun?.task ?? directTask} onChange={event => setDirectTask(event.target.value)}/></Field>}
+     </>}
      </div>
      <footer>
       {error && <p className="error-text" role="alert">{error}</p>}
       {notice && <p className="field-note" role="status">{notice}</p>}
       <button type="submit" className={isDirty?'primary':undefined} aria-describedby={missingIdentity?'agent-save-hint':undefined}
        disabled={busy || profileUnavailable || missingIdentity}>保存 Agent</button>
-      <button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
-       {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>
+      {!isNative&&<button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
+       {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>}
       <button type="button" className={'bind-agent'+(!isDirty&&record&&!profileUnavailable?' primary':'')} disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>
        {selectedNode ? '用于当前节点' : '添加到画布'}</button>
       {record && (deleteAsk ? <>
