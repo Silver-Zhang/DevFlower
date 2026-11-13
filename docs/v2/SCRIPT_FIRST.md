@@ -4,7 +4,8 @@
 
 DevFlower 是面向原生 Agent 的可视化工作流编译器。用户定义部门之间的协作，固定程序将画布
 编译为可独立执行的 Python；每个 Agent 自主组织内部工具、Skills、MCP 和子 Agent。
-**旧 Phase 0–7 / V1 功能矩阵是历史记录，不是新版必须保留的产品范围。**
+**Script-First 决定新开发的主方向；旧 Phase 0–7 / V1 矩阵不再驱动功能堆叠，但
+FEATURE_PARITY.md 仍是已有 V2 功能的兼容回归清单，不是删除这些功能的授权。**
 
 核心约束：画布自由组合；Python 是正式产物；直接使用原生 CLI；调度确定而模型行为不必确定；
 GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型框架或重复执行器。
@@ -15,8 +16,8 @@ GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型�
 有界 Loop、确定性 Tool 和原生多轮续聊均为后续扩展，**不是首个 Stable 的发布门槛**。
 开发/审核只是验收示例，不是固定产品角色。没有真实 CLI 与 GUI 闭环证据时不得发布 Stable。
 
-本轮以集成分支 `adeb6e4998e495e990467165dfb8271cdfcf8169` 为基线。
-[基线 CI 两项通过](https://github.com/Silver-Zhang/DevFlower/actions/runs/43260418244)。
+本轮启动依赖精简以 `960d0667f1174071be6a5c9300403e1f8008dd69` 为基线。
+[基线 CI 两项通过](https://github.com/Silver-Zhang/DevFlower/actions/runs/43269851278)。
 
 ## 2. 模块与依赖边界
 
@@ -25,12 +26,43 @@ GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型�
 | 核心必需 | 画布、`DraftStore`、原生 `AgentRecords`、`devflower_export.py`、独立脚本 runtime | 保存画布与 Agent 版本，编译确定性 Python，脚本执行原生 CLI、交接并记录结果 |
 | 核心必需 | `script_runs.py`、`ScriptRunMonitor.jsx` | 从 GUI 发布并启动编译产物，复用脚本的状态和取消命令，展示实际证据 |
 | 兼容保留 | `V2Runtime`、worker、Scheduler、Studio 公共组件与存储、原生会话和历史归档 | 已有受管草稿仍使用原授权、会话绑定和交付 Gate；历史读取仍可用 |
-| 非核心可隔离 | 助手、自动建队/修复、Git 平台、Git 交付与 Copilot 目录 | 助手和 Git 平台从「兼容工具」进入，后端按路由加载；显式登记的 Git 交付目标仍在启动时校验 |
-| 已无依赖可删除 | 原生画布上仅允许导出的限制、提示及受管检查入口 | 原生画布检查调用固定编译器；仍有调用方的受管模块保留 |
+| 扩展功能保留、按需加载 | 助手、自动建队/修复、Git 平台、Git 交付与 Copilot 目录 | 助手和 Git 平台从「兼容工具」进入，后端按路由加载；显式登记的 Git 交付目标仍在启动时校验 |
+| 已替代的限制 | 原生画布上仅允许导出的限制及提示 | 原生画布已使用编译器检查与脚本执行；受管检查与执行入口仍保留 |
 
 原生 Agent 只保存 Provider、目录、角色、Prompt 和可选覆盖。受管的工具权限、Skills、原生
-会话绑定及模型目录校验位于兼容分支。原生 CLI 按自己的账户和设置运行。现有 V2 启动器仍会
-为兼容工作流探测受管 Codex 版本；脚本启动、监控和独立终端执行均无需该探测结果。
+会话绑定及模型目录校验位于兼容分支。原生 CLI 按自己的账户和设置运行。
+
+默认启动器不再导入或构造 `V2Runtime`，不做受管 Provider 探测。状态查询、原生 Agent
+配置、画布保存/编译，以及原生脚本启动/监控/取消均不需要兼容执行器。原生 PTY 与会话标题
+写入模块仅在显式启用会话操作时导入；共享存储、图校验和只读历史工具继续复用，不为改目录复制实现。
+
+兼容 Runtime 由服务内一个加锁的惰性工厂创建。只有实际访问受管配置、检查/执行、模型发现、
+助手/Git 兼容入口，或读取当前工作区已有的受管运行记录时才构造；并发首次访问共享同一实例。
+初始化中的慢探测不会占用原生 API 的锁，失败不自动重试，也不阻断原生脚本路径。新旧路径
+复用同一份 AgentRecords；兼容路径的原权限、会话及恢复检查不变。
+
+用户显式登记原生历史/会话操作、命名 Profile、独立 HOME 或 Git 交付目标时，仍按原方式在
+启动时校验，不把无效登记悄悄推迟。单独的 `--codex-cli` 仅为兼容工厂保留可执行文件选择，
+不影响原生脚本从用户 PATH 调用 CLI。
+
+`/status` 以 `managed_runtime_loaded` 区分是否已加载。加载前 `provider` 和
+`execution_available` 均为 null；旧 GUI 的 `provider_available` 仅保留显式启动入口，不能
+视作 CLI 已安装、能力验证或推理通过的证据。真正启动仍须通过原有服务端检查。
+
+### V2 功能保留与执行边界（2026-11-13）
+
+本批只改变兼容模块的初始化时机，不删除 V2 功能、不改变菜单、不改存储结构。会话中心
+（历史、续聊、别名及终端接管）、Agent 管理、文件与模板、历史归档、助手/自动建队/修复、
+GitHub/GitLab 与交付能力继续保留，沿用原来的配置条件和授权边界；未支持的能力不会因此
+被宣称已支持。默认不加载与用户点击后可用是两个独立要求，两者都需验证。
+
+原生脚本工作流仅承诺已实现的顺序子集；已有条件、循环、汇合、审批、恢复和结构化交接
+继续由其原受管执行器处理，不能把新编译器尚不支持误写成整个 V2 已移除该功能。一个已
+冻结运行只属于自己的执行路径：不得自动回退、双重启动、复用另一条路径的权限或伪造
+会话关联。旧执行器仅维护兼容性，新编排能力在脚本链实现，不发展两套新的调度语义。
+
+后续删除仅限证明无调用方的重复实现，且须先有等价替代和回归证据；产品功能下线须另行
+取得用户授权。用户验收和 Stable 发布授权仍独立于 CI。
 
 ## 3. 本批实现与可靠性语义
 
@@ -79,6 +111,7 @@ PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_native_workfl
 PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_workflow_script_*.py' -v
 PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_native_agent_contract.py' -v
 PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_script_export.py' -v
+PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_lazy_runtime.py' -v
 ```
 
 脚本与 HTTP 回归覆盖确定性字节、并发重复启动、草稿修改后的冻结身份、服务关闭后继续运行、
@@ -91,6 +124,12 @@ PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_script_exp
 `ca82d371e504f4a854b2e8f421377f7e3118a199d193ed8b44eaade01e0da407`。
 两条路径均验证了实际文件、精确回答交接和独立算术结果。真实调用用于正常闭环，取消与故障
 使用模拟 CLI。原始记录留在本机。
+
+本轮不修改编译器、独立脚本驱动或 GUI 产物，未重新进行真实模型调用。新增测试在全新解释器
+禁止导入受管执行模块，再通过实际启动器和 HTTP 完成模拟 CLI 顺序闭环；另外验证并发只
+初始化一次、慢/失败初始化隔离、已有会话授权拒绝和显式兼容登记的启动校验。此前真实验收
+属于上轮证据，不冒充本轮实测。提交前另补充延迟加载下的原受管 HTTP 启动、冻结版本、
+工作区隔离和历史投影回归，以及助手/Git 入口共用 Runtime、新旧运行并列且不改写记录的检查。
 
 ## 5. 本地交接与下一关口
 

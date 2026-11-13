@@ -13,14 +13,12 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from orchestration.common import Blocked
 from .agent_records import AgentRecords
-from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
 from .documents import check_chain
 from .history_archives import HistoryArchives, MAX_BYTES as HISTORY_ARCHIVE_BYTES
 from .draft_transfer import DraftTransferError, read_request, validate_archive
 from .native_session_activity import NativeSessionActivity, activity_parameters
 from .native_session_pages import MAX_SEARCH_BODY, NativeSessionPages, page_parameters, search_parameters
 from .native_sessions import NativeHistoryError, request_parameters
-from .native_session_title import NativeSessionTitles
 from .native_session_views import MAX_ACTION_BYTES, NativeSessionViews, WorkflowSessionTrash, action_parameters, list_parameters
 from .project_files import read_project
 from .session_identity import SessionRefused
@@ -36,7 +34,7 @@ STATIC = Path(__file__).parent / 'static'
 
 
 def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None,
-                  git_delivery_targets=()):
+                  git_delivery_targets=(), runtime_factory=None):
     token = secrets.token_urlsafe(32)
     if native_sessions is not None and runtime is not None:
         native_sessions.workflow_links = bool(runtime.provider or 'claude' in getattr(session_operations, 'profiles', {})
@@ -46,13 +44,33 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                       and getattr(runtime.provider, 'version', None) == CODEX_COORDINATION_VERSION else None)
     native_pages = NativeSessionPages(native_sessions) if native_sessions is not None else None
     native_activity = NativeSessionActivity(native_sessions) if native_sessions is not None else None
-    terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
-    titles = (NativeSessionTitles(session_operations) if session_operations
-              and 'codex' in getattr(session_operations,'profiles',{})
-              and getattr(session_operations.codex,'version',None)==CODEX_COORDINATION_VERSION else None)
+    terminals = titles = None
+    if session_operations is not None:
+        from .codex_terminals import CodexTerminals, KEY as TERMINAL_ID
+        terminals = CodexTerminals(session_operations) if CodexTerminals.available(session_operations) else None
+        if ('codex' in getattr(session_operations, 'profiles', {})
+                and getattr(session_operations.codex, 'version', None) == CODEX_COORDINATION_VERSION):
+            from .native_session_title import NativeSessionTitles
+            titles = NativeSessionTitles(session_operations)
     inspector = RunInspector(store)
     archives = HistoryArchives(store, inspector)
     templates = WorkflowTemplates(store)
+    agents = getattr(runtime, 'agents', None) or AgentRecords(store)
+    agents.session_operations = session_operations
+    scripts = ScriptRuns(store, agents)
+    managed_available = runtime is not None or runtime_factory is not None
+    runtime_lock = Lock()
+
+    def managed_runtime():
+        nonlocal runtime
+        with runtime_lock:
+            if runtime is None and runtime_factory is not None:
+                candidate = runtime_factory()
+                agents.providers = candidate.cli_providers
+                candidate.agents = agents
+                runtime = candidate  # Publish only after all shared dependencies are ready.
+            return runtime
+
     assistant = None
     assistant_lock = Lock()
 
@@ -61,7 +79,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
         with assistant_lock:
             if assistant is None:
                 from .assistant import Assistant
-                assistant = Assistant(store, session_operations, runtime)
+                assistant = Assistant(store, session_operations, managed_runtime())
             return assistant
 
     @cache
@@ -74,20 +92,17 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     @cache
     def git_platform():
         from .git_platform import GitPlatform
-        return GitPlatform(store, runtime)
+        return GitPlatform(store, managed_runtime())
 
     @cache
     def git_delivery():
         from .git_delivery import GitDelivery
-        homes = getattr(getattr(getattr(runtime, 'cli_providers', None), 'homes', None), 'entries', {})
+        homes = getattr(getattr(getattr(managed_runtime(), 'cli_providers', None), 'homes', None), 'entries', {})
         return GitDelivery(git_platform(), git_delivery_targets,
                            native_homes=[row['home'] for row in homes.values()] if git_delivery_targets else ())
 
     if git_delivery_targets:
         git_delivery()  # Validate explicitly registered destinations at startup.
-    agents = getattr(runtime, 'agents', None) or AgentRecords(store)
-    agents.session_operations = session_operations
-    scripts = ScriptRuns(store, agents)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -309,9 +324,14 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         raise Invalid('请求需要 JSON 对象')
                 query = {key: values[0] for key, values in parse_qs(urlsplit(self.path).query).items()}
                 if not post and path == '/api/v2/status':
-                    result = {'stage': 'M2' if runtime else 'M1', 'channel': 'Development',
-                              'execution_supported': True, 'provider_available': bool(runtime and runtime.provider),
-                              'execution_available': None if runtime and runtime.provider else False,
+                    deferred = runtime is None and runtime_factory is not None
+                    result = {'stage': 'M2' if managed_available else 'M1', 'channel': 'Development',
+                              'execution_supported': True,
+                              # Retain the GUI's explicit legacy-launch affordance while deferred.
+                              # This is not a CLI readiness result; execution_available stays unknown.
+                              'provider_available': deferred or bool(runtime and runtime.provider),
+                              'execution_available': None if deferred or runtime and runtime.provider else False,
+                              'managed_runtime_loaded': runtime is not None,
                               'native_history_available': native_sessions is not None,
                               'native_session_writes': session_operations.status() if session_operations else [],
                               'native_codex_terminal': terminals is not None, 'native_codex_title': titles is not None,
@@ -385,34 +405,39 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = scripts.check(data['workspace'], data['document'])
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
-                    result = runtime.inspect(data['workspace'],data['document']) if runtime else check_chain(data['document'])
-                    if not runtime:
+                    legacy = managed_runtime()
+                    result = legacy.inspect(data['workspace'],data['document']) if legacy else check_chain(data['document'])
+                    if not legacy:
                         result['issues'].extend(agents.reference_issues(data['workspace'], data['document']['nodes']))
-                elif post and path == '/api/v2/providers/discover' and data == {} and runtime:
-                    result = runtime.catalog(refresh=True)
-                elif not post and path == '/api/v2/cli-providers' and not query and runtime:
-                    result = runtime.cli_providers.listing()
+                elif post and path == '/api/v2/providers/discover' and data == {} and managed_available:
+                    result = managed_runtime().catalog(refresh=True)
+                elif not post and path == '/api/v2/cli-providers' and not query and managed_available:
+                    result = managed_runtime().cli_providers.listing()
                 elif post and path == '/api/v2/cli-providers/discover' and not query and set(data) in (
-                        {'provider'}, {'provider', 'native_profile'}) and runtime:
-                    result = runtime.cli_providers.discover(data['provider'],data.get('native_profile'))
+                        {'provider'}, {'provider', 'native_profile'}) and managed_available:
+                    result = managed_runtime().cli_providers.discover(data['provider'],data.get('native_profile'))
                 elif not post and path == '/api/v2/agents' and set(query) == {'workspace'}:
                     result = agents.list(query['workspace'])
                 elif post and path == '/api/v2/agents/save' and not query and set(data) == {
                         'workspace', 'id', 'expected', 'config', 'session_revision'}:
+                    if isinstance(data['config'], dict) and 'execution' not in data['config']:
+                        managed_runtime()
                     result = agents.save(data['workspace'], data['id'], data['expected'], data['config'], data['session_revision'])
                 elif post and path == '/api/v2/agents/remove' and not query and set(data) == {'workspace', 'id', 'expected'}:
                     result = agents.remove(data['workspace'], data['id'], data['expected'])
-                elif post and path == '/api/v2/agents/launch' and runtime and not query and set(data) == {
+                elif post and path == '/api/v2/agents/launch' and managed_available and not query and set(data) == {
                         'workspace', 'id', 'revision', 'intent_key', 'task'}:
-                    result = runtime.launch_agent(data['workspace'], data['id'], data['revision'], data['intent_key'], data['task'])
-                elif post and path == '/api/v2/agents/plan-transition' and runtime and not query and set(data) == {
+                    result = managed_runtime().launch_agent(data['workspace'], data['id'], data['revision'], data['intent_key'], data['task'])
+                elif post and path == '/api/v2/agents/plan-transition' and managed_available and not query and set(data) == {
                         'workspace', 'run', 'node', 'intent_key', 'authorization'}:
-                    result = runtime.launch_plan_agent(data['workspace'], data['run'], data['node'],
+                    result = managed_runtime().launch_plan_agent(data['workspace'], data['run'], data['node'],
                                                        data['intent_key'], data['authorization'])
                 elif not post and path == '/api/v2/agent-skills' and set(query) == {'workspace', 'provider', 'cwd'}:
+                    managed_runtime()
                     result = agents.skills(query['workspace'], query['provider'], query['cwd'])
                 elif not post and path=='/api/v2/agent-sessions' and {'workspace','provider','cwd'}<=set(query)<={
                         'workspace','provider','cwd','native_profile'}:
+                    managed_runtime()
                     result = agents.sessions(query['workspace'],query['provider'],query['cwd'],query.get('native_profile'))
                 elif path=='/api/v2/session-title' and titles:
                     if post and not query:
@@ -426,8 +451,9 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif not post and path == '/api/v2/runs':
                     workspace = query.get('workspace')
                     result = scripts.list(workspace)
-                    if runtime:
-                        result.extend(inspector.clean(runtime.runs(workspace)))
+                    if managed_available and (runtime is not None or any(
+                            row.get('workspace') == workspace for row in store.db.list('run'))):
+                        result.extend(inspector.clean(managed_runtime().runs(workspace)))
                 elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):
                     required = {'workspace', 'id'}
                     extra = {'node'} if path.endswith('/evidence') else set()
@@ -442,15 +468,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                             result['stderr'] = dict(stderr, text=inspector.text(stderr['text']))
                     else:
                         result = scripts.source(record)
-                elif not post and path == '/api/v2/local-delivery/preview' and runtime and set(query) == {'workspace', 'run'}:
+                elif not post and path == '/api/v2/local-delivery/preview' and managed_available and set(query) == {'workspace', 'run'}:
                     from .local_delivery import preview
                     result = preview(git_platform(), **query)
                     result = dict(result, git_targets=sorted(git_delivery().targets),
                                   git_ref='refs/heads/work/devflower-' + query['run'])
-                elif post and path == '/api/v2/local-delivery' and runtime and not query:
+                elif post and path == '/api/v2/local-delivery' and managed_available and not query:
                     from .local_delivery import package
                     return self.reply(200, package(git_platform(), data), 'application/zip')
-                elif post and path == '/api/v2/local-delivery/git' and runtime and not query:
+                elif post and path == '/api/v2/local-delivery/git' and managed_available and not query:
                     result = git_delivery().publish(data)
                 elif not post and path == '/api/v2/local-delivery/git-operation' and set(query) == {'workspace', 'intent_key'}:
                     result = git_delivery().read(**query)
@@ -459,8 +485,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     record = scripts.get(workspace, run_id)
                     if record is not None:
                         result = scripts.snapshot(workspace, run_id, record=record)
-                    elif runtime:
-                        result = runtime.snapshot(workspace, run_id)
+                    elif managed_available:
+                        result = managed_runtime().snapshot(workspace, run_id)
                     else:
                         raise Invalid('找不到此运行。')
                 elif post and path == '/api/v2/launch' and 'execution' in data:
@@ -468,7 +494,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     if (not required <= set(data) <= required | {'task_files'} or data['execution'] != EXECUTION):
                         raise Invalid('脚本启动需要明确的工作空间、草稿版本、任务和原生执行意图。')
                     result = scripts.launch(**{key: value for key, value in data.items() if key != 'execution'})
-                elif post and path == '/api/v2/launch' and runtime:
+                elif post and path == '/api/v2/launch' and managed_available:
                     required = {'workspace','draft_id','revision','intent_key','task'}
                     if not required <= set(data) <= required | {'task_files'}:
                         raise Invalid('启动需要明确的工作空间、草稿版本、本次任务与启动意图')
@@ -476,23 +502,23 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     if 'task_files' in data:
                         from .data_handoff import task_selection
                         options['task_files'] = task_selection(data['task_files'])
-                    result = runtime.launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'],
+                    result = managed_runtime().launch(data['workspace'],data['draft_id'],data['revision'],data['intent_key'],data['task'],
                                             **options)
-                elif post and path == '/api/v2/resume' and runtime and set(data) == {'workspace', 'run_id'}:
-                    result = runtime.resume(data['workspace'], data['run_id'])
-                elif post and path == '/api/v2/approval' and runtime and set(data) == {
+                elif post and path == '/api/v2/resume' and managed_available and set(data) == {'workspace', 'run_id'}:
+                    result = managed_runtime().resume(data['workspace'], data['run_id'])
+                elif post and path == '/api/v2/approval' and managed_available and set(data) == {
                         'workspace', 'run_id', 'activation', 'decision'}:
-                    result = runtime.control_designer(data['workspace'], data['run_id'],
+                    result = managed_runtime().control_designer(data['workspace'], data['run_id'],
                                                       activation=data['activation'], decision=data['decision'])
-                elif post and path == '/api/v2/pause' and runtime and set(data) == {'workspace', 'run_id', 'paused'}:
-                    result = runtime.control_designer(data['workspace'], data['run_id'], paused=data['paused'])
+                elif post and path == '/api/v2/pause' and managed_available and set(data) == {'workspace', 'run_id', 'paused'}:
+                    result = managed_runtime().control_designer(data['workspace'], data['run_id'], paused=data['paused'])
                 elif post and path == '/api/v2/cancel' and set(data) == {'workspace', 'run_id'}:
                     workspace, run_id = data['workspace'], data['run_id']
                     record = scripts.get(workspace, run_id)
                     if record is not None:
                         result = scripts.snapshot(workspace, run_id, record=record, cancel=True)
-                    elif runtime:
-                        result = runtime.cancel(workspace, run_id)
+                    elif managed_available:
+                        result = managed_runtime().cancel(workspace, run_id)
                     else:
                         raise Invalid('找不到此运行。')
                 else:

@@ -10,9 +10,6 @@ from orchestration.common import Blocked
 from studio.graph import Invalid
 from v2.store import DraftStore
 from v2.server import create_server
-from v2.runtime import V2Runtime
-from v2.native_sessions import NativeSessions
-from v2.session_operations import SessionOperations, load_write_profiles
 
 
 def main(argv=None, *, ready=None):
@@ -37,17 +34,33 @@ def main(argv=None, *, ready=None):
             raise Invalid('V2 当前支持 Linux 本机环境')
         store = DraftStore(args.state_dir, args.allow_root)
         with lease(store.state / 'v2-service.lock'):
-            native = NativeSessions.from_path(store, args.native_history_config) if args.native_history_config else None
-            runtime = V2Runtime(store,args.codex_cli,native_profiles=args.native_agent_profile,native_homes=args.native_agent_home)
-            if args.native_session_writes and native is None:
+            def managed_runtime():
+                # The script compiler/runner does not need managed Provider probes.
+                from v2.runtime import V2Runtime
+                return V2Runtime(store, args.codex_cli, native_profiles=args.native_agent_profile,
+                                 native_homes=args.native_agent_home)
+
+            if args.native_session_writes and not args.native_history_config:
                 raise Invalid('原生会话写入同时需要 --native-history-config。')
-            operations = (SessionOperations(store, native, runtime.provider, load_write_profiles(args.native_session_writes))
-                          if args.native_session_writes else None)
+            native = None
+            if args.native_history_config:
+                from v2.native_sessions import NativeSessions
+                native = NativeSessions.from_path(store, args.native_history_config)
+            # Explicit compatibility registrations retain their startup validation.
+            runtime = managed_runtime() if (args.native_history_config or args.native_agent_profile
+                                            or args.native_agent_home or args.git_delivery_target) else None
+            operations = None
+            if args.native_session_writes:
+                from v2.session_operations import SessionOperations, load_write_profiles
+                operations = SessionOperations(store, native, runtime.provider,
+                                               load_write_profiles(args.native_session_writes))
             catalog = None
             if args.copilot_catalog_config:
                 from v2.copilot_catalog import CopilotCatalog
                 catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
-            server, token = create_server(store, args.port, runtime=runtime, native_sessions=native, copilot_catalog=catalog,
+            server, token = create_server(store, args.port, runtime=runtime,
+                                          runtime_factory=managed_runtime if runtime is None else None,
+                                          native_sessions=native, copilot_catalog=catalog,
                                           session_operations=operations, git_delivery_targets=args.git_delivery_target)
             with server:
                 if ready is None:
