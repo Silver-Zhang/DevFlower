@@ -7,6 +7,14 @@ PRIVATE_FIELDS = frozenset({'receipt', 'credentials', 'authorization', 'authenti
     'api_key', 'access_token', 'refresh_token', 'auth_token', 'password', 'secret', 'cookie'})
 
 
+REPLY = {'type': 'object', 'additionalProperties': False,
+         'required': ['reply','summary','accepted','result_json','artifacts','evidence','issues','next'], 'properties': {
+    'reply': {'type': 'string'}, 'summary': {'type': 'string'}, 'accepted': {'type': 'boolean'},
+    'result_json': {'type': 'string'}, 'artifacts': {'type': 'array', 'items': {'type': 'string'}},
+    'evidence': {'type': 'array', 'items': {'type': 'string'}},
+    'issues': {'type': 'array', 'items': {'type': 'string'}}, 'next': {'type': 'string'}}}
+
+
 def public_field(path):
     if isinstance(path, str) and any(part.casefold() in PRIVATE_FIELDS for part in path.split('.')):
         raise Invalid('私有回执和认证字段不能作为上下游数据')

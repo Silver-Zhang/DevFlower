@@ -23,6 +23,7 @@ from v2.agent_records import AgentRecords
 from v2.server import create_server
 import test_v2_script_export as fixtures
 import test_v2_execution_http as legacy_http
+import test_v2_launch_event as legacy_launch
 
 ROOT = Path(__file__).resolve().parents[1]
 # A fresh interpreter must not even import managed execution on the native path.
@@ -67,6 +68,8 @@ class LazyRuntimeTests(unittest.TestCase):
 
     def test_actual_default_launcher_runs_native_chain_without_managed_imports(self):
         data, bin_dir = self.native_fixture()
+        legacy_draft = self.store.save(self.workspace, None, None, self.managed_document())
+        old = self.managed_run(self.workspace, legacy_draft)
         env = dict(os.environ, PATH=str(bin_dir), PYTHONPATH=str(ROOT / 'tools'))
         process = subprocess.Popen([sys.executable, '-B', '-c', LAUNCHER,
             '--state-dir', str(self.store.state), '--allow-root', str(self.project.parent),
@@ -85,6 +88,10 @@ class LazyRuntimeTests(unittest.TestCase):
             self.assertIsNone(status['provider'])  # No fabricated CLI metadata.
             for route in ('drafts?', 'agents?', 'runs?', 'project-files?', 'workflow-templates?', 'history-archives?'):
                 self.assertEqual(self.http(service, route + 'workspace=' + self.workspace)[0], 200)
+            code, legacy = self.http(service, f'run?workspace={self.workspace}&id={old}')
+            self.assertEqual(code, 200, legacy)
+            self.assertEqual(legacy['state'], 'FAILED')
+            self.assertEqual(legacy['definition']['draft_document'], legacy_draft['graph'])
             saved = self.http(service, 'agents/save', dict(workspace=self.workspace, id=None, expected=None,
                 config=dict(self.agent['config'], name='New native Agent'), session_revision=None))
             self.assertEqual(saved[0], 200, saved)
@@ -169,20 +176,50 @@ class LazyRuntimeTests(unittest.TestCase):
             factory.assert_called_once_with()
             self.assertEqual(len((self.project / 'calls.jsonl').read_text().splitlines()), 2)
 
-    def test_old_history_in_another_workspace_does_not_load_compatibility(self):
+    def test_history_is_scoped_and_does_not_wait_for_managed_initialization(self):
         other = self.project.parent / 'Other'
         other.mkdir()
         workspace = self.store.open_workspace(str(other))['id']
-        self.store.db.put('run', 'a' * 32, {'id': 'a' * 32, 'workspace': workspace})
-        instance = self.stub_runtime()
-        instance.runs = Mock(return_value=[{'id': 'a' * 32, 'workspace': workspace, 'state': 'UNKNOWN'}])
-        factory = Mock(return_value=instance)
-        with self.server(factory) as service:
-            self.assertEqual(self.http(service, 'runs?workspace=' + self.workspace), (200, []))
-            factory.assert_not_called()
-            self.assertEqual(self.http(service, 'runs?workspace=' + workspace)[1][0]['id'], 'a' * 32)
-            factory.assert_called_once_with()
-            instance.runs.assert_called_once_with(workspace)
+        draft = self.store.save(workspace, None, None, self.managed_document())
+        old = self.managed_run(workspace, draft)
+        started, release = Event(), Event()
+
+        def create():
+            started.set()
+            if not release.wait(10):
+                raise TimeoutError('test did not release the compatibility initializer')
+            raise OSError('synthetic compatibility initialization failure')
+
+        with self.server(Mock(side_effect=create)) as service, ThreadPoolExecutor(1) as pool:
+            request = pool.submit(self.http, service, 'cli-providers')
+            try:
+                self.assertTrue(started.wait(5))
+                self.assertEqual(self.http(service, 'runs?workspace=' + self.workspace), (200, []))
+                code, rows = self.http(service, 'runs?workspace=' + workspace)
+                self.assertEqual(code, 200, rows)
+                self.assertEqual([row['id'] for row in rows], [old])
+                detail = f'run?workspace={workspace}&id={old}'
+                self.assertEqual(self.http(service, detail)[1]['state'], rows[0]['state'])
+                self.assertEqual(self.http(service, f'run?workspace={self.workspace}&id={old}')[0], 409)
+                self.assertFalse(request.done())
+            finally:
+                release.set()
+            self.assertEqual(request.result(timeout=5)[0], 503)
+            self.assertEqual(self.http(service, detail)[0], 200)
+            self.assertEqual(self.http(service, 'runs?workspace=' + workspace)[0], 200)
+
+    @staticmethod
+    def managed_document():
+        return dict(version=1, name='Existing managed workflow', nodes=[dict(
+            id='Legacy', name='Legacy', position=dict(x=0, y=0), provider='codex',
+            model='fixture', effort='low', round_prompt='Freeze managed request')], edges=[])
+
+    def managed_run(self, workspace, draft):
+        runtime = legacy_launch.runtime_for(self.store)
+        with patch.object(runtime, 'spawn'):
+            run = runtime.launch(workspace, draft['id'], draft['revision'], 'managed-fixture-intent')['run']['id']
+        self.store.db.change('run', run, dict(state='FAILED', reason='Synthetic known local failure'))
+        return run
 
     def test_unauthenticated_or_invalid_native_requests_do_not_activate_legacy(self):
         factory = Mock(side_effect=AssertionError('must not initialize'))
@@ -230,14 +267,12 @@ class LazyRuntimeTests(unittest.TestCase):
 
     def test_native_and_managed_history_coexist_without_reclassifying_records(self):
         data, bin_dir = self.native_fixture()
-        old = dict(id='a' * 32, workspace=self.workspace, name='Existing managed run', state='UNKNOWN')
-        self.store.db.put('run', old['id'], old)
-        instance = self.stub_runtime()
-        instance.runs = Mock(return_value=[old])
-        instance.snapshot = Mock(return_value=dict(run=old, state='RECOVERY_REQUIRED'))
-        factory = Mock(return_value=instance)
+        legacy_draft = self.store.save(self.workspace, None, None, self.managed_document())
+        old = self.managed_run(self.workspace, legacy_draft)
+        stored = self.store.db.get('run', old)
+        factory = Mock(side_effect=AssertionError('history must not initialize the managed runtime'))
         with self.server(factory) as service, patch.dict(os.environ, PATH=str(bin_dir)):
-            self.assertEqual(self.http(service, 'runs?workspace=' + self.workspace), (200, [old]))
+            self.assertEqual(self.http(service, 'runs?workspace=' + self.workspace)[1][0]['id'], old)
             code, started = self.http(service, 'launch', data)
             self.assertEqual(code, 200, started)
             run_id = started['run']['id']
@@ -245,14 +280,15 @@ class LazyRuntimeTests(unittest.TestCase):
             self.wait_for_state(service, route, lambda row: row['state'] == 'COMPLETED')
             code, rows = self.http(service, 'runs?workspace=' + self.workspace)
             self.assertEqual(code, 200)
-            self.assertEqual({row['id'] for row in rows}, {old['id'], run_id})
-            self.assertEqual(self.http(service, f"run?workspace={self.workspace}&id={old['id']}")[1],
-                             dict(run=old, state='RECOVERY_REQUIRED'))
-            instance.snapshot.assert_called_once_with(self.workspace, old['id'])
-            self.assertEqual(self.store.db.get('run', old['id']), old)
+            self.assertEqual({row['id'] for row in rows}, {old, run_id})
+            _, legacy = self.http(service, f'run?workspace={self.workspace}&id={old}')
+            self.assertEqual(legacy['definition']['draft_document'], legacy_draft['graph'])
+            self.assertEqual(legacy['state'], 'FAILED')
+            self.assertNotIn('script', legacy)
+            self.assertEqual(self.store.db.get('run', old), stored)
             self.assertEqual(self.store.db.get('script-run', run_id)['run']['execution'], 'native-cli')
             self.assertEqual(len((self.project / 'calls.jsonl').read_text().splitlines()), 2)
-            factory.assert_called_once_with()
+            factory.assert_not_called()
 
     def test_explicit_compatibility_registrations_keep_startup_validation(self):
         args = ['--state-dir', str(self.store.state), '--allow-root', str(self.project.parent), '--no-browser']

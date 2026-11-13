@@ -1,7 +1,11 @@
 """Public execution diagnostics from recorded effects and bounded native facts."""
+import copy
 import re
+import uuid
 
-from orchestration.common import Blocked
+from orchestration.common import Blocked, digest
+from orchestration.contracts import validate
+from studio.workbench_data import REPLY
 
 from .session_identity import SessionRefused
 
@@ -72,3 +76,65 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
         action = '查看原生客户端及当前工作区的配置，再核对本次记录。'
     effect = 'terminal-failed' if terminal_failed else 'unknown' if uncertain else 'not-sent'
     return dict(code=code,reason=reason,action=action,effect=effect,input_recorded=bool(sent),process=process)
+
+
+def terminal_correlated(activation, process, binding, terminal_type, session_id, native_turn_id):
+    """One association rule for success and definite native terminal failure."""
+    events = activation.get('native_terminal_events', [])
+    saved = activation.get('process_result') or {}
+    return bool(isinstance(process, dict) and len(events) == 1 and events[0].get('type') == terminal_type and
+        session_id and session_id == activation.get('observed_session') == events[0].get('session_id') and
+        events[0].get('native_turn_id') == native_turn_id and
+        process.get('process') == activation.get('process') and
+        process.get('operation_id') and process['operation_id'] == activation.get('input_sent_operation_id') and
+        all(saved.get(k) == process.get(k) for k in ('process','operation_id','exit','timeout','cancelled','overflow')) and
+        activation.get('input_sent_sha256') and activation['input_sent_sha256'] == activation.get('actual_request_sha256') and
+        activation.get('executed_image_sha256') == binding['_executable_sha256'])
+
+
+def verify_completion(activation, receipt, binding):
+    process = receipt.get('process')
+    if binding.get('provider') == 'claude':
+        sid = binding.get('session_id') or binding.get('new_session_id')
+        native = activation.get('claude_terminal')
+        saved = activation.get('process_result') or {}
+        history = receipt.get('native_history')
+        if (not isinstance(process, dict) or not sid or native != {'type': 'result', 'subtype': 'success', 'session_id': sid}
+                or sid != receipt.get('session_id') or sid != activation.get('observed_session')
+                or not isinstance(history, dict) or not re.fullmatch(r'[0-9a-f]{64}', history.get('sha256', ''))
+                or process.get('exit') != 0 or any(process.get(key) for key in ('timeout', 'cancelled', 'overflow'))
+                or process.get('process') != activation.get('process') or not process.get('operation_id')
+                or process['operation_id'] != activation.get('input_sent_operation_id')
+                or any(saved.get(key) != process.get(key) for key in ('process', 'operation_id', 'exit', 'timeout', 'cancelled', 'overflow'))
+                or not activation.get('input_sent_sha256') or activation['input_sent_sha256'] != activation.get('actual_request_sha256')
+                or activation.get('executed_image_sha256') != binding['_executable_sha256']
+                or receipt.get('requested_model') not in (binding['model'], 'unknown' if binding['model'] is None else binding['model'])
+                or receipt.get('requested_effort') not in (binding['effort'], 'unknown' if binding['effort'] is None else binding['effort'])):
+            raise Blocked('Claude 终结、原生记录、输入或进程证据未确认；未重发。')
+        validate(receipt.get('report'), REPLY)
+        return
+    if (not terminal_correlated(activation, process, binding, 'turn.completed', receipt.get('session_id'), receipt.get('native_turn_id')) or
+            process.get('exit') != 0 or
+            any(process.get(k) for k in ('timeout', 'cancelled', 'overflow')) or
+            receipt.get('requested_model') != binding['model'] or receipt.get('requested_effort') != binding['effort'] or
+            receipt.get('resolved_model') not in (None, 'unknown', binding['model']) or
+            receipt.get('resolved_effort') not in (None, 'unknown', binding['effort'])):
+        raise Blocked('原生终结回执、会话、请求或进程证据缺失/矛盾；结果未确认且未重发')
+    validate(receipt.get('report'), REPLY)
+    if binding.get('v2_agent_plan'):
+        plan = receipt.get('native_plan')
+        if (not isinstance(plan, dict) or plan != activation.get('native_plan') or plan.get('mode') != 'plan'
+                or type(plan.get('finalized')) is not bool
+                or plan.get('sha256') != digest(receipt['report']['reply'].encode())):
+            raise Blocked('Codex 原生 Plan 回执无法核验。')
+    if binding.get('transition_from'):
+        expected = {'mode': 'default', 'plan_sha256': binding['transition_from']['plan_sha256']}
+        if receipt.get('native_agent_transition') != expected or activation.get('native_agent_transition') != expected:
+            raise Blocked('Codex 原生 Agent 切换回执无法核验。')
+
+
+def activation_binding(definition, activation):
+    binding = copy.deepcopy(definition['bindings'][activation['node']])
+    if definition.get('designer_runtime') == 1 and activation.get('iteration_path') and binding.get('new_session_id'):
+        binding['new_session_id'] = str(uuid.uuid5(uuid.UUID(binding['new_session_id']), activation['id']))
+    return binding

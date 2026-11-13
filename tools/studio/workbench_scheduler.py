@@ -18,15 +18,9 @@ from orchestration.store import lease
 from .agent_sessions import safe_text
 from .graph import Invalid
 from .workbench_graph import field, predicate, request_text, request_sections, transfer
-from .workbench_data import public_data
+from .workbench_data import REPLY, public_data
 
 DONE = {'COMPLETED', 'FAILED', 'SKIPPED', 'CANCELLED', 'RECOVERY_REQUIRED'}
-REPLY = {'type': 'object', 'additionalProperties': False,
-         'required': ['reply','summary','accepted','result_json','artifacts','evidence','issues','next'], 'properties': {
-    'reply': {'type': 'string'}, 'summary': {'type': 'string'}, 'accepted': {'type': 'boolean'},
-    'result_json': {'type': 'string'}, 'artifacts': {'type': 'array', 'items': {'type': 'string'}},
-    'evidence': {'type': 'array', 'items': {'type': 'string'}},
-    'issues': {'type': 'array', 'items': {'type': 'string'}}, 'next': {'type': 'string'}}}
 
 
 def skip_reason(incoming, states):

@@ -16,8 +16,8 @@ GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型�
 有界 Loop、确定性 Tool 和原生多轮续聊均为后续扩展，**不是首个 Stable 的发布门槛**。
 开发/审核只是验收示例，不是固定产品角色。没有真实 CLI 与 GUI 闭环证据时不得发布 Stable。
 
-本轮启动依赖精简以 `960d0667f1174071be6a5c9300403e1f8008dd69` 为基线。
-[基线 CI 两项通过](https://github.com/Silver-Zhang/DevFlower/actions/runs/43269851278)。
+本轮混合验收以 `61fb754365cb3580e3ef9ed18c0ff4135b058471` 为基线。
+[基线 CI](https://github.com/Silver-Zhang/DevFlower/actions/runs/43351745852)。
 
 ## 2. 模块与依赖边界
 
@@ -37,8 +37,9 @@ GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型�
 写入模块仅在显式启用会话操作时导入；共享存储、图校验和只读历史工具继续复用，不为改目录复制实现。
 
 兼容 Runtime 由服务内一个加锁的惰性工厂创建。只有实际访问受管配置、检查/执行、模型发现、
-助手/Git 兼容入口，或读取当前工作区已有的受管运行记录时才构造；并发首次访问共享同一实例。
-初始化中的慢探测不会占用原生 API 的锁，失败不自动重试，也不阻断原生脚本路径。新旧路径
+助手/Git 兼容入口时才构造，并发首次访问共享同一实例。旧运行列表和详情由
+`ManagedRunHistory` 读取当前工作区的冻结证据，受管启动、恢复与历史继续共享同一投影及
+回执核验。Provider 初始化失败会返回既有错误响应，历史读取与原生脚本可以继续。新旧路径
 复用同一份 AgentRecords；兼容路径的原权限、会话及恢复检查不变。
 
 用户显式登记原生历史/会话操作、命名 Profile、独立 HOME 或 Git 交付目标时，仍按原方式在
@@ -51,7 +52,7 @@ GUI 与终端必须执行同一产物；先交付最小闭环，不增加大型�
 
 ### V2 功能保留与执行边界（2026-11-13）
 
-本批只改变兼容模块的初始化时机，不删除 V2 功能、不改变菜单、不改存储结构。会话中心
+当前的依赖精简涉及兼容模块的初始化时机与历史投影，沿用既有菜单和存储结构。会话中心
 （历史、续聊、别名及终端接管）、Agent 管理、文件与模板、历史归档、助手/自动建队/修复、
 GitHub/GitLab 与交付能力继续保留，沿用原来的配置条件和授权边界；未支持的能力不会因此
 被宣称已支持。默认不加载与用户点击后可用是两个独立要求，两者都需验证。
@@ -63,6 +64,25 @@ GitHub/GitLab 与交付能力继续保留，沿用原来的配置条件和授权
 
 后续删除仅限证明无调用方的重复实现，且须先有等价替代和回归证据；产品功能下线须另行
 取得用户授权。用户验收和 Stable 发布授权仍独立于 CI。
+
+### 混合集成核对（2026-11-14）
+
+| 功能 | 实际入口和执行边界 | 本轮覆盖 |
+|---|---|---|
+| 工作区、文件、模板、设计器（W01–W12 及设计器条目） | `index.jsx` → `DraftStore`、`project_files.py`、`workflow_templates.py`、`canvas_structure.py`。由两条运行路径共用。旧文件附件冻结仍在 `data_handoff.py` | `v2_browser`、`v2_draft_transfer_browser`、`v2_designer_runtime_browser`，以及原生运行中的跨工作区访问拒绝 |
+| Agent 与 Provider | `AgentManager.jsx` → `AgentRecords`。原生配置直达编译器，受管目录、工具权限和会话绑定由 `cli_providers.py`、`agent_execution.py` 处理 | Chromium 实建并绑定 Codex、Claude；`v2_native_agent_contract`、`v2_agent_records`、`v2_provider_catalog_browser` |
+| 会话中心及终端（S01–S15） | `NativeSessions.jsx` / `NativePty.jsx` → `native_sessions.py`、`session_operations.py`、`codex_terminals.py`。保持原生身份、显式批准和共用写租约 | 会话浏览器夹具覆盖历史、分页、搜索、别名、回收和发送；`v2_codex_terminals`、`v2_native_controls`、`native_attach` 覆盖终端授权、会话定位和共享 PTY 代次 |
+| 原生运行和监控 | `/check`、`/launch` 的原生入口 → `script_runs.py`、`devflower_export.py` → 独立脚本。Run Monitor 读取脚本事件和参数文件 | 同一 Chromium 工作区实走预览、下载、运行与交接。用模拟 CLI 验证丢失响应、刷新、切换、进程存活期间重启和取消。并发、失败、超时由脚本与 HTTP 回归覆盖 |
+| 旧受管执行和历史 | 同一工作台的受管入口 → `V2Runtime` / worker / Scheduler。`ManagedRunHistory` → `recovery.project` → `RunInspector`，冻结回执规则与原路径共用 | 同一工作区交替执行并打开新旧历史，重启后历史读取不加载 Runtime。`v2_lazy_runtime`、`v2_execution_browser`、`v2_recovery_browser`、`v2_run_inspector_browser` 和 `v2_run_summary_browser` |
+| 助手与 Git 平台 | 兼容工具 → `assistant.py`、`git_platform.py`。自动建队、修复及 Git 交付保留原受管入口，交付继续验证 Gate | `v2_assistant_browser`、`v2_git_platform_browser` 验证实际交互与合成平台数据；`v2_assistant_repairs`、`v2_workflow_portability` 覆盖修复和交付约束 |
+
+本轮消除的是历史查询对启动探测和全工作区运行反序列化的依赖。脚本与受管运行的证据不同，
+各自使用其原有协议。菜单入口共用，冻结数据及权限校验各自保留。历史绑定的旧
+`runtime_sources` 仍用于显式恢复的源码校验，跨版本的旧运行继续可读。既有两条执行路径
+尚无等价替代的部分包括受管审批、绑定会话、恢复与交付 Gate。
+
+本轮使用合成 Provider 与模拟 CLI 验收混合行为。真实模型、远端 GitHub/GitLab 用户操作及
+实际账号的 Codex TUI 接管沿用独立验收边界，上表的夹具结果不代表这些操作的实测结论。
 
 ## 3. 本批实现与可靠性语义
 
@@ -125,11 +145,9 @@ PYTHONPATH=tools python3 -B -m unittest discover -s tests -p 'test_v2_lazy_runti
 两条路径均验证了实际文件、精确回答交接和独立算术结果。真实调用用于正常闭环，取消与故障
 使用模拟 CLI。原始记录留在本机。
 
-本轮不修改编译器、独立脚本驱动或 GUI 产物，未重新进行真实模型调用。新增测试在全新解释器
-禁止导入受管执行模块，再通过实际启动器和 HTTP 完成模拟 CLI 顺序闭环；另外验证并发只
-初始化一次、慢/失败初始化隔离、已有会话授权拒绝和显式兼容登记的启动校验。此前真实验收
-属于上轮证据，不冒充本轮实测。提交前另补充延迟加载下的原受管 HTTP 启动、冻结版本、
-工作区隔离和历史投影回归，以及助手/Git 入口共用 Runtime、新旧运行并列且不改写记录的检查。
+混合验收使用原有编译器、独立脚本协议和 GUI 产物。`test_v2_lazy_runtime.py` 在阻断受管
+模块导入的实际启动器中执行脚本并读取已冻结的受管记录，另验证慢探测及初始化错误期间的
+历史读回、工作区隔离、同意图去重、旧运行权限与并列展示。
 
 ## 5. 本地交接与下一关口
 
@@ -162,3 +180,20 @@ python3 /path/to/code_review_HASH.py --cancel --run-dir /path/to/run-a
 
 已有受管工作流仍依赖兼容执行器。后续仅在对应入口和调用方完成迁移后清理其实现。
 Minimal Stable 仍需用户验收和单独发布授权。
+
+## 6. 下一轮流程控制的最小接口
+
+1. 先为脚本 Agent 增加显式的结构化输出合同。可复用现有 `output_contract` 字段路径、
+   类型与必需标记，产物增加版本化的结构化结果。审核返回严格 JSON，例如
+   `{"verdict":"needs_correction","issues":["…"]}`，白名单为 `accept` 与
+   `needs_correction`。先验证重复键、长度、类型、取值与候选摘要；解析失败、候选不符、
+   请求或回执未知时停止并保留证据。自由文本和 CLI 退出码都不能代替审核结论。
+2. 编译器再读取现有 Condition 的 `expression` 与 `true/false` 端口，或 Router 的
+   有序 `rules` 与 `fallback`。固定程序校验端口、可达性和分支边，调用可独立打包的
+   纯谓词求值，记录输入摘要、命中规则与选择端口。用分支夹具证明未选分支不启动。当前
+   受管 Merge 另有 `all/selected/any` 与失败策略，首批流程无需 Merge，推迟到需要证据合流时。
+3. 接着复用 Loop 的 `body`、`exit_condition`、`max_iterations`。首批子图固定支持顺序的
+   开发 → 审核，编译成有界迭代。每轮交接已核验的候选和反馈，记录轮次及摘要。只有当前轮
+   有效的 `accept` 才走成功出口，明确的 `needs_correction` 才进入下一轮。到达上限以
+   失败结束，取消、未知状态、半写产物均不得触发返工。编译器为新语义使用明确的版本，
+   已导出顺序脚本及旧受管运行保留自己的协议。

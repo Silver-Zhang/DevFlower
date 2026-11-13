@@ -13,6 +13,7 @@ from studio.session_sources import opened
 from studio.workbench_data import public_data
 from studio.data_contracts import check
 from .data_handoff import has_output_contract, MAX_ARTIFACTS, SHA
+from .execution_facts import activation_binding, terminal_correlated, verify_completion
 from .project_files import MAX_ARTIFACT_BYTES
 
 IDENTITY=('host','boot_id','pid','start','pgid','sid')
@@ -30,7 +31,6 @@ def frozen_node(definition, path):
 
 def _binding(definition, activation):
     if definition.get('designer_runtime') == 1:
-        from .runtime import activation_binding
         return activation_binding(definition, activation)
     return definition['bindings'][activation['node']]
 
@@ -68,7 +68,6 @@ def owned_group(activation,steps):
 
 def read_completion(rt,run,node,definition,steps):
     """Bounded regular artifact plus original request/process/terminal evidence."""
-    from .runtime import verify_completion
     path=rt.storage/'flow-artifacts'/run['id']/node['id']/'completion.json'
     with opened(path) as fd:
         size=os.fstat(fd).st_size
@@ -138,7 +137,6 @@ def validate_data_completion(run,node,binding,spec,value):
 
 def project(rt,run,definition,nodes,steps):
     """One derived projection used by list/detail/nodes, never a scheduler resume."""
-    from .runtime import terminal_correlated
     worker=observe(run.get('worker'));projected=[];outcomes=[];proofs={};bad_definition=False
     designer=definition.get('designer_runtime') == 1
     try:

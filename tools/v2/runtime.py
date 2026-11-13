@@ -1,6 +1,5 @@
 """V2 execution boundary around the existing scheduler, native adapter and journal."""
 from contextlib import ExitStack
-import copy
 import json
 import os
 from pathlib import Path
@@ -9,17 +8,16 @@ import secrets
 import subprocess
 import sys
 import time
-import uuid
 
 from orchestration.common import Blocked, canonical, digest, save
-from orchestration.contracts import validate
 from orchestration.process import group_alive
 from orchestration.store import alive, process_identity
 from studio.graph import Invalid
 from studio.server import Conflict
 from studio.workbench_data import public_data
 from studio.workbench_graph import request_sections
-from studio.workbench_scheduler import Scheduler, Journal, REPLY
+from studio.workbench_scheduler import Scheduler, Journal
+from studio.workbench_data import REPLY
 from studio.local_codex_adapter import LocalCodex
 from studio.native_codex_image import binary_digest
 from studio.session_sources import UUID
@@ -34,7 +32,8 @@ from .agent_records import AgentRecords, KEY as AGENT_ID
 from .agent_execution import freeze_agent, prove_agent_history, require_agent_history, require_agent_scope
 from .native_writer_state import require_native_writer_idle
 from .definitions import compile_definition, source_manifest, ROOT
-from .execution_facts import failure_fact
+from .execution_facts import activation_binding, failure_fact, terminal_correlated, verify_completion
+from .run_history import ManagedRunHistory
 from .data_handoff import (freeze_task_files, has_output_contract, output_instruction, structured_output,
                            require_task_files_public, task_file_refs, task_selection, verify_artifacts)
 from .canvas_structure import node_kind
@@ -228,61 +227,6 @@ def require_claude_child(supervisor, child):
     return child
 
 
-def terminal_correlated(activation, process, binding, terminal_type, session_id, native_turn_id):
-    """One association rule for success and definite native terminal failure."""
-    events = activation.get('native_terminal_events', [])
-    saved = activation.get('process_result') or {}
-    return bool(isinstance(process, dict) and len(events) == 1 and events[0].get('type') == terminal_type and
-        session_id and session_id == activation.get('observed_session') == events[0].get('session_id') and
-        events[0].get('native_turn_id') == native_turn_id and
-        process.get('process') == activation.get('process') and
-        process.get('operation_id') and process['operation_id'] == activation.get('input_sent_operation_id') and
-        all(saved.get(k) == process.get(k) for k in ('process','operation_id','exit','timeout','cancelled','overflow')) and
-        activation.get('input_sent_sha256') and activation['input_sent_sha256'] == activation.get('actual_request_sha256') and
-        activation.get('executed_image_sha256') == binding['_executable_sha256'])
-
-
-def verify_completion(activation, receipt, binding):
-    process = receipt.get('process')
-    if binding.get('provider') == 'claude':
-        sid = binding.get('session_id') or binding.get('new_session_id')
-        native = activation.get('claude_terminal')
-        saved = activation.get('process_result') or {}
-        history = receipt.get('native_history')
-        if (not isinstance(process, dict) or not sid or native != {'type': 'result', 'subtype': 'success', 'session_id': sid}
-                or sid != receipt.get('session_id') or sid != activation.get('observed_session')
-                or not isinstance(history, dict) or not re.fullmatch(r'[0-9a-f]{64}', history.get('sha256', ''))
-                or process.get('exit') != 0 or any(process.get(key) for key in ('timeout', 'cancelled', 'overflow'))
-                or process.get('process') != activation.get('process') or not process.get('operation_id')
-                or process['operation_id'] != activation.get('input_sent_operation_id')
-                or any(saved.get(key) != process.get(key) for key in ('process', 'operation_id', 'exit', 'timeout', 'cancelled', 'overflow'))
-                or not activation.get('input_sent_sha256') or activation['input_sent_sha256'] != activation.get('actual_request_sha256')
-                or activation.get('executed_image_sha256') != binding['_executable_sha256']
-                or receipt.get('requested_model') not in (binding['model'], 'unknown' if binding['model'] is None else binding['model'])
-                or receipt.get('requested_effort') not in (binding['effort'], 'unknown' if binding['effort'] is None else binding['effort'])):
-            raise Blocked('Claude 终结、原生记录、输入或进程证据未确认；未重发。')
-        validate(receipt.get('report'), REPLY)
-        return
-    if (not terminal_correlated(activation, process, binding, 'turn.completed', receipt.get('session_id'), receipt.get('native_turn_id')) or
-            process.get('exit') != 0 or
-            any(process.get(k) for k in ('timeout', 'cancelled', 'overflow')) or
-            receipt.get('requested_model') != binding['model'] or receipt.get('requested_effort') != binding['effort'] or
-            receipt.get('resolved_model') not in (None, 'unknown', binding['model']) or
-            receipt.get('resolved_effort') not in (None, 'unknown', binding['effort'])):
-        raise Blocked('原生终结回执、会话、请求或进程证据缺失/矛盾；结果未确认且未重发')
-    validate(receipt.get('report'), REPLY)
-    if binding.get('v2_agent_plan'):
-        plan = receipt.get('native_plan')
-        if (not isinstance(plan, dict) or plan != activation.get('native_plan') or plan.get('mode') != 'plan'
-                or type(plan.get('finalized')) is not bool
-                or plan.get('sha256') != digest(receipt['report']['reply'].encode())):
-            raise Blocked('Codex 原生 Plan 回执无法核验。')
-    if binding.get('transition_from'):
-        expected = {'mode': 'default', 'plan_sha256': binding['transition_from']['plan_sha256']}
-        if receipt.get('native_agent_transition') != expected or activation.get('native_agent_transition') != expected:
-            raise Blocked('Codex 原生 Agent 切换回执无法核验。')
-
-
 def _append_run_authorized(db, run, reserved_at):
     run_id = run['id']
     event = dict(
@@ -295,16 +239,9 @@ def _append_run_authorized(db, run, reserved_at):
     return db.execute('INSERT INTO events(run,data) VALUES(?,?)', (run_id, canonical(event).decode())).lastrowid
 
 
-def activation_binding(definition, activation):
-    binding = copy.deepcopy(definition['bindings'][activation['node']])
-    if definition.get('designer_runtime') == 1 and activation.get('iteration_path') and binding.get('new_session_id'):
-        binding['new_session_id'] = str(uuid.uuid5(uuid.UUID(binding['new_session_id']), activation['id']))
-    return binding
-
-
-class V2Runtime:
+class V2Runtime(ManagedRunHistory):
     def __init__(self, store, executable=None, *, worker_run=None, native_profiles=(), native_homes=()):
-        self.store, self.flow, self.storage = store, store.db, store.state
+        super().__init__(store)
         self.worker_run = worker_run
         self.provider_error = None
         try: self.provider = CodexProvider(store, executable)
@@ -772,61 +709,8 @@ class V2Runtime:
         finally:
             journal.writer_gates.close()
 
-    def _records(self, run_id=None, *, include_events=True):
-        # One committed SQLite snapshot. Run detail does not load another run's
-        # payloads, and its compatibility event tail is separate from the cursor.
-        with self.flow.tx(read=True) as db:
-            if run_id is None:
-                records = db.execute("SELECT kind,id,data FROM records WHERE kind IN ('run','definition','activation','native-step')")
-            else:
-                records = db.execute("""SELECT kind,id,data FROM records WHERE kind='run' AND id=?
-                    UNION ALL SELECT kind,id,data FROM records WHERE kind='definition' AND id=(
-                        SELECT json_extract(data,'$.definition_id') FROM records WHERE kind='run' AND id=?)
-                    UNION ALL SELECT kind,id,data FROM records WHERE kind IN ('activation','native-step')
-                        AND CASE WHEN json_valid(data) THEN json_extract(data,'$.run') END=?""", (run_id, run_id, run_id))
-            rows = {(kind,key): json.loads(raw) for kind,key,raw in records}
-            if not include_events:
-                return rows, []
-            if run_id is None:
-                events = db.execute('SELECT seq,data FROM events ORDER BY seq')
-            else:
-                tail = db.execute('SELECT seq,data FROM events WHERE run=? ORDER BY seq DESC LIMIT 100', (run_id,))
-                events = reversed(tail.fetchall())
-            return rows, [dict(json.loads(raw), seq=seq) for seq,raw in events]
-
-    def _snapshot(self,run,rows,events):
-        from .recovery import project
-        definition=rows.get(('definition',run['definition_id']))
-        if definition is None:raise Invalid('冻结执行定义缺失，请保留本次运行并核验状态目录')
-        nodes=[r for (kind,_),r in rows.items() if kind=='activation' and r.get('run')==run['id']]
-        steps=[r for (kind,_),r in rows.items() if kind=='native-step' and r.get('run')==run['id']]
-        value=project(self,run,definition,nodes,steps)
-        for key in worker_facts.INTERNAL_FIELDS:
-            value['run'].pop(key, None)
-        value.update(definition={k:v for k,v in definition.items() if k not in ('bindings','runtime_sources')},
-                     events=[e for e in events if e.get('run')==run['id']][-1000:])
-        return value
-
     def state(self,run):
         return self.snapshot(run['workspace'],run['id'])['state']
-
-    def snapshot(self,workspace,run_id):
-        self.store.workspace(workspace)
-        if not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{32}',run_id):raise Invalid('运行身份无效')
-        rows,events=self._records(run_id);run=rows.get(('run',run_id))
-        if run is None:raise Invalid('找不到此运行，请从当前工作空间历史选择')
-        if run['workspace']!=workspace:raise Conflict('运行不属于当前工作空间')
-        return self._snapshot(run,rows,events)
-
-    def runs(self,workspace):
-        self.store.workspace(workspace);rows,events=self._records(include_events=False);result=[]
-        for (kind,_),run in rows.items():
-            if kind!='run' or run['workspace']!=workspace:continue
-            value=self._snapshot(run,rows,events);public=value['run']
-            result.append(dict({k:public.get(k) for k in ('id','definition_id','draft_id','draft_revision','launch_intent',
-                'created_at','reason','state','cancel_requested','provider_outcome','local_status')},
-                name=value['definition']['draft_document']['name']))
-        return result
 
     def resume(self, workspace, run_id):
         from .recovery import resume

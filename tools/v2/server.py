@@ -26,6 +26,7 @@ from .session_lease import CODEX_COORDINATION_VERSION
 from .script_runs import EXECUTION, ScriptRuns, compile_saved
 from .native_history_config import unique_pairs
 from .run_inspector import RunInspector, parameters as inspector_parameters
+from .run_history import ManagedRunHistory
 from .tool_artifacts import read as read_tool_artifact
 from .workflow_templates import WorkflowTemplates
 from .run_summary import RunSummaryError, read_run_summary, request_parameters as run_summary_parameters
@@ -58,6 +59,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
     agents = getattr(runtime, 'agents', None) or AgentRecords(store)
     agents.session_operations = session_operations
     scripts = ScriptRuns(store, agents)
+    history = ManagedRunHistory(store)
     managed_available = runtime is not None or runtime_factory is not None
     runtime_lock = Lock()
 
@@ -451,9 +453,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif not post and path == '/api/v2/runs':
                     workspace = query.get('workspace')
                     result = scripts.list(workspace)
-                    if managed_available and (runtime is not None or any(
-                            row.get('workspace') == workspace for row in store.db.list('run'))):
-                        result.extend(inspector.clean(managed_runtime().runs(workspace)))
+                    if managed_available:
+                        result.extend(inspector.clean(history.runs(workspace)))
                 elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):
                     required = {'workspace', 'id'}
                     extra = {'node'} if path.endswith('/evidence') else set()
@@ -486,7 +487,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     if record is not None:
                         result = scripts.snapshot(workspace, run_id, record=record)
                     elif managed_available:
-                        result = managed_runtime().snapshot(workspace, run_id)
+                        result = history.snapshot(workspace, run_id)
                     else:
                         raise Invalid('找不到此运行。')
                 elif post and path == '/api/v2/launch' and 'execution' in data:
