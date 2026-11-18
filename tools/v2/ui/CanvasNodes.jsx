@@ -5,24 +5,31 @@ import {PredicateEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {canvasTypes,developmentExit,developmentRoles,draftConfigIssue,emptyPredicate,nodeKind,nodeType,ports,runtimeBlock} from './canvasModel.mjs';
 
 const predicateLimits={field:200,value:2000};
-function CommandArgs({value,label,onChange,Field}){
+function CommandArgs({value,label,onChange,Field,nodeId,commandDrafts}){
  const [draft,setDraft]=useState(null);
- const raw=draft??JSON.stringify(value??[]);
+ const raw=draft&&draft.serialized===JSON.stringify(value)?draft.raw:
+  value===null?commandDrafts.get(nodeId)??'[]':JSON.stringify(value??[]);
  return <>
   <Field label={label} note="使用当前用户权限，按参数数组直接执行。">
    <textarea rows={3} value={raw} placeholder={'["python3","-m","pytest","tests/"]'} aria-invalid={value===null}
    onChange={event=>{
     const next=event.target.value;
-    setDraft(next);
     let parsed=null;
     try{
      const args=JSON.parse(next);
      if(Array.isArray(args)&&args.every(arg=>typeof arg==='string'&&!arg.includes('\0')))parsed=args;
     }catch{}
+    setDraft({serialized:JSON.stringify(parsed),raw:next});
+    if(parsed===null)commandDrafts.set(nodeId,next);
+    else commandDrafts.delete(nodeId);
     onChange({argv:parsed});
    }}/>
   </Field>
-  {value===null&&<span role="alert">请输入有效的 JSON 字符串数组。</span>}
+  {value===null&&<p className="error-text" role="alert">请输入有效的 JSON 字符串数组。</p>}
+  {Array.isArray(value)&&value[0]?.trim()&&<details className="command-preview">
+   <summary>预览实际参数</summary>
+   <pre aria-label="命令参数预览">{JSON.stringify(value,null,2)}</pre>
+  </details>}
  </>;
 }
 const icons={start:Flag,agent:Bot,condition:GitBranch,router:GitBranch,merge:GitMerge,loop:Repeat2,
@@ -36,7 +43,7 @@ function PortRows({node,direction}){
   {entries.map(([port,label])=><div className="node-port" key={port} title={label}>
    <Handle id={port} type={input?'target':'source'} position={input?Position.Left:Position.Right}
     aria-label={node.name+' '+(nodeKind(node)==='agent'?(input?'输入连接点':'输出连接点'):label+' '+(input?'输入端口':'输出端口'))}/>
-   <span>{label}</span>
+   <span>{nodeKind(node)==='condition'&&!input?(port==='true'?'True · ':'False · ')+label:label}</span>
   </div>)}
  </div>;
 }
@@ -45,6 +52,13 @@ export function CanvasNodeCard({id,data,selected}){
  const n=data.node,kind=nodeKind(n),type=nodeType(n),Icon=icons[kind],agent=kind==='agent';
  const issue=data.referenceIssue||draftConfigIssue(n);
  const state=data.activation?.state||(issue?'NEEDS_CONFIG':agent&&n.agent_id?'BOUND':'DRAFT');
+ const config=n.config||{};
+ const summary={
+  agent:n.agent_id?'固定版本':n.model||n.provider, tool:config.argv?.[0]||type.fields.tool?.options?.[config.tool],
+  condition:config.expression?.field, router:`${config.rules?.length||0} 条规则 · 默认分支`,
+  loop:`最多 ${config.max_iterations??3} 轮`, start:config.instructions, output:type.fields.format?.options?.[config.format||'text'],
+ }[kind];
+ const detail=data.activation?.input_sent_sha256?'已写入 CLI':issue||summary;
  const portsKey=JSON.stringify([ports(n,'inputs'),ports(n,'outputs')]);
  const update=useUpdateNodeInternals();
  useLayoutEffect(()=>{update(id)},[id,portsKey,update]);
@@ -56,7 +70,7 @@ export function CanvasNodeCard({id,data,selected}){
   </div>
   <footer>
    <span className="workbench-state" data-state={state}>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
-   <span title={issue||undefined}>{data.activation?data.activation.input_sent_sha256?'已写入 CLI':'':issue||(agent?(n.agent_id?'固定版本':n.model||''):'')}</span>
+   <span className="node-config-summary" title={detail||undefined}>{detail}</span>
   </footer>
  </article>;
 }
@@ -74,21 +88,22 @@ function RouterRules({node,onChange,connected,nativeScript,Field}){
   onChange({rules:reordered});
  }
  return <section className="canvas-router">
-  <p className="field-note">按顺序编辑声明字段与比较值。默认分支有独立端口。修改分支名称会保留已有连线。</p>
+  <p className="field-note">默认分支（fallback） · {connected.has('fallback')?'已连接':'尚未连接'}</p>
   {nativeScript&&<p className="field-note">
-   原生路由按列表顺序选择首个匹配。请使用上游结构化合同声明的字段做等于比较，并连接每条规则和默认分支。
-   {!connected.has('fallback')&&' 默认分支尚未连接。'}
+   按顺序使用首个匹配。请对上游合同声明的字段做等于比较，并连接每条规则和默认分支。
   </p>}
   {rules.map((rule,index)=><fieldset key={rule.id}>
    <legend>规则 {index+1}</legend>
    <Field label={'分支名称 '+(index+1)}><input maxLength={100} value={rule.label} onChange={e=>change(rule.id,{label:e.target.value})}/></Field>
    <PredicateEditor nullable Field={Field} limits={predicateLimits} value={rule.test} labels={{field:'路由字段 '+(index+1),op:'路由运算符 '+(index+1)}} onChange={test=>change(rule.id,{test})}/>
-   {rules.length>1&&<>
+   <div className="router-rule-actions">
+    {rules.length>1&&<>
     <button type="button" disabled={index===0} aria-label={'上移规则 '+(index+1)} onClick={()=>move(index,-1)}>上移</button>
     <button type="button" disabled={index===rules.length-1} aria-label={'下移规则 '+(index+1)} onClick={()=>move(index,1)}>下移</button>
-   </>}
+    </>}
+    <button type="button" disabled={connected.has(rule.id)} onClick={()=>onChange({rules:rules.filter(item=>item.id!==rule.id)})}>移除规则 {index+1}</button>
+   </div>
    {connected.has(rule.id)&&<p className="field-note">此分支已有连线。请先删除连线，再移除规则。</p>}
-   <button type="button" disabled={connected.has(rule.id)} onClick={()=>onChange({rules:rules.filter(item=>item.id!==rule.id)})}>移除规则 {index+1}</button>
   </fieldset>)}
   <button type="button" disabled={rules.length>=16} onClick={add}>添加分支规则</button>
  </section>;
@@ -121,7 +136,7 @@ function CompoundPredicate({value,onChange,Field,depth=0}){
  </>;
 }
 
-export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,nativeScript,Field}){
+export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,nativeScript,Field,commandDrafts}){
  const type=nodeType(node);
  const nativeCondition=nativeScript&&nodeKind(node)==='condition';
  const nativeLoop=nativeScript&&nodeKind(node)==='loop';
@@ -145,7 +160,8 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
    if(developmentRoles.includes(key)&&tool!=='delivery-gate'||key==='expected_json'&&!jsonTool||
       key==='path'&&tool==='delivery-gate')return null;
    const value=node.config[key]??field.default??'';
-   if(field.type==='argv')return <CommandArgs key={key} label={field.label} value={node.config[key]} onChange={onChange} Field={Field}/>;
+   if(field.type==='argv')return <CommandArgs key={key} label={field.label} value={node.config[key]}
+    onChange={onChange} Field={Field} nodeId={node.id} commandDrafts={commandDrafts}/>;
    if(developmentRoles.includes(key)){
     const verification=key==='verification_node';
     const candidates=siblingNodes.filter(item=>verification?item.config?.tool==='verify-json':nodeKind(item)==='agent');
@@ -169,8 +185,13 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
       {bodyChoices.map(row=><option key={row.id} value={row.id}>{row.graph.name}</option>)}
      </select>
     </Field>
-    {value&&<p className="field-note">{value.name} · {value.nodes.length} 个节点 <button type="button"
-      onClick={()=>onChange({[key]:undefined})}>移除循环子工作流</button></p>}
+    {value&&<div className="loop-body-summary">
+     <strong>{value.name}</strong>
+     <p className="field-note">{value.nodes.length} 个节点 · {value.edges.length} 条连线</p>
+     <details><summary>查看固定的子流程节点</summary><ul>{value.nodes.map(item=>
+      <li key={item.id}>{item.name||item.id} · {nodeType(item).label}</li>)}</ul></details>
+     <button type="button" onClick={()=>onChange({[key]:undefined})}>移除循环子工作流</button>
+    </div>}
    </div>;
    if(field.type==='predicate')return <fieldset className="canvas-predicate" key={key}>
     <legend>{field.label}</legend>
@@ -185,6 +206,9 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
    </select></Field>;
    if(field.type==='integer')return <Field key={key} label={field.label}><input type="number" min={field.min} max={field.max} value={value}
     onChange={e=>{if(e.target.value!=='')onChange({[key]:Math.max(field.min,Math.min(field.max,Math.trunc(Number(e.target.value))))})}}/></Field>;
+   if(key==='cwd'&&tool==='command')return <Field key={key} label={field.label} note="相对于工作空间，默认使用项目根目录。">
+    <input value={value} maxLength={20000} onChange={e=>onChange({[key]:e.target.value})}/>
+   </Field>;
    return <Field key={key} label={key==='path'&&jsonTool?'工作区 Python 测试入口':field.label}><textarea placeholder={nodeKind(node)==='validation'?'{"field":"result.ok","op":"equals","value":true}':undefined} maxLength={20000} rows={3} value={value} onChange={e=>onChange({[key]:e.target.value})}/></Field>;
   })}
   {['verify-json','check-json'].includes(node.config.tool)&&<p className="field-note">启动时固定测试入口。验证器在隔离候选上运行该脚本并比较实际 JSON 输出。</p>}

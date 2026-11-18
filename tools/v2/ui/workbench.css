@@ -183,7 +183,7 @@
 .document-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; padding: 2px 3px 0; }
 .document-meta :is(.save-state, small) { font-size: 11px; }
 .document-meta small { color: var(--studio-muted); line-height: 1.35; }
-.document-actions { flex-shrink: 0; gap: 6px; }
+.document-actions { min-width: 0; gap: 6px; }
 .document-actions > button { min-height: 34px; }
 .document-actions > button.primary { padding-inline: 12px; }
 .editor[data-mode=run] .document-icon { color: var(--workbench-warn); background: var(--workbench-warn-bg); }
@@ -303,6 +303,7 @@
 .canvas-node p { margin: 10px 0 13px; font-size: 11px; }
 .canvas-node footer { min-height: 26px; padding-top: 8px; gap: 7px; font-size: 10px; }
 .canvas-node footer > span:last-child { text-align: right; }
+.node-config-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-node .node-port { color: var(--studio-muted); }
 .canvas-node .node-port .react-flow__handle { width: 11px; height: 11px; border-color: var(--node-tone); }
 .canvas-node.selected { border-color: var(--studio-primary-bg); box-shadow: 0 0 0 2px var(--studio-selected); }
@@ -390,6 +391,16 @@
 .v2-app :is(.inspector, .project-panel, .agent-manager) > header > button:last-child { flex: none; min-width: 32px; padding: 5px; border-color: transparent; }
 .inspector-content { padding: 15px; gap: 14px; }
 .inspector-content .field, .agent-manager .field { gap: 5px; }
+.router-rule-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.loop-body-summary { display: grid; gap: 5px; margin-top: 8px; overflow-wrap: anywhere; }
+.loop-body-summary > button { justify-self: start; }
+.command-preview pre {
+  padding: 8px 10px;
+  background: var(--studio-subtle-bg);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .v2-app :is(.field > small, .field-note) { font-size: 12px; color: var(--studio-muted); line-height: 1.55; }
 .v2-app :is(.inspector, .project-panel) .session-note {
   padding: 9px 10px;
@@ -561,12 +572,12 @@
   .document-bar, .editor:has(+.inspector) .document-bar { padding: 8px 10px; gap: 6px; min-height: 58px; flex-wrap: wrap; }
   .document-title .document-icon { width: 28px; height: 28px; }
   .document-name input { width: 100%; }
-  .document-actions { flex-wrap: wrap; }
+  .document-actions { position: relative; flex: 1 1 100%; flex-wrap: wrap; }
   .document-actions button { min-height: 32px; padding-inline: 7px; }
   .canvas-toolbar, .editor:has(+.inspector) .canvas-toolbar { padding: 4px 8px; }
   .canvas-toolbar .draft-transfer button svg { display: none; }
   .canvas-toolbar :is(.inline-agent, .draft-transfer button, .task-context > summary) { font-size: 12px; }
-  .task-context-content { position: fixed; inset: 115px 8px auto; width: auto; }
+  .task-context-content { inset: calc(100% + 6px) 0 auto; width: auto; }
   .v2-app > :is(.project-panel, .agent-manager) { inset: var(--chrome-height) 0 0; width: auto; }
   .v2-app > .inspector {
     position: fixed;
@@ -621,8 +632,22 @@
   border-left: 0;
   border-top: 1px solid var(--studio-line);
 }
-.run-evidence-workspace > .run-inspector-content { padding-inline: clamp(14px, 4vw, 48px); }
+.run-evidence-workspace > :is(.run-inspector-content, .script-evidence) { padding-inline: clamp(14px, 4vw, 48px); }
 .run-evidence-workspace .run-inspector-content > * { width: min(100%, 920px); }
+.script-evidence > * { width: min(100%, 820px); }
+.script-overview { padding-bottom: 12px; border-bottom: 1px solid var(--studio-line); }
+.script-metrics { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; }
+.script-metrics > span { overflow-wrap: anywhere; }
+.script-metrics > span:not(.workbench-state) { color: var(--studio-muted); font-variant-numeric: tabular-nums; }
+.script-metrics strong { color: var(--studio-text); }
+.script-overview .error-text { margin-top: 6px; }
+.script-evidence-detail { display: grid; min-width: 0; gap: 12px; }
+.script-evidence-detail section > :is(h3, h4) { margin-bottom: 5px; }
+.script-evidence-detail section { overflow-wrap: anywhere; }
+.script-evidence-detail summary, .script-artifact summary { font-weight: 600; }
+.script-evidence-detail :is(ol,ul) { margin-block: 4px; padding-inline-start: 20px; }
+.script-evidence-detail li { margin-block: 3px; }
+.script-evidence-detail li > button { padding-block: 2px; min-height: 27px; }
 .run-inspector-toolbar { display: grid; gap: 8px; }
 .run-evidence-workspace .run-inspector-toolbar > .field { width: min(100%, 360px); }
 .run-evidence-issues { display: grid; gap: 6px; justify-items: start; }
@@ -813,6 +838,7 @@
   .native-panel .native-list-options select { padding-inline: 4px; }
 }
 @media (max-width: 760px) {
+  .document-actions .task-context { position: static; }
   .document-actions .task-context > summary { font-size: 12px; }
   .canvas-insert-tools .draft-transfer svg { display: none; }
   .canvas-insert-tools > button, .canvas-insert-tools .draft-transfer button { min-height: 29px; font-size: 12px; }

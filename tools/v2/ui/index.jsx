@@ -172,6 +172,7 @@ function App(){
  const [past,setPast]=useState([]),[future,setFuture]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
+ const commandDrafts=useRef(new Map()),checkMove=useRef(false);
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
  const sideViewRef=useRef(sideView);sideViewRef.current=sideView;
@@ -251,7 +252,7 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false){commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -873,6 +874,22 @@ function App(){
   setNodePicker({screen,position:atPointer?flow.screenToFlowPosition(screen):null});
  }
  function fitCanvas(){setCanvasMenu(null);flow.fitView({padding:.18,duration:0,maxZoom:1.25})}
+ function checkTarget(issue){
+  const node=doc.nodes.find(item=>item.id===issue.node_id?.split('/')[0]||
+   !issue.node_id&&issue.message?.startsWith(item.id+': '));
+  const link=doc.edges.find(item=>item.id===issue.edge_id);
+  return {node,link};
+ }
+ function openCheckTarget({node,link}){
+  setSelected(node?.id||null);setEdge(node?null:link.id);setEdgeSelection(node?[]:[link.id]);
+  setChecks(null);
+  requestAnimationFrame(()=>{
+   document.getElementById('v2-draft-inspector-heading')?.focus();
+   checkMove.current=true;
+   flow.fitView({nodes:(node?[node.id]:[link.source,link.target]).map(id=>({id})),padding:.28,maxZoom:1.1})
+    .then(moved=>{if(!moved)checkMove.current=false});
+  });
+ }
  function canvasCommand(action,ids=nodeSelection){
   if(!editable)return;
   setCanvasMenu(null);
@@ -1053,20 +1070,23 @@ function App(){
   }
   const tool=shown.nodes.some(node=>node.id===id&&node.config?.tool==='command');
   const complete=scriptRun.completed_nodes?.includes(id);
+  const live=scriptRun.active&&['RUNNING','CANCEL_REQUESTED'].includes(runSnapshot.state);
   if(scriptRun.loop?.node===id){
    if(complete)return {state:'COMPLETED'};
    if(!scriptRun.loop.iterations.length)return {state:'UNACTIVATED'};
-   return {state:scriptRun.active?'RUNNING':runSnapshot.state==='STOPPED'?'FAILED':
+   return {state:live?'RUNNING':runSnapshot.state==='STOPPED'?'FAILED':
     runSnapshot.state==='CANCELLED'?'CANCELLED':'UNKNOWN'};
   }
   if(!tool&&!Object.hasOwn(scriptRun.agents,id))return null;
-  const started=events.some(event=>!event.iteration&&event.node===id&&event.kind==='PROCESS_STARTED');
-  const failed=events.some(event=>!event.iteration&&event.node===id&&(event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
+  const facts=events.filter(event=>!event.iteration&&event.node===id);
+  const process=facts.findLast(event=>['CALL_INTENT','PROCESS_STARTED','PROCESS_EXITED','UNKNOWN'].includes(event.kind));
+  const failed=facts.some(event=>event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
    event.kind==='OUTPUT_CONTRACT_FAILED'||
-   tool&&complete&&event.kind==='PROCESS_EXITED'&&event.returncode!==0));
-  const cancelled=events.some(event=>!event.iteration&&event.node===id&&event.kind==='CANCELLED');
+   tool&&complete&&event.kind==='PROCESS_EXITED'&&event.returncode!==0);
+  const cancelled=facts.some(event=>event.kind==='CANCELLED');
   return {state:failed?'FAILED':complete?'COMPLETED':cancelled?'CANCELLED':
-   started?(scriptRun.active?'RUNNING':'UNKNOWN'):'UNACTIVATED'};
+   process?(live&&process.kind==='PROCESS_STARTED'?'RUNNING':
+    live&&process.kind==='CALL_INTENT'?'STARTING':'UNKNOWN'):'UNACTIVATED'};
  },n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
   agentVersions.records?.get(n.agent_id):null;
@@ -1131,7 +1151,7 @@ function App(){
    <header><div>{!wide&&<small>运行检查器</small>}<h2>{wide?'运行证据':n?.name||(e?'交接记录':'运行详情')}</h2></div>
     {!wide&&<button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button>}</header>
    {scriptRun?<ScriptRunMonitor key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api}
-    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target}/>:
+    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target} stateLabel={stateLabel}/>:
    <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted} wide={wide}
     selection={n?{node:n.id,activation:linkedActivation}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
     {current=>{
@@ -1171,7 +1191,8 @@ function App(){
    </aside>;
   }
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
-  (sideView?' side-tool-open':'')+(primaryView?' primary-workspace-open':'')}>
+  (sideView?' side-tool-open':'')+(primaryView?' primary-workspace-open':'')}
+  onKeyDown={event=>{if(event.key===' '&&event.target.closest('summary'))event.stopPropagation()}}>
   <button type="button" className="skip-workbench" onClick={()=>document.getElementById(
    primaryView?.[0]||(runInspectorOpen&&readOnly?'v2-run-evidence':'v2-editor'))?.focus()}>
    {primaryView?'跳至'+primaryView[1]:runInspectorOpen&&readOnly?'跳至运行证据':'跳至工作流画布'}
@@ -1261,10 +1282,10 @@ function App(){
      </div>
     </details>}
     <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
-    <Button icon={Download} disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython()}
-     title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python（原生 CLI）</Button>
-    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython(true)}>预览 Python</Button>}
     <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot,...(nativeScript?{execution:'native-cli'}:{})});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
+    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython(true)}>预览 Python</Button>}
+    <Button icon={Download} aria-label="导出 Python（原生 CLI）" disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython()}
+     title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python</Button>
     <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!nativeScript&&!status?.provider_available&&inlineAgent))}
      title={startHint||(nativeScript?'启动将使用原生 CLI 配置和权限。':'明确启动将调用所选模型；不自动重试')} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
      onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
@@ -1342,7 +1363,12 @@ function App(){
      onSelectionDragStop={recordDrag} onSelectionStart={()=>{setSelectedNode(null);setEdge(null)}}
      selectionOnDrag={editable&&canvasMode==='select'} selectionMode={SelectionMode.Partial}
      multiSelectionKeyCode={['Shift','Control','Meta']} panOnDrag={canvasMode==='pan'||readOnly?true:[1,2]}
-     onMoveEnd={(_,viewport)=>{if(!editable)return;const next=copy(docRef.current);next.viewport={...viewport,x:coordinate(viewport.x),y:coordinate(viewport.y)};edit(next,false)}}
+     onMoveEnd={(event,viewport)=>{
+      const locating=checkMove.current;checkMove.current=false;
+      if(!editable||locating&&!event)return;
+      const next=copy(docRef.current);
+      next.viewport={...viewport,x:coordinate(viewport.x),y:coordinate(viewport.y)};edit(next,false);
+     }}
      defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(frozenGraph):'draft:'+generation.current}
      minZoom={.2} maxZoom={2} deleteKeyCode={null} colorMode={theme} proOptions={{hideAttribution:true}}>
      <RepairHandles/>{frozenGraph?.nodes.length>0&&<FitFrozenRun nodes={frozenGraph.nodes}/>}<Background gap={24} size={1}/>{readOnly&&<Controls showInteractive={false}/>}
@@ -1379,7 +1405,16 @@ function App(){
      </div>}
     </div>}
    </div>
-   {checks&&<section className="checks" aria-label="工作流检查结果"><header><strong>配置检查</strong><button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header><p>{checks.message}</p>{checks.issues.length?<ul>{checks.issues.map((i,k)=><li key={k}><button onClick={()=>{if(i.node_id){setSelected(i.node_id.split('/')[0]);setEdge(null);setEdgeSelection([])}else if(i.edge_id){setSelected(null);setEdge(i.edge_id);setEdgeSelection([i.edge_id])}}}>{i.message}</button></li>)}</ul>:<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}</section>}
+   {checks&&<section className="checks" aria-label="工作流检查结果">
+    <header><strong>配置检查{checks.issues.length>0?' · '+checks.issues.length+' 项':''}</strong>
+     <button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header>
+    {checks.message&&<p role="status">{checks.message}</p>}
+    {checks.issues.length?<ul>{checks.issues.map((issue,key)=>{
+     const target=checkTarget(issue);
+     return <li key={key}>{target.node||target.link?
+      <Button icon={ArrowRight} onClick={()=>openCheckTarget(target)}>{issue.message}</Button>:<p>{issue.message}</p>}</li>;
+    })}</ul>:!checks.message&&<p>工作流配置已填写，尚未验证 Provider 可用性。</p>}
+   </section>}
    <footer className="editor-footer" hidden={!workspace}><span>{shown.nodes.length} 个节点 · {shown.edges.length} 条连线</span>
     {canvasGuide?<span className="canvas-guide">{canvasGuide}</span>:
      <span>{readOnly?'独立新会话 · 实际执行记录':'保存不调用模型 · 明确启动才执行'}</span>}
@@ -1388,9 +1423,9 @@ function App(){
    </div>
   </main>
   {readOnly&&!runInspectorOpen&&(n||e)&&renderRunInspector(false)}
-  {!readOnly&&(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
+  {!readOnly&&(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2 id="v2-draft-inspector-heading" tabIndex={-1}>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
    {n?<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'} note={n.agent_id?'此名称用于画布节点。':undefined}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
-    {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
+    {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} commandDrafts={commandDrafts.current} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
      bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} nativeScript={nativeScript}
      connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<section className="bound-agent" aria-label="已绑定的 Agent 配置">

@@ -217,12 +217,12 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      {isNative ? <>
       <fieldset ref={element=>{agentSections.current.identity=element}} tabIndex={-1} disabled={busy}><legend>身份与 CLI</legend>
        {missingIdentity&&<p id="agent-save-hint" className="field-note">填写名称与角色后即可保存。</p>}
-       {editText('Agent 名称', 'name')}
+       <div className="agent-manager-pair">{editText('Agent 名称', 'name')}
        <Field label="Agent Provider"><select aria-label="Agent Provider" value={config.provider}
         onChange={event=>changeProvider(event.target.value)}>
         {Object.entries(LABELS).map(([id,label])=><option key={id} value={id}>{label}</option>)}
-       </select></Field>
-       {editText('Agent 工作目录', 'cwd')}{editText('角色', 'role')}
+       </select></Field></div>
+       <div className="agent-manager-pair">{editText('Agent 工作目录', 'cwd')}{editText('角色', 'role')}</div>
        <p className="field-note">Tools、Skills、MCP 和子 Agent 继承原生 CLI 配置。</p>
       </fieldset>
       <fieldset ref={element=>{agentSections.current.prompt=element}} tabIndex={-1} disabled={busy}><legend>提示词</legend>
