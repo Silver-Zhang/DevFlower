@@ -33,8 +33,13 @@ function EvidenceText({label,value}) {
 }
 
 const loopStates={NOT_STARTED:'未开始',STARTING:'准备调用',RUNNING:'运行中',VERIFYING:'核验中',
- COMPLETED:'已完成',FAILED:'失败',CANCELLED:'已取消',UNKNOWN:'待核验'};
+ COMPLETED:'已完成',PASSED:'通过',FAILED:'失败',INVALID:'候选已变化',SKIPPED:'未执行',CANCELLED:'已取消',UNKNOWN:'待核验'};
 const loopDecisions={LOOP_CONTINUED:'继续返工',LOOP_ACCEPTED:'接受',LOOP_LIMIT_REACHED:'达到迭代上限'};
+function roundActors(round){
+ const actors=Object.entries(round.agents);
+ if(round.validation)actors.splice(1,0,[round.validation.node,round.validation]);
+ return actors;
+}
 
 export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const {run,script,state}=snapshot;
@@ -44,9 +49,10 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const events=script.events||[];
  const loop=script.loop;
  const [iteration,selectedNode]=loop?choice.split('/'):[null,choice];
- const node=Object.hasOwn(script.agents,selectedNode)?selectedNode:'';
- const agent=node?script.agents[node]:null;
  const round=loop?.iterations.find(item=>String(item.iteration)===iteration);
+ const tool=round?.validation?.node===selectedNode&&Boolean(selectedNode);
+ const node=(tool||Object.hasOwn(script.agents,selectedNode))?selectedNode:'';
+ const agent=node?script.agents[node]:null;
  const completed=(loop?round?.completed_nodes:script.completed_nodes)||[];
  const facts=events.filter(event=>event.node===node&&(!loop||String(event.iteration)===iteration));
  const command=facts.find(event=>event.kind==='CALL_INTENT');
@@ -87,28 +93,29 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
   {error&&<p className="error-text" role="alert">{error}</p>}
   <label className="field"><span>查看证据</span><select value={node?choice:''} onChange={event=>setChoice(event.target.value)}>
    <option value="">最终结果</option>
-   {loop?loop.iterations.flatMap(item=>Object.keys(item.agents).map(id=>{
+   {loop?loop.iterations.flatMap(item=>roundActors(item).map(([id])=>{
     const key=item.iteration+'/'+id;
     return <option key={key} value={key}>第 {item.iteration} 轮 · {nameOf(id)}</option>;
    })):script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)).map(item=><option key={item.id} value={item.id}>
     {item.name}{skipped.includes(item.id)?'（分支未选中）':''}
    </option>)}
   </select></label>
-  {agent?<div>
-   <p>{agent.provider==='codex'?'Codex CLI':'Claude Code'}{exit?' · 退出码 '+exit.returncode:''}</p>
+  {node?<div>
+   <p>{tool?'验证命令':agent.provider==='codex'?'Codex CLI':'Claude Code'}{exit?' · 退出码 '+exit.returncode:''}</p>
+   {tool&&command&&<pre aria-label="实际命令与工作目录">{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
    <EvidenceText label="实际请求（含上游交接）" value={shown?.prompt}/>
    <EvidenceText label={completed.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>
    {completed.includes(node)&&(shown?.structured||shown?.candidate)&&<details><summary>结构化交付与候选文件</summary>
     <EvidenceText label="结构化结果" value={shown?.structured}/>
     <EvidenceText label="候选清单" value={shown?.candidate}/>
    </details>}
-   <details><summary>调用与错误记录</summary>
-    {command&&<pre>{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
+   <details open={tool?true:undefined}><summary>调用与错误记录</summary>
+    {!tool&&command&&<pre>{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
     {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
      {event.at} · {event.kind}{event.reason?' · '+event.reason:''}
     </li>)}</ol>}
-    <EvidenceText label="原生 CLI stdout（隐藏敏感值）" value={shown?.stdout}/>
-    <EvidenceText label="原生 CLI stderr（隐藏敏感值）" value={shown?.stderr}/>
+    <EvidenceText label={tool?'验证 stdout':'原生 CLI stdout（隐藏敏感值）'} value={shown?.stdout}/>
+    <EvidenceText label={tool?'验证 stderr':'原生 CLI stderr（隐藏敏感值）'} value={shown?.stderr}/>
    </details>
    {!command&&<p>{skipped.includes(node)?'此 Agent 所在分支未选中。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div>
@@ -117,9 +124,10 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
     {loop.iterations.map(item=><section key={item.iteration} aria-label={'第 '+item.iteration+' 轮'}>
      <h4>第 {item.iteration} 轮{item.historical?' · 历史候选':''}
       {item.disposition?' · '+loopDecisions[item.disposition]:''}</h4>
-     <ul>{Object.entries(item.agents).map(([id,actor])=><li key={id}>
+     <ul>{roundActors(item).map(([id,actor])=><li key={id}>
       <button type="button" onClick={()=>setChoice(item.iteration+'/'+id)}>{nameOf(id)}</button>
       {' · '+loopStates[actor.state]}
+      {actor===item.validation&&Number.isInteger(actor.returncode)&&' · 退出码 '+actor.returncode}
      </li>)}</ul>
      {item.candidate_sha256&&<p>候选摘要 <code>{item.candidate_sha256}</code></p>}
      {item.review&&<div>

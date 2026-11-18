@@ -70,6 +70,33 @@ def loop_graph(maximum=3):
     return document, records
 
 
+def validation_loop(argv, *, maximum=2, timeout=5):
+    document, records = loop_graph(maximum)
+    body = document['nodes'][1]['config']['body']
+    body['nodes'].append(dict(id='Validation', kind='tool', config=dict(tool='command', argv=argv, timeout=timeout)))
+    body['edges'][0]['target'] = 'Validation'
+    body['edges'].append(dict(id='validated', source='Validation', target='Reviewer'))
+    return document, records
+
+
+VALIDATOR = """import os
+from pathlib import Path
+import sys
+import time
+
+assert sys.argv[1] == 'literal ; argument'
+iteration = Path('a.py').read_text().split()[1]
+action = os.environ.get('TOOL_FIXTURE', 'once')
+print('test stdout ' + iteration, flush=True)
+print('test stderr ' + iteration, file=sys.stderr, flush=True)
+if action == 'mutate':
+    Path('a.py').write_text('modified by validation')
+if action in ('timeout', 'cancel'):
+    time.sleep(30)
+sys.exit(1 if action == 'fail' or action == 'once' and iteration == '1' else 0)
+"""
+
+
 def router_graph():
     classifier = dict(id='Classifier', name='Classifier', kind='agent', execution='native-cli',
                       provider='codex', cwd='.', role='Classify', round_prompt='Classify', output_prompt='Deliver',
@@ -108,7 +135,18 @@ if 'P3_LOOP' in prompt:
     if department == 'Developer':
         if mode == 'developer-failed':
             sys.exit(7)
-        if iteration > 1:
+        if 'Previous iteration validation (data)' in prompt:
+            from hashlib import sha256
+            feedback = json.loads(prompt.split('Previous iteration validation (data)\n',1)[1].splitlines()[0])
+            assert feedback['returncode'] == 1 and feedback['reason'] == 'Validation failed (exit 1).'
+            assert feedback['stdout'].strip() == 'test stdout '+str(iteration-1)
+            assert feedback['stderr'].strip() == 'test stderr '+str(iteration-1)
+            files = [dict(path=p, bytes=len(Path(p).read_bytes()), sha256=sha256(Path(p).read_bytes()).hexdigest())
+                     for p in ('a.py','b.py')]
+            manifest = json.dumps(dict(schema_version=1, files=files), sort_keys=True, separators=(',',':'))
+            assert feedback['candidate_sha256'] == sha256(manifest.encode()).hexdigest()
+            assert 'Previous iteration review (data)' not in prompt
+        elif iteration > 1:
             feedback = json.loads(prompt.split('Previous iteration review (data)\n',1)[1].splitlines()[0])
             assert feedback.keys() == {'summary','issues','candidate_sha256'}
             assert feedback['summary'] == 'Review '+str(iteration-1)
@@ -129,6 +167,9 @@ if 'P3_LOOP' in prompt:
         upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
         candidate = upstream['candidate']
         digest = candidate['candidate_sha256']
+        if validation := upstream.get('validation'):
+            assert validation['returncode'] == 0 and validation['candidate_sha256'] == digest
+            assert validation['stdout'].strip() == 'test stdout '+str(iteration)
         Path('previous-digest.txt').write_text(digest)
         if mode == 'mutate':
             Path('a.py').write_text('changed during review')
@@ -668,4 +709,78 @@ class ContractTests(unittest.TestCase):
                 else:
                     body['nodes'][0].pop('agent_id')
                     body['nodes'][0].pop('agent_revision')
+                compile_workflow(doc, records, self.workspace, native_config=True)
+
+    def test_validation_loop_runs_real_commands_and_routes_by_verified_outcomes(self):
+        bin_dir = self.install_cli_fixture()
+        for mode, acceptance, state, outcomes, reviewers in (
+            ('pass', '1', 'COMPLETED', ['PASSED'], [1]),
+            ('once', '2', 'COMPLETED', ['FAILED', 'PASSED'], [2]),
+            ('fail', '2', 'STOPPED', ['FAILED', 'FAILED'], []),
+            ('pass', '2', 'COMPLETED', ['PASSED', 'PASSED'], [1, 2]),
+            ('mutate', '2', 'STOPPED', ['INVALID'], []),
+            ('timeout', '2', 'STOPPED', ['UNKNOWN'], []),
+            ('cancel', '2', 'CANCELLED', ['CANCELLED'], []),
+            ('missing-command', '2', 'STOPPED', ['FAILED'], []),
+        ):
+            with self.subTest(mode=mode, acceptance=acceptance):
+                project = self.root / (mode + acceptance)
+                project.mkdir()
+                (project/'verify.py').write_text(VALIDATOR)
+                argv = ['./nonexistent'] if mode == 'missing-command' else [sys.executable, '-B', 'verify.py', 'literal ; argument']
+                doc, records = validation_loop(argv, timeout=1 if mode == 'timeout' else 10)
+                filename, source = compile_workflow(doc, records, project, native_config=True)
+                script = project/filename
+                script.write_text(source)
+                run = project/'run'
+                command = [sys.executable, '-I', str(script), '--run-dir', str(run)]
+                env = dict(os.environ, PATH=str(bin_dir), LOOP_FIXTURE=acceptance, TOOL_FIXTURE=mode)
+                with subprocess.Popen([*command, '--workspace', str(project), '--task', 'P3_LOOP'],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                    if mode == 'cancel':
+                        output = run/'iterations/1/Validation/stdout.log'
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline and not (output.is_file() and output.stat().st_size):
+                            time.sleep(.02)
+                        subprocess.run([*command, '--cancel'], capture_output=True, check=True, timeout=5)
+                    _, stderr = proc.communicate(timeout=14)
+                status = json.loads(subprocess.check_output([*command, '--status', '--details']))
+                self.assertEqual(status['status'], state, status.get('reason'))
+                self.assertEqual(proc.returncode == 0, state == 'COMPLETED', stderr.decode())
+                rounds = status['loop']['iterations']
+                self.assertEqual([row['validation']['state'] for row in rounds], outcomes)
+                self.assertEqual([event['iteration'] for event in status['events']
+                                  if event['kind']=='PROCESS_STARTED' and event['node']=='Reviewer'], reviewers)
+                for row, outcome in zip(rounds, outcomes):
+                    index = row['iteration']
+                    validation = row['validation']
+                    if validation.get('verified'):
+                        self.assertEqual(validation['returncode'], 0 if outcome == 'PASSED' else 1)
+                        self.assertEqual(validation['candidate_sha256_before'], validation['candidate_sha256_after'])
+                        self.assertEqual(validation['candidate_sha256_before'], row['candidate_sha256'])
+                        self.assertIn('test stdout', (run/f'iterations/{index}/Validation/stdout.log').read_text())
+                        self.assertIn('test stderr', (run/f'iterations/{index}/Validation/stderr.log').read_text())
+                        if outcome == 'FAILED':
+                            self.assertEqual(row['agents']['Reviewer']['state'], 'SKIPPED')
+                            self.assertIsNone(row['review'])
+                if mode == 'mutate':
+                    self.assertNotEqual(rounds[0]['validation']['candidate_sha256_before'],
+                                        rounds[0]['validation']['candidate_sha256_after'])
+                if mode == 'fail':
+                    self.assertEqual(rounds[-1]['disposition'], 'LOOP_LIMIT_REACHED')
+                if mode == 'once':
+                    self.assertNotEqual(rounds[0]['candidate_sha256'], rounds[1]['candidate_sha256'])
+                    (run/'iterations/1/Validation/stdout.log').write_text('altered historical evidence')
+                    damaged = json.loads(subprocess.check_output([*command, '--status']))
+                    self.assertEqual(damaged['status'], 'RECOVERY_REQUIRED')
+                    self.assertIn('Validation log has changed', damaged['reason'])
+
+    def test_validation_tool_configuration_is_explicit_and_workspace_relative(self):
+        for patch, message in (
+            (dict(argv=[]), 'argv'), (dict(argv=['python3', 1]), 'argv'), (dict(cwd='../parent'), 'workspace-relative'),
+            (dict(cwd='/tmp'), 'workspace-relative'), (dict(timeout=True), 'timeout'), (dict(tool='read-file'), 'requires command'),
+        ):
+            with self.subTest(patch=patch), self.assertRaisesRegex(ExportError, message):
+                doc, records = validation_loop(['python3', '-V'])
+                doc['nodes'][1]['config']['body']['nodes'][-1]['config'].update(patch)
                 compile_workflow(doc, records, self.workspace, native_config=True)

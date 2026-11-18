@@ -650,7 +650,7 @@ with sqlite3.connect(sys.argv[1]) as db:
    assert.equal(fs.readFileSync(file,'utf8'),source);
   }
  });
- await test('native-loop-freezes-saved-body-and-shows-round-evidence',async()=>{
+ for(const withTool of [false,true])await test(withTool?'native-loop-command-edit-retry-and-evidence':'native-loop-freezes-saved-body-and-shows-round-evidence',async()=>{
   const button=name=>page.getByRole('button',{name,exact:true});
   const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
   const project=path.join(process.env.V2_WORKSPACES,'A');
@@ -665,11 +665,44 @@ with sqlite3.connect(sys.argv[1]) as db:
   nodes[0].artifact_paths=['a.py','b.py'];
   const typed=(id,kind,x)=>({id,name:id,kind,position:{x,y:130},config_version:1,config:{}});
   const edges=ids=>ids.slice(1).map((target,i)=>({id:'edge'+i,source:ids[i],target}));
-  const bodyGraph={version:1,name:'P3 冻结子流程',nodes:[typed('BodyStart','start',0),...nodes,typed('BodyEnd','output',720)],
-   edges:edges(['BodyStart','Developer','Reviewer','BodyEnd'])};
-  const body=await api('drafts/save',{workspace,id:null,expected:null,document:bodyGraph});
+  let bodyGraph={version:1,name:withTool?'P3.1 验证子流程':'P3 冻结子流程',
+   nodes:[typed('BodyStart','start',0),...nodes,typed('BodyEnd','output',720)],
+   edges:edges(['BodyStart','Developer',...(withTool?['Validation']:[]),'Reviewer','BodyEnd'])};
+  if(withTool){
+   bodyGraph.nodes.push(typed('Validation','tool',430));
+   bodyGraph.nodes.find(item=>item.id==='Reviewer').position.x=660;
+   bodyGraph.nodes.find(item=>item.id==='BodyEnd').position.x=890;
+  }
+  let body=await api('drafts/save',{workspace,id:null,expected:null,document:bodyGraph});
   assert(body.revision,JSON.stringify(body));
-  const name='P3 原生循环夹具';
+  const argv=['python3','-B','verify.py','literal ; argument'];
+  if(withTool){
+   const qa=path.join(project,'qa');fs.mkdirSync(qa);
+   fs.writeFileSync(path.join(qa,'verify.py'),[
+    'from pathlib import Path','import sys',"assert sys.argv[1] == 'literal ; argument'",
+    "iteration = Path('../a.py').read_text().split()[1]",
+    "print('test stdout ' + iteration)","print('test stderr ' + iteration,file=sys.stderr)","sys.exit(iteration == '1')"
+   ].join('\n'));
+   await page.reload();
+   await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name:bodyGraph.name,exact:true}).click();
+   await page.getByLabel('适应画布',{exact:true}).click();await node('Validation');
+   await page.getByLabel('工具类型',{exact:true}).selectOption('command');
+   const args=page.getByLabel('命令参数（JSON）',{exact:true});
+   await args.fill('["broken"');
+   await page.getByRole('alert').filter({hasText:'请输入有效的 JSON 字符串数组'}).waitFor();
+   await args.fill(JSON.stringify(argv));
+   await page.getByLabel('命令工作目录',{exact:true}).fill('qa');
+   await page.getByLabel('命令超时（秒）',{exact:true}).fill('10');
+   await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+   await page.reload();await page.getByLabel('适应画布',{exact:true}).click();await node('Validation');
+   assert.deepEqual(JSON.parse(await args.inputValue()),argv);
+   assert.equal(await page.getByLabel('命令工作目录',{exact:true}).inputValue(),'qa');
+   assert.equal(await page.getByLabel('命令超时（秒）',{exact:true}).inputValue(),'10');
+   await page.getByLabel('关闭检查器',{exact:true}).click();
+   body=await api('draft?'+new URLSearchParams({workspace,id:body.id}));
+   bodyGraph=body.graph;
+  }
+  const name=withTool?'P3.1 验证循环夹具':'P3 原生循环夹具';
   const outer=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,
    nodes:[typed('Start','start',0),typed('Loop','loop',260),typed('End','output',520)],edges:edges(['Start','Loop','End'])}});
   assert(outer.revision,JSON.stringify(outer));
@@ -710,19 +743,32 @@ with sqlite3.connect(sys.argv[1]) as db:
   const rounds=monitor.getByRole('region',{name:'循环轮次'});
   const first=rounds.getByRole('region',{name:'第 1 轮',exact:true});
   const second=rounds.getByRole('region',{name:'第 2 轮',exact:true});
-  await first.getByText('needs_correction',{exact:true}).waitFor();
   await first.getByText(/历史候选/).waitFor();
-  await first.getByText(/Improve 1/).waitFor();
+  if(withTool){
+   await first.getByText(/失败 · 退出码 1/).waitFor();
+   await first.getByText(/未执行/).waitFor();
+   assert.equal(await first.getByText('needs_correction',{exact:true}).count(),0);
+   await second.getByText(/通过 · 退出码 0/).waitFor();
+   await first.getByRole('button',{name:'Validation',exact:true}).click();
+   const invoked=JSON.parse(await monitor.getByLabel('实际命令与工作目录',{exact:true}).textContent());
+   assert.deepEqual(invoked,{argv,cwd:path.join(project,'qa')});
+   assert.match(await monitor.getByLabel('验证 stdout',{exact:true}).textContent(),/test stdout 1/);
+   assert.match(await monitor.getByLabel('验证 stderr',{exact:true}).textContent(),/test stderr 1/);
+   await monitor.getByLabel('查看证据').selectOption('');
+  }else{
+   await first.getByText('needs_correction',{exact:true}).waitFor();
+   await first.getByText(/Improve 1/).waitFor();
+  }
   await second.getByText('accept',{exact:true}).waitFor();
   assert.notEqual(await first.getByText(/^候选摘要 /).textContent(),await second.getByText(/^候选摘要 /).textContent());
   assert.equal(JSON.parse(await monitor.getByLabel('工作流最终回答',{exact:true}).textContent()).result.verdict,'accept');
   await second.getByRole('button',{name:'Developer',exact:true}).click();
   const actualRequest=monitor.getByLabel('实际请求（含上游交接）',{exact:true});
   await actualRequest.waitFor();
-  assert.match(await actualRequest.textContent(),/Improve 1/);
+  assert.match(await actualRequest.textContent(),withTool?/Validation failed \(exit 1\)/:/Improve 1/);
   await monitor.getByLabel('查看证据').selectOption('1/Developer');
   await actualRequest.waitFor();
-  await until(async()=>!(await actualRequest.textContent()).includes('Previous iteration review'));
+  await until(async()=>!(await actualRequest.textContent()).includes('Previous iteration'));
   const evidencePath=new URLSearchParams({workspace,id:run.id,node:'Developer',iteration:'3'});
   assert.match((await api('script-run/evidence?'+evidencePath)).error,/有效轮次/);
   const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);

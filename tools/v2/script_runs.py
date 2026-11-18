@@ -179,9 +179,10 @@ class ScriptRuns:
         return dict(filename=artifact['filename'], sha256=artifact['sha256'], source=source.decode('utf-8'))
 
     def evidence(self, record, node=None, iteration=None):
-        if node is not None and node not in record['agents']:
-            raise Invalid('节点不属于本次脚本运行。')
         loop = next((item for item in record['document']['nodes'] if item.get('kind') == 'loop'), None)
+        tool = next((item['id'] for item in loop['config']['body']['nodes'] if item.get('kind') == 'tool'), None) if loop else None
+        if node is not None and node not in record['agents'] and node != tool:
+            raise Invalid('节点不属于本次脚本运行。')
         prefix = ''
         if node is not None and loop:
             if (not isinstance(iteration, str) or not re.fullmatch(r'[1-5]', iteration)
@@ -189,7 +190,7 @@ class ScriptRuns:
                 raise Invalid('请选择本次循环的有效轮次。')
             prefix = 'iterations/' + iteration + '/'
         elif iteration is not None:
-            raise Invalid('轮次证据需要本次循环的 Agent 节点。')
+            raise Invalid('轮次证据需要本次循环的节点。')
         folder = self.folder(record['run']['id'])
         try:
             self.artifact(folder, record['artifact'])

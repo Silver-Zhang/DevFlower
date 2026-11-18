@@ -1,10 +1,30 @@
-import React,{useLayoutEffect} from 'react';
+import React,{useLayoutEffect,useState} from 'react';
 import {Handle,Position,useUpdateNodeInternals} from '@xyflow/react';
 import {Bot,CheckCheck,FileCheck2,Flag,GitBranch,GitMerge,Repeat2,Terminal,UserCheck} from 'lucide-react';
 import {PredicateEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {canvasTypes,developmentExit,developmentRoles,draftConfigIssue,emptyPredicate,nodeKind,nodeType,ports,runtimeBlock} from './canvasModel.mjs';
 
 const predicateLimits={field:200,value:2000};
+function CommandArgs({value,label,onChange,Field}){
+ const [draft,setDraft]=useState(null);
+ const raw=draft??JSON.stringify(value??[]);
+ return <>
+  <Field label={label} note="使用当前用户权限，按参数数组直接执行。">
+   <textarea rows={3} value={raw} placeholder={'["python3","-m","pytest","tests/"]'} aria-invalid={value===null}
+   onChange={event=>{
+    const next=event.target.value;
+    setDraft(next);
+    let parsed=null;
+    try{
+     const args=JSON.parse(next);
+     if(Array.isArray(args)&&args.every(arg=>typeof arg==='string'&&!arg.includes('\0')))parsed=args;
+    }catch{}
+    onChange({argv:parsed});
+   }}/>
+  </Field>
+  {value===null&&<span role="alert">请输入有效的 JSON 字符串数组。</span>}
+ </>;
+}
 const icons={start:Flag,agent:Bot,condition:GitBranch,router:GitBranch,merge:GitMerge,loop:Repeat2,
  approval:UserCheck,tool:Terminal,validation:FileCheck2,output:CheckCheck};
 export const nodeKinds=Object.fromEntries(Object.entries(canvasTypes).map(([id,spec])=>[id,[spec.label,icons[id],spec.english]]));
@@ -110,7 +130,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
  return <>
   <p className="session-note">{runtimeBlock(node)||'此节点由工作流调度器按已保存配置执行。'}</p>
   {(nativeCondition||nativeLoop)&&<p className="field-note">
-   {nativeLoop?'原生循环子流程为「开始 → 交付 Agent → 审核 Agent → 输出」。审核结论 accept 时退出，needs_correction 时可继续。':
+   {nativeLoop?'原生循环可在交付和审核之间加一条验证命令。验证通过且审核接受时退出。':
     <>上游连接「候选审核 v1」。<code>accept</code> 走满足分支，<code>needs_correction</code> 走不满足分支。</>}
    {(field!=='result.verdict'||op!=='equals'||value!=='accept')&&<button type="button"
     onClick={()=>onChange({[predicateKey]:{field:'result.verdict',op:'equals',value:'accept'}})}>使用候选审核条件</button>}
@@ -121,9 +141,11 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
   {Object.entries(type.fields).map(([key,field])=>{
    const tool=nodeKind(node)==='tool'?node.config.tool:null;
    const jsonTool=['verify-json','check-json'].includes(tool);
+   if(field.tool&&field.tool!==tool || tool==='command'&&!field.tool&&key!=='tool')return null;
    if(developmentRoles.includes(key)&&tool!=='delivery-gate'||key==='expected_json'&&!jsonTool||
       key==='path'&&tool==='delivery-gate')return null;
    const value=node.config[key]??field.default??'';
+   if(field.type==='argv')return <CommandArgs key={key} label={field.label} value={node.config[key]} onChange={onChange} Field={Field}/>;
    if(developmentRoles.includes(key)){
     const verification=key==='verification_node';
     const candidates=siblingNodes.filter(item=>verification?item.config?.tool==='verify-json':nodeKind(item)==='agent');

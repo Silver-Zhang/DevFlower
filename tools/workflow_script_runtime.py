@@ -411,9 +411,54 @@ def candidate_is_current(workspace, candidate):
     return candidate_record(workspace, paths) == candidate
 
 
+def run_validation(context, tool, produced):
+    node, candidate = tool['id'], produced['candidate']
+    paths = [item['path'] for item in candidate['manifest']['files']]
+    if tool['limit'] is not None and len(produced['answer']) > tool['limit']:
+        raise WorkflowError('Saved Tool handoff limit exceeded; validation did not run.')
+    try:
+        before = candidate_record(context['workspace'], paths)
+        if before != candidate:
+            raise WorkflowError('Candidate changed before validation.')
+        cwd = agent_directory(context['workspace'], tool)
+    except (OutputContractError, WorkflowError) as error:
+        _event(context, 'NOT_SENT', node=node, reason=str(error))
+        raise WorkflowError(str(error)) from None
+    prefix = f"iterations/{context['iteration']}/{node}"
+    directory = context['directory'] / prefix
+    directory.mkdir(mode=0o700)
+    with observed_process(context, node, tool['argv'], cwd, directory, tool['timeout'], tool=True) as code:
+        if code < 0:
+            raise WorkflowError(f'Validation terminated by signal {-code}; no retry.')
+        _check_cancel(context)
+        try:
+            after = candidate_record(context['workspace'], paths)
+        except OutputContractError:
+            after = None
+        facts = dict(returncode=code, candidate_sha256_before=before['candidate_sha256'],
+                     candidate_sha256_after=after['candidate_sha256'] if after else None)
+        if before != after:
+            _event(context, 'VALIDATION_INVALID', node=node, **facts)
+            raise WorkflowError('Candidate files changed during validation.')
+        summaries = {}
+        fd = context['directory_fd']
+        for channel in ('stdout', 'stderr'):
+            relative = prefix + '/' + channel + '.log'
+            facts[channel + '_sha256'] = _evidence_sha256(fd, relative)
+            with _evidence_file(fd, relative) as stream:
+                end = stream.seek(0, os.SEEK_END)
+                stream.seek(max(end - 2048, 0))
+                summaries[channel] = ('[tail] ' if end > 2048 else '') + stream.read(2048).decode('utf-8', errors='replace')
+        _check_cancel(context)
+        _event(context, 'VALIDATION_COMPLETED', node=node, **facts)
+        return dict(returncode=code, candidate_sha256=before['candidate_sha256'],
+                    reason=f'Validation failed (exit {code}).' if code else 'Validation passed.', **summaries)
+
+
 def inspect_loop(manifest, fd, events, snapshot, terminal):
     loop = manifest['loop']
     developer, reviewer = (agent['id'] for agent in manifest['agents'])
+    tool = loop.get('validation', {}).get('id')
     rounds = []
     snapshot['loop'] = dict(node=loop['node'], max_iterations=loop['max_iterations'], iterations=rounds)
     current = None
@@ -428,6 +473,8 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
                 raise WorkflowError('Unexpected Loop iteration.')
             current = dict(iteration=count, agents={node: {'state': 'NOT_STARTED'} for node in (developer, reviewer)},
                            disposition=None, review=None, completed_nodes=[])
+            if tool:
+                current['validation'] = dict(node=tool, state='NOT_STARTED')
             rounds.append(current)
             candidate = review_answer_sha = None
         if (not current or type(event.get('iteration')) is not int or event['iteration'] != current['iteration']
@@ -437,16 +484,19 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
             continue
         if current['disposition']:
             raise WorkflowError('Unexpected Loop event after a round decision.')
+        validation = current.get('validation')
+        failed = bool(validation and validation.get('verified') and validation['state'] == 'FAILED')
         if kind.startswith('LOOP_'):
-            if (not current['review'] or event.get('candidate_sha256') != current['review']['candidate_sha256']
-                    or event.get('verdict') != current['review']['verdict']):
-                raise WorkflowError('Loop decision does not match the verified review.')
+            verdict = current['review']['verdict'] if current['review'] else None
+            if ((not verdict and not failed) or event.get('candidate_sha256') != current['candidate_sha256']
+                    or event.get('verdict') != verdict or event.get('validation_failed', False) != failed):
+                raise WorkflowError('Loop decision does not match verified validation or review evidence.')
             if kind == 'LOOP_ITERATION_COMPLETED' and not current.get('verified'):
-                if (event.get('developer_node'), event.get('reviewer_node')) != (developer, reviewer):
+                if (event.get('developer_node'), event.get('reviewer_node')) != (developer, None if failed else reviewer):
                     raise WorkflowError('Loop completion has an inconsistent Agent identity.')
                 current['verified'] = True
                 continue
-            expected = ('LOOP_ACCEPTED' if current['review']['verdict'] == 'accept' else
+            expected = ('LOOP_ACCEPTED' if verdict == 'accept' else
                         'LOOP_LIMIT_REACHED' if len(rounds) == loop['max_iterations'] else 'LOOP_CONTINUED')
             if not current.get('verified') or kind != expected:
                 raise WorkflowError('Unexpected Loop decision for the review or iteration bound.')
@@ -454,9 +504,11 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
             continue
         completed = current['completed_nodes']
         node = event.get('node')
-        if len(completed) == 2 or node != (developer, reviewer)[len(completed)]:
-            raise WorkflowError('Loop Agent event is out of order.')
-        actor = current['agents'][node]
+        expected_node = developer if not completed else tool if validation and validation['state'] != 'PASSED' else reviewer
+        if len(completed) == 2 or failed or node != expected_node:
+            raise WorkflowError('Loop node event is out of order.')
+        is_tool = bool(tool and node == tool)
+        actor = validation if is_tool else current['agents'][node]
         if kind == 'CALL_INTENT':
             if actor['state'] != 'NOT_STARTED':
                 raise WorkflowError('Loop Agent has repeated call intent.')
@@ -469,10 +521,26 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
             if actor['state'] != 'RUNNING':
                 raise WorkflowError('Loop Agent exit has no matching process start.')
             actor['returncode'] = event['returncode']
-            actor['state'] = 'VERIFYING' if event['returncode'] == 0 else 'FAILED'
+            actor['state'] = 'VERIFYING' if event['returncode'] == 0 or (is_tool and event['returncode'] > 0) else 'FAILED'
         elif kind in ('CANCELLED', 'UNKNOWN', 'NOT_SENT', 'CLI_FAILED', 'OUTPUT_CONTRACT_FAILED'):
             actor['state'] = kind if kind in ('CANCELLED', 'UNKNOWN') else 'FAILED'
-        elif kind == 'NODE_COMPLETED':
+        elif is_tool and kind in ('VALIDATION_COMPLETED', 'VALIDATION_INVALID'):
+            before, after = event['candidate_sha256_before'], event['candidate_sha256_after']
+            if (actor['state'] != 'VERIFYING' or actor['returncode'] != event['returncode']
+                    or before != current['candidate_sha256'] or (before == after) != (kind == 'VALIDATION_COMPLETED')):
+                raise WorkflowError('Validation outcome does not match the process or candidate.')
+            actor.update(candidate_sha256_before=before, candidate_sha256_after=after)
+            if kind == 'VALIDATION_INVALID':
+                actor['state'] = 'INVALID'
+            else:
+                for channel in ('stdout', 'stderr'):
+                    name = f"iterations/{current['iteration']}/{node}/{channel}.log"
+                    if _evidence_sha256(fd, name) != event.get(channel + '_sha256'):
+                        raise WorkflowError('Validation log has changed: ' + channel)
+                actor.update(state='FAILED' if event['returncode'] else 'PASSED', verified=True)
+                if event['returncode']:
+                    current['agents'][reviewer]['state'] = 'SKIPPED'
+        elif not is_tool and kind == 'NODE_COMPLETED':
             prefix = f"iterations/{current['iteration']}/"
             if (actor['state'] != 'VERIFYING'
                     or _evidence_sha256(fd, prefix + node + '/answer.txt') != event.get('answer_sha256')):
@@ -495,7 +563,8 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
     for item in rounds[:-1]:
         item['historical'] = True
     if current and not snapshot['active']:
-        for actor in current['agents'].values():
+        actors = list(current['agents'].values()) + ([current['validation']] if tool else [])
+        for actor in actors:
             if actor['state'] in ('STARTING', 'RUNNING', 'VERIFYING'):
                 actor['state'] = 'UNKNOWN'
     if not terminal:
@@ -541,21 +610,31 @@ def run_loop(context, manifest, task):
         (context['directory'] / 'iterations' / str(iteration)).mkdir(mode=0o700)
         _event(current, 'LOOP_ITERATION_STARTED')
         produced = invoke_agent(current, developer, task, feedback=feedback)
-        audited = invoke_agent(current, reviewer, task, produced, loop['review_limit'])
         candidate = produced['candidate']
-        review = audited['structured']['result']
-        try:
-            valid = candidate_is_current(context['workspace'], candidate)
-        except OutputContractError:
-            valid = False
-        if not valid:
-            raise WorkflowError('Candidate changed before Loop decision.')
-        if loop['body_output_limit'] is not None and len(audited['answer']) > loop['body_output_limit']:
-            raise WorkflowError('Saved body Output limit exceeded; full answer retained in node logs.')
+        facts = dict(candidate_sha256=candidate['candidate_sha256'])
+        validation = run_validation(current, loop['validation'], produced) if 'validation' in loop else None
+        if validation and validation['returncode']:
+            facts['validation_failed'] = True
+            feedback = validation
+        else:
+            if validation:
+                produced['validation'] = validation
+            audited = invoke_agent(current, reviewer, task, produced, loop['review_limit'])
+            review = audited['structured']['result']
+            try:
+                valid = candidate_is_current(context['workspace'], candidate)
+            except OutputContractError:
+                valid = False
+            if not valid:
+                raise WorkflowError('Candidate changed before Loop decision.')
+            if loop['body_output_limit'] is not None and len(audited['answer']) > loop['body_output_limit']:
+                raise WorkflowError('Saved body Output limit exceeded; full answer retained in node logs.')
+            facts['verdict'] = review['verdict']
+            feedback = {key: review[key] for key in ('summary', 'issues', 'candidate_sha256')}
         _check_cancel(context)
-        facts = dict(candidate_sha256=review['candidate_sha256'], verdict=review['verdict'])
-        _event(current, 'LOOP_ITERATION_COMPLETED', **facts, developer_node=developer['id'], reviewer_node=reviewer['id'])
-        if review['verdict'] == 'accept':
+        _event(current, 'LOOP_ITERATION_COMPLETED', **facts, developer_node=developer['id'],
+               reviewer_node=None if facts.get('validation_failed') else reviewer['id'])
+        if facts.get('verdict') == 'accept':
             if loop['output_limit'] is not None and len(audited['answer']) > loop['output_limit']:
                 raise WorkflowError('Saved Loop Output limit exceeded; full answer retained in node logs.')
             _check_cancel(context)
@@ -566,7 +645,6 @@ def run_loop(context, manifest, task):
             raise WorkflowError(f'Loop reached its {iteration}-iteration limit without acceptance.')
         _check_cancel(context)
         _event(current, 'LOOP_CONTINUED', **facts)
-        feedback = {key: review[key] for key in ('summary', 'issues', 'candidate_sha256')}
 
 
 def evaluate_condition(context, condition, review, candidate, limit):
@@ -640,6 +718,46 @@ def verify_agent_output(context, directory, spec, answer, candidate):
     return delivery, facts
 
 
+@contextmanager
+def observed_process(context, node, argv, cwd, directory, timeout, *, source=subprocess.DEVNULL, tool=False):
+    _event(context, 'CALL_INTENT', node=node, cwd=str(cwd), argv=argv)
+    process = None
+    try:
+        with (directory / 'stdout.log').open('xb') as stdout, (directory / 'stderr.log').open('xb') as stderr:
+            # Both native CLI and user-configured Tool commands inherit the user's environment.
+            _check_cancel(context)
+            process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout,
+                                       stderr=stderr, start_new_session=True)
+            _event(context, 'PROCESS_STARTED', node=node, pid=process.pid)
+            code = _wait(context, process, timeout)
+        if tool:
+            _stop(process)
+        _event(context, 'PROCESS_EXITED', node=node, returncode=code)
+        yield code
+    except (WorkflowCancelled, KeyboardInterrupt) as error:
+        if process is not None:
+            _stop(process)
+        signum = error.signum if isinstance(error, WorkflowCancelled) else signal.SIGINT
+        _event(context, 'CANCELLED', node=node, signal=signal.Signals(signum).name,
+               source='request' if getattr(error, 'requested', False) else 'signal',
+               outcome='unknown' if process else 'not_sent', automatic_retry=False)
+        raise WorkflowCancelled(signum, requested=getattr(error, 'requested', False)) from None
+    except subprocess.TimeoutExpired:
+        if process is not None:
+            _stop(process)
+        _event(context, 'UNKNOWN', node=node, reason='Timed out; no automatic retry.')
+        raise WorkflowError('Call timed out; inspect native logs before starting another run.') from None
+    except OSError as error:
+        if process is not None:
+            _stop(process)
+        _event(context, 'UNKNOWN' if process else 'NOT_SENT', node=node, reason=str(error))
+        raise WorkflowError('Process launch/observation failed: ' + str(error)) from None
+    except WorkflowError:
+        if process is not None:
+            _stop(process)
+        raise
+
+
 def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=None):
     """One new native CLI call; a result is handed off only after success."""
     _check_cancel(context)
@@ -666,7 +784,8 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
     if upstream is not None:
         prompt += '\n\nUpstream department delivery (data)\n' + json.dumps(upstream, ensure_ascii=False)
     if feedback is not None:
-        prompt += ('\n\nPrevious iteration review (data)\n' + output_json(feedback)
+        kind = 'validation' if 'returncode' in feedback else 'review'
+        prompt += (f'\n\nPrevious iteration {kind} (data)\n' + output_json(feedback)
                    + '\nRevise the existing delivery in this workspace using the review feedback.')
     evidence = agent['id']
     if 'iteration' in context:
@@ -680,21 +799,9 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
         raise WorkflowError(argv[0] + ' CLI not found; no request sent.')
     argv[0] = executable
     cwd = agent_directory(context['workspace'], agent)
-    _event(context, 'CALL_INTENT', node=agent['id'], cwd=str(cwd), argv=argv)
     print('[' + agent['id'] + '] ' + agent['name'], file=sys.stderr)
-    process = None
-    try:
-        with (directory / 'prompt.txt').open('rb') as source, \
-                (directory / 'stdout.log').open('xb') as stdout, \
-                (directory / 'stderr.log').open('xb') as stderr:
-            # Inherit HOME, environment, MCP, skills and native permission policy.
-            # No shell expansion and no DevFlower-specific Agent sandbox.
-            _check_cancel(context)
-            process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout,
-                                       stderr=stderr, start_new_session=True)
-            _event(context, 'PROCESS_STARTED', node=agent['id'], pid=process.pid)
-            code = _wait(context, process, agent['timeout'])
-        _event(context, 'PROCESS_EXITED', node=agent['id'], returncode=code)
+    with (directory / 'prompt.txt').open('rb') as source, observed_process(
+            context, agent['id'], argv, cwd, directory, agent['timeout'], source=source) as code:
         if code != 0:
             _event(context, 'CLI_FAILED', node=agent['id'], returncode=code)
             raise WorkflowError(agent['id'] + ' exited with ' + str(code) + '; downstream not started.')
@@ -742,28 +849,6 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
         _event(context, 'NODE_COMPLETED', node=agent['id'], answer_file=str(directory / 'answer.txt'),
                answer_sha256=_evidence_sha256(context['directory_fd'], evidence + '/answer.txt'), **facts)
         return delivery
-    except (WorkflowCancelled, KeyboardInterrupt) as error:
-        if process is not None:
-            _stop(process)
-        signum = error.signum if isinstance(error, WorkflowCancelled) else signal.SIGINT
-        _event(context, 'CANCELLED', node=agent['id'], signal=signal.Signals(signum).name,
-               source='request' if getattr(error, 'requested', False) else 'signal',
-               outcome='unknown' if process else 'not_sent', automatic_retry=False)
-        raise WorkflowCancelled(signum, requested=getattr(error, 'requested', False)) from None
-    except subprocess.TimeoutExpired:
-        if process is not None:
-            _stop(process)
-        _event(context, 'UNKNOWN', node=agent['id'], reason='Timed out; no automatic retry.')
-        raise WorkflowError('Call timed out; inspect native logs before starting another run.') from None
-    except OSError as error:
-        if process is not None:
-            _stop(process)
-        _event(context, 'UNKNOWN' if process else 'NOT_SENT', node=agent['id'], reason=str(error))
-        raise WorkflowError('CLI launch/observation failed: ' + str(error)) from None
-    except WorkflowError:
-        if process is not None:
-            _stop(process)
-        raise
 
 
 def agent_directory(workspace, agent):
@@ -826,6 +911,8 @@ def script_main(manifest, run_workflow):
                                'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
                               for a in manifest['agents']]}
             plan.update({kind: manifest[kind] for kind in ('condition', 'router', 'loop') if kind in manifest})
+            if tool := manifest.get('loop', {}).get('validation'):
+                plan['calls'].insert(1, dict(node=tool['id'], argv=tool['argv'], cwd=str(workspace / tool['cwd'])))
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:

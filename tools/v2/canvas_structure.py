@@ -165,6 +165,9 @@ def validate_config(node):
         setting = spec[key]
         if setting['type'] == 'text':
             text(value, 20000, setting['label'])
+        elif setting['type'] == 'argv':
+            if not isinstance(value, list) or any(not isinstance(arg, str) or '\0' in arg for arg in value):
+                raise Invalid('命令参数需要 JSON 字符串数组。')
         elif setting['type'] == 'predicate':
             validate_expression(value)
         elif setting['type'] == 'graph':
