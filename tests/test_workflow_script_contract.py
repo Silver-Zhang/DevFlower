@@ -1,4 +1,4 @@
-"""P1 compiler and isolated process acceptance with synthetic native CLI output."""
+"""Structured contracts and branch execution with synthetic native CLI output."""
 from hashlib import sha256
 import json
 import os
@@ -48,6 +48,28 @@ def condition_graph():
     return document
 
 
+def router_graph():
+    classifier = dict(id='Classifier', name='Classifier', kind='agent', execution='native-cli',
+                      provider='codex', cwd='.', role='Classify', round_prompt='Classify', output_prompt='Deliver',
+                      native_output=dict(version=1, kind='result'), output_contract=[
+                          dict(field='result.data.category', type='string', required=True),
+                          dict(field='result.data.ready', type='boolean'),
+                          dict(field='result.data.rank', type='number'),
+                      ])
+    tests = [('research', 'category', 'research'), ('development', 'ready', True), ('priority', 'rank', 2)]
+    rules = [dict(id=port, label=port.title(), test=dict(field='result.data.'+field, op='equals', value=value))
+             for port, field, value in tests]
+    nodes = [dict(id='Start', kind='start'), classifier, dict(id='Router', kind='router', config=dict(rules=rules))]
+    edges = [dict(id='entry', source='Start', target='Classifier'),
+             dict(id='classified', source='Classifier', target='Router', transfer=dict(mode='result'))]
+    for port, name in [('research', 'Research'), ('development', 'Development'),
+                       ('priority', 'Priority'), ('fallback', 'General')]:
+        nodes += [dict(id=name, kind='agent', provider='codex', cwd=name.lower()), dict(id=name+'Output', kind='output')]
+        edges += [dict(id='route'+name, source='Router', source_port=port, target=name),
+                  dict(id='out'+name, source=name, target=name+'Output')]
+    return dict(version=1, name='Router fixture', nodes=nodes, edges=edges)
+
+
 FAKE = r"""from pathlib import Path
 import json, os, sys, time
 program = Path(sys.argv[0]).name
@@ -56,6 +78,20 @@ prompt = sys.stdin.read()
 if 'P2_FIXTURE_CORRECTION' in prompt:
     mode = 'correction'
 department = prompt.splitlines()[1]
+if department == 'Classifier':
+    raw = os.environ.get('ROUTER_FIXTURE')
+    if raw is None:
+        category = 'other' if 'P2_ROUTER_FALLBACK' in prompt else 'research'
+        raw = json.dumps({'category':category,'ready':True,'rank':1})
+    answer = ('invalid' if raw == 'invalid' else
+              json.dumps(dict(result=dict(schema_version=1,summary='Classified',data=json.loads(raw)),artifacts=[])))
+    Path(sys.argv[3]).write_text(answer)
+    sys.exit(0)
+if department in ('Research', 'Development', 'Priority', 'General'):
+    upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
+    assert upstream['node'] == 'Classifier' and 'data' in upstream['structured']['result']
+    Path(sys.argv[3]).write_text(department.upper()+'_FINISHED')
+    sys.exit(0)
 if department in ('Success', 'Correction'):
     workspace = Path.cwd().parent
     with (workspace/'calls.log').open('a') as calls:
@@ -337,7 +373,7 @@ class ContractTests(unittest.TestCase):
                 elif mode == 'no-handoff':
                     edges['decision']['transfer'] = {'mode': 'none'}
                 elif mode == 'router':
-                    nodes['Condition']['kind'] = 'router'
+                    doc['nodes'].append(dict(id='ExtraRouter', kind='router'))
                 compile_workflow(doc, workspace=self.workspace, native_config=True)
 
     def test_condition_branch_can_go_directly_to_output(self):
@@ -356,3 +392,112 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(status['condition']['branches']['true'], ['SuccessOutput'])
         self.assertEqual(status['completed_nodes'], ['Developer', 'Reviewer'])
         self.assertEqual(json.loads(output)['result']['verdict'], 'accept')
+
+    def test_router_routes_first_match_second_match_number_and_fallback(self):
+        bin_dir = self.install_cli_fixture()
+        original = router_graph()
+        for mode, data, port, selected in (
+            ('first', dict(category='research', ready=True, rank=2), 'research', 'Research'),
+            ('second', dict(category='development', ready=True, rank=1), 'development', 'Development'),
+            ('number', dict(category='other', ready=False, rank=2.0), 'priority', 'Priority'),
+            ('fallback', dict(category='other', ready=False, rank=1), 'fallback', 'General'),
+            ('reordered', dict(category='research', ready=True, rank=2), 'development', 'Development'),
+            ('missing-later-field', dict(category='research', rank=1), None, None),
+            ('boolean-is-not-number', dict(category='research', ready=True, rank=True), None, None),
+            ('number-is-not-boolean', dict(category='research', ready=1, rank=1), None, None),
+            ('invalid-output', 'invalid', None, None),
+        ):
+            with self.subTest(mode=mode):
+                doc = router_graph() if mode == 'reordered' else original
+                if mode == 'reordered':
+                    rules = doc['nodes'][2]['config']['rules']
+                    rules[0], rules[1] = rules[1], rules[0]
+                project = self.root/mode
+                project.mkdir()
+                if selected:
+                    # Unselected branch directories do not exist.
+                    (project/selected.lower()).mkdir()
+                name, source = compile_workflow(doc, workspace=project, native_config=True)
+                self.assertEqual((name, source), compile_workflow(doc, workspace=project, native_config=True))
+                self.assertIn("port = evaluate_router(context, WORKFLOW['router']", source)
+                script = project/name
+                script.write_text(source)
+                run = project/'run'
+                command = [sys.executable, '-I', str(script), '--run-dir', str(run)]
+                env = dict(os.environ, PATH=str(bin_dir), ROUTER_FIXTURE=data if data == 'invalid' else json.dumps(data))
+                child = subprocess.run([*command, '--workspace', str(project)], env=env,
+                                       cwd=self.root, capture_output=True, text=True, timeout=10)
+                self.assertEqual(child.returncode, 0 if selected else 1, child.stderr)
+                status = json.loads(subprocess.check_output([*command, '--status', '--details'], cwd=self.root))
+                self.assertEqual(status['status'], 'COMPLETED' if selected else 'STOPPED')
+                events = status['events']
+                self.assertEqual([e['node'] for e in events if e['kind'] == 'PROCESS_STARTED'],
+                                 ['Classifier'] + ([selected] if selected else []))
+                decisions = [event for event in events if event['kind'] == 'ROUTER_EVALUATED']
+                if not selected:
+                    self.assertNotIn('router', status)
+                    self.assertEqual(decisions, [])
+                    kind = 'ROUTER_REJECTED' if mode == 'missing-later-field' else 'OUTPUT_CONTRACT_FAILED'
+                    self.assertIn(kind, [event['kind'] for event in events])
+                    continue
+                self.assertEqual(len(decisions), 1)
+                decision = status['router']
+                self.assertEqual(decision['source_node'], 'Classifier')
+                self.assertEqual(decision['matched_rule'], None if port == 'fallback' else port)
+                self.assertEqual(decision['selected_port'], port)
+                self.assertEqual(decision['branches'][port], [selected, selected+'Output'])
+                self.assertEqual(json.loads(decision['input_json']), {'result.data.'+key:value for key, value in data.items()})
+                self.assertEqual(decision['input_sha256'], sha256((run/'Classifier'/'structured.json').read_bytes()).hexdigest())
+                self.assertEqual(child.stdout.strip(), selected.upper()+'_FINISHED')
+                if mode == 'first':
+                    decisions[0]['matched_rule'] = 'development'
+                    (run/'events.jsonl').write_text(''.join(json.dumps(event)+'\n' for event in events))
+                    damaged = json.loads(subprocess.check_output([*command, '--status'], cwd=self.root))
+                    self.assertEqual(damaged['status'], 'RECOVERY_REQUIRED')
+                    self.assertNotIn('router', damaged)
+                    self.assertIn('verified structured input', damaged['reason'])
+
+    def test_router_rejects_unsupported_rules_graphs_and_ports_at_compile_time(self):
+        for mode, message in (
+            ('operator', 'only equals'), ('undeclared', 'declared as'), ('value-type', 'type does not match'),
+            ('object', 'string, finite number or boolean'), ('nonfinite', 'finite number'), ('absent-contract', 'structured result Agent'),
+            ('optional-type-any', 'declared as'), ('reserved', 'reserved Router'), ('duplicate', 'Duplicate'),
+            ('fallback', 'Missing: fallback'), ('unknown-port', 'Unsupported port'), ('merge', 'branch merges'),
+            ('cycle', 'reachable from the root'), ('nested', 'multiple control nodes'), ('mixed', 'multiple control nodes'),
+        ):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ExportError, message):
+                doc = router_graph()
+                classifier = doc['nodes'][1]
+                rules = doc['nodes'][2]['config']['rules']
+                by_id = {edge['id']: edge for edge in doc['edges']}
+                if mode == 'operator':
+                    rules[0]['test']['op'] = 'contains'
+                elif mode == 'undeclared':
+                    rules[0]['test']['field'] = 'result.data.unknown'
+                elif mode == 'value-type':
+                    rules[2]['test']['value'] = True
+                elif mode == 'object':
+                    rules[0]['test']['value'] = {}
+                elif mode == 'nonfinite':
+                    rules[2]['test']['value'] = float('inf')
+                elif mode == 'absent-contract':
+                    classifier.pop('native_output')
+                    classifier.pop('output_contract')
+                elif mode == 'optional-type-any':
+                    classifier['output_contract'][0]['type'] = 'any'
+                elif mode in ('reserved', 'duplicate'):
+                    rules[1]['id'] = 'fallback' if mode == 'reserved' else rules[0]['id']
+                elif mode == 'fallback':
+                    doc['edges'].remove(by_id['routeGeneral'])
+                elif mode == 'unknown-port':
+                    by_id['routeGeneral']['source_port'] = 'unknown'
+                elif mode == 'merge':
+                    by_id['outGeneral']['target'] = 'ResearchOutput'
+                    doc['nodes'].pop()
+                elif mode == 'cycle':
+                    doc['nodes'] += [dict(id=node, kind='agent') for node in ('CycleA', 'CycleB')]
+                    doc['edges'] += [dict(id='cycle1', source='CycleA', target='CycleB'),
+                                     dict(id='cycle2', source='CycleB', target='CycleA')]
+                else:
+                    doc['nodes'].append(dict(id='Extra', kind='router' if mode=='nested' else 'condition'))
+                compile_workflow(doc, workspace=self.workspace, native_config=True)

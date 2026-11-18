@@ -21,7 +21,7 @@ import time
 
 
 from workflow_output_contract import (OUTPUT_BYTES, OutputContractError, candidate_record, output_json,
-                                      validate_structured_answer)  # EMBED_OUTPUT_CONTRACT
+                                      check_output_fields, output_field, validate_structured_answer)  # EMBED_OUTPUT_CONTRACT
 
 
 class WorkflowError(RuntimeError):
@@ -149,18 +149,21 @@ def review_port(verdict):
 def recorded_path(manifest, events):
     agents = [agent['id'] for agent in manifest['agents']]
     condition = manifest.get('condition')
-    if not condition:
+    control = condition or manifest.get('router')
+    if not control:
         return agents, None
-    branches = condition['branches']
-    branch_nodes = branch_node_ids(condition)
+    branches = control['branches']
+    branch_nodes = branch_node_ids(control)
     prefix = [node for node in agents if node not in branch_nodes]
     expected, completed, decision = prefix, [], None
     for event in events:
         kind, node = event['kind'], event.get('node')
-        if kind == 'CONDITION_EVALUATED':
-            port = review_port(event['input_verdict'])
-            if decision or node != condition['node'] or completed != prefix or event.get('selected_port') != port:
-                raise WorkflowError('Condition decision does not match the completed review path.')
+        if kind in ('CONDITION_EVALUATED', 'ROUTER_EVALUATED'):
+            port = event.get('selected_port')
+            event_kind = 'CONDITION_EVALUATED' if condition else 'ROUTER_EVALUATED'
+            if (decision or kind != event_kind or node != control['node'] or completed != prefix
+                    or port not in branches or (condition and review_port(event['input_verdict']) != port)):
+                raise WorkflowError('Branch decision does not match the completed input path.')
             expected = prefix + branches[port][:-1]
             decision = dict(event, branches=branches)
         if kind in ('CALL_INTENT', 'PROCESS_STARTED', 'NODE_COMPLETED') and node in branch_nodes and node not in expected:
@@ -225,6 +228,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     os.fsync(fd)
             snapshot['cancel_requested'] = _cancel_requested(fd)
             completed = [row for row in events if row['kind'] == 'NODE_COMPLETED']
+            condition, router = manifest.get('condition'), manifest.get('router')
             expected, decision = recorded_path(manifest, events)
             if [row.get('node') for row in completed] != expected[:len(completed)]:
                 raise WorkflowError('Node-completion evidence is inconsistent.')
@@ -237,13 +241,21 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     raise WorkflowError('Recorded node answer has changed: ' + row['node'])
                 if spec := agent.get('native_output'):
                     structured = read_structured_evidence(fd, row, 'structured.json', 'structured_sha256')
+                    if decision and router and row['node'] == router['source_node']:
+                        inputs, match = router_match(structured, router['rules'])
+                        if (decision.get('input_sha256') != row['structured_sha256']
+                                or decision.get('source_node') != row['node'] or 'matched_rule' not in decision
+                                or decision['matched_rule'] != match
+                                or decision['selected_port'] != (match or 'fallback')):
+                            raise WorkflowError('Router decision does not match the verified structured input.')
+                        snapshot['router'] = dict(decision, input_json=json.dumps(inputs, ensure_ascii=False, indent=2))
                     if spec['kind'] == 'review':
                         candidate = read_structured_evidence(fd, row, 'candidate-after.json', 'candidate_after_sha256')
                         if (candidate != producer or row.get('candidate_sha256') != candidate['candidate_sha256']
                                 or row.get('verdict') != structured['result']['verdict']
                                 or structured['result']['candidate_sha256'] != candidate['candidate_sha256']):
                             raise WorkflowError('Review evidence is inconsistent: ' + row['node'])
-                        if decision and row['node'] == manifest['condition']['reviewer']:
+                        if decision and condition and row['node'] == condition['reviewer']:
                             if (decision.get('candidate_sha256') != candidate['candidate_sha256']
                                     or decision['input_verdict'] != row['verdict']):
                                 raise WorkflowError('Condition evidence does not match the verified candidate review.')
@@ -262,7 +274,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                 if last['kind'] == 'RUN_COMPLETED':
                     if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
                         raise WorkflowError('Final result is missing or changed.')
-                    if manifest.get('condition') and (not decision or last['result_sha256'] != completed[-1]['answer_sha256']):
+                    if (condition or router) and (not decision or last['result_sha256'] != completed[-1]['answer_sha256']):
                         raise WorkflowError('Final result is not bound to a selected branch.')
                     candidates_current = True
                     for node, candidate in reviews:
@@ -273,7 +285,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                             current = False
                         if not current:
                             candidates_current = False
-                            if not decision or node != manifest['condition']['reviewer']:
+                            if not decision or not condition or node != condition['reviewer']:
                                 snapshot['candidate_current'] = False
                                 raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
                     if reviews:
@@ -409,6 +421,35 @@ def evaluate_condition(context, condition, review, candidate, limit):
     _event(context, 'CONDITION_EVALUATED', node=node, input_verdict=result['verdict'],
            selected_port=port, candidate_sha256=candidate['candidate_sha256'])
     return port == 'true'
+
+
+def router_match(structured, rules):
+    # A match never bypasses validation of the fields in later rules.
+    check_output_fields(structured, [dict(field=rule['field'], type=rule['type'], required=True)
+                                     for rule in rules])
+    inputs = {rule['field']: output_field(structured, rule['field']) for rule in rules}
+    match = next((rule['id'] for rule in rules if inputs[rule['field']] == rule['value']), None)
+    return inputs, match
+
+
+def evaluate_router(context, router, upstream, limit):
+    _check_cancel(context)
+    node = router['node']
+    try:
+        if limit is not None and len(upstream['answer']) > limit:
+            raise WorkflowError('Saved Router handoff limit exceeded.')
+        if upstream['node'] != router['source_node'] or 'structured' not in upstream:
+            raise WorkflowError('Router requires a verified structured upstream result.')
+        structured = upstream['structured']
+        _, match = router_match(structured, router['rules'])
+    except (WorkflowError, OutputContractError) as error:
+        _event(context, 'ROUTER_REJECTED', node=node, reason=str(error))
+        raise WorkflowError(str(error)) from None
+    _check_cancel(context)
+    port = match or 'fallback'
+    _event(context, 'ROUTER_EVALUATED', node=node, source_node=upstream['node'], matched_rule=match,
+           selected_port=port, input_sha256=sha256(output_json(structured).encode('utf-8')).hexdigest())
+    return port
 
 
 def verify_agent_output(context, directory, spec, answer, candidate):
@@ -555,15 +596,15 @@ def agent_directory(workspace, agent):
     return path
 
 
-def branch_node_ids(condition):
-    return {node for path in condition['branches'].values() for node in path} if condition else set()
+def branch_node_ids(control):
+    return {node for path in control['branches'].values() for node in path} if control else set()
 
 
 def prepare_calls(manifest, workspace, *, dry_run=False):
     workspace = (workspace or Path.cwd()).resolve(strict=True)
     if not workspace.is_dir():
         raise WorkflowError('Workspace is not a directory.')
-    deferred = branch_node_ids(manifest.get('condition'))
+    deferred = branch_node_ids(manifest.get('condition') or manifest.get('router'))
     for agent in manifest['agents']:
         # Branch prerequisites are checked on invocation, only for the selected path.
         if agent['id'] in deferred:
@@ -601,15 +642,13 @@ def script_main(manifest, run_workflow):
             raise WorkflowError('Choose --task or --task-file, not both.')
         if args.dry_run:
             workspace = prepare_calls(manifest, args.workspace, dry_run=True)
-            condition = manifest.get('condition')
-            deferred = branch_node_ids(condition)
+            deferred = branch_node_ids(manifest.get('condition') or manifest.get('router'))
             plan = {'name': manifest['name'], 'policy': manifest['policy'],
                     'calls': [{'node': a['id'], 'cwd': str(workspace / a['cwd'] if a['id'] in deferred
                                                           else agent_directory(workspace, a)),
                                'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
                               for a in manifest['agents']]}
-            if condition:
-                plan['condition'] = condition
+            plan.update({kind: manifest[kind] for kind in ('condition', 'router') if kind in manifest})
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:

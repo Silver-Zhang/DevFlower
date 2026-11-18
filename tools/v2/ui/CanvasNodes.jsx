@@ -41,19 +41,32 @@ export function CanvasNodeCard({id,data,selected}){
  </article>;
 }
 
-function RouterRules({node,onChange,connected,Field}){
+function RouterRules({node,onChange,connected,nativeScript,Field}){
  const rules=node.config.rules||[];
  function change(id,patch){onChange({rules:rules.map(rule=>rule.id===id?{...rule,...patch}:rule)})}
  function add(){
   const id='r'+crypto.randomUUID().replaceAll('-','');
   onChange({rules:[...rules,{id,label:'分支 '+(rules.length+1),test:{...emptyPredicate,value:''}}]});
  }
+ function move(index,step){
+  const reordered=[...rules], target=index+step;
+  [reordered[index],reordered[target]]=[reordered[target],reordered[index]];
+  onChange({rules:reordered});
+ }
  return <section className="canvas-router">
   <p className="field-note">按顺序编辑声明字段与比较值。默认分支有独立端口。修改分支名称会保留已有连线。</p>
+  {nativeScript&&<p className="field-note">
+   原生路由按列表顺序选择首个匹配。请使用上游结构化合同声明的字段做等于比较，并连接每条规则和默认分支。
+   {!connected.has('fallback')&&' 默认分支尚未连接。'}
+  </p>}
   {rules.map((rule,index)=><fieldset key={rule.id}>
    <legend>规则 {index+1}</legend>
    <Field label={'分支名称 '+(index+1)}><input maxLength={100} value={rule.label} onChange={e=>change(rule.id,{label:e.target.value})}/></Field>
    <PredicateEditor nullable Field={Field} limits={predicateLimits} value={rule.test} labels={{field:'路由字段 '+(index+1),op:'路由运算符 '+(index+1)}} onChange={test=>change(rule.id,{test})}/>
+   {rules.length>1&&<>
+    <button type="button" disabled={index===0} aria-label={'上移规则 '+(index+1)} onClick={()=>move(index,-1)}>上移</button>
+    <button type="button" disabled={index===rules.length-1} aria-label={'下移规则 '+(index+1)} onClick={()=>move(index,1)}>下移</button>
+   </>}
    {connected.has(rule.id)&&<p className="field-note">此分支已有连线。请先删除连线，再移除规则。</p>}
    <button type="button" disabled={connected.has(rule.id)} onClick={()=>onChange({rules:rules.filter(item=>item.id!==rule.id)})}>移除规则 {index+1}</button>
   </fieldset>)}
@@ -99,7 +112,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
    {(field!=='result.verdict'||op!=='equals'||value!=='accept')&&<button type="button"
     onClick={()=>onChange({expression:{field:'result.verdict',op:'equals',value:'accept'}})}>使用候选审核条件</button>}
   </p>}
-  {!nativeCondition&&['condition','router','validation'].includes(nodeKind(node))&&<p className="field-note">
+  {!nativeCondition&&!(nativeScript&&nodeKind(node)==='router')&&['condition','router','validation'].includes(nodeKind(node))&&<p className="field-note">
    字段路径从上游节点数据读取。开始节点的初始 JSON 位于 <code>result</code> 下，例如用 <code>result.ok</code> 读取 <code>{'{"ok":true}'}</code> 中的 <code>ok</code>。
   </p>}
   {Object.entries(type.fields).map(([key,field])=>{
@@ -155,7 +168,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
   {node.config.tool==='delivery-gate'&&<p className="field-note">开发、测试、确定性测试与独立审核必须来自同一轮。只有 ACCEPT 会结束研发循环。</p>}
   {nodeKind(node)==='approval'&&<p className="field-note">等待期间停止启动后续节点。只有本机用户可批准。拒绝或超时会结束运行。</p>}
   {nodeKind(node)==='merge'&&<p className="field-note">ALL 等待全部输入。ANY 按已保存的连线顺序选择成功输入，较早的输入仍在执行时会等待。</p>}
-  {nodeKind(node)==='router'&&<RouterRules node={node} onChange={onChange} connected={connected} Field={Field}/>}
+  {nodeKind(node)==='router'&&<RouterRules node={node} onChange={onChange} connected={connected} nativeScript={nativeScript} Field={Field}/>}
   {draftConfigIssue(node)&&<p className="error-text">{draftConfigIssue(node)}</p>}
  </>;
 }

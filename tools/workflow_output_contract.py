@@ -14,6 +14,10 @@ CANDIDATE_FILE_BYTES = 1_000_000
 CANDIDATE_TOTAL_BYTES = CANDIDATE_FILES * CANDIDATE_FILE_BYTES
 REVIEW_SEVERITIES = ('critical', 'major', 'minor')
 OUTPUT_TYPES = ('any', 'string', 'number', 'boolean', 'object', 'array', 'null')
+ROUTER_TYPES = ('string', 'number', 'boolean')
+JSON_TYPES = {str: 'string', int: 'number', float: 'number', bool: 'boolean',
+              dict: 'object', list: 'array', type(None): 'null'}
+MISSING_OUTPUT_FIELD = object()
 SENSITIVE_COMPONENT = re.compile(
     r'(secret|token|password|api.?key|receipt|credential)|\.(pem|key|p12|pfx)$|'
     r'(^|[._-])id_(rsa|dsa|ecdsa|ed25519)($|[._-])|(^|[._-])auth($|[._-])', re.IGNORECASE)
@@ -103,18 +107,26 @@ def output_text(value, maximum, label):
         raise OutputContractError(f'{label} must contain 1–{maximum} characters of text.')
 
 
+def output_field(envelope, path):
+    value = envelope
+    for part in path.split('.'):
+        if not isinstance(value, dict) or part not in value:
+            return MISSING_OUTPUT_FIELD
+        value = value[part]
+    return value
+
+
+def output_type(value):
+    return JSON_TYPES.get(type(value))
+
+
 def check_output_fields(envelope, fields):
-    types = {str: 'string', int: 'number', float: 'number', bool: 'boolean',
-             dict: 'object', list: 'array', type(None): 'null'}
-    missing = object()
     for rule in fields:
-        actual = envelope
-        for part in rule['field'].split('.'):
-            actual = actual.get(part, missing) if isinstance(actual, dict) else missing
-        if actual is missing:
+        actual = output_field(envelope, rule['field'])
+        if actual is MISSING_OUTPUT_FIELD:
             if rule['required']:
                 raise OutputContractError('Missing required output field: ' + rule['field'])
-        elif rule['type'] not in ('any', types[type(actual)]):
+        elif rule['type'] not in ('any', output_type(actual)):
             raise OutputContractError('Output field type mismatch: ' + rule['field'])
 
 

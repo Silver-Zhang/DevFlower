@@ -38,19 +38,23 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const [evidence,setEvidence]=useState(null);
  const [error,setError]=useState('');
  const events=script.events||[];
- const node=script.agents[choice]?choice:'';
+ const node=Object.hasOwn(script.agents,choice)?choice:'';
  const agent=script.agents[node];
  const completed=script.completed_nodes||[];
  const facts=events.filter(event=>event.node===node);
  const command=facts.find(event=>event.kind==='CALL_INTENT');
  const exit=facts.find(event=>event.kind==='PROCESS_EXITED');
  const reviews=events.filter(event=>event.kind==='NODE_COMPLETED'&&event.verdict&&completed.includes(event.node));
- const decision=script.condition;
- const skippedPort=decision?.selected_port==='true'?'false':'true';
- const skipped=decision?.branches[skippedPort]||[];
+ const router=script.router;
+ const decision=script.condition||router;
+ const skippedPorts=Object.keys(decision?.branches||{}).filter(port=>port!==decision.selected_port);
+ const skipped=skippedPorts.flatMap(port=>decision.branches[port]);
  const started=events.filter(event=>event.kind==='PROCESS_STARTED');
  const nameOf=id=>script.document.nodes.find(item=>item.id===id)?.name||id;
- const labelPort=port=>port==='true'?'满足（true）':'不满足（false）';
+ const rules=script.document.nodes.find(item=>item.id===router?.node)?.config.rules||[];
+ const labelPort=port=>router?(port==='fallback'?'默认分支（fallback）':(rules.find(rule=>rule.id===port)?.label||port)+'（'+port+'）'):
+  port==='true'?'满足（true）':'不满足（false）';
+ const pathLabel=port=>decision.branches[port].map(nameOf).join(' → ');
  const path=new URLSearchParams({workspace:run.workspace,id:run.id,...(node?{node}:{})}).toString();
  useEffect(()=>{
   if(!trusted)return;
@@ -74,7 +78,7 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
   {error&&<p className="error-text" role="alert">{error}</p>}
   <label className="field"><span>查看证据</span><select value={node} onChange={event=>setChoice(event.target.value)}>
    <option value="">最终结果</option>
-   {script.document.nodes.filter(item=>script.agents[item.id]).map(item=><option key={item.id} value={item.id}>
+   {script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)).map(item=><option key={item.id} value={item.id}>
     {item.name}{skipped.includes(item.id)?'（分支未选中）':''}
    </option>)}
   </select></label>
@@ -95,13 +99,20 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
    </details>
    {!command&&<p>{skipped.includes(node)?'此 Agent 所在分支未选中。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div>
-   {decision&&<section aria-label="条件分支">
+   {decision&&<section aria-label={router?'路由分支':'条件分支'}>
     <h3>{nameOf(decision.node)}</h3>
-    <p>判断结果 <code>{decision.input_verdict}</code> · 选中 {labelPort(decision.selected_port)}</p>
-    <p>选中路径 {decision.branches[decision.selected_port].map(nameOf).join(' → ')}</p>
-    <p>未选中 {labelPort(skippedPort)} · {skipped.map(nameOf).join(' → ')}</p>
-    <p>候选摘要 <code>{decision.candidate_sha256}</code></p>
-    {script.candidate_current===false&&<p>当前候选已变化。分支记录对应判断时的候选版本。</p>}
+    {router?<><p>上游 {nameOf(router.source_node)} · <button type="button"
+     onClick={()=>setChoice(router.source_node)}>查看上游完整交付</button></p>
+     <EvidenceText label="上游参与路由的结构化输入" value={{text:router.input_json}}/>
+     <p>{router.matched_rule?'命中规则 '+labelPort(router.matched_rule):'未命中规则，使用 fallback'}</p>
+     <p>选中端口 <code>{router.selected_port}</code></p>
+    </>:<>
+     <p>判断结果 <code>{decision.input_verdict}</code> · 选中 {labelPort(decision.selected_port)}</p>
+     <p>候选摘要 <code>{decision.candidate_sha256}</code></p>
+     {script.candidate_current===false&&<p>当前候选已变化。分支记录对应判断时的候选版本。</p>}
+    </>}
+    <p>选中路径 {pathLabel(decision.selected_port)}</p>
+    {skippedPorts.map(port=><p key={port}>未选中 {labelPort(port)} · {pathLabel(port)}</p>)}
     <p>实际启动 {started.map(event=>nameOf(event.node)).join(' → ')}</p>
    </section>}
    {reviews.map(review=><p key={review.node}>

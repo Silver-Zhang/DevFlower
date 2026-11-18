@@ -15,7 +15,7 @@ import re
 import sqlite3
 import sys
 
-from workflow_output_contract import OutputContractError, native_output_spec
+from workflow_output_contract import ROUTER_TYPES, OutputContractError, native_output_spec, output_type
 
 
 class ExportError(ValueError):
@@ -32,6 +32,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
                        'initial_prompt', 'round_prompt', 'output_prompt', 'native_profile'}
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
+CONTROL_KINDS = ('condition', 'router')
 
 
 def canonical(value):
@@ -132,6 +133,42 @@ def read_saved(database, workspace, draft_id, *, expected_revision=None):
         return graph, agents, space['path']
 
 
+def control_ports(node):
+    config = node.get('config')
+    if node['kind'] == 'condition':
+        if config != {'expression': REVIEW_CONDITION}:
+            raise ExportError('Native Condition requires result.verdict equals "accept".')
+        return ('true', 'false')
+    known_fields(config, {'rules'}, 'Router configuration')
+    rules = config.get('rules')
+    if not isinstance(rules, list) or not 1 <= len(rules) <= 16:
+        raise ExportError('Native Router requires 1–16 ordered rules.')
+    ports = []
+    for rule in rules:
+        known_fields(rule, {'id', 'label', 'test'}, 'Router rule')
+        port = identifier(rule.get('id'))
+        if port == 'fallback' or port in ports:
+            raise ExportError('Duplicate or reserved Router rule ID: ' + port)
+        label = text(rule.get('label'), 'Router rule label')
+        if not label.strip() or len(label) > 100:
+            raise ExportError('Router rule label must contain 1–100 characters: ' + port)
+        test = rule.get('test')
+        known_fields(test, {'field', 'op', 'value'}, 'Router rule test')
+        if test.get('op') != 'equals':
+            raise ExportError('Native Router supports only equals: ' + port)
+        field = text(test.get('field'), 'Router rule field')
+        if len(field) > 200 or not field.startswith('result.'):
+            raise ExportError('Router rule field must be a declared result.* path: ' + port)
+        value = test.get('value')
+        kind = output_type(value)
+        if kind not in ROUTER_TYPES or (kind == 'number' and not -1e100 <= value <= 1e100):
+            raise ExportError('Router comparison needs a string, finite number or boolean: ' + port)
+        if kind == 'string' and len(text(value, 'Router rule value')) > 2000:
+            raise ExportError('Router string comparison exceeds 2000 characters: ' + port)
+        ports.append(port)
+    return (*ports, 'fallback')
+
+
 def workflow_paths(document):
     if (not isinstance(document, dict) or type(document.get('version')) is not int
             or document['version'] != 1 or not isinstance(document.get('nodes'), list)
@@ -149,7 +186,7 @@ def workflow_paths(document):
         if ident in nodes:
             raise ExportError('Duplicate node: ' + ident)
         kind = node.get('kind', 'agent')
-        if kind not in ('start', 'agent', 'output', 'condition'):
+        if kind not in ('start', 'agent', 'output', *CONTROL_KINDS):
             raise ExportError('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
         if kind == 'agent':
             allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
@@ -162,41 +199,54 @@ def workflow_paths(document):
             if type(node.get('config_version', 1)) is not int or node.get('config_version', 1) != 1:
                 raise ExportError(ident + ': unsupported configuration version.')
         nodes[ident], incoming[ident], outgoing[ident] = node, [], []
+    controls = [node for node in nodes.values() if node.get('kind') in CONTROL_KINDS]
+    if len(controls) > 1:
+        raise ExportError('Native export supports a single Condition or Router; multiple control nodes are unsupported.')
+    control = controls[0] if controls else None
+    control_id = control['id'] if control else None
+    branch_ports = control_ports(control) if control else ()
     for edge in document['edges']:
         if not isinstance(edge, dict):
             raise ExportError('Invalid edge.')
         known_fields(edge, {'id', 'source', 'target', 'source_port', 'target_port', 'transfer'}, 'Edge')
         ident = identifier(edge.get('id'))
-        source, target = edge.get('source'), edge.get('target')
+        source, target = identifier(edge.get('source')), identifier(edge.get('target'))
         if ident in edge_ids or source not in nodes or target not in nodes or source == target:
             raise ExportError('Duplicate or invalid edge: ' + ident)
         source_kind, target_kind = nodes[source].get('kind'), nodes[target].get('kind')
-        ports = ('true', 'false') if source_kind == 'condition' else ('out',)
+        ports = branch_ports if source == control_id else ('out',)
         if (edge.get('source_port', 'out') not in ports or edge.get('target_port', 'in') != 'in'
                 or source_kind == 'output' or target_kind == 'start'):
             raise ExportError('Unsupported port: ' + ident)
         transfer = edge.get('transfer', {})
-        envelope = source_kind in ('start', 'condition') or target_kind in ('condition', 'output')
+        envelope = source_kind in ('start', *CONTROL_KINDS) or target_kind in (*CONTROL_KINDS, 'output')
         modes = ('answer', 'none', 'envelope') if envelope else ('answer', 'none')
+        if target_kind == 'router':
+            modes += ('result',)
         if not isinstance(transfer, dict) or set(transfer) - {'mode', 'max_chars'} or transfer.get('mode', 'answer') not in modes:
             raise ExportError('Unsupported handoff on ' + ident + '; structured data must not be silently discarded.')
         limit = transfer.get('max_chars')
         if limit is not None and (type(limit) is not int or limit < 1):
             raise ExportError('Invalid handoff limit: ' + ident)
-        if (source_kind == 'start' or target_kind == 'condition') and transfer.get('mode') == 'none':
-            raise ExportError('Start and Condition input require a data handoff: ' + ident)
+        if (source_kind == 'start' or target_kind in CONTROL_KINDS) and transfer.get('mode') == 'none':
+            raise ExportError('Start and control node inputs require a data handoff: ' + ident)
         edge_ids.add(ident)
         incoming[target].append(edge)
         outgoing[source].append(edge)
-    conditions = [key for key, node in nodes.items() if node.get('kind') == 'condition']
-    if len(conditions) > 1:
-        raise ExportError('Native export supports at most one Condition.')
-    condition = conditions[0] if conditions else None
+    targets = {}
+    if control:
+        label = control['kind'].title()
+        targets = {edge['source_port']: edge['target'] for edge in outgoing[control_id]}
+        missing = [port for port in branch_ports if port not in targets]
+        if missing:
+            raise ExportError(label + ' requires a connection from each output port. Missing: ' + ', '.join(missing))
+        if len(outgoing[control_id]) != len(branch_ports):
+            raise ExportError(label + ' requires exactly one edge per output port.')
     roots = [key for key in nodes if not incoming[key]]
     if len(roots) != 1:
         raise ExportError('Expected one root; the graph is disconnected or cyclic.')
-    if any(len(incoming[key]) > 1 or (key != condition and len(outgoing[key]) > 1) for key in nodes):
-        raise ExportError('Only Condition may branch; shared nodes and branch merges are unsupported.')
+    if any(len(incoming[key]) > 1 or (key != control_id and len(outgoing[key]) > 1) for key in nodes):
+        raise ExportError('Only Condition or Router may branch; shared nodes and branch merges are unsupported.')
     seen = set()
 
     def walk(current, stop=None):
@@ -209,28 +259,23 @@ def workflow_paths(document):
             current = outgoing[current][0]['target'] if outgoing[current] else None
         return path, current
 
-    prefix, endpoint = walk(roots[0], condition)
+    prefix, endpoint = walk(roots[0], control_id)
     branches = {}
-    if condition is not None:
-        if (endpoint != condition or not prefix or prefix[0].get('kind') != 'start'
+    if control:
+        if (endpoint != control_id or not prefix or prefix[0].get('kind') != 'start'
                 or prefix[-1].get('kind', 'agent') != 'agent'):
-            raise ExportError('Condition requires a Start and a preceding candidate Reviewer.')
-        targets = {edge['source_port']: edge['target'] for edge in outgoing[condition]}
-        if len(outgoing[condition]) != 2 or targets.keys() != {'true', 'false'}:
-            raise ExportError('Condition requires exactly one true and one false output edge.')
-        if nodes[condition].get('config') != {'expression': REVIEW_CONDITION}:
-            raise ExportError('Native Condition requires result.verdict equals "accept".')
-        seen.add(condition)
-        for port in ('true', 'false'):
-            branch, _ = walk(targets[port], condition)
+            raise ExportError(label + ' requires a Start and a preceding structured Agent.')
+        seen.add(control_id)
+        for port in branch_ports:
+            branch, _ = walk(targets[port], control_id)
             if not branch or branch[-1].get('kind') != 'output':
-                raise ExportError('Condition ' + port + ' must end at its own Output.')
+                raise ExportError(label + ' ' + port + ' must end at its own Output.')
             branches[port] = branch
     if len(seen) != len(nodes):
         raise ExportError('Every node must be reachable from the root; disconnected or cyclic graph.')
     if not any(n.get('kind', 'agent') == 'agent' for n in prefix):
         raise ExportError('Add at least one Agent.')
-    return name, prefix, condition, branches, incoming
+    return name, prefix, control, branches, incoming
 
 
 def compile_agent(node, records, root, transfer, producer):
@@ -296,11 +341,28 @@ def compile_agent(node, records, root, transfer, producer):
     return agent
 
 
+def compile_router(node, source):
+    spec = source.get('native_output', {})
+    if spec.get('kind') != 'result':
+        raise ExportError('Router requires a direct handoff from a structured result Agent v1.')
+    fields = {rule['field']: rule['type'] for rule in spec['fields']}
+    rules = []
+    for rule in node['config']['rules']:
+        test = rule['test']
+        kind = fields.get(test['field'])
+        if kind not in ROUTER_TYPES:
+            raise ExportError('Router field must be declared as string, number or boolean: ' + test['field'])
+        if output_type(test['value']) != kind:
+            raise ExportError('Router comparison type does not match declared field: ' + test['field'])
+        rules.append(dict(id=rule['id'], label=rule['label'], field=test['field'], type=kind, value=test['value']))
+    return rules
+
+
 def compile_workflow(document, agents=None, workspace='.', *, native_config=False):
     """Pure code generation except reading the bundled fixed runtime template."""
     if native_config is not True:
         raise ExportError('Explicit --native-config required: exported calls use native CLI permissions, not V2 sandbox policy.')
-    name, prefix, condition, branches, incoming = workflow_paths(document)
+    name, prefix, control, branches, incoming = workflow_paths(document)
     records, normalized, calls, initial = agents or {}, {}, [], ''
     root = Path(workspace).resolve()
 
@@ -346,26 +408,39 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
                          + indent + "    raise WorkflowError('Saved Output limit exceeded; full answer retained in node logs.')")
         calls.append(indent + f'return results[{previous!r}]')
 
-    reviewer, final_limit = compile_path(prefix)
-    manifest = dict(version=1, compiler_version=5, name=name, policy='native-cli (not the V2 managed sandbox)',
+    upstream, final_limit = compile_path(prefix)
+    manifest = dict(version=1, compiler_version=6, name=name, policy='native-cli (not the V2 managed sandbox)',
                     input=initial, source_sha256=sha256(canonical(document).encode()).hexdigest())
-    if condition is None:
-        finish_path(reviewer, final_limit, '    ')
+    if not control:
+        finish_path(upstream, final_limit, '    ')
     else:
-        if normalized[reviewer].get('native_output', {}).get('kind') != 'review':
-            raise ExportError('Condition requires a direct handoff from a candidate Reviewer v1.')
-        producer = incoming[reviewer][0]['source']
-        manifest['condition'] = dict(node=condition, reviewer=reviewer,
-                                     branches={port: [node['id'] for node in path] for port, path in branches.items()})
-        limit = incoming[condition][0].get('transfer', {}).get('max_chars')
-        calls.append(f"    if evaluate_condition(context, WORKFLOW['condition'], results[{reviewer!r}], "
-                     f"results[{producer!r}]['candidate'], {limit!r}):")
-        finish_path(*compile_path(branches['true'], reviewer, indent='        '), '        ')
-        calls.append('    else:')
-        finish_path(*compile_path(branches['false'], reviewer, indent='        '), '        ')
+        node_id, kind = control['id'], control['kind']
+        decision = dict(node=node_id, branches={port: [node['id'] for node in path] for port, path in branches.items()})
+        manifest[kind] = decision
+        limit = incoming[node_id][0].get('transfer', {}).get('max_chars')
+        if kind == 'condition':
+            if normalized[upstream].get('native_output', {}).get('kind') != 'review':
+                raise ExportError('Condition requires a direct handoff from a candidate Reviewer v1.')
+            producer = incoming[upstream][0]['source']
+            decision['reviewer'] = upstream
+            calls.append(f"    if evaluate_condition(context, WORKFLOW['condition'], results[{upstream!r}], "
+                         f"results[{producer!r}]['candidate'], {limit!r}):")
+            finish_path(*compile_path(branches['true'], upstream, indent='        '), '        ')
+            calls.append('    else:')
+            finish_path(*compile_path(branches['false'], upstream, indent='        '), '        ')
+        else:
+            decision.update(source_node=upstream, rules=compile_router(control, normalized[upstream]))
+            calls.append(f"    port = evaluate_router(context, WORKFLOW['router'], results[{upstream!r}], {limit!r})")
+            for index, (port, path) in enumerate(branches.items()):
+                if port == 'fallback':
+                    calls.append('    else:')
+                else:
+                    keyword = 'if' if index == 0 else 'elif'
+                    calls.append(f'    {keyword} port == {port!r}:')
+                finish_path(*compile_path(path, upstream, indent='        '), '        ')
     manifest['agents'] = list(normalized.values())
     runtime = Path(__file__).with_name('workflow_script_runtime.py').read_text(encoding='utf-8')
-    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v5.\n'
+    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v6.\n'
     source += '# Native CLI settings/permissions apply. Review before execution. No GUI/service dependency.\n'
     contract = Path(__file__).with_name('workflow_output_contract.py').read_text(encoding='utf-8')
     runtime, replacements = re.subn(r'^from workflow_output_contract import \(.*\n[^\n]+# EMBED_OUTPUT_CONTRACT$',

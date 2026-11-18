@@ -550,5 +550,105 @@ with sqlite3.connect(sys.argv[1]) as db:
    assert.equal(fs.readFileSync(filename,'utf8'),script);
   }
  });
+ await test('native-router-reorders-rules-keeps-ports-and-shows-evidence',async()=>{
+  const button=name=>page.getByRole('button',{name,exact:true});
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const nodes=[];
+  for(const name of ['Classifier','Research','Development','General']){
+   const agent=await api('agents/save',{workspace,id:null,expected:null,session_revision:null,
+    config:{execution:'native-cli',name,provider:'codex',cwd:path.join(process.env.V2_WORKSPACES,'A'),
+     role:name,round_prompt:'Fixture',output_prompt:'Deliver'}});
+   assert(agent.revision,JSON.stringify(agent));
+   const i=nodes.length;
+   nodes.push({id:name,name,kind:'agent',agent_id:agent.id,agent_revision:agent.revision,
+    position:{x:i?780:245,y:i?200*(i-1):170}});
+  }
+  nodes[0].native_output={version:1,kind:'result'};
+  nodes[0].output_contract=[{field:'result.data.category',type:'string',required:true}];
+  for(const [id,kind,x,y,config] of [['Start','start',0,170,{}],['Router','router',520,170,{}],
+    ['ResearchOut','output',1040,0,{}],['DevelopmentOut','output',1040,200,{}],['GeneralOut','output',1040,400,{}]]){
+   nodes.push({id,name:id,kind,config_version:1,position:{x,y},config});
+  }
+  const edges=[['Start','Classifier'],['Classifier','Router'],['Research','ResearchOut'],
+   ['Development','DevelopmentOut'],['General','GeneralOut']].map(([source,target],i)=>({id:'edge'+i,source,target}));
+  const name='P2-B 路由夹具';
+  const seed=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,nodes,edges}});
+  assert(seed.revision,JSON.stringify(seed));
+  await page.reload();
+  await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name,exact:true}).click();
+  await page.getByLabel('适应画布',{exact:true}).click();await node('Router');
+  const inspector=page.getByLabel('节点配置',{exact:true});
+  for(const [index,label] of ['科研任务','开发任务'].entries()){
+   await button('添加分支规则').click();
+   await inspector.getByLabel('分支名称 '+(index+1),{exact:true}).fill(label);
+   await inspector.getByLabel('路由字段 '+(index+1),{exact:true}).fill('result.data.category');
+   await inspector.getByRole('group',{name:'规则 '+(index+1),exact:true}).getByLabel('比较值',{exact:true}).fill('research');
+  }
+  async function connect(portLabel,target){
+   await inspector.getByLabel('源输出端口',{exact:true}).selectOption({label:portLabel});
+   await inspector.getByLabel('下游节点',{exact:true}).selectOption(target);
+   await button('连接节点').click();
+  }
+  await connect('科研任务','Research');
+  await connect('开发任务','Development');
+  await button('检查').click();
+  await page.getByText(/Missing: fallback/).waitFor();
+  await page.getByLabel('关闭检查结果',{exact:true}).click();
+  await connect('默认分支','General');
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  const query='draft?'+new URLSearchParams({workspace,id:seed.id});
+  const before=(await api(query)).graph;
+  const rules=before.nodes.find(current=>current.id==='Router').config.rules;
+  await page.reload();
+  await page.getByLabel('适应画布',{exact:true}).click();await node('Router');
+  await button('上移规则 2').click();
+  assert.equal(await inspector.getByLabel('分支名称 1',{exact:true}).inputValue(),'开发任务');
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  await page.reload();
+  const after=(await api(query)).graph;
+  assert.deepEqual(after.nodes.find(current=>current.id==='Router').config.rules,[rules[1],rules[0]]);
+  assert.deepEqual(after.edges,before.edges);
+  await button('检查').click();
+  await page.getByText('原生脚本编译通过。检查未启动 CLI。',{exact:true}).waitFor();
+  await page.getByLabel('关闭检查结果',{exact:true}).click();
+  await button('预览 Python').click();
+  const preview=page.getByRole('dialog',{name:'Python 脚本预览'});
+  const source=await preview.locator('pre').textContent();
+  assert.match(source,/port = evaluate_router/);
+  await preview.getByRole('button',{name:'关闭预览'}).click();
+  const [exported]=await Promise.all([page.waitForEvent('download'),button('导出 Python（原生 CLI）').click()]);
+  const exportedPath=path.join(out,'router-exported.py');
+  await exported.saveAs(exportedPath);
+  assert.equal(fs.readFileSync(exportedPath,'utf8'),source);
+  for(const [category,expectedPort,selected] of [['research',rules[1].id,'Development'],['other','fallback','General']]){
+   if(expectedPort==='fallback'){
+    await button('编辑草稿').click();
+    const context=page.getByLabel('本次运行上下文',{exact:true}).locator('summary');
+    await context.click();
+    await page.getByLabel('本次任务',{exact:true}).fill('P2_ROUTER_FALLBACK');
+    await context.click();
+   }
+   const [response]=await Promise.all([
+    page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')),button('启动').click()]);
+   const {run}=await response.json();
+   assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+   const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
+   if(!await monitor.isVisible())await button('运行检查器').click();
+   const branch=monitor.getByRole('region',{name:'路由分支'});
+   assert.equal(await branch.getByText(/^选中端口 /).textContent(),'选中端口 '+expectedPort);
+   await branch.getByText(expectedPort==='fallback'?/未命中规则，使用 fallback/:/命中规则 开发任务/).waitFor();
+   assert.deepEqual(JSON.parse(await branch.getByLabel('上游参与路由的结构化输入').textContent()),{'result.data.category':category});
+   assert.equal(await branch.getByText(/^实际启动 /).textContent(),'实际启动 Classifier → '+selected);
+   assert.equal(await branch.getByText(/^未选中 /).count(),2);
+   assert.match(await branch.getByText(/^未选中 科研任务/).textContent(),/Research/);
+   assert.equal(await monitor.getByLabel('工作流最终回答',{exact:true}).textContent(),selected.toUpperCase()+'_FINISHED');
+   await button('查看上游完整交付').click();
+   await monitor.getByText('结构化交付与候选文件',{exact:true}).click();
+   assert.equal(JSON.parse(await monitor.getByLabel('结构化结果',{exact:true}).textContent()).result.data.category,category);
+   const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);
+   const file=path.join(out,run.id+'.py');await download.saveAs(file);
+   assert.equal(fs.readFileSync(file,'utf8'),source);
+  }
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

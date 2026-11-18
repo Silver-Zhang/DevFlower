@@ -1045,13 +1045,13 @@ function App(){
  const activation=id=>{
   if(!scriptRun)return runSnapshot?.nodes?.find(a=>a.node===id);
   const events=scriptRun.events||[];
-  const decision=scriptRun.condition;
+  const decision=scriptRun.condition||scriptRun.router;
   if(decision){
    if(id===decision.node)return {state:'COMPLETED'};
-   const unselected=decision.selected_port==='true'?'false':'true';
-   if(decision.branches[unselected].includes(id))return {state:'SKIPPED'};
+   if(Object.entries(decision.branches).some(([port,path])=>port!==decision.selected_port&&path.includes(id)))
+    return {state:'SKIPPED'};
   }
-  if(!scriptRun.agents[id])return null;
+  if(!Object.hasOwn(scriptRun.agents,id))return null;
   const started=events.some(event=>event.node===id&&event.kind==='PROCESS_STARTED');
   const failed=events.some(event=>event.node===id&&event.kind==='CLI_FAILED');
   const cancelled=events.some(event=>event.node===id&&event.kind==='CANCELLED');
