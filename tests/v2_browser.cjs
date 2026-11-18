@@ -708,8 +708,12 @@ async function configure(name,round){await page.getByLabel('Agent 名称',{exact
   assert.match(await preview.locator('pre').textContent(),/'allowed_paths': \['nested\/delivery.txt'\]/);
   await preview.getByRole('button',{name:'关闭预览'}).click();
   await contract.selectOption('review');
+  assert.equal(await page.getByText(/输出字段合同|可报告的产物路径/).count(),0);
+  await page.getByRole('alert').filter({hasText:'此节点仍保存自定义输出字段或产物路径'}).waitFor();
   await check.click();
   await page.getByText(/Review v1 has fixed fields and an empty artifacts list/).waitFor();
+  await contract.selectOption('result');
+  assert.equal(await page.getByLabel('产物路径 1',{exact:true}).inputValue(),'nested/delivery.txt');
  });
  assert.equal(requests.some(r=>r.path.endsWith('/launch')||r.path.endsWith('/cancel')),false);
  assert.equal(requests.some(r=>/start|prepare|model|account|thread|turn|sessions/.test(r.path)),false,'M1 must not call native or legacy execution routes');assert.equal(errors.length,0,'Browser page errors: '+errors.join('; '));

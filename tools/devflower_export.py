@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a saved sequential canvas into one standalone native-CLI Python file.
+"""Compile a saved canvas into one standalone native-CLI Python file.
 
 Compilation is read-only and uses no model. This is an explicit native execution
 contract with its own native CLI permissions. V2 managed execution is separate.
@@ -31,6 +31,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
                        'cwd', 'session', 'skills', 'subagents', 'timeout', 'max_budget_usd',
                        'initial_prompt', 'round_prompt', 'output_prompt', 'native_profile'}
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
+REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
 
 
 def canonical(value):
@@ -131,7 +132,7 @@ def read_saved(database, workspace, draft_id, *, expected_revision=None):
         return graph, agents, space['path']
 
 
-def chain(document):
+def workflow_paths(document):
     if (not isinstance(document, dict) or type(document.get('version')) is not int
             or document['version'] != 1 or not isinstance(document.get('nodes'), list)
             or not isinstance(document.get('edges'), list) or not document['nodes']):
@@ -148,7 +149,7 @@ def chain(document):
         if ident in nodes:
             raise ExportError('Duplicate node: ' + ident)
         kind = node.get('kind', 'agent')
-        if kind not in ('start', 'agent', 'output'):
+        if kind not in ('start', 'agent', 'output', 'condition'):
             raise ExportError('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
         if kind == 'agent':
             allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
@@ -169,143 +170,202 @@ def chain(document):
         source, target = edge.get('source'), edge.get('target')
         if ident in edge_ids or source not in nodes or target not in nodes or source == target:
             raise ExportError('Duplicate or invalid edge: ' + ident)
-        if edge.get('source_port', 'out') != 'out' or edge.get('target_port', 'in') != 'in':
+        source_kind, target_kind = nodes[source].get('kind'), nodes[target].get('kind')
+        ports = ('true', 'false') if source_kind == 'condition' else ('out',)
+        if (edge.get('source_port', 'out') not in ports or edge.get('target_port', 'in') != 'in'
+                or source_kind == 'output' or target_kind == 'start'):
             raise ExportError('Unsupported port: ' + ident)
         transfer = edge.get('transfer', {})
-        terminal = nodes[source].get('kind') == 'start' or nodes[target].get('kind') == 'output'
-        modes = ('answer', 'none', 'envelope') if terminal else ('answer', 'none')
+        envelope = source_kind in ('start', 'condition') or target_kind in ('condition', 'output')
+        modes = ('answer', 'none', 'envelope') if envelope else ('answer', 'none')
         if not isinstance(transfer, dict) or set(transfer) - {'mode', 'max_chars'} or transfer.get('mode', 'answer') not in modes:
             raise ExportError('Unsupported handoff on ' + ident + '; structured data must not be silently discarded.')
         limit = transfer.get('max_chars')
         if limit is not None and (type(limit) is not int or limit < 1):
             raise ExportError('Invalid handoff limit: ' + ident)
-        if nodes[source].get('kind') == 'start' and transfer.get('mode') == 'none':
-            raise ExportError('Control-only Start is not supported by this export.')
+        if (source_kind == 'start' or target_kind == 'condition') and transfer.get('mode') == 'none':
+            raise ExportError('Start and Condition input require a data handoff: ' + ident)
         edge_ids.add(ident)
         incoming[target].append(edge)
         outgoing[source].append(edge)
+    conditions = [key for key, node in nodes.items() if node.get('kind') == 'condition']
+    if len(conditions) > 1:
+        raise ExportError('Native export supports at most one Condition.')
+    condition = conditions[0] if conditions else None
     roots = [key for key in nodes if not incoming[key]]
-    if len(roots) != 1 or any(len(incoming[key]) > 1 or len(outgoing[key]) > 1 for key in nodes):
-        raise ExportError('This first compiler supports one sequential chain, not fan-out/merge.')
-    ordered, seen, current = [], set(), roots[0]
-    while current is not None:
-        if current in seen:
-            raise ExportError('Cycle detected.')
-        seen.add(current)
-        ordered.append(nodes[current])
-        current = outgoing[current][0]['target'] if outgoing[current] else None
+    if len(roots) != 1:
+        raise ExportError('Expected one root; the graph is disconnected or cyclic.')
+    if any(len(incoming[key]) > 1 or (key != condition and len(outgoing[key]) > 1) for key in nodes):
+        raise ExportError('Only Condition may branch; shared nodes and branch merges are unsupported.')
+    seen = set()
+
+    def walk(current, stop=None):
+        path = []
+        while current != stop and current is not None:
+            if current in seen:
+                raise ExportError('Cycle or shared branch node: ' + current)
+            seen.add(current)
+            path.append(nodes[current])
+            current = outgoing[current][0]['target'] if outgoing[current] else None
+        return path, current
+
+    prefix, endpoint = walk(roots[0], condition)
+    branches = {}
+    if condition is not None:
+        if (endpoint != condition or not prefix or prefix[0].get('kind') != 'start'
+                or prefix[-1].get('kind', 'agent') != 'agent'):
+            raise ExportError('Condition requires a Start and a preceding candidate Reviewer.')
+        targets = {edge['source_port']: edge['target'] for edge in outgoing[condition]}
+        if len(outgoing[condition]) != 2 or targets.keys() != {'true', 'false'}:
+            raise ExportError('Condition requires exactly one true and one false output edge.')
+        if nodes[condition].get('config') != {'expression': REVIEW_CONDITION}:
+            raise ExportError('Native Condition requires result.verdict equals "accept".')
+        seen.add(condition)
+        for port in ('true', 'false'):
+            branch, _ = walk(targets[port], condition)
+            if not branch or branch[-1].get('kind') != 'output':
+                raise ExportError('Condition ' + port + ' must end at its own Output.')
+            branches[port] = branch
     if len(seen) != len(nodes):
-        raise ExportError('Disconnected or cyclic graph.')
-    for index, node in enumerate(ordered):
-        if node.get('kind') == 'start' and index != 0 or node.get('kind') == 'output' and index != len(ordered)-1:
-            raise ExportError('Start/Output must be endpoints.')
-    if not any(n.get('kind', 'agent') == 'agent' for n in ordered):
+        raise ExportError('Every node must be reachable from the root; disconnected or cyclic graph.')
+    if not any(n.get('kind', 'agent') == 'agent' for n in prefix):
         raise ExportError('Add at least one Agent.')
-    return name, ordered, incoming
+    return name, prefix, condition, branches, incoming
+
+
+def compile_agent(node, records, root, transfer, producer):
+    ident = node['id']
+    if 'agent_id' in node:
+        row = records.get(node['agent_id'])
+        if not row or row.get('id') != node['agent_id'] or row.get('revision') != node.get('agent_revision'):
+            raise ExportError(ident + ': missing or stale saved Agent revision.')
+        config = row['config']
+    else:
+        config = node
+    if not isinstance(config, dict):
+        raise ExportError(ident + ': invalid Agent configuration.')
+    if 'agent_id' in node:
+        known_fields(config, LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS, ident)
+    if 'execution' in config:
+        portable = {key: value for key, value in config.items() if key not in NODE_FIELDS - {'name'}}
+        # Node presentation metadata is separate from inline Agent settings.
+        portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths', 'native_output')}
+        validate_native_agent(portable)
+    provider = config.get('provider')
+    if provider not in ('codex', 'claude'):
+        raise ExportError(ident + ': configure Codex or Claude.')
+    if config.get('mode') == 'Plan' or config.get('native_profile') or config.get('skills'):
+        raise ExportError(ident + ': Plan transition, named profiles and selected Skill handles need explicit portable mapping; not exported.')
+    if config.get('session', {'kind': 'new'}) != {'kind': 'new'}:
+        raise ExportError(ident + ': existing managed sessions cannot be resumed by an independent script.')
+    cwd = Path(text(config.get('cwd') or str(root), 'Working directory'))
+    try:
+        relative = (cwd if cwd.is_absolute() else root / cwd).resolve().relative_to(root).as_posix()
+    except ValueError:
+        raise ExportError(ident + ': working directory is outside the exported project root.') from None
+    timeout = config.get('timeout')
+    validate_timeout(timeout)
+    budget = config.get('max_budget_usd')
+    if budget is not None and (provider != 'claude' or not isinstance(budget, str)
+                               or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', budget) or float(budget) <= 0):
+        raise ExportError(ident + ': unsupported native budget.')
+    identity = '\n'.join(text(config.get(key, ''), key) for key in ('role','responsibilities','background','goal'))
+    agent = dict(id=ident, name=text(node.get('name', ident), 'Node name'), provider=provider,
+                 model=text(config.get('model'), 'Model', optional=True),
+                 effort=text(config.get('effort'), 'Effort', optional=True), cwd=relative,
+                 role=identity.strip(), initial_prompt=text(config.get('initial_prompt',''), 'Initial prompt'),
+                 round_prompt=text(config.get('round_prompt',''), 'Node prompt'),
+                 output_prompt=text(config.get('output_prompt',''), 'Delivery prompt'),
+                 timeout=timeout, max_budget_usd=budget)
+    if 'native_output' in node:
+        if config.get('execution') != 'native-cli':
+            raise ExportError(ident + ': native output requires an explicit native-cli Agent.')
+        try:
+            spec = native_output_spec(node)
+        except OutputContractError as error:
+            raise ExportError(ident + ': ' + str(error)) from None
+        if any(not (Path(root) / path).is_relative_to(root / relative) for path in spec['allowed_paths']):
+            raise ExportError(ident + ': declared artifacts must be inside the producing Agent directory.')
+        if spec['kind'] == 'review':
+            upstream = producer.get('native_output', {})
+            if not upstream.get('allowed_paths') or transfer.get('mode') == 'none':
+                raise ExportError(ident + ': review requires a direct handoff from a structured producer with declared artifacts.')
+        agent['native_output'] = spec
+    elif node.get('output_contract') or node.get('artifact_paths'):
+        raise ExportError(ident + ': enable native output to export structured fields or artifact paths.')
+    return agent
 
 
 def compile_workflow(document, agents=None, workspace='.', *, native_config=False):
     """Pure code generation except reading the bundled fixed runtime template."""
     if native_config is not True:
         raise ExportError('Explicit --native-config required: exported calls use native CLI permissions, not V2 sandbox policy.')
-    name, ordered, incoming = chain(document)
-    records, normalized, calls, initial = agents or {}, [], [], ''
-    final_limit = None
+    name, prefix, condition, branches, incoming = workflow_paths(document)
+    records, normalized, calls, initial = agents or {}, {}, [], ''
     root = Path(workspace).resolve()
-    previous = None
-    for node in ordered:
-        kind, ident = node.get('kind', 'agent'), node['id']
-        if kind == 'start':
-            config = node.get('config', {})
-            if not isinstance(config, dict) or set(config) - {'instructions', 'initial_data'}:
-                raise ExportError('Unsupported Start configuration.')
-            instructions = text(config.get('instructions', ''), 'Start instructions')
-            raw_data = text(config.get('initial_data', ''), 'Start initial data')
-            data = 'Initial data\n' + canonical(json.loads(raw_data)) if raw_data.strip() else ''
-            initial = '\n\n'.join(value for value in (instructions, data) if value)
-            continue
-        if kind == 'output':
-            config = node.get('config', {})
-            if not isinstance(config, dict) or config.get('format', 'text') != 'text' or config.get('instructions') or set(config) - {'format', 'instructions'}:
-                raise ExportError('This export supports plain final-answer Output only.')
-            transfer = incoming[ident][0].get('transfer', {})
-            if transfer.get('mode') == 'none':
-                raise ExportError('Output requires data; control-only Output is not implemented.')
-            final_limit = transfer.get('max_chars')
-            continue
-        if 'agent_id' in node:
-            row = records.get(node['agent_id'])
-            if not row or row.get('id') != node['agent_id'] or row.get('revision') != node.get('agent_revision'):
-                raise ExportError(ident + ': missing or stale saved Agent revision.')
-            config = row['config']
-        else:
-            config = node
-        if not isinstance(config, dict):
-            raise ExportError(ident + ': invalid Agent configuration.')
-        if 'agent_id' in node:
-            known_fields(config, LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS, ident)
-        if 'execution' in config:
-            portable = {key: value for key, value in config.items() if key not in NODE_FIELDS - {'name'}}
-            # Node presentation metadata is separate from inline Agent settings.
-            portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths', 'native_output')}
-            validate_native_agent(portable)
-        provider = config.get('provider')
-        if provider not in ('codex', 'claude'):
-            raise ExportError(ident + ': configure Codex or Claude.')
-        if config.get('mode') == 'Plan' or config.get('native_profile') or config.get('skills'):
-            raise ExportError(ident + ': Plan transition, named profiles and selected Skill handles need explicit portable mapping; not exported.')
-        if config.get('session', {'kind': 'new'}) != {'kind': 'new'}:
-            raise ExportError(ident + ': existing managed sessions cannot be resumed by an independent script.')
-        cwd = Path(text(config.get('cwd') or str(root), 'Working directory'))
-        try:
-            relative = (cwd if cwd.is_absolute() else root / cwd).resolve().relative_to(root).as_posix()
-        except ValueError:
-            raise ExportError(ident + ': working directory is outside the exported project root.') from None
-        timeout = config.get('timeout')
-        validate_timeout(timeout)
-        budget = config.get('max_budget_usd')
-        if budget is not None and (provider != 'claude' or not isinstance(budget, str)
-                                   or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', budget) or float(budget) <= 0):
-            raise ExportError(ident + ': unsupported native budget.')
-        identity = '\n'.join(text(config.get(key, ''), key) for key in ('role','responsibilities','background','goal'))
-        agent = dict(id=ident, name=text(node.get('name', ident), 'Node name'), provider=provider,
-                     model=text(config.get('model'), 'Model', optional=True),
-                     effort=text(config.get('effort'), 'Effort', optional=True), cwd=relative,
-                     role=identity.strip(), initial_prompt=text(config.get('initial_prompt',''), 'Initial prompt'),
-                     round_prompt=text(config.get('round_prompt',''), 'Node prompt'),
-                     output_prompt=text(config.get('output_prompt',''), 'Delivery prompt'),
-                     timeout=timeout, max_budget_usd=budget)
-        transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
-        if 'native_output' in node:
-            if config.get('execution') != 'native-cli':
-                raise ExportError(ident + ': native output requires an explicit native-cli Agent.')
-            try:
-                spec = native_output_spec(node)
-            except OutputContractError as error:
-                raise ExportError(ident + ': ' + str(error)) from None
-            if any(not (Path(root) / path).is_relative_to(root / relative) for path in spec['allowed_paths']):
-                raise ExportError(ident + ': declared artifacts must be inside the producing Agent directory.')
-            if spec['kind'] == 'review':
-                upstream = normalized[-1].get('native_output', {}) if normalized else {}
-                if not upstream.get('allowed_paths') or transfer.get('mode') == 'none':
-                    raise ExportError(ident + ': review requires a direct handoff from a structured producer with declared artifacts.')
-            agent['native_output'] = spec
-        elif node.get('output_contract') or node.get('artifact_paths'):
-            raise ExportError(ident + ': enable native output to export structured fields or artifact paths.')
-        index = len(normalized)
-        normalized.append(agent)
-        if previous is None and transfer.get('max_chars') is not None:
-            calls.append('    if len(task) > ' + repr(transfer['max_chars']) + ':\n'
-                         "        raise WorkflowError('Saved Start handoff limit exceeded; no request sent.')")
-        source = 'None' if previous is None or transfer.get('mode') == 'none' else 'results[' + repr(previous) + ']'
-        calls.append('    results[' + repr(ident) + '] = invoke_agent(context, WORKFLOW[\'agents\'][' + str(index)
-                     + '], task, ' + source + ', ' + repr(transfer.get('max_chars')) + ')')
-        previous = ident
-    manifest = dict(version=1, compiler_version=4, name=name, policy='native-cli (not the V2 managed sandbox)',
-                    input=initial, agents=normalized,
-                    source_sha256=sha256(canonical(document).encode()).hexdigest())
+
+    def compile_path(path, previous=None, *, indent='    '):
+        nonlocal initial
+        for node in path:
+            kind, ident = node.get('kind', 'agent'), node['id']
+            transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
+            limit = transfer.get('max_chars')
+            if kind == 'start':
+                config = node.get('config', {})
+                if not isinstance(config, dict) or set(config) - {'instructions', 'initial_data'}:
+                    raise ExportError('Unsupported Start configuration.')
+                instructions = text(config.get('instructions', ''), 'Start instructions')
+                raw_data = text(config.get('initial_data', ''), 'Start initial data')
+                data = 'Initial data\n' + canonical(json.loads(raw_data)) if raw_data.strip() else ''
+                initial = '\n\n'.join(value for value in (instructions, data) if value)
+                continue
+            if kind == 'output':
+                config = node.get('config', {})
+                if (not isinstance(config, dict) or config.get('format', 'text') != 'text'
+                        or config.get('instructions') or set(config) - {'format', 'instructions'}):
+                    raise ExportError('This export supports plain final-answer Output only.')
+                if transfer.get('mode') == 'none':
+                    raise ExportError('Output requires data; control-only Output is not implemented.')
+                return previous, limit
+            actual_source = incoming[ident][0]['source'] if incoming[ident] else None
+            agent = compile_agent(node, records, root, transfer, normalized.get(actual_source, {}))
+            index = len(normalized)
+            normalized[ident] = agent
+            if previous is None and limit is not None:
+                calls.append(indent + f'if len(task) > {limit}:\n'
+                             + indent + "    raise WorkflowError('Saved Start handoff limit exceeded; no request sent.')")
+            source = 'None' if previous is None or transfer.get('mode') == 'none' else f'results[{previous!r}]'
+            calls.append(indent + f"results[{ident!r}] = invoke_agent(context, WORKFLOW['agents'][{index}], "
+                         f"task, {source}, {limit!r})")
+            previous = ident
+        return previous, None
+
+    def finish_path(previous, limit, indent):
+        if limit is not None:
+            calls.append(indent + f"if len(results[{previous!r}]['answer']) > {limit}:\n"
+                         + indent + "    raise WorkflowError('Saved Output limit exceeded; full answer retained in node logs.')")
+        calls.append(indent + f'return results[{previous!r}]')
+
+    reviewer, final_limit = compile_path(prefix)
+    manifest = dict(version=1, compiler_version=5, name=name, policy='native-cli (not the V2 managed sandbox)',
+                    input=initial, source_sha256=sha256(canonical(document).encode()).hexdigest())
+    if condition is None:
+        finish_path(reviewer, final_limit, '    ')
+    else:
+        if normalized[reviewer].get('native_output', {}).get('kind') != 'review':
+            raise ExportError('Condition requires a direct handoff from a candidate Reviewer v1.')
+        producer = incoming[reviewer][0]['source']
+        manifest['condition'] = dict(node=condition, reviewer=reviewer,
+                                     branches={port: [node['id'] for node in path] for port, path in branches.items()})
+        limit = incoming[condition][0].get('transfer', {}).get('max_chars')
+        calls.append(f"    if evaluate_condition(context, WORKFLOW['condition'], results[{reviewer!r}], "
+                     f"results[{producer!r}]['candidate'], {limit!r}):")
+        finish_path(*compile_path(branches['true'], reviewer, indent='        '), '        ')
+        calls.append('    else:')
+        finish_path(*compile_path(branches['false'], reviewer, indent='        '), '        ')
+    manifest['agents'] = list(normalized.values())
     runtime = Path(__file__).with_name('workflow_script_runtime.py').read_text(encoding='utf-8')
-    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v4.\n'
+    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v5.\n'
     source += '# Native CLI settings/permissions apply. Review before execution. No GUI/service dependency.\n'
     contract = Path(__file__).with_name('workflow_output_contract.py').read_text(encoding='utf-8')
     runtime, replacements = re.subn(r'^from workflow_output_contract import \(.*\n[^\n]+# EMBED_OUTPUT_CONTRACT$',
@@ -313,11 +373,7 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
     if replacements != 1:
         raise ExportError('Workflow output contract template marker is missing or duplicated.')
     source += runtime + '\n\nWORKFLOW = ' + pprint.pformat(manifest, width=100, sort_dicts=False) + '\n\n'
-    source += 'def run_workflow(context, task):\n    results = {}\n' + '\n'.join(calls)
-    if final_limit is not None:
-        source += '\n    if len(results[' + repr(previous) + "][\'answer\']) > " + repr(final_limit) + ':\n'
-        source += "        raise WorkflowError('Saved Output limit exceeded; full answer retained in node logs.')\n"
-    source += '\n    return results[' + repr(previous) + ']\n\n\n'
+    source += 'def run_workflow(context, task):\n    results = {}\n' + '\n'.join(calls) + '\n\n\n'
     source += "if __name__ == '__main__':\n    raise SystemExit(script_main(WORKFLOW, run_workflow))\n"
     compile(source, '<workflow>', 'exec')
     slug = re.sub(r'[^\w-]+', '_', name, flags=re.UNICODE).strip('_-')[:64] or 'workflow'

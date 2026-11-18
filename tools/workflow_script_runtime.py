@@ -138,6 +138,38 @@ def _cancel_requested(fd):
     return True
 
 
+def review_port(verdict):
+    if verdict == 'accept':
+        return 'true'
+    if verdict == 'needs_correction':
+        return 'false'
+    raise WorkflowError('Unexpected candidate review verdict.')
+
+
+def recorded_path(manifest, events):
+    agents = [agent['id'] for agent in manifest['agents']]
+    condition = manifest.get('condition')
+    if not condition:
+        return agents, None
+    branches = condition['branches']
+    branch_nodes = branch_node_ids(condition)
+    prefix = [node for node in agents if node not in branch_nodes]
+    expected, completed, decision = prefix, [], None
+    for event in events:
+        kind, node = event['kind'], event.get('node')
+        if kind == 'CONDITION_EVALUATED':
+            port = review_port(event['input_verdict'])
+            if decision or node != condition['node'] or completed != prefix or event.get('selected_port') != port:
+                raise WorkflowError('Condition decision does not match the completed review path.')
+            expected = prefix + branches[port][:-1]
+            decision = dict(event, branches=branches)
+        if kind in ('CALL_INTENT', 'PROCESS_STARTED', 'NODE_COMPLETED') and node in branch_nodes and node not in expected:
+            raise WorkflowError('Execution evidence belongs to an unselected branch: ' + node)
+        if kind == 'NODE_COMPLETED':
+            completed.append(node)
+    return expected, decision
+
+
 def inspect_run(manifest, directory, *, cancel=False, details=False):
     """Observe the same artifact, never replay it. Cancellation is cooperative.
 
@@ -193,12 +225,14 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     os.fsync(fd)
             snapshot['cancel_requested'] = _cancel_requested(fd)
             completed = [row for row in events if row['kind'] == 'NODE_COMPLETED']
-            expected = [agent['id'] for agent in manifest['agents']]
-            if [row.get('node') for row in completed] != expected[:len(completed)] or len(completed) > len(expected):
+            expected, decision = recorded_path(manifest, events)
+            if [row.get('node') for row in completed] != expected[:len(completed)]:
                 raise WorkflowError('Node-completion evidence is inconsistent.')
             reviews = []
             producer = None
-            for row, agent in zip(completed, manifest['agents']):
+            agents = {agent['id']: agent for agent in manifest['agents']}
+            for row in completed:
+                agent = agents[row['node']]
                 if _evidence_sha256(fd, row['node'] + '/answer.txt') != row.get('answer_sha256'):
                     raise WorkflowError('Recorded node answer has changed: ' + row['node'])
                 if spec := agent.get('native_output'):
@@ -209,6 +243,11 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                                 or row.get('verdict') != structured['result']['verdict']
                                 or structured['result']['candidate_sha256'] != candidate['candidate_sha256']):
                             raise WorkflowError('Review evidence is inconsistent: ' + row['node'])
+                        if decision and row['node'] == manifest['condition']['reviewer']:
+                            if (decision.get('candidate_sha256') != candidate['candidate_sha256']
+                                    or decision['input_verdict'] != row['verdict']):
+                                raise WorkflowError('Condition evidence does not match the verified candidate review.')
+                            snapshot['condition'] = decision
                         reviews.append((row['node'], candidate))
                         producer = None
                     elif spec['allowed_paths']:
@@ -223,18 +262,22 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                 if last['kind'] == 'RUN_COMPLETED':
                     if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
                         raise WorkflowError('Final result is missing or changed.')
+                    if manifest.get('condition') and (not decision or last['result_sha256'] != completed[-1]['answer_sha256']):
+                        raise WorkflowError('Final result is not bound to a selected branch.')
+                    candidates_current = True
                     for node, candidate in reviews:
-                        paths = [file['path'] for file in candidate['manifest']['files']]
                         try:
                             [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
-                            current = candidate_record(workspace, paths)
+                            current = candidate_is_current(workspace, candidate)
                         except OutputContractError:
-                            current = None
-                        if current != candidate:
-                            snapshot['candidate_current'] = False
-                            raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
+                            current = False
+                        if not current:
+                            candidates_current = False
+                            if not decision or node != manifest['condition']['reviewer']:
+                                snapshot['candidate_current'] = False
+                                raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
                     if reviews:
-                        snapshot['candidate_current'] = True
+                        snapshot['candidate_current'] = candidates_current
                     snapshot.update(status='COMPLETED', result_file=str(directory / 'result.txt'))
                 elif last.get('status') in ('CANCELLED', 'STOPPED'):
                     snapshot.update(status=last['status'], reason=last.get('reason', ''))
@@ -341,6 +384,33 @@ def write_structured_evidence(directory, filename, value):
     return sha256(raw.encode('utf-8')).hexdigest()
 
 
+def candidate_is_current(workspace, candidate):
+    paths = [file['path'] for file in candidate['manifest']['files']]
+    return candidate_record(workspace, paths) == candidate
+
+
+def evaluate_condition(context, condition, review, candidate, limit):
+    """Consume the result of a successful native review in this invocation."""
+    _check_cancel(context)
+    node = condition['node']
+    try:
+        if limit is not None and len(review['answer']) > limit:
+            raise WorkflowError('Saved Condition handoff limit exceeded.')
+        result = review['structured']['result']
+        if review['node'] != condition['reviewer'] or result['candidate_sha256'] != candidate['candidate_sha256']:
+            raise WorkflowError('Condition requires the verified review for this candidate.')
+        if not candidate_is_current(context['workspace'], candidate):
+            raise WorkflowError('Candidate files changed before Condition evaluation.')
+        port = review_port(result['verdict'])
+    except (WorkflowError, OutputContractError) as error:
+        _event(context, 'CONDITION_REJECTED', node=node, reason=str(error))
+        raise WorkflowError(str(error)) from None
+    _check_cancel(context)
+    _event(context, 'CONDITION_EVALUATED', node=node, input_verdict=result['verdict'],
+           selected_port=port, candidate_sha256=candidate['candidate_sha256'])
+    return port == 'true'
+
+
 def verify_agent_output(context, directory, spec, answer, candidate):
     envelope = validate_structured_answer(answer, spec, candidate)
     workspace = context['workspace']
@@ -370,8 +440,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
     if spec and spec['kind'] == 'review':
         candidate = (upstream or {}).get('candidate')
         try:
-            if not candidate or candidate_record(context['workspace'], [
-                    row['path'] for row in candidate['manifest']['files']]) != candidate:
+            if not candidate or not candidate_is_current(context['workspace'], candidate):
                 raise OutputContractError('Candidate changed before review dispatch.')
         except OutputContractError as error:
             _event(context, 'OUTPUT_CONTRACT_FAILED', node=agent['id'], reason=str(error))
@@ -486,11 +555,19 @@ def agent_directory(workspace, agent):
     return path
 
 
+def branch_node_ids(condition):
+    return {node for path in condition['branches'].values() for node in path} if condition else set()
+
+
 def prepare_calls(manifest, workspace, *, dry_run=False):
     workspace = (workspace or Path.cwd()).resolve(strict=True)
     if not workspace.is_dir():
         raise WorkflowError('Workspace is not a directory.')
+    deferred = branch_node_ids(manifest.get('condition'))
     for agent in manifest['agents']:
+        # Branch prerequisites are checked on invocation, only for the selected path.
+        if agent['id'] in deferred:
+            continue
         agent_directory(workspace, agent)
         if not dry_run and shutil.which(agent['provider']) is None:
             raise WorkflowError('Missing CLI: ' + agent['provider'])
@@ -524,10 +601,16 @@ def script_main(manifest, run_workflow):
             raise WorkflowError('Choose --task or --task-file, not both.')
         if args.dry_run:
             workspace = prepare_calls(manifest, args.workspace, dry_run=True)
-            print(json.dumps({'name': manifest['name'], 'policy': manifest['policy'],
-                              'calls': [{'node': a['id'], 'cwd': str(agent_directory(workspace, a)),
-                                         'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
-                                        for a in manifest['agents']]}, ensure_ascii=False, indent=2))
+            condition = manifest.get('condition')
+            deferred = branch_node_ids(condition)
+            plan = {'name': manifest['name'], 'policy': manifest['policy'],
+                    'calls': [{'node': a['id'], 'cwd': str(workspace / a['cwd'] if a['id'] in deferred
+                                                          else agent_directory(workspace, a)),
+                               'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
+                              for a in manifest['agents']]}
+            if condition:
+                plan['condition'] = condition
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:
             if args.run_dir:

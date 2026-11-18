@@ -88,11 +88,18 @@ function CompoundPredicate({value,onChange,Field,depth=0}){
  </>;
 }
 
-export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,Field}){
+export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,nativeScript,Field}){
  const type=nodeType(node);
+ const nativeCondition=nativeScript&&nodeKind(node)==='condition';
+ const {field,op,value}=node.config.expression||{};
  return <>
   <p className="session-note">{runtimeBlock(node)||'此节点由工作流调度器按已保存配置执行。'}</p>
-  {['condition','router','validation'].includes(nodeKind(node))&&<p className="field-note">
+  {nativeCondition&&<p className="field-note">
+   上游连接「候选审核 v1」。<code>accept</code> 走满足分支，<code>needs_correction</code> 走不满足分支。
+   {(field!=='result.verdict'||op!=='equals'||value!=='accept')&&<button type="button"
+    onClick={()=>onChange({expression:{field:'result.verdict',op:'equals',value:'accept'}})}>使用候选审核条件</button>}
+  </p>}
+  {!nativeCondition&&['condition','router','validation'].includes(nodeKind(node))&&<p className="field-note">
    字段路径从上游节点数据读取。开始节点的初始 JSON 位于 <code>result</code> 下，例如用 <code>result.ok</code> 读取 <code>{'{"ok":true}'}</code> 中的 <code>ok</code>。
   </p>}
   {Object.entries(type.fields).map(([key,field])=>{

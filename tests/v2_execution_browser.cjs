@@ -468,5 +468,87 @@ with sqlite3.connect(sys.argv[1]) as db:
   await fallback.click();
   assert.equal(await name.inputValue(),'Beta 保存后修改');
  });
+ // Use a fresh browser profile for native execution. The managed fault cases
+ // deliberately leave durable launch intents in the previous profile.
+ await context.tracing.stop({path:path.join(out,'managed-trace.zip')});
+ await context.close();
+ context=await browser.newContext({viewport:{width:1440,height:900}});
+ page=await context.newPage();page.setDefaultTimeout(10000);
+ page.on('pageerror',error=>errors.push(error.message));
+ page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/'))requests.push({path:url.pathname,method:request.method()})});
+ await context.tracing.start({screenshots:true,snapshots:true});
+ await page.goto(process.env.V2_URL);
+ await test('native-condition-compile-launch-and-distinguish-selected-branches',async()=>{
+  const button=name=>page.getByRole('button',{name,exact:true});
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const nodes=[];
+  for(const [name,provider,cwd] of [['Developer','codex','.'],['Reviewer','claude','.'],
+    ['Success','codex','success'],['Correction','claude','correction']]){
+   const agent=await api('agents/save',{workspace,id:null,expected:null,session_revision:null,
+    config:{execution:'native-cli',name,provider,cwd:path.join(process.env.V2_WORKSPACES,'A',cwd),
+     role:name,round_prompt:'Fixture',output_prompt:'Deliver'}});
+   assert(agent.revision,JSON.stringify(agent));
+   nodes.push({id:name,name,kind:'agent',agent_id:agent.id,agent_revision:agent.revision,position:{x:200+nodes.length*250,y:170}});
+  }
+  nodes[0].native_output={version:1,kind:'result'};nodes[0].artifact_paths=['a.py','b.py'];
+  nodes[1].native_output={version:1,kind:'review'};
+  for(const [id,kind,x,y,config] of [['Start','start',0,170,{}],['Gate','condition',700,0,{}],
+    ['Yes','output',1200,0,{}],['No','output',1200,300,{}]]){
+   nodes.push({id,name:id,kind,config_version:1,position:{x,y},config});
+  }
+  const edges=[['Start','Developer'],['Developer','Reviewer'],['Reviewer','Gate'],
+   ['Success','Yes'],['Correction','No']].map(([source,target],i)=>
+   ({id:'edge'+i,source,target,source_port:'out',target_port:'in'}));
+  const name='P2-A 条件夹具';
+  const draft=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,nodes,edges}});
+  assert(draft.revision,JSON.stringify(draft));
+  await page.reload();
+  await page.locator('.workspace-link').filter({hasText:'A'}).click();
+  await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name,exact:true}).click();
+  await page.getByLabel('适应画布',{exact:true}).click();await node('Gate');
+  await button('使用候选审核条件').click();
+  assert.equal(await page.getByLabel('判定字段',{exact:true}).inputValue(),'result.verdict');
+  for(const [port,target] of [['true','Success'],['false','Correction']]){
+   await page.getByLabel('源输出端口',{exact:true}).selectOption(port);
+   await page.getByLabel('下游节点',{exact:true}).selectOption(target);
+   await button('连接节点').click();
+  }
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  await page.reload();await button('检查').click();
+  await page.getByText('原生脚本编译通过。检查未启动 CLI。',{exact:true}).waitFor();
+  await page.getByLabel('关闭检查结果',{exact:true}).click();
+  await button('预览 Python').click();
+  const preview=page.getByRole('dialog',{name:'Python 脚本预览'});
+  const script=await preview.locator('pre').textContent();
+  assert.match(script,/if evaluate_condition\(context, WORKFLOW\['condition'\]/);
+  await preview.getByRole('button',{name:'关闭预览'}).click();
+  for(const [selected,skipped,verdict,task] of [['Success','Correction','accept',''],
+    ['Correction','Success','needs_correction','P2_FIXTURE_CORRECTION']]){
+   if(task){
+    await button('编辑草稿').click();
+    const context=page.getByLabel('本次运行上下文',{exact:true}).locator('summary');
+    await context.click();
+    await page.getByLabel('本次任务',{exact:true}).fill(task);
+    await context.click();
+   }
+   const [response]=await Promise.all([
+    page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')), button('启动').click()]);
+   const {run}=await response.json();
+   assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+   const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
+   if(!await monitor.isVisible())await button('运行检查器').click();
+   const branch=monitor.getByRole('region',{name:'条件分支'});
+   await branch.getByText(verdict,{exact:true}).waitFor();
+   assert.match(await branch.getByText(/^未选中 /).textContent(),new RegExp(skipped));
+   assert.equal(await branch.getByText(/^实际启动 /).textContent(),'实际启动 Developer → Reviewer → '+selected);
+   assert.equal(await monitor.getByLabel('工作流最终回答',{exact:true}).textContent(),selected.toUpperCase()+'_FINISHED');
+   await monitor.getByLabel('查看证据').selectOption({label:skipped+'（分支未选中）'});
+   await monitor.getByText('此 Agent 所在分支未选中。',{exact:true}).waitFor();
+   assert.equal(await monitor.getByLabel('实际请求（含上游交接）',{exact:true}).count(),0);
+   const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);
+   const filename=path.join(out,run.id+'.py');await download.saveAs(filename);
+   assert.equal(fs.readFileSync(filename,'utf8'),script);
+  }
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

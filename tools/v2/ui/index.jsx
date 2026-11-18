@@ -1044,8 +1044,14 @@ function App(){
  const runSourceDraft=runDraftId&&drafts.find(row=>row.workspace===workspace?.id&&row.id===runDraftId);
  const activation=id=>{
   if(!scriptRun)return runSnapshot?.nodes?.find(a=>a.node===id);
-  if(!scriptRun.agents[id])return null;
   const events=scriptRun.events||[];
+  const decision=scriptRun.condition;
+  if(decision){
+   if(id===decision.node)return {state:'COMPLETED'};
+   const unselected=decision.selected_port==='true'?'false':'true';
+   if(decision.branches[unselected].includes(id))return {state:'SKIPPED'};
+  }
+  if(!scriptRun.agents[id])return null;
   const started=events.some(event=>event.node===id&&event.kind==='PROCESS_STARTED');
   const failed=events.some(event=>event.node===id&&event.kind==='CLI_FAILED');
   const cancelled=events.some(event=>event.node===id&&event.kind==='CANCELLED');
@@ -1371,7 +1377,8 @@ function App(){
   {!readOnly&&(n||e)&&<aside className="inspector" aria-label={n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):'连线配置'}><header><div><small>{n?nodeType(n).english:'连接'}</small><h2>{n?.name||'Agent 交接'}</h2></div><button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button></header>
    {n?<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'} note={n.agent_id?'此名称用于画布节点。':undefined}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
-     bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
+     bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} nativeScript={nativeScript}
+     connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<section className="bound-agent" aria-label="已绑定的 Agent 配置">
      <h3>已绑定的 Agent 配置</h3>
      {boundAgent&&<strong>{boundAgent.config.name}</strong>}
@@ -1407,7 +1414,12 @@ function App(){
       </select>
      </Field>}
      {n.native_output?.kind==='result'&&<p className="field-note">输出字段路径以 result. 开头，例如 result.data.score。</p>}
-     {n.native_output?.kind==='review'&&<p className="field-note">直接连接声明了产物的结构化 Agent。审核使用固定字段和空产物列表。</p>}
+     {n.native_output?.kind==='review'?<>
+      <p className="field-note">直接连接声明了产物的结构化 Agent。审核使用固定字段和空产物列表。</p>
+      {Boolean(n.output_contract?.length||n.artifact_paths?.length)&&<p className="error-text" role="alert">
+       此节点仍保存自定义输出字段或产物路径。切回「结构化结果 v1」，清除这些配置后再选择「候选审核 v1」。
+      </p>}
+     </>:<>
      <ContractEditor label="输出" rows={n.output_contract} maxRows={32} maxFieldLength={200}
       onChange={rows=>updateNode(n.id,{output_contract:rows})}/>
      <details className="contract-editor"><summary>可报告的产物路径 · {n.artifact_paths?.length||0} 项</summary>
@@ -1421,6 +1433,7 @@ function App(){
       <Button disabled={(n.artifact_paths?.length||0)>=8}
        onClick={()=>updateNode(n.id,{artifact_paths:[...(n.artifact_paths||[]),'']})}>添加产物路径</Button>
      </details>
+     </>}
     </>}
     <NodeConnections node={n} graph={doc} onConnect={connect} Field={Field}/>
     {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}

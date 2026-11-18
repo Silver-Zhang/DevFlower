@@ -12,6 +12,7 @@ import unittest
 from devflower_export import ExportError, compile_workflow
 from workflow_output_contract import (OutputContractError, candidate_record, output_json,
                                       validate_structured_answer)
+from workflow_script_runtime import WorkflowError, _run_directory, evaluate_condition
 
 
 def graph():
@@ -26,11 +27,48 @@ def graph():
     ], edges=[dict(id='handoff', source='Developer', target='Reviewer')])
 
 
+def condition_graph():
+    document = graph()
+    document['nodes'] += [
+        dict(id='Start', kind='start'),
+        dict(id='Condition', kind='condition', config={'expression': {
+            'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}}),
+        dict(id='Success', kind='agent', provider='codex', cwd='success'),
+        dict(id='Correction', kind='agent', provider='claude', cwd='correction'),
+        dict(id='SuccessOutput', kind='output'), dict(id='CorrectionOutput', kind='output'),
+    ]
+    document['edges'] += [
+        dict(id='entry', source='Start', target='Developer'),
+        dict(id='decision', source='Reviewer', target='Condition'),
+        dict(id='yes', source='Condition', target='Success', source_port='true'),
+        dict(id='no', source='Condition', target='Correction', source_port='false'),
+        dict(id='accepted', source='Success', target='SuccessOutput'),
+        dict(id='rejected', source='Correction', target='CorrectionOutput'),
+    ]
+    return document
+
+
 FAKE = r"""from pathlib import Path
 import json, os, sys, time
 program = Path(sys.argv[0]).name
 mode = os.environ.get('CONTRACT_FIXTURE', '')
 prompt = sys.stdin.read()
+if 'P2_FIXTURE_CORRECTION' in prompt:
+    mode = 'correction'
+department = prompt.splitlines()[1]
+if department in ('Success', 'Correction'):
+    workspace = Path.cwd().parent
+    with (workspace/'calls.log').open('a') as calls:
+        calls.write(department+'\n')
+    delivered = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])['structured']['result']
+    assert delivered['verdict'] == ('accept' if department == 'Success' else 'needs_correction')
+    assert len(delivered['candidate_sha256']) == 64
+    if department == 'Correction':
+        (workspace/'a.py').write_text('corrected after decision')
+        print(json.dumps(dict(type='result', is_error=False, result='CORRECTION_FINISHED')))
+    else:
+        Path(sys.argv[3]).write_text('SUCCESS_FINISHED')
+    sys.exit(0)
 with Path('calls.log').open('a') as calls:
     calls.write(program+'\n')
 if program == 'codex':
@@ -44,6 +82,8 @@ if program == 'codex':
                 'artifacts':[] if mode == 'empty' else ['b.py','a.py']}
     Path(sys.argv[3]).write_text(json.dumps(delivery))
 else:
+    if mode == 'reviewer-failure':
+        sys.exit(9)
     candidate = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])['candidate']
     assert [file['path'] for file in candidate['manifest']['files']] == ['a.py','b.py']
     if mode == 'mutate':
@@ -67,6 +107,15 @@ class ContractTests(unittest.TestCase):
         self.root = Path(folder.name)
         self.workspace = self.root / 'project'
         self.workspace.mkdir()
+
+    def install_cli_fixture(self):
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        for name in ('codex', 'claude'):
+            exe = bin_dir / name
+            exe.write_text('#!' + sys.executable + '\n' + FAKE)
+            exe.chmod(0o700)
+        return bin_dir
 
     def test_result_contract_strict_json_and_types(self):
         valid = '{"result":{"schema_version":1,"summary":"done","data":{"done":true}},"artifacts":[]}'
@@ -140,12 +189,7 @@ class ContractTests(unittest.TestCase):
                 compile_workflow(doc, workspace=self.workspace, native_config=True)
 
     def test_real_subprocess_handoff_outcomes_and_candidate_drift(self):
-        bin_dir = self.root / 'bin'
-        bin_dir.mkdir()
-        for name in ('codex', 'claude'):
-            exe = bin_dir / name
-            exe.write_text('#!' + sys.executable + '\n' + FAKE)
-            exe.chmod(0o700)
+        bin_dir = self.install_cli_fixture()
         doc = graph()
         doc['nodes'][0]['timeout'] = 3
         filename, source = compile_workflow(doc, workspace=self.workspace, native_config=True)
@@ -194,3 +238,121 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual(changed['status'], 'RECOVERY_REQUIRED')
                     self.assertFalse(changed['candidate_current'])
                     self.assertTrue((run / 'Reviewer' / 'structured.json').is_file())
+
+    def test_condition_executes_only_selected_branch_and_verifies_journal(self):
+        bin_dir = self.install_cli_fixture()
+        doc = condition_graph()
+        # Non-topological input order exercises topology and canonical true/false emission.
+        doc['nodes'].reverse()
+        doc['edges'].reverse()
+        filename, source = compile_workflow(doc, workspace=self.workspace, native_config=True)
+        self.assertEqual((filename, source), compile_workflow(doc, workspace=self.workspace, native_config=True))
+        self.assertIn("if evaluate_condition(context, WORKFLOW['condition']", source)
+        script = self.root / filename
+        script.write_text(source)
+        for mode, selected, port in (('accept', 'Success', 'true'), ('correction', 'Correction', 'false'),
+                                     ('reviewer-failure', None, None), ('mutate', None, None), ('mismatch', None, None)):
+            with self.subTest(mode=mode):
+                project = self.root / mode
+                project.mkdir()
+                if selected:
+                    # The other branch has a missing working directory, which cannot block this run.
+                    (project / selected.lower()).mkdir()
+                run = project / 'run'
+                command = [sys.executable, '-I', str(script), '--run-dir', str(run)]
+                env = dict(os.environ, PATH=str(bin_dir), CONTRACT_FIXTURE=mode)
+                child = subprocess.run([*command, '--workspace', str(project)], env=env,
+                                       cwd=self.root, capture_output=True, timeout=10)
+                self.assertEqual(child.returncode, 0 if selected else 1, child.stderr.decode())
+                status = json.loads(subprocess.check_output([*command, '--status', '--details'], cwd=self.root))
+                self.assertEqual(status['status'], 'COMPLETED' if selected else 'STOPPED')
+                calls = ['codex', 'claude'] + ([selected] if selected else [])
+                self.assertEqual((project/'calls.log').read_text().splitlines(), calls)
+                events = status['events']
+                started = [event['node'] for event in events if event['kind'] == 'PROCESS_STARTED']
+                self.assertEqual(started, ['Developer', 'Reviewer'] + ([selected] if selected else []))
+                self.assertEqual(sum(event['kind'] == 'CONDITION_EVALUATED' for event in events), int(bool(selected)))
+                if not selected:
+                    self.assertNotIn('condition', status)
+                    self.assertFalse((run/'result.txt').exists())
+                    continue
+                decision = status['condition']
+                self.assertEqual(decision['selected_port'], port)
+                self.assertEqual(decision['branches'][port], [selected, selected+'Output'])
+                self.assertEqual(status['completed_nodes'], started)
+                self.assertEqual(status['candidate_current'], mode == 'accept')
+                self.assertEqual((run/'result.txt').read_text(), selected.upper()+'_FINISHED')
+                journal = run / 'events.jsonl'
+                wrong = 'false' if port == 'true' else 'true'
+                events[-1:-1] = [dict(kind='CALL_INTENT', node=decision['branches'][wrong][0])]
+                journal.write_text(''.join(json.dumps(event)+'\n' for event in events))
+                damaged = json.loads(subprocess.check_output([*command, '--status'], cwd=self.root))
+                self.assertEqual(damaged['status'], 'RECOVERY_REQUIRED')
+                self.assertIn('unselected branch', damaged['reason'])
+
+    def test_condition_rechecks_candidate_after_the_review_already_passed(self):
+        artifact = self.workspace / 'a.py'
+        artifact.write_text('reviewed contents')
+        candidate = candidate_record(self.workspace, ['a.py'])
+        envelope = dict(result=dict(schema_version=1, verdict='accept', issues=[], summary='Checked',
+                                    candidate_sha256=candidate['candidate_sha256']), artifacts=[])
+        structured = validate_structured_answer(output_json(envelope), dict(kind='review', version=1, fields=[]), candidate)
+        artifact.write_text('changed after review and before decision')
+        with _run_directory(self.root) as fd, self.assertRaisesRegex(WorkflowError, 'before Condition evaluation'):
+            evaluate_condition(dict(directory_fd=fd, directory=self.root, workspace=self.workspace),
+                               dict(node='Condition', reviewer='Reviewer'),
+                               dict(node='Reviewer', structured=structured), candidate, None)
+        event = json.loads((self.root/'events.jsonl').read_text())
+        self.assertEqual(event['kind'], 'CONDITION_REJECTED')
+
+    def test_condition_compiler_rejects_invalid_topology_and_expression(self):
+        for mode in ('multiple', 'cycle', 'merge', 'port', 'missing-output', 'unreachable',
+                     'no-start', 'no-review', 'expression', 'no-handoff', 'router'):
+            with self.subTest(mode=mode), self.assertRaises(ExportError):
+                doc = condition_graph()
+                nodes = {node['id']: node for node in doc['nodes']}
+                edges = {edge['id']: edge for edge in doc['edges']}
+                if mode == 'multiple':
+                    nodes['Success']['kind'] = 'condition'
+                    nodes['Success'].pop('provider')
+                    nodes['Success'].pop('cwd')
+                    edges['accepted']['source_port'] = 'true'
+                elif mode == 'cycle':
+                    edges['accepted']['target'] = 'Condition'
+                elif mode == 'merge':
+                    edges['rejected']['target'] = 'SuccessOutput'
+                elif mode == 'port':
+                    edges['no']['source_port'] = 'true'
+                elif mode == 'missing-output':
+                    nodes['CorrectionOutput']['kind'] = 'agent'
+                elif mode == 'unreachable':
+                    doc['nodes'].append(dict(id='Orphan', kind='agent'))
+                elif mode == 'no-start':
+                    doc['nodes'].remove(nodes['Start'])
+                    doc['edges'].remove(edges['entry'])
+                elif mode == 'no-review':
+                    nodes['Reviewer'].pop('native_output')
+                elif mode == 'expression':
+                    nodes['Condition']['config']['expression']['op'] = 'contains'
+                elif mode == 'no-handoff':
+                    edges['decision']['transfer'] = {'mode': 'none'}
+                elif mode == 'router':
+                    nodes['Condition']['kind'] = 'router'
+                compile_workflow(doc, workspace=self.workspace, native_config=True)
+
+    def test_condition_branch_can_go_directly_to_output(self):
+        doc = condition_graph()
+        doc['nodes'] = [node for node in doc['nodes'] if node['id'] not in ('Success', 'Correction')]
+        doc['edges'] = [dict(edge, target=edge['target']+'Output') if edge['source']=='Condition' else edge
+                        for edge in doc['edges'] if edge['source'] not in ('Success', 'Correction')]
+        filename, source = compile_workflow(doc, workspace=self.workspace, native_config=True)
+        script = self.root / filename
+        script.write_text(source)
+        env = dict(os.environ, PATH=str(self.install_cli_fixture()))
+        run = self.root / 'direct'
+        command = [sys.executable, '-I', str(script), '--run-dir', str(run)]
+        output = subprocess.check_output([*command, '--workspace', str(self.workspace)], env=env)
+        status = json.loads(subprocess.check_output([*command, '--status']))
+        self.assertEqual(status['condition']['branches']['true'], ['SuccessOutput'])
+        self.assertEqual(status['completed_nodes'], ['Developer', 'Reviewer'])
+        self.assertEqual(json.loads(output)['result']['verdict'], 'accept')
