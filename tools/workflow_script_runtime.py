@@ -5,7 +5,7 @@ SDK. Native CLI configuration remains authoritative. Logs are local/private;
 they can contain project source and native CLI output and are not sanitized.
 """
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -231,25 +231,46 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     os.close(request)
                     os.fsync(fd)
             snapshot['cancel_requested'] = _cancel_requested(fd)
-            if 'loop' in manifest:
-                inspect_loop(manifest, fd, events, snapshot, terminal[0] if terminal else None)
-                return snapshot
-            completed = [row for row in events if row['kind'] == 'NODE_COMPLETED']
+            outer = [row for row in events if 'iteration' not in row]
+            completed = [row for row in outer if row['kind'] == 'NODE_COMPLETED']
             condition, router = manifest.get('condition'), manifest.get('router')
             expected, decision = recorded_path(manifest, events)
             if [row.get('node') for row in completed] != expected[:len(completed)]:
                 raise WorkflowError('Node-completion evidence is inconsistent.')
+            loop = manifest.get('loop')
+            accepted = None
+            if loop:
+                snapshot['steps'] = expected
+                iterations, step = [], 0
+                for event in events:
+                    if 'iteration' in event or 'node' in event:
+                        node = event['loop_node'] if 'iteration' in event else event['node']
+                        if step == len(expected) or node != expected[step]:
+                            raise WorkflowError('Workflow node event is out of order: ' + node)
+                        if 'iteration' in event:
+                            iterations.append(event)
+                        elif event['kind'] == 'NODE_COMPLETED':
+                            step += 1
+                accepted = inspect_loop(loop, fd, iterations, snapshot)
             reviews = []
             producer = None
             agents = {agent['id']: agent for agent in manifest['agents']}
             tools = manifest.get('tools', {})
             for row in completed:
                 node = row['node']
+                if loop and node == loop['node']:
+                    if not accepted or (row.get('accepted_iteration'), row.get('answer_sha256'),
+                                        row.get('candidate_sha256')) != (
+                            accepted[0], accepted[1], accepted[2]['candidate_sha256']):
+                        raise WorkflowError('Loop delivery is not bound to its accepted round.')
+                    producer = accepted[2]
+                    reviews.append((node, producer))
+                    continue
                 if _evidence_sha256(fd, node + '/answer.txt') != row.get('answer_sha256'):
                     raise WorkflowError('Recorded node answer has changed: ' + node)
                 if node in tools:
                     result = read_structured_evidence(fd, row, 'structured.json', 'answer_sha256')['result']
-                    exits = [event.get('returncode') for event in events if event['kind'] == 'PROCESS_EXITED'
+                    exits = [event.get('returncode') for event in outer if event['kind'] == 'PROCESS_EXITED'
                              and event.get('node') == node]
                     if (exits != [row['returncode']] or result['returncode'] != row['returncode']
                             or result['success'] is not (row['returncode'] == 0)):
@@ -257,6 +278,11 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     for channel in ('stdout', 'stderr'):
                         if _evidence_sha256(fd, node + '/' + channel + '.log') != row.get(channel + '_sha256'):
                             raise WorkflowError('Tool log has changed: ' + channel)
+                    if 'upstream_sha256' in row:
+                        upstream = read_structured_evidence(fd, row, 'upstream.json', 'upstream_sha256')
+                        if (not accepted or upstream['candidate'] != accepted[2]
+                                or sha256(upstream['answer'].encode()).hexdigest() != accepted[1]):
+                            raise WorkflowError('Tool input does not match the accepted Loop delivery.')
                     if 'candidate_sha256' not in row:
                         producer = None
                     elif not producer or row['candidate_sha256'] != producer['candidate_sha256']:
@@ -296,6 +322,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                         raise WorkflowError('Final result is missing or changed.')
                     if (condition or router) and (not decision or last['result_sha256'] != completed[-1]['answer_sha256']):
                         raise WorkflowError('Final result is not bound to a selected branch.')
+                    if loop and last['result_sha256'] != completed[-1]['answer_sha256']:
+                        raise WorkflowError('Final result does not match the last node after running Loop.')
                     candidates_current = True
                     for node, candidate in reviews:
                         try:
@@ -307,6 +335,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                             candidates_current = False
                             if not decision or not condition or node != condition['reviewer']:
                                 snapshot['candidate_current'] = False
+                                if loop and node == loop['node']:
+                                    snapshot['loop']['iterations'][-1]['historical'] = True
                                 raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
                     if reviews:
                         snapshot['candidate_current'] = candidates_current
@@ -431,7 +461,7 @@ def candidate_is_current(workspace, candidate):
 
 
 @contextmanager
-def command_process(context, tool, prefix):
+def command_process(context, tool, prefix, upstream=None):
     _check_cancel(context)
     try:
         cwd = agent_directory(context['workspace'], tool)
@@ -440,7 +470,12 @@ def command_process(context, tool, prefix):
         raise
     directory = context['directory'] / prefix
     directory.mkdir(mode=0o700)
-    with observed_process(context, tool['id'], tool['argv'], cwd, directory, tool['timeout'], tool=True) as code:
+    delivery = directory / 'upstream.json'
+    if upstream is not None:
+        _write(delivery, output_json(upstream))
+    source = delivery.open('rb') if upstream is not None else nullcontext(subprocess.DEVNULL)
+    with source as stdin, observed_process(context, tool['id'], tool['argv'], cwd, directory,
+                                          tool['timeout'], source=stdin, tool=True) as code:
         _check_cancel(context)
         yield code
 
@@ -462,8 +497,11 @@ def invoke_tool(context, tool, upstream, limit):
     node = tool['id']
     if upstream is not None and limit is not None and len(upstream['answer']) > limit:
         raise WorkflowError('Saved Tool handoff limit exceeded; command did not run.')
-    with command_process(context, tool, node) as code:
+    loop_input = upstream if upstream and 'accepted_iteration' in upstream else None
+    with command_process(context, tool, node, loop_input) as code:
         summaries, hashes = command_logs(context, node)
+        if loop_input is not None:
+            hashes['upstream_sha256'] = _evidence_sha256(context['directory_fd'], node + '/upstream.json')
         result = dict(tool='command', argv=tool['argv'], cwd=tool['cwd'], returncode=code, success=code == 0, **summaries)
         envelope = {'result': result}
         directory = context['directory'] / node
@@ -512,9 +550,8 @@ def run_validation(context, tool, produced):
                     reason=f'Validation failed (exit {code}).' if code else 'Validation passed.', **summaries)
 
 
-def inspect_loop(manifest, fd, events, snapshot, terminal):
-    loop = manifest['loop']
-    developer, reviewer = (agent['id'] for agent in manifest['agents'])
+def inspect_loop(loop, fd, events, snapshot):
+    developer, reviewer = (agent['id'] for agent in loop['agents'])
     tool = loop.get('validation', {}).get('id')
     rounds = []
     snapshot['loop'] = dict(node=loop['node'], max_iterations=loop['max_iterations'], iterations=rounds)
@@ -522,8 +559,6 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
     candidate = review_answer_sha = None
     for event in events:
         kind = event['kind']
-        if kind in ('RUN_STARTED', 'RUN_STOPPED', 'RUN_COMPLETED', 'CANDIDATE_WORKSPACE'):
-            continue
         if kind == 'LOOP_ITERATION_STARTED':
             count = len(rounds) + 1
             if count > loop['max_iterations'] or (current and current['disposition'] != 'LOOP_CONTINUED'):
@@ -624,37 +659,13 @@ def inspect_loop(manifest, fd, events, snapshot, terminal):
         for actor in actors:
             if actor['state'] in ('STARTING', 'RUNNING', 'VERIFYING'):
                 actor['state'] = 'UNKNOWN'
-    if not terminal:
-        if snapshot['active']:
-            snapshot['status'] = 'CANCEL_REQUESTED' if snapshot['cancel_requested'] else 'RUNNING'
-        else:
-            snapshot['reason'] = 'Script owner is absent without a terminal record; native effects are unknown.'
-        return
-    if terminal['kind'] == 'RUN_COMPLETED':
-        if (not current or current['disposition'] != 'LOOP_ACCEPTED'
-                or terminal.get('result_sha256') != review_answer_sha
-                or _evidence_sha256(fd, 'result.txt') != review_answer_sha):
-            raise WorkflowError('Final Loop output is not bound to an accepted round.')
-        [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
-        try:
-            snapshot['candidate_current'] = candidate_is_current(workspace, candidate)
-        except OutputContractError:
-            snapshot['candidate_current'] = False
-        if not snapshot['candidate_current']:
-            current['historical'] = True
-            raise WorkflowError('Final accepted Loop candidate no longer matches current files.')
-        snapshot.update(status='COMPLETED', completed_nodes=[loop['node']],
-                        result_file=str(Path(snapshot['directory']) / 'result.txt'))
-    elif terminal.get('status') in ('CANCELLED', 'STOPPED'):
-        snapshot.update(status=terminal['status'], reason=terminal.get('reason', ''))
-    else:
-        raise WorkflowError('Unknown terminal state.')
+    if current and current['disposition'] == 'LOOP_ACCEPTED':
+        return current['iteration'], review_answer_sha, candidate
 
 
-def run_loop(context, manifest, task):
-    loop = manifest['loop']
-    developer, reviewer = manifest['agents']
-    if loop['start_limit'] is not None and len(task) > loop['start_limit']:
+def run_loop(context, loop, task, upstream, limit):
+    developer, reviewer = loop['agents']
+    if upstream is not None and limit is not None and len(upstream['answer']) > limit:
         raise WorkflowError('Saved Loop input limit exceeded; no request sent.')
     task = '\n\n'.join(value for value in (loop['body_input'], task) if value)
     if loop['task_limit'] is not None and len(task) > loop['task_limit']:
@@ -666,7 +677,7 @@ def run_loop(context, manifest, task):
         current = dict(context, iteration=iteration, loop_node=loop['node'])
         (context['directory'] / 'iterations' / str(iteration)).mkdir(mode=0o700)
         _event(current, 'LOOP_ITERATION_STARTED')
-        produced = invoke_agent(current, developer, task, feedback=feedback)
+        produced = invoke_agent(current, developer, task, upstream, loop['task_limit'], feedback=feedback)
         candidate = produced['candidate']
         facts = dict(candidate_sha256=candidate['candidate_sha256'])
         validation = run_validation(current, loop['validation'], produced) if 'validation' in loop else None
@@ -692,11 +703,13 @@ def run_loop(context, manifest, task):
         _event(current, 'LOOP_ITERATION_COMPLETED', **facts, developer_node=developer['id'],
                reviewer_node=None if facts.get('validation_failed') else reviewer['id'])
         if facts.get('verdict') == 'accept':
-            if loop['output_limit'] is not None and len(audited['answer']) > loop['output_limit']:
-                raise WorkflowError('Saved Loop Output limit exceeded; full answer retained in node logs.')
             _check_cancel(context)
             _event(current, 'LOOP_ACCEPTED', **facts)
-            return audited
+            answer_hash = _evidence_sha256(context['directory_fd'], f"iterations/{iteration}/{reviewer['id']}/answer.txt")
+            _event(context, 'NODE_COMPLETED', node=loop['node'], accepted_iteration=iteration,
+                   answer_sha256=answer_hash, **facts)
+            return dict(audited, node=loop['node'], name=loop['name'], candidate=candidate,
+                        accepted_iteration=iteration, reviewer_node=reviewer['id'])
         if iteration == loop['max_iterations']:
             _event(current, 'LOOP_LIMIT_REACHED', **facts)
             raise WorkflowError(f'Loop reached its {iteration}-iteration limit without acceptance.')
@@ -924,7 +937,7 @@ def prepare_calls(manifest, workspace, *, dry_run=False):
     if not workspace.is_dir():
         raise WorkflowError('Workspace is not a directory.')
     deferred = branch_node_ids(manifest.get('condition') or manifest.get('router'))
-    for agent in manifest['agents']:
+    for agent in [*manifest['agents'], *manifest.get('loop', {}).get('agents', [])]:
         # Branch prerequisites are checked on invocation, only for the selected path.
         if agent['id'] in deferred:
             continue
@@ -962,19 +975,28 @@ def script_main(manifest, run_workflow):
         if args.dry_run:
             workspace = prepare_calls(manifest, args.workspace, dry_run=True)
             deferred = branch_node_ids(manifest.get('condition') or manifest.get('router'))
+
+            def agent_call(agent, prefix=Path('<run>')):
+                cwd = workspace / agent['cwd'] if agent['id'] in deferred else agent_directory(workspace, agent)
+                return dict(node=agent['id'], cwd=str(cwd),
+                            argv=native_command(agent, prefix / agent['id'] / 'answer.txt'))
+
+            def tool_call(tool):
+                return dict(node=tool['id'], argv=tool['argv'], cwd=str(workspace / tool['cwd']))
+
             plan = {'name': manifest['name'], 'policy': manifest['policy'],
-                    'calls': [{'node': a['id'], 'cwd': str(workspace / a['cwd'] if a['id'] in deferred
-                                                          else agent_directory(workspace, a)),
-                               'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
-                              for a in manifest['agents']]}
+                    'calls': [agent_call(agent) for agent in manifest['agents']]}
             plan.update({kind: manifest[kind] for kind in ('condition', 'router', 'loop') if kind in manifest})
-            if tool := manifest.get('loop', {}).get('validation'):
-                plan['calls'].insert(1, dict(node=tool['id'], argv=tool['argv'], cwd=str(workspace / tool['cwd'])))
-            if 'tools' in manifest:
-                by_node = {call['node']: call for call in plan['calls']}
-                by_node.update({node: dict(node=node, argv=tool['argv'], cwd=str(workspace / tool['cwd']))
-                                for node, tool in manifest['tools'].items()})
-                plan['calls'] = [by_node[node] for node in manifest['steps']]
+            if 'steps' in manifest:
+                by_node = {call['node']: [call] for call in plan['calls']}
+                by_node.update({node: [tool_call(tool)] for node, tool in manifest.get('tools', {}).items()})
+                if loop := manifest.get('loop'):
+                    actors = [dict(agent_call(agent, Path('<run>/iterations/<round>')), loop_node=loop['node'])
+                              for agent in loop['agents']]
+                    if tool := loop.get('validation'):
+                        actors.insert(1, dict(tool_call(tool), loop_node=loop['node']))
+                    by_node[loop['node']] = actors
+                plan['calls'] = [call for node in manifest['steps'] for call in by_node[node]]
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:
@@ -993,7 +1015,8 @@ def script_main(manifest, run_workflow):
                 try:
                     _check_cancel(context)
                     context['workspace'] = prepare_calls(manifest, args.workspace)
-                    if any(agent.get('native_output', {}).get('kind') == 'review' for agent in manifest['agents']):
+                    if 'loop' in manifest or any(agent.get('native_output', {}).get('kind') == 'review'
+                                                 for agent in manifest['agents']):
                         _event(context, 'CANDIDATE_WORKSPACE', workspace=str(context['workspace']))
                     task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
                     task = '\n\n'.join(part for part in (manifest['input'], task) if part)

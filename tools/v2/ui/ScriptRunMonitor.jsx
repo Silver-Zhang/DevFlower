@@ -48,24 +48,39 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const [error,setError]=useState('');
  const events=script.events||[];
  const loop=script.loop;
- const [iteration,selectedNode]=loop?choice.split('/'):[null,choice];
+ const [iteration,selectedNode]=choice.includes('/')?choice.split('/'):[null,choice];
  const round=loop?.iterations.find(item=>String(item.iteration)===iteration);
- const tool=Boolean(selectedNode)&&(loop?round?.validation?.node===selectedNode:
-  script.document.nodes.some(item=>item.id===selectedNode&&item.config?.tool==='command'));
- const node=(tool||Object.hasOwn(script.agents,selectedNode))?selectedNode:'';
- const agent=node?script.agents[node]:null;
- const completed=(loop?round?.completed_nodes:script.completed_nodes)||[];
- const facts=events.filter(event=>event.node===node&&(!loop||String(event.iteration)===iteration));
+ const outer=script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)||item.config?.tool==='command');
+ const tool=Boolean(selectedNode)&&(iteration?round?.validation?.node===selectedNode:
+  outer.some(item=>item.id===selectedNode&&item.config?.tool==='command'));
+ const agent=(iteration?script.loop_agents:script.agents)?.[selectedNode];
+ const node=(tool||agent)?selectedNode:'';
+ const completed=(iteration?round?.completed_nodes:script.completed_nodes)||[];
+ const nodeEvents=id=>events.filter(event=>event.node===id&&(iteration?String(event.iteration)===iteration:!event.iteration));
+ const facts=nodeEvents(node);
  const command=facts.find(event=>event.kind==='CALL_INTENT');
  const exit=facts.find(event=>event.kind==='PROCESS_EXITED');
- const reviews=events.filter(event=>event.kind==='NODE_COMPLETED'&&event.verdict&&completed.includes(event.node));
+ const reviews=events.filter(event=>event.kind==='NODE_COMPLETED'&&!event.iteration&&event.node!==loop?.node&&
+  event.verdict&&completed.includes(event.node));
  const router=script.router;
  const decision=script.condition||router;
  const skippedPorts=Object.keys(decision?.branches||{}).filter(port=>port!==decision.selected_port);
  const skipped=skippedPorts.flatMap(port=>decision.branches[port]);
  const started=events.filter(event=>event.kind==='PROCESS_STARTED');
  const body=script.document.nodes.find(item=>item.id===loop?.node)?.config.body;
- const nameOf=id=>body?.nodes.find(item=>item.id===id)?.name||script.document.nodes.find(item=>item.id===id)?.name||id;
+ const nameOf=id=>script.document.nodes.find(item=>item.id===id)?.name||id;
+ const roundName=id=>body?.nodes.find(item=>item.id===id)?.name||id;
+ function outerState(id){
+  const facts=nodeEvents(id);
+  const exited=facts.find(event=>event.kind==='PROCESS_EXITED');
+  if(skipped.includes(id))return '未执行';
+  if(completed.includes(id))return exited&&exited.returncode!==0?'失败':'成功';
+  if(facts.some(event=>event.kind==='CANCELLED'))return '已取消';
+  if(facts.some(event=>event.kind==='NOT_SENT'))return '启动失败';
+  if(facts.some(event=>['CLI_FAILED','OUTPUT_CONTRACT_FAILED','UNKNOWN'].includes(event.kind)))return '未完成';
+  if(id===loop?.node&&loop.iterations.length)return script.active?'运行中':state==='CANCELLED'?'已取消':'未完成';
+  return facts.length?(script.active?'运行中':'未完成'):'未启动';
+ }
  const rules=script.document.nodes.find(item=>item.id===router?.node)?.config.rules||[];
  const labelPort=port=>router?(port==='fallback'?'默认分支（fallback）':(rules.find(rule=>rule.id===port)?.label||port)+'（'+port+'）'):
   port==='true'?'满足（true）':'不满足（false）';
@@ -89,26 +104,26 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  return <div className="inspector-content run-evidence" aria-label="原生脚本运行证据">
   <p><strong>{script.artifact.filename}</strong> <button disabled={!trusted} onClick={download}>下载本次运行脚本</button></p>
   <details><summary>脚本与配置版本</summary><pre>{JSON.stringify({
-   sha256:script.artifact.sha256,draft_revision:run.draft_revision,agents:script.agents,evidence_directory:script.directory
+   sha256:script.artifact.sha256,draft_revision:run.draft_revision,agents:script.agents,
+   ...(loop?{loop_agents:script.loop_agents}:{}),evidence_directory:script.directory
   },null,2)}</pre></details>
   {error&&<p className="error-text" role="alert">{error}</p>}
   <label className="field"><span>查看证据</span><select value={node?choice:''} onChange={event=>setChoice(event.target.value)}>
    <option value="">最终结果</option>
-   {loop?loop.iterations.flatMap(item=>roundActors(item).map(([id])=>{
-    const key=item.iteration+'/'+id;
-    return <option key={key} value={key}>第 {item.iteration} 轮 · {nameOf(id)}</option>;
-   })):script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)||item.config?.tool==='command').map(item=><option key={item.id} value={item.id}>
+   {outer.map(item=><option key={item.id} value={item.id}>
     {item.name}{skipped.includes(item.id)?'（分支未选中）':''}
    </option>)}
+   {loop?.iterations.flatMap(item=>roundActors(item).map(([id])=>{
+    const key=item.iteration+'/'+id;
+    return <option key={key} value={key}>第 {item.iteration} 轮 · {roundName(id)}</option>;
+   }))}
   </select></label>
   {node?<div>
-   <p>{tool?(loop?'验证命令':nameOf(node)):agent.provider==='codex'?'Codex CLI':'Claude Code'}
-    {tool&&!loop&&' · '+(completed.includes(node)?(exit?.returncode===0?'成功':'失败'):
-     skipped.includes(node)?'未执行':facts.some(event=>event.kind==='CANCELLED')?'已取消':
-     facts.some(event=>event.kind==='NOT_SENT')?'启动失败':
-     script.active&&command?'运行中':command?'未完成':'未启动')}
+   <p>{tool?(iteration?'验证命令':nameOf(node)):agent.provider==='codex'?'Codex CLI':'Claude Code'}
+    {!iteration&&(tool||loop)&&' · '+outerState(node)}
     {exit?' · 退出码 '+exit.returncode:''}</p>
    {tool&&command&&<pre aria-label="实际命令与工作目录">{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
+   <EvidenceText label="命令标准输入（上游交接）" value={shown?.upstream}/>
    <EvidenceText label="实际请求（含上游交接）" value={shown?.prompt}/>
    {!tool&&<EvidenceText label={completed.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>}
    {completed.includes(node)&&(shown?.structured||shown?.candidate)&&<details open={tool?true:undefined}><summary>结构化交付与候选文件</summary>
@@ -120,19 +135,25 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
     {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
      {event.at} · {event.kind}{event.reason?' · '+event.reason:''}
     </li>)}</ol>}
-    <EvidenceText label={tool?(loop?'验证 stdout':'命令 stdout'):'原生 CLI stdout（隐藏敏感值）'} value={shown?.stdout}/>
-    <EvidenceText label={tool?(loop?'验证 stderr':'命令 stderr'):'原生 CLI stderr（隐藏敏感值）'} value={shown?.stderr}/>
+    <EvidenceText label={tool?(iteration?'验证 stdout':'命令 stdout'):'原生 CLI stdout'} value={shown?.stdout}/>
+    <EvidenceText label={tool?(iteration?'验证 stderr':'命令 stderr'):'原生 CLI stderr'} value={shown?.stderr}/>
    </details>
    {!command&&<p>{skipped.includes(node)?(tool?'此命令所在分支未选中。':'此 Agent 所在分支未选中。'):
     tool?'尚无命令调用记录。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div>
+   {script.steps?.length>1&&loop&&<section aria-label="外层执行顺序">
+    <h3>外层执行顺序</h3><ol>{script.steps.map(id=><li key={id}>
+     {id===loop.node?nameOf(id):<button type="button" onClick={()=>setChoice(id)}>{nameOf(id)}</button>}
+     {' · '+outerState(id)}
+    </li>)}</ol>
+   </section>}
    {loop&&<section aria-label="循环轮次">
     <h3>{nameOf(loop.node)} · 最多 {loop.max_iterations} 轮</h3>
     {loop.iterations.map(item=><section key={item.iteration} aria-label={'第 '+item.iteration+' 轮'}>
      <h4>第 {item.iteration} 轮{item.historical?' · 历史候选':''}
       {item.disposition?' · '+loopDecisions[item.disposition]:''}</h4>
      <ul>{roundActors(item).map(([id,actor])=><li key={id}>
-      <button type="button" onClick={()=>setChoice(item.iteration+'/'+id)}>{nameOf(id)}</button>
+      <button type="button" onClick={()=>setChoice(item.iteration+'/'+id)}>{roundName(id)}</button>
       {' · '+loopStates[actor.state]}
       {actor===item.validation&&Number.isInteger(actor.returncode)&&' · 退出码 '+actor.returncode}
      </li>)}</ul>

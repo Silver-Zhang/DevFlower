@@ -650,7 +650,12 @@ with sqlite3.connect(sys.argv[1]) as db:
    assert.equal(fs.readFileSync(file,'utf8'),source);
   }
  });
- for(const withTool of [false,true])await test(withTool?'native-loop-command-edit-retry-and-evidence':'native-loop-freezes-saved-body-and-shows-round-evidence',async()=>{
+ for(const scenario of ['plain','validation','composed'])await test({
+  plain:'native-loop-freezes-saved-body-and-shows-round-evidence',
+  validation:'native-loop-command-edit-retry-and-evidence',
+  composed:'native-loop-composed-handoffs-survive-reload',
+ }[scenario],async()=>{
+  const withTool=scenario==='validation',composed=scenario==='composed';
   const button=name=>page.getByRole('button',{name,exact:true});
   const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
   const project=path.join(process.env.V2_WORKSPACES,'A');
@@ -702,9 +707,29 @@ with sqlite3.connect(sys.argv[1]) as db:
    body=await api('draft?'+new URLSearchParams({workspace,id:body.id}));
    bodyGraph=body.graph;
   }
-  const name=withTool?'P3.1 验证循环夹具':'P3 原生循环夹具';
+  const name=composed?'P4-B 组合循环夹具':withTool?'P3.1 验证循环夹具':'P3 原生循环夹具';
+  let outerNodes=[typed('Start','start',0),typed('Loop','loop',260),typed('End','output',520)];
+  if(composed){
+   const outerAgent=async(id,name,x)=>{
+    const row=await api('agents/save',{workspace,id:null,expected:null,session_revision:null,
+     config:{execution:'native-cli',name,provider:'codex',cwd:project,role:name,round_prompt:'Fixture',output_prompt:'Deliver'}});
+    assert(row.revision,JSON.stringify(row));
+    return {id,name,kind:'agent',position:{x,y:130},agent_id:row.id,agent_revision:row.revision};
+   };
+   const planner=await outerAgent('Developer','Planner',220);
+   planner.native_output={version:1,kind:'result'};planner.artifact_paths=['plan.txt'];
+   const pack=typed('Package','tool',670);
+   pack.config={tool:'command',cwd:'.',argv:['python3','-c',[
+    'import json, sys','from pathlib import Path','d = json.load(sys.stdin)',
+    "assert d['accepted_iteration'] == 2 and d['structured']['result']['verdict'] == 'accept'",
+    "assert d['candidate']['candidate_sha256'] == Path('previous-digest.txt').read_text()",
+    "print('consumed ' + d['candidate']['candidate_sha256'])",
+   ].join('\n')]};
+   outerNodes=[outerNodes[0],planner,typed('Loop','loop',440),pack,
+    await outerAgent('Publisher','Publisher',900),typed('End','output',1120)];
+  }
   const outer=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,
-   nodes:[typed('Start','start',0),typed('Loop','loop',260),typed('End','output',520)],edges:edges(['Start','Loop','End'])}});
+   nodes:outerNodes,edges:edges(outerNodes.map(item=>item.id))}});
   assert(outer.revision,JSON.stringify(outer));
   await page.reload();
   await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name,exact:true}).click();
@@ -728,16 +753,18 @@ with sqlite3.connect(sys.argv[1]) as db:
   await button('预览 Python').click();
   const preview=page.getByRole('dialog',{name:'Python 脚本预览'});
   const source=await preview.locator('pre').textContent();
-  assert.match(source,/return run_loop\(context, WORKFLOW, task\)/);
+  assert(source.includes("results['Loop'] = run_loop(context, WORKFLOW['loop'], task, "+
+   (composed?"results['Developer']":"None")+", None)"));
   await preview.getByRole('button',{name:'关闭预览'}).click();
   const [exported]=await Promise.all([page.waitForEvent('download'),button('导出 Python（原生 CLI）').click()]);
-  const exportedPath=path.join(out,'loop-exported.py');await exported.saveAs(exportedPath);
+  const exportedPath=path.join(out,composed?'loop-composed-exported.py':'loop-exported.py');await exported.saveAs(exportedPath);
   assert.equal(fs.readFileSync(exportedPath,'utf8'),source);
   const task=page.getByLabel('本次运行上下文',{exact:true}).locator('summary');
   await task.click();await page.getByLabel('本次任务',{exact:true}).fill('P3_LOOP');await task.click();
   const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')),button('启动').click()]);
   const {run}=await response.json();
   assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+  if(composed){await page.reload();await complete()}
   const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
   if(!await monitor.isVisible())await button('运行检查器').click();
   const rounds=monitor.getByRole('region',{name:'循环轮次'});
@@ -761,7 +788,26 @@ with sqlite3.connect(sys.argv[1]) as db:
   }
   await second.getByText('accept',{exact:true}).waitFor();
   assert.notEqual(await first.getByText(/^候选摘要 /).textContent(),await second.getByText(/^候选摘要 /).textContent());
-  assert.equal(JSON.parse(await monitor.getByLabel('工作流最终回答',{exact:true}).textContent()).result.verdict,'accept');
+  const finalAnswer=await monitor.getByLabel('工作流最终回答',{exact:true}).textContent();
+  if(composed){
+   assert.equal(finalAnswer,'PUBLISHED');
+   const chain=monitor.getByRole('region',{name:'外层执行顺序',exact:true});
+   assert.deepEqual(await chain.locator('li').allTextContents(),['Planner · 成功','Loop · 成功','Package · 成功','Publisher · 成功']);
+   const choice=monitor.getByLabel('查看证据');
+   await choice.selectOption({label:'Planner'});
+   assert.match(await monitor.getByLabel('最终回答',{exact:true}).textContent(),/Plan from upstream/);
+   await choice.selectOption({label:'Package'});
+   const delivery=JSON.parse(await monitor.getByLabel('命令标准输入（上游交接）',{exact:true}).textContent());
+   assert.equal(delivery.structured.result.verdict,'accept');
+   assert.equal(delivery.accepted_iteration,2);
+   assert.match(await monitor.getByLabel('命令 stdout',{exact:true}).textContent(),new RegExp(delivery.candidate.candidate_sha256));
+   await choice.selectOption({label:'Publisher'});
+   assert.match(await monitor.getByLabel('实际请求（含上游交接）',{exact:true}).textContent(),/consumed /);
+   await choice.selectOption('');
+   assert.match(await second.getByText(/^候选摘要 /).textContent(),new RegExp(delivery.candidate.candidate_sha256));
+  }else{
+   assert.equal(JSON.parse(finalAnswer).result.verdict,'accept');
+  }
   await second.getByRole('button',{name:'Developer',exact:true}).click();
   const actualRequest=monitor.getByLabel('实际请求（含上游交接）',{exact:true});
   await actualRequest.waitFor();
@@ -769,6 +815,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   await monitor.getByLabel('查看证据').selectOption('1/Developer');
   await actualRequest.waitFor();
   await until(async()=>!(await actualRequest.textContent()).includes('Previous iteration'));
+  if(composed)assert.match(await actualRequest.textContent(),/Plan from upstream/);
   const evidencePath=new URLSearchParams({workspace,id:run.id,node:'Developer',iteration:'3'});
   assert.match((await api('script-run/evidence?'+evidencePath)).error,/有效轮次/);
   const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);

@@ -1052,12 +1052,19 @@ function App(){
     return {state:'SKIPPED'};
   }
   const tool=shown.nodes.some(node=>node.id===id&&node.config?.tool==='command');
-  if(!tool&&!Object.hasOwn(scriptRun.agents,id))return null;
   const complete=scriptRun.completed_nodes?.includes(id);
-  const started=events.some(event=>event.node===id&&event.kind==='PROCESS_STARTED');
-  const failed=events.some(event=>event.node===id&&(event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
+  if(scriptRun.loop?.node===id){
+   if(complete)return {state:'COMPLETED'};
+   if(!scriptRun.loop.iterations.length)return {state:'UNACTIVATED'};
+   return {state:scriptRun.active?'RUNNING':runSnapshot.state==='STOPPED'?'FAILED':
+    runSnapshot.state==='CANCELLED'?'CANCELLED':'UNKNOWN'};
+  }
+  if(!tool&&!Object.hasOwn(scriptRun.agents,id))return null;
+  const started=events.some(event=>!event.iteration&&event.node===id&&event.kind==='PROCESS_STARTED');
+  const failed=events.some(event=>!event.iteration&&event.node===id&&(event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
+   event.kind==='OUTPUT_CONTRACT_FAILED'||
    tool&&complete&&event.kind==='PROCESS_EXITED'&&event.returncode!==0));
-  const cancelled=events.some(event=>event.node===id&&event.kind==='CANCELLED');
+  const cancelled=events.some(event=>!event.iteration&&event.node===id&&event.kind==='CANCELLED');
   return {state:failed?'FAILED':complete?'COMPLETED':cancelled?'CANCELLED':
    started?(scriptRun.active?'RUNNING':'UNKNOWN'):'UNACTIVATED'};
  },n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);

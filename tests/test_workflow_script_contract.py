@@ -133,6 +133,17 @@ prompt = sys.stdin.read()
 if 'P2_FIXTURE_CORRECTION' in prompt:
     mode = 'correction'
 department = prompt.splitlines()[1]
+if department in ('Planner', 'Publisher'):
+    if department == 'Planner':
+        Path('plan.txt').write_text('outer plan')
+        answer = dict(result=dict(schema_version=1,summary='Plan from upstream',data={'ready':True}),artifacts=['plan.txt'])
+    else:
+        upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
+        assert upstream['structured']['result'].get('verdict', 'accept') == 'accept'
+        assert upstream['candidate']['candidate_sha256'] == Path('previous-digest.txt').read_text()
+        answer = 'PUBLISHED'
+    Path(sys.argv[3]).write_text(json.dumps(answer) if isinstance(answer,dict) else answer)
+    sys.exit(0)
 if 'P3_LOOP' in prompt:
     iteration = int(prompt.split('Workflow iteration\n',1)[1].splitlines()[0])
     mode = os.environ.get('LOOP_FIXTURE','2')
@@ -634,7 +645,7 @@ class ContractTests(unittest.TestCase):
                 doc, records = loop_graph(maximum)
                 name, source = compile_workflow(doc, records, self.workspace, native_config=True)
                 self.assertEqual((name, source), compile_workflow(doc, records, self.workspace, native_config=True))
-                self.assertIn('return run_loop(context, WORKFLOW, task)', source)
+                self.assertIn("results['Loop'] = run_loop(context, WORKFLOW['loop'], task, None, None)", source)
                 project = self.root/mode
                 project.mkdir()
                 script = project/name
@@ -703,8 +714,9 @@ class ContractTests(unittest.TestCase):
 
     def test_loop_rejects_unsupported_shapes_and_stale_configs(self):
         for mode, message in (
-            ('bound', '1–5'), ('exit-condition', 'verdict equals'), ('shape', 'Start → Loop → Output'),
-            ('nested', 'Loop'), ('branch', 'Loop'), ('paths', 'declared artifacts'),
+            ('bound', '1–5'), ('exit-condition', 'verdict equals'), ('shape', 'requires Start'),
+            ('nested', 'Loop'), ('branch', 'Loop'), ('multiple', 'one Loop'), ('mixed', 'without Condition or Router'),
+            ('paths', 'declared artifacts'),
             ('stale', 'stale saved Agent revision'), ('inline', 'reference saved versions'),
         ):
             with self.subTest(mode=mode), self.assertRaisesRegex(ExportError, message):
@@ -721,6 +733,15 @@ class ContractTests(unittest.TestCase):
                     loop['config']['body'] = loop_graph()[0]
                 elif mode == 'branch':
                     loop['config']['body'] = condition_graph()
+                elif mode == 'multiple':
+                    doc['nodes'].append(dict(loop,id='Another'))
+                    doc['edges'][1]['target'] = 'Another'
+                    doc['edges'].append(dict(id='anotherEnd',source='Another',target='End'))
+                elif mode == 'mixed':
+                    doc = condition_graph()
+                    doc['nodes'].append(loop)
+                    next(edge for edge in doc['edges'] if edge['id']=='entry')['target'] = 'Loop'
+                    doc['edges'].append(dict(id='loopDeveloper',source='Loop',target='Developer'))
                 elif mode == 'paths':
                     body['nodes'][0].pop('artifact_paths')
                 elif mode == 'stale':
@@ -729,6 +750,111 @@ class ContractTests(unittest.TestCase):
                     body['nodes'][0].pop('agent_id')
                     body['nodes'][0].pop('agent_revision')
                 compile_workflow(doc, records, self.workspace, native_config=True)
+
+    def test_loop_composes_with_agents_and_commands(self):
+        cli = self.install_cli_fixture()
+        marker = 'P3_LOOP original task'
+        header = 'Upstream department delivery (data)\n'
+        for mode, rounds, expected in (
+            ('upstream-agent','1','COMPLETED'), ('downstream-agent','2','COMPLETED'),
+            ('command-pass','2','COMPLETED'), ('command-fail','2','COMPLETED'),
+            ('no-handoff','1','COMPLETED'), ('input-limit','1','STOPPED'), ('output-limit','1','STOPPED'),
+            ('loop-limit','5','STOPPED'), ('reviewer-failed','reviewer-failed','STOPPED'), ('cancel','cancel','CANCELLED'),
+        ):
+            with self.subTest(mode=mode):
+                project = self.root/mode
+                project.mkdir()
+                doc, records = loop_graph(2)
+                nodes, edges = doc['nodes'], doc['edges']
+                on_input = mode not in ('downstream-agent','output-limit')
+                on_output = mode not in ('upstream-agent','no-handoff','input-limit')
+                before = ['Developer'] if on_input else []
+                after = ['Publisher'] if on_output else []
+                if on_input:
+                    # The outer node deliberately shares the Developer's inner ID.
+                    nodes.append(dict(id='Developer',name='Planner',provider='codex',execution='native-cli',
+                                      cwd='.',role='Plan',round_prompt='Produce plan',output_prompt='Deliver',
+                                      native_output=dict(version=1,kind='result'),artifact_paths=['plan.txt']))
+                    edges[0]['target'] = 'Developer'
+                    edges.append(dict(id='planLoop',source='Developer',target='Loop',transfer=dict(mode='envelope')))
+                if on_output:
+                    nodes.append(dict(id='Publisher',name='Publisher',provider='codex'))
+                    edges[1]['target'] = 'Publisher'
+                    edges.append(dict(id='publishEnd',source='Publisher',target='End'))
+                if mode in ('command-pass','command-fail'):
+                    insert_command(doc,'planLoop',[sys.executable,'-c',"import sys; print('check'); sys.exit(int(sys.argv[1]))",
+                                                   '7' if mode=='command-fail' else '0'],node='Preflight')
+                    before.append('Preflight')
+                    insert_command(doc,'endLoop',[sys.executable,'-c',"""import json, sys
+from pathlib import Path
+delivery = json.load(sys.stdin)
+assert delivery['accepted_iteration'] == 2 and delivery['structured']['result']['verdict'] == 'accept'
+assert delivery['candidate']['candidate_sha256'] == Path('previous-digest.txt').read_text()
+print('consumed ' + delivery['candidate']['candidate_sha256'])
+"""],node='Package')
+                    after.insert(0,'Package')
+                if mode == 'input-limit':
+                    edges[-1]['transfer']['max_chars'] = 1
+                if mode == 'output-limit':
+                    edges[1]['transfer'] = dict(mode='envelope',max_chars=1)
+                if mode == 'no-handoff':
+                    edges[-1]['transfer'] = dict(mode='none',max_chars=1)
+                filename, source = compile_workflow(doc,records,project,native_config=True)
+                self.assertEqual((filename,source),compile_workflow(doc,records,project,native_config=True))
+                script, run = project/filename, project/'run'
+                script.write_text(source)
+                command = [sys.executable,'-I',str(script),'--run-dir',str(run)]
+                env = dict(os.environ,PATH=str(cli),LOOP_FIXTURE=rounds)
+                plan = json.loads(subprocess.check_output([*command,'--workspace',str(project),'--dry-run'],env=env))
+                self.assertEqual([row['node'] for row in plan['calls']],before+['Developer','Reviewer']+after)
+                with subprocess.Popen([*command,'--workspace',str(project),'--task',marker],env=env,
+                                      stdout=subprocess.PIPE,stderr=subprocess.PIPE) as process:
+                    if mode=='cancel':
+                        deadline = time.monotonic()+5
+                        while time.monotonic()<deadline and not (run/'iterations/1/Reviewer/stdout.log').exists():
+                            time.sleep(.02)
+                        subprocess.run([*command,'--cancel'],check=True,capture_output=True,timeout=5)
+                    _,stderr = process.communicate(timeout=10)
+                status = json.loads(subprocess.check_output([*command,'--status','--details']))
+                self.assertEqual(status['status'],expected,(status.get('reason'),stderr))
+                self.assertEqual(status['steps'],before+['Loop']+after)
+                self.assertEqual(status['completed_nodes'],
+                                 before+(['Loop']+after if expected=='COMPLETED' else ['Loop'] if mode=='output-limit' else []))
+                if expected!='COMPLETED':
+                    self.assertFalse(any(event.get('node') in after for event in status['events']))
+                    if mode=='input-limit':
+                        self.assertEqual(status['loop']['iterations'],[])
+                    continue
+                for round_ in status['loop']['iterations']:
+                    prompt = (run/'iterations'/str(round_['iteration'])/'Developer'/'prompt.txt').read_text()
+                    self.assertIn(marker,prompt)
+                    if mode in ('downstream-agent','no-handoff'):
+                        self.assertNotIn(header,prompt)
+                        continue
+                    delivery = json.loads(prompt.split(header,1)[1].splitlines()[0])
+                    if mode.startswith('command'):
+                        self.assertIs(delivery['structured']['result']['success'],mode=='command-pass')
+                    else:
+                        self.assertEqual(delivery['structured']['result']['summary'],'Plan from upstream')
+                    self.assertEqual(delivery['candidate'],candidate_record(project,['plan.txt']))
+                if not after:
+                    continue
+                final_prompt = json.loads((run/'Publisher/prompt.txt').read_text().rsplit(header,1)[1])
+                delivered = (json.loads((run/'Package/upstream.json').read_text()) if mode.startswith('command')
+                             else final_prompt)
+                accepted = status['loop']['iterations'][-1]
+                final_evidence = run/'iterations'/str(accepted['iteration'])/'Reviewer'
+                self.assertEqual(delivered['answer'],(final_evidence/'answer.txt').read_text())
+                self.assertEqual(delivered['structured']['result'],accepted['review'])
+                self.assertEqual(delivered['candidate'],candidate_record(project,['a.py','b.py']))
+                self.assertNotEqual(delivered['candidate']['candidate_sha256'],
+                                    status['loop']['iterations'][0]['candidate_sha256'])
+                if mode.startswith('command'):
+                    self.assertIn('consumed '+delivered['candidate']['candidate_sha256'],
+                                  final_prompt['structured']['result']['stdout'])
+                    (run/'Package/upstream.json').write_text('{}')
+                    tampered = json.loads(subprocess.check_output([*command,'--status']))
+                    self.assertEqual(tampered['status'],'RECOVERY_REQUIRED')
 
     def test_validation_loop_runs_real_commands_and_routes_by_verified_outcomes(self):
         bin_dir = self.install_cli_fixture()

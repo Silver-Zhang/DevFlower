@@ -76,9 +76,14 @@ class ScriptRuns:
         task_bytes = task.encode('utf-8')
         source_bytes = artifact['source'].encode('utf-8')
         artifact_sha = artifact['sha256']
-        agent_versions = {node['id']: dict(id=node['agent_id'], revision=node['agent_revision'],
-                          provider=records[node['agent_id']]['config']['provider'])
-                          for node in document_agents(document) if 'agent_id' in node}
+        def versions(nodes):
+            return {node['id']: dict(id=node['agent_id'], revision=node['agent_revision'],
+                    provider=records[node['agent_id']]['config']['provider'])
+                    for node in nodes if 'agent_id' in node}
+
+        body = next((node['config']['body'] for node in document['nodes'] if node.get('kind') == 'loop'), None)
+        agent_versions = versions(document['nodes'])
+        loop_versions = versions(body['nodes']) if body else {}
 
         def publish(db, run_id):
             row = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (draft_id,)).fetchone()
@@ -98,7 +103,7 @@ class ScriptRuns:
             run = dict(id=run_id, workspace=workspace, draft_id=draft_id, draft_revision=revision,
                        name=document['name'], launch_intent=intent_key, created_at=time.time(), execution=EXECUTION)
             db.execute('INSERT INTO records VALUES(?,?,?)', (KIND, run_id, canonical(dict(
-                run=run, document=document, agents=agent_versions,
+                run=run, document=document, agents=agent_versions, loop_agents=loop_versions,
                 artifact=dict(filename=artifact['filename'], sha256=artifact_sha, size=len(source_bytes)))).decode()))
 
         reservation = self.store.reserve_launch(workspace, intent_key, payload, artifact_sha, publish=publish)
@@ -181,20 +186,17 @@ class ScriptRuns:
     def evidence(self, record, node=None, iteration=None):
         nodes = record['document']['nodes']
         loop = next((item for item in nodes if item.get('kind') == 'loop'), None)
-        if loop:
-            nodes = loop['config']['body']['nodes']
-        tool = any(item['id'] == node and item.get('kind') == 'tool' and item['config'].get('tool') == 'command'
-                   for item in nodes)
-        if node is not None and node not in record['agents'] and not tool:
-            raise Invalid('节点不属于本次脚本运行。')
         prefix = ''
-        if node is not None and loop:
-            if (not isinstance(iteration, str) or not re.fullmatch(r'[1-5]', iteration)
+        if iteration is not None:
+            if (node is None or not loop or not isinstance(iteration, str) or not re.fullmatch(r'[1-5]', iteration)
                     or int(iteration) > loop['config'].get('max_iterations', 3)):
                 raise Invalid('请选择本次循环的有效轮次。')
             prefix = 'iterations/' + iteration + '/'
-        elif iteration is not None:
-            raise Invalid('轮次证据需要本次循环的节点。')
+            nodes = loop['config']['body']['nodes']
+        actor = next((item for item in nodes if item['id'] == node), None)
+        tool = actor and actor.get('kind') == 'tool' and actor['config'].get('tool') == 'command'
+        if node is not None and not (actor and (tool or actor.get('kind', 'agent') == 'agent')):
+            raise Invalid('节点不属于本次脚本运行。')
         folder = self.folder(record['run']['id'])
         try:
             self.artifact(folder, record['artifact'])
@@ -206,9 +208,10 @@ class ScriptRuns:
                               answer=self.excerpt(fd, base + 'answer.txt'),
                               structured=self.excerpt(fd, base + 'structured.json'),
                               candidate=self.excerpt(fd, base + 'candidate.json'),
+                              stdout=self.excerpt(fd, base + 'stdout.log'),
                               stderr=self.excerpt(fd, base + 'stderr.log', tail=True))
-                if prefix or tool:
-                    result['stdout'] = self.excerpt(fd, base + 'stdout.log')
+                if tool and not prefix:
+                    result['upstream'] = self.excerpt(fd, base + 'upstream.json')
                 if prefix:
                     if not result['candidate']:
                         result['candidate'] = self.excerpt(fd, base + 'candidate-after.json')
@@ -247,4 +250,5 @@ class ScriptRuns:
                 reason = error.stderr.decode('utf-8', errors='replace').strip() or reason
             evidence = dict(status='RECOVERY_REQUIRED', reason=reason)
         return dict(run=run, state=evidence['status'], script=dict(
-            artifact=artifact, document=record['document'], agents=record['agents'], **evidence))
+            artifact=artifact, document=record['document'], agents=record['agents'],
+            loop_agents=record.get('loop_agents', record['agents']), **evidence))
