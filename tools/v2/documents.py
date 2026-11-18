@@ -52,7 +52,7 @@ def validate_draft(document, *, depth=0):
             config = {'config_version', 'config'}
             required |= config
         if kind == 'agent':
-            config |= {'output_contract','artifact_paths'}
+            config |= {'output_contract','artifact_paths','native_output'}
         fields(node, {'id', 'name', 'position', 'kind'} | config, required)
         if not isinstance(node['id'], str) or not ID.fullmatch(node['id']) or node['id'] in nodes:
             raise Invalid('节点身份无效或重复')
@@ -66,6 +66,11 @@ def validate_draft(document, *, depth=0):
             if kind == 'loop' and 'body' in node['config']:
                 validate_draft(node['config']['body'], depth=depth + 1)
             continue
+        if 'native_output' in node:
+            spec = node['native_output']
+            fields(spec, {'version', 'kind'}, {'version', 'kind'})
+            if type(spec['version']) is not int or spec['version'] != 1 or spec['kind'] not in ('result', 'review'):
+                raise Invalid('原生输出合同需要有效的类型与版本 1。')
         if 'output_contract' in node:
             field_contract(node['output_contract'])
         if 'artifact_paths' in node:

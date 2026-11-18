@@ -164,6 +164,8 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
             options = dict(tool_type=tool, **tool_options(n)) if tool in TOOLS | {CHECK, 'write-file'} else {'path':n['config']['path']}
             nodes.append(dict(id=n['id'], name=n['name'], kind='tool', **options))
             continue
+        if 'native_output' in n:
+            raise Invalid('原生结构化输出合同须从原生工作流执行。')
         spec = bind(n, prefix)
         if has_output_contract(n) and spec.get('mode')=='Plan':
             raise Invalid('原生 Plan 输出固定为计划文本，不能配置结构化字段或产物。')

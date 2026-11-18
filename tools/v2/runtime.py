@@ -268,6 +268,8 @@ class V2Runtime(ManagedRunHistory):
             configured, bindings = {}, {}
             for path, node in agents:
                 try:
+                    if 'native_output' in node:
+                        raise Invalid('原生结构化输出合同须从原生工作流执行。')
                     if 'agent_id' in node:
                         configured[path], binding = freeze_agent(self, workspace, node)
                         bindings[path] = binding

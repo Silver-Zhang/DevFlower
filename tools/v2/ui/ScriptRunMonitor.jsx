@@ -40,9 +40,11 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const events=script.events||[];
  const node=script.agents[choice]?choice:'';
  const agent=script.agents[node];
+ const completed=script.completed_nodes||[];
  const facts=events.filter(event=>event.node===node);
  const command=facts.find(event=>event.kind==='CALL_INTENT');
  const exit=facts.find(event=>event.kind==='PROCESS_EXITED');
+ const reviews=events.filter(event=>event.kind==='NODE_COMPLETED'&&event.verdict&&completed.includes(event.node));
  const path=new URLSearchParams({workspace:run.workspace,id:run.id,...(node?{node}:{})}).toString();
  useEffect(()=>{
   if(!trusted)return;
@@ -71,7 +73,11 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
   {agent?<div>
    <p>{agent.provider==='codex'?'Codex CLI':'Claude Code'}{exit?' · 退出码 '+exit.returncode:''}</p>
    <EvidenceText label="实际请求（含上游交接）" value={shown?.prompt}/>
-   <EvidenceText label={script.completed_nodes?.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>
+   <EvidenceText label={completed.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>
+   {completed.includes(node)&&(shown?.structured||shown?.candidate)&&<details><summary>结构化交付与候选文件</summary>
+    <EvidenceText label="结构化结果" value={shown?.structured}/>
+    <EvidenceText label="候选清单" value={shown?.candidate}/>
+   </details>}
    <details><summary>调用与错误记录</summary>
     {command&&<pre>{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
     {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
@@ -81,6 +87,10 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
    </details>
    {!command&&<p>尚无 CLI 调用记录。</p>}
   </div>:<div>
+   {reviews.map(review=><p key={review.node}>
+    {script.document.nodes.find(item=>item.id===review.node)?.name} · {review.verdict==='accept'?'接受':'需要返工'}
+    {state!=='COMPLETED'?'（历史审核记录）':''} · <code>{review.candidate_sha256}</code>
+   </p>)}
    {state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:<p>尚无已核验的最终结果。</p>}
    {events.length>0&&<details><summary>运行日志</summary><ol>{events.map((event,index)=><li key={index}>
     {event.at} · {event.kind}{event.node?' · '+event.node:''}

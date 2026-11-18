@@ -15,6 +15,8 @@ import re
 import sqlite3
 import sys
 
+from workflow_output_contract import OutputContractError, native_output_spec
+
 
 class ExportError(ValueError):
     pass
@@ -151,7 +153,7 @@ def chain(document):
         if kind == 'agent':
             allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
                        else LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS)
-            known_fields(node, NODE_FIELDS | allowed | {'output_contract', 'artifact_paths'}, ident)
+            known_fields(node, NODE_FIELDS | allowed | {'output_contract', 'artifact_paths', 'native_output'}, ident)
             if 'agent_revision' in node and 'agent_id' not in node:
                 raise ExportError(ident + ': Agent revision requires its saved identity.')
         else:
@@ -231,8 +233,6 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
                 raise ExportError('Output requires data; control-only Output is not implemented.')
             final_limit = transfer.get('max_chars')
             continue
-        if node.get('output_contract') or node.get('artifact_paths'):
-            raise ExportError(ident + ': structured contracts/artifact transfer are not yet exported.')
         if 'agent_id' in node:
             row = records.get(node['agent_id'])
             if not row or row.get('id') != node['agent_id'] or row.get('revision') != node.get('agent_revision'):
@@ -247,7 +247,7 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
         if 'execution' in config:
             portable = {key: value for key, value in config.items() if key not in NODE_FIELDS - {'name'}}
             # Node presentation metadata is separate from inline Agent settings.
-            portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths')}
+            portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths', 'native_output')}
             validate_native_agent(portable)
         provider = config.get('provider')
         if provider not in ('codex', 'claude'):
@@ -275,9 +275,25 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
                      round_prompt=text(config.get('round_prompt',''), 'Node prompt'),
                      output_prompt=text(config.get('output_prompt',''), 'Delivery prompt'),
                      timeout=timeout, max_budget_usd=budget)
+        transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
+        if 'native_output' in node:
+            if config.get('execution') != 'native-cli':
+                raise ExportError(ident + ': native output requires an explicit native-cli Agent.')
+            try:
+                spec = native_output_spec(node)
+            except OutputContractError as error:
+                raise ExportError(ident + ': ' + str(error)) from None
+            if any(not (Path(root) / path).is_relative_to(root / relative) for path in spec['allowed_paths']):
+                raise ExportError(ident + ': declared artifacts must be inside the producing Agent directory.')
+            if spec['kind'] == 'review':
+                upstream = normalized[-1].get('native_output', {}) if normalized else {}
+                if not upstream.get('allowed_paths') or transfer.get('mode') == 'none':
+                    raise ExportError(ident + ': review requires a direct handoff from a structured producer with declared artifacts.')
+            agent['native_output'] = spec
+        elif node.get('output_contract') or node.get('artifact_paths'):
+            raise ExportError(ident + ': enable native output to export structured fields or artifact paths.')
         index = len(normalized)
         normalized.append(agent)
-        transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
         if previous is None and transfer.get('max_chars') is not None:
             calls.append('    if len(task) > ' + repr(transfer['max_chars']) + ':\n'
                          "        raise WorkflowError('Saved Start handoff limit exceeded; no request sent.')")
@@ -285,12 +301,17 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
         calls.append('    results[' + repr(ident) + '] = invoke_agent(context, WORKFLOW[\'agents\'][' + str(index)
                      + '], task, ' + source + ', ' + repr(transfer.get('max_chars')) + ')')
         previous = ident
-    manifest = dict(version=1, compiler_version=3, name=name, policy='native-cli (not the V2 managed sandbox)',
+    manifest = dict(version=1, compiler_version=4, name=name, policy='native-cli (not the V2 managed sandbox)',
                     input=initial, agents=normalized,
                     source_sha256=sha256(canonical(document).encode()).hexdigest())
     runtime = Path(__file__).with_name('workflow_script_runtime.py').read_text(encoding='utf-8')
-    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v3.\n'
+    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v4.\n'
     source += '# Native CLI settings/permissions apply. Review before execution. No GUI/service dependency.\n'
+    contract = Path(__file__).with_name('workflow_output_contract.py').read_text(encoding='utf-8')
+    runtime, replacements = re.subn(r'^from workflow_output_contract import \(.*\n[^\n]+# EMBED_OUTPUT_CONTRACT$',
+                                    lambda _: contract, runtime, flags=re.MULTILINE)
+    if replacements != 1:
+        raise ExportError('Workflow output contract template marker is missing or duplicated.')
     source += runtime + '\n\nWORKFLOW = ' + pprint.pformat(manifest, width=100, sort_dicts=False) + '\n\n'
     source += 'def run_workflow(context, task):\n    results = {}\n' + '\n'.join(calls)
     if final_limit is not None:

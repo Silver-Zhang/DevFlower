@@ -733,6 +733,7 @@ function App(){
   change(d=>{
    const node={id,name:record.config.name,agent_id:record.id,agent_revision:record.revision,
     position:previous?.position||{x:100+d.nodes.length*300,y:160},...(!previous||previous.kind?{kind:'agent'}:{})};
+   if(previous?.native_output)node.native_output=previous.native_output;
    if(previous?.output_contract?.length)node.output_contract=previous.output_contract;
    if(previous?.artifact_paths?.length)node.artifact_paths=previous.artifact_paths;
    if(previous)d.nodes=d.nodes.map(item=>item.id===id?node:item);else d.nodes.push(node);
@@ -1391,6 +1392,22 @@ function App(){
     <Field label="初始化提示词" note="每次新运行初始化此 Agent。"><textarea rows={3} value={n.initial_prompt||''} onChange={e=>updateNode(n.id,{initial_prompt:e.target.value})}/></Field><Field label="每轮提示词"><textarea rows={4} value={n.round_prompt||''} onChange={e=>updateNode(n.id,{round_prompt:e.target.value})}/></Field><Field label="输出与交接要求"><textarea rows={3} value={n.output_prompt||''} onChange={e=>updateNode(n.id,{output_prompt:e.target.value})}/></Field>
     <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details></>}
     {nodeKind(n)==='agent'&&<>
+     {(n.native_output||boundAgent?.config.execution==='native-cli')&&<Field label="原生输出合同">
+      <select value={n.native_output?.kind||''} onChange={event=>{
+       const kind=event.target.value;
+       change(d=>{
+        const node=d.nodes.find(item=>item.id===n.id);
+        if(kind)node.native_output={version:1,kind};
+        else delete node.native_output;
+       });
+      }}>
+       <option value="">文本</option>
+       <option value="result">结构化结果 v1</option>
+       <option value="review">候选审核 v1</option>
+      </select>
+     </Field>}
+     {n.native_output?.kind==='result'&&<p className="field-note">输出字段路径以 result. 开头，例如 result.data.score。</p>}
+     {n.native_output?.kind==='review'&&<p className="field-note">直接连接声明了产物的结构化 Agent。审核使用固定字段和空产物列表。</p>}
      <ContractEditor label="输出" rows={n.output_contract} maxRows={32} maxFieldLength={200}
       onChange={rows=>updateNode(n.id,{output_contract:rows})}/>
      <details className="contract-editor"><summary>可报告的产物路径 · {n.artifact_paths?.length||0} 项</summary>

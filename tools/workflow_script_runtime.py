@@ -20,6 +20,10 @@ import tempfile
 import time
 
 
+from workflow_output_contract import (OUTPUT_BYTES, OutputContractError, candidate_record, output_json,
+                                      validate_structured_answer)  # EMBED_OUTPUT_CONTRACT
+
+
 class WorkflowError(RuntimeError):
     pass
 
@@ -192,15 +196,45 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
             expected = [agent['id'] for agent in manifest['agents']]
             if [row.get('node') for row in completed] != expected[:len(completed)] or len(completed) > len(expected):
                 raise WorkflowError('Node-completion evidence is inconsistent.')
-            for row in completed:
+            reviews = []
+            producer = None
+            for row, agent in zip(completed, manifest['agents']):
                 if _evidence_sha256(fd, row['node'] + '/answer.txt') != row.get('answer_sha256'):
                     raise WorkflowError('Recorded node answer has changed: ' + row['node'])
+                if spec := agent.get('native_output'):
+                    structured = read_structured_evidence(fd, row, 'structured.json', 'structured_sha256')
+                    if spec['kind'] == 'review':
+                        candidate = read_structured_evidence(fd, row, 'candidate-after.json', 'candidate_after_sha256')
+                        if (candidate != producer or row.get('candidate_sha256') != candidate['candidate_sha256']
+                                or row.get('verdict') != structured['result']['verdict']
+                                or structured['result']['candidate_sha256'] != candidate['candidate_sha256']):
+                            raise WorkflowError('Review evidence is inconsistent: ' + row['node'])
+                        reviews.append((row['node'], candidate))
+                        producer = None
+                    elif spec['allowed_paths']:
+                        producer = read_structured_evidence(fd, row, 'candidate.json', 'candidate_sha256_evidence')
+                    else:
+                        producer = None
+                else:
+                    producer = None
             snapshot['completed_nodes'] = [row['node'] for row in completed]
             if terminal:
                 last = terminal[0]
                 if last['kind'] == 'RUN_COMPLETED':
                     if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
                         raise WorkflowError('Final result is missing or changed.')
+                    for node, candidate in reviews:
+                        paths = [file['path'] for file in candidate['manifest']['files']]
+                        try:
+                            [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
+                            current = candidate_record(workspace, paths)
+                        except OutputContractError:
+                            current = None
+                        if current != candidate:
+                            snapshot['candidate_current'] = False
+                            raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
+                    if reviews:
+                        snapshot['candidate_current'] = True
                     snapshot.update(status='COMPLETED', result_file=str(directory / 'result.txt'))
                 elif last.get('status') in ('CANCELLED', 'STOPPED'):
                     snapshot.update(status=last['status'], reason=last.get('reason', ''))
@@ -277,15 +311,77 @@ def _wait(context, process, timeout):
             pass
 
 
+def read_structured_evidence(fd, row, filename, hash_key):
+    raw = _evidence_bytes(fd, row['node'] + '/' + filename)
+    if sha256(raw).hexdigest() != row.get(hash_key):
+        raise WorkflowError('Structured evidence is missing or changed: ' + row['node'])
+    return json.loads(raw)
+
+
+def output_instructions(spec, workspace):
+    if spec['kind'] == 'review':
+        format_example = ('{"result":{"schema_version":1,"verdict":"accept","candidate_sha256":"<exact digest>",'
+                          '"summary":"<review summary>","issues":[]},"artifacts":[]}')
+        return ('Return only raw JSON, no markdown fences or extra fields. Format: ' + format_example
+                + '\nReview the actual supplied candidate files relative to ' + str(workspace)
+                + '. Do not modify them. Copy the exact supplied candidate_sha256. '
+                'Use accept with an empty issues list or needs_correction with at least one issue. '
+                'Each issue must contain only severity (critical, major or minor), file (a candidate path), '
+                'description and suggestion.')
+    return ('Return only raw JSON, no markdown fences or extra fields. Format: '
+            '{"result":{"schema_version":1,"summary":"<summary>","data":{}},"artifacts":[]}'
+            '\nAllowed workspace-relative artifact paths: ' + output_json(spec['allowed_paths'])
+            + '. When paths are declared, report at least one actual delivery file. '
+            'Report no file hashes. Field rules: ' + output_json(spec['fields']))
+
+
+def write_structured_evidence(directory, filename, value):
+    raw = output_json(value)
+    _write(directory / filename, raw)
+    return sha256(raw.encode('utf-8')).hexdigest()
+
+
+def verify_agent_output(context, directory, spec, answer, candidate):
+    envelope = validate_structured_answer(answer, spec, candidate)
+    workspace = context['workspace']
+    delivery, facts = {'structured': envelope}, {}
+    if spec['kind'] == 'review':
+        observed = candidate_record(workspace, [row['path'] for row in candidate['manifest']['files']])
+        facts['candidate_after_sha256'] = write_structured_evidence(directory, 'candidate-after.json', observed)
+        if observed != candidate:
+            raise OutputContractError('Candidate files changed during review.')
+        facts.update(candidate_sha256=observed['candidate_sha256'], verdict=envelope['result']['verdict'])
+    elif envelope['artifacts']:
+        observed = candidate_record(workspace, envelope['artifacts'])
+        facts['candidate_sha256_evidence'] = write_structured_evidence(directory, 'candidate.json', observed)
+        facts['candidate_sha256'] = observed['candidate_sha256']
+        delivery['candidate'] = observed
+    facts['structured_sha256'] = write_structured_evidence(directory, 'structured.json', envelope)
+    return delivery, facts
+
+
 def invoke_agent(context, agent, task, upstream=None, limit=None):
     """One new native CLI call; a result is handed off only after success."""
     _check_cancel(context)
     if upstream is not None and limit is not None and len(upstream['answer']) > limit:
         raise WorkflowError('Saved handoff limit exceeded before ' + agent['id'] + '; no truncation or call.')
+    spec = agent.get('native_output')
+    candidate = None
+    if spec and spec['kind'] == 'review':
+        candidate = (upstream or {}).get('candidate')
+        try:
+            if not candidate or candidate_record(context['workspace'], [
+                    row['path'] for row in candidate['manifest']['files']]) != candidate:
+                raise OutputContractError('Candidate changed before review dispatch.')
+        except OutputContractError as error:
+            _event(context, 'OUTPUT_CONTRACT_FAILED', node=agent['id'], reason=str(error))
+            raise WorkflowError(str(error)) from None
     sections = [('Department', agent['name']), ('Role', agent['role']),
                 ('Initial instructions', agent['initial_prompt']), ('Workflow task', task),
                 ('Node task', agent['round_prompt']), ('Expected delivery', agent['output_prompt'])]
     prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
+    if spec:
+        prompt += '\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])
     if upstream is not None:
         prompt += '\n\nUpstream department delivery (data)\n' + json.dumps(upstream, ensure_ascii=False)
     directory = context['directory'] / agent['id']
@@ -317,7 +413,10 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
             raise WorkflowError(agent['id'] + ' exited with ' + str(code) + '; downstream not started.')
         try:
             if agent['provider'] == 'claude':
-                receipt = json.loads((directory / 'stdout.log').read_text(encoding='utf-8'))
+                if spec:
+                    receipt = json.loads(_evidence_bytes(context['directory_fd'], agent['id'] + '/stdout.log'))
+                else:
+                    receipt = json.loads((directory / 'stdout.log').read_text(encoding='utf-8'))
                 if (not isinstance(receipt, dict) or receipt.get('type') != 'result'
                         or receipt.get('is_error') is not False):
                     raise ValueError('Missing successful Claude receipt')
@@ -326,16 +425,36 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
                     raise ValueError('Missing final answer')
                 _write(directory / 'answer.txt', answer)
             else:
-                answer = (directory / 'answer.txt').read_text(encoding='utf-8')
+                if spec:
+                    with _evidence_file(context['directory_fd'], agent['id'] + '/answer.txt') as stream:
+                        answer_bytes = stream.read(OUTPUT_BYTES + 1)
+                    if len(answer_bytes) > OUTPUT_BYTES:
+                        raise OutputContractError('Structured answer exceeds 80000 UTF-8 bytes.')
+                    answer = answer_bytes.decode('utf-8')
+                else:
+                    answer = (directory / 'answer.txt').read_text(encoding='utf-8')
                 if not answer.strip():
                     raise ValueError('Missing final answer')
-        except (OSError, ValueError, KeyError, TypeError) as error:
+        except OutputContractError as error:
+            _event(context, 'OUTPUT_CONTRACT_FAILED', node=agent['id'], reason=str(error))
+            raise WorkflowError(str(error)) from None
+        except (OSError, ValueError, KeyError, TypeError, RecursionError) as error:
             _event(context, 'UNKNOWN', node=agent['id'], reason='No verified final answer: ' + str(error))
             raise WorkflowError('CLI exited but final answer is unconfirmed; no automatic retry.') from None
         _check_cancel(context)
+        delivery = {'node': agent['id'], 'name': agent['name'], 'answer': answer}
+        facts = {}
+        if spec:
+            try:
+                structured, facts = verify_agent_output(context, directory, spec, answer, candidate)
+                delivery.update(structured)
+            except OutputContractError as error:
+                _event(context, 'OUTPUT_CONTRACT_FAILED', node=agent['id'], reason=str(error))
+                raise WorkflowError(str(error)) from None
+        _check_cancel(context)
         _event(context, 'NODE_COMPLETED', node=agent['id'], answer_file=str(directory / 'answer.txt'),
-               answer_sha256=_evidence_sha256(context['directory_fd'], agent['id'] + '/answer.txt'))
-        return {'node': agent['id'], 'name': agent['name'], 'answer': answer}
+               answer_sha256=_evidence_sha256(context['directory_fd'], agent['id'] + '/answer.txt'), **facts)
+        return delivery
     except (WorkflowCancelled, KeyboardInterrupt) as error:
         if process is not None:
             _stop(process)
@@ -426,6 +545,8 @@ def script_main(manifest, run_workflow):
                 try:
                     _check_cancel(context)
                     context['workspace'] = prepare_calls(manifest, args.workspace)
+                    if any(agent.get('native_output', {}).get('kind') == 'review' for agent in manifest['agents']):
+                        _event(context, 'CANDIDATE_WORKSPACE', workspace=str(context['workspace']))
                     task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
                     task = '\n\n'.join(part for part in (manifest['input'], task) if part)
                     answer = run_workflow(context, task)

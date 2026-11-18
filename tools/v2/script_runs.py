@@ -190,6 +190,8 @@ class ScriptRuns:
                     return dict(result=self.excerpt(fd, 'result.txt'))
                 return dict(prompt=self.excerpt(fd, node + '/prompt.txt'),
                             answer=self.excerpt(fd, node + '/answer.txt'),
+                            structured=self.excerpt(fd, node + '/structured.json'),
+                            candidate=self.excerpt(fd, node + '/candidate.json'),
                             stderr=self.excerpt(fd, node + '/stderr.log', tail=True))
         except FileNotFoundError:
             return {}
