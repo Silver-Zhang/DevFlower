@@ -5,6 +5,7 @@ SDK. Native CLI configuration remains authoritative. Logs are local/private;
 they can contain project source and native CLI output and are not sanitized.
 """
 import argparse
+from collections import defaultdict
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -233,6 +234,10 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
             snapshot['cancel_requested'] = _cancel_requested(fd)
             outer = [row for row in events if 'iteration' not in row]
             completed = [row for row in outer if row['kind'] == 'NODE_COMPLETED']
+            calls = defaultdict(list)
+            for row in outer:
+                if row['kind'] in ('CALL_INTENT', 'PROCESS_STARTED', 'PROCESS_EXITED', 'NODE_COMPLETED'):
+                    calls[row['node']].append(row)
             condition, router = manifest.get('condition'), manifest.get('router')
             expected, decision = recorded_path(manifest, events)
             if [row.get('node') for row in completed] != expected[:len(completed)]:
@@ -268,11 +273,13 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     continue
                 if _evidence_sha256(fd, node + '/answer.txt') != row.get('answer_sha256'):
                     raise WorkflowError('Recorded node answer has changed: ' + node)
+                call = calls[node]
+                if ([event['kind'] for event in call] != ['CALL_INTENT', 'PROCESS_STARTED', 'PROCESS_EXITED', 'NODE_COMPLETED']
+                        or call[2].get('returncode') != (row['returncode'] if node in tools else 0)):
+                    raise WorkflowError('Node completion does not match its recorded process: ' + node)
                 if node in tools:
                     result = read_structured_evidence(fd, row, 'structured.json', 'answer_sha256')['result']
-                    exits = [event.get('returncode') for event in outer if event['kind'] == 'PROCESS_EXITED'
-                             and event.get('node') == node]
-                    if (exits != [row['returncode']] or result['returncode'] != row['returncode']
+                    if (result['returncode'] != row['returncode']
                             or result['success'] is not (row['returncode'] == 0)):
                         raise WorkflowError('Tool outcome does not match its process: ' + node)
                     for channel in ('stdout', 'stderr'):
@@ -320,14 +327,15 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                 if last['kind'] == 'RUN_COMPLETED':
                     if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
                         raise WorkflowError('Final result is missing or changed.')
-                    if (condition or router) and (not decision or last['result_sha256'] != completed[-1]['answer_sha256']):
+                    if (condition or router) and not decision:
                         raise WorkflowError('Final result is not bound to a selected branch.')
-                    if loop and last['result_sha256'] != completed[-1]['answer_sha256']:
-                        raise WorkflowError('Final result does not match the last node after running Loop.')
+                    if not completed or last['result_sha256'] != completed[-1]['answer_sha256']:
+                        raise WorkflowError('Final result does not match the last node.')
                     candidates_current = True
+                    if reviews:
+                        [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
                     for node, candidate in reviews:
                         try:
-                            [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
                             current = candidate_is_current(workspace, candidate)
                         except OutputContractError:
                             current = False
@@ -896,7 +904,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
                         raise OutputContractError('Structured answer exceeds 80000 UTF-8 bytes.')
                     answer = answer_bytes.decode('utf-8')
                 else:
-                    answer = (directory / 'answer.txt').read_text(encoding='utf-8')
+                    answer = (directory / 'answer.txt').read_bytes().decode('utf-8')
                 if not answer.strip():
                     raise ValueError('Missing final answer')
         except OutputContractError as error:

@@ -202,6 +202,33 @@ class ScriptMonitorTests(unittest.TestCase):
             self.assertEqual(self.observe('--status')['status'], 'RECOVERY_REQUIRED')
         path.write_bytes(raw)
 
+    def test_completed_run_requires_matching_process_and_final_delivery(self):
+        self.assertEqual(self.execute().returncode, 0)
+        path = self.run_dir / 'events.jsonl'
+        original = [json.loads(line) for line in path.read_text().splitlines()]
+        for kind in ('CALL_INTENT', 'PROCESS_STARTED', 'PROCESS_EXITED'):
+            with self.subTest(missing=kind):
+                events = [row for row in original if (row['kind'], row.get('node')) != (kind, 'Developer')]
+                path.write_text(''.join(json.dumps(row) + '\n' for row in events))
+                self.assertEqual(self.observe('--status')['status'], 'RECOVERY_REQUIRED')
+        path.write_text(''.join(json.dumps(row) + '\n' for row in original))
+        (self.run_dir / 'result.txt').write_text('Unrelated delivery')
+        original[-1]['result_sha256'] = sha256(b'Unrelated delivery').hexdigest()
+        path.write_text(''.join(json.dumps(row) + '\n' for row in original))
+        self.assertEqual(self.observe('--status')['status'], 'RECOVERY_REQUIRED')
+
+    def test_native_line_endings_keep_the_final_delivery_hash(self):
+        cli = self.bin / 'codex'
+        cli.write_text(cli.read_text().replace("'DEVELOPER_RESULT'", r"'line one\r\nline two'"))
+        document = graph()
+        document['nodes'] = document['nodes'][:1]
+        document['edges'] = []
+        _, source = export.compile_workflow(document, workspace=self.project, native_config=True)
+        self.script.write_text(source)
+        self.assertEqual(self.execute().returncode, 0)
+        self.assertEqual(self.observe('--status')['status'], 'COMPLETED')
+        self.assertEqual((self.run_dir / 'result.txt').read_bytes(), b'line one\r\nline two')
+
     def test_live_partial_tail_is_only_a_running_observation(self):
         self.start_slow()
         path = self.run_dir / 'events.jsonl'

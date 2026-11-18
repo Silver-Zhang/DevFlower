@@ -529,6 +529,7 @@ class ContractTests(unittest.TestCase):
         original = router_graph()
         for mode, data, port, selected in (
             ('first', dict(category='research', ready=True, rank=2), 'research', 'Research'),
+            ('default-out', dict(category='research', ready=True, rank=2), 'out', 'Research'),
             ('second', dict(category='development', ready=True, rank=1), 'development', 'Development'),
             ('number', dict(category='other', ready=False, rank=2.0), 'priority', 'Priority'),
             ('fallback', dict(category='other', ready=False, rank=1), 'fallback', 'General'),
@@ -539,10 +540,13 @@ class ContractTests(unittest.TestCase):
             ('invalid-output', 'invalid', None, None),
         ):
             with self.subTest(mode=mode):
-                doc = router_graph() if mode == 'reordered' else original
+                doc = router_graph() if mode in ('reordered', 'default-out') else original
                 if mode == 'reordered':
                     rules = doc['nodes'][2]['config']['rules']
                     rules[0], rules[1] = rules[1], rules[0]
+                if mode == 'default-out':
+                    doc['nodes'][2]['config']['rules'][0]['id'] = 'out'
+                    next(edge for edge in doc['edges'] if edge['id']=='routeResearch').pop('source_port')
                 project = self.root/mode
                 project.mkdir()
                 if selected:
@@ -716,7 +720,7 @@ class ContractTests(unittest.TestCase):
         for mode, message in (
             ('bound', '1–5'), ('exit-condition', 'verdict equals'), ('shape', 'requires Start'),
             ('nested', 'Loop'), ('branch', 'Loop'), ('multiple', 'one Loop'), ('mixed', 'without Condition or Router'),
-            ('paths', 'declared artifacts'),
+            ('paths', 'declared artifacts'), ('reserved-evidence', 'reserved for Loop evidence'),
             ('stale', 'stale saved Agent revision'), ('inline', 'reference saved versions'),
         ):
             with self.subTest(mode=mode), self.assertRaisesRegex(ExportError, message):
@@ -744,6 +748,8 @@ class ContractTests(unittest.TestCase):
                     doc['edges'].append(dict(id='loopDeveloper',source='Loop',target='Developer'))
                 elif mode == 'paths':
                     body['nodes'][0].pop('artifact_paths')
+                elif mode == 'reserved-evidence':
+                    insert_command(doc,'startLoop',[sys.executable,'-V'],node='iterations')
                 elif mode == 'stale':
                     records[body['nodes'][0]['agent_id']]['revision'] = 'b'*64
                 else:
