@@ -9,8 +9,10 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from test_native_workflow_export import export, graph, FAKE_CLI
+from workflow_script_runtime import inspect_run
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux directory-lock contract')
@@ -145,6 +147,15 @@ class ScriptMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.calls.read_text().splitlines()), 1)
         self.assertFalse((self.run_dir / 'Reviewer').exists())
         self.assertFalse((self.run_dir / 'result.txt').exists())
+
+    def test_observers_do_not_take_owner_lock_before_manifest_is_published(self):
+        self.run_dir.mkdir(mode=0o700)
+        with patch('fcntl.flock') as lock:
+            for cancel in (False, True):
+                with self.assertRaises(FileNotFoundError):
+                    inspect_run({}, self.run_dir, cancel=cancel)
+            lock.assert_not_called()
+        self.assertFalse((self.run_dir / 'cancel.request').exists())
 
     def test_dead_owner_is_unknown_and_cancel_does_not_claim_success(self):
         self.start_slow()

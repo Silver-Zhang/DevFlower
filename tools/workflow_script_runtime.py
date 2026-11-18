@@ -185,6 +185,14 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
     import fcntl
     directory = Path(directory).absolute()
     with _run_directory(directory) as fd:
+        # The execution owner locks the directory before publishing its manifest.
+        # A status or cancel request must not compete for ownership before then.
+        try:
+            saved = json.loads(_evidence_bytes(fd, 'workflow.json'))
+        except (ValueError, UnicodeError, RecursionError):
+            raise WorkflowError('Invalid run manifest; execution outcome is unknown.') from None
+        if saved != manifest:
+            raise WorkflowError('Run belongs to a different workflow artifact.')
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -192,12 +200,6 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
         else:
             active = False
             fcntl.flock(fd, fcntl.LOCK_UN)
-        try:
-            saved = json.loads(_evidence_bytes(fd, 'workflow.json'))
-        except (ValueError, UnicodeError, RecursionError):
-            raise WorkflowError('Invalid run manifest; execution outcome is unknown.') from None
-        if saved != manifest:
-            raise WorkflowError('Run belongs to a different workflow artifact.')
         snapshot = dict(status='RECOVERY_REQUIRED', active=active, automatic_retry=False,
                         directory=str(directory), script_sha256=_script_sha256(), completed_nodes=[])
         try:
