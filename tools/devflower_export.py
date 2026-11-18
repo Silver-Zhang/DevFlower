@@ -98,6 +98,15 @@ def validate_native_agent(value):
     return value
 
 
+def document_agents(document):
+    """Yield the Agent nodes from the draft and any fixed Loop bodies."""
+    for node in document['nodes']:
+        if node.get('kind', 'agent') == 'agent':
+            yield node
+        elif node.get('kind') == 'loop' and (body := node['config'].get('body')):
+            yield from document_agents(body)
+
+
 def read_saved(database, workspace, draft_id, *, expected_revision=None):
     """One SQLite read transaction; never starts services or writes product data."""
     database = Path(database).resolve(strict=True)
@@ -124,7 +133,7 @@ def read_saved(database, workspace, draft_id, *, expected_revision=None):
         if sha256(canonical(graph).encode()).hexdigest() != draft.get('revision'):
             raise ExportError('Saved draft revision does not match its content.')
         agents = {}
-        for node in graph['nodes']:
+        for node in document_agents(graph):
             if 'agent_id' in node:
                 row = record('agent-config', node['agent_id'])
                 if row.get('workspace') != workspace:
@@ -186,7 +195,7 @@ def workflow_paths(document):
         if ident in nodes:
             raise ExportError('Duplicate node: ' + ident)
         kind = node.get('kind', 'agent')
-        if kind not in ('start', 'agent', 'output', *CONTROL_KINDS):
+        if kind not in ('start', 'agent', 'output', 'loop', *CONTROL_KINDS):
             raise ExportError('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
         if kind == 'agent':
             allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
@@ -228,7 +237,7 @@ def workflow_paths(document):
         limit = transfer.get('max_chars')
         if limit is not None and (type(limit) is not int or limit < 1):
             raise ExportError('Invalid handoff limit: ' + ident)
-        if (source_kind == 'start' or target_kind in CONTROL_KINDS) and transfer.get('mode') == 'none':
+        if (source_kind == 'start' or target_kind in ('loop', *CONTROL_KINDS)) and transfer.get('mode') == 'none':
             raise ExportError('Start and control node inputs require a data handoff: ' + ident)
         edge_ids.add(ident)
         incoming[target].append(edge)
@@ -273,7 +282,10 @@ def workflow_paths(document):
             branches[port] = branch
     if len(seen) != len(nodes):
         raise ExportError('Every node must be reachable from the root; disconnected or cyclic graph.')
-    if not any(n.get('kind', 'agent') == 'agent' for n in prefix):
+    if any(n.get('kind') == 'loop' for n in nodes.values()):
+        if control or [n.get('kind') for n in prefix] != ['start', 'loop', 'output']:
+            raise ExportError('Native Loop requires exactly Start → Loop → Output.')
+    elif not any(n.get('kind', 'agent') == 'agent' for n in prefix):
         raise ExportError('Add at least one Agent.')
     return name, prefix, control, branches, incoming
 
@@ -358,6 +370,54 @@ def compile_router(node, source):
     return rules
 
 
+def compile_start(node):
+    config = node.get('config', {})
+    known_fields(config, {'instructions', 'initial_data'}, 'Start configuration')
+    instructions = text(config.get('instructions', ''), 'Start instructions')
+    raw_data = text(config.get('initial_data', ''), 'Start initial data')
+    data = 'Initial data\n' + canonical(json.loads(raw_data)) if raw_data.strip() else ''
+    return '\n\n'.join(value for value in (instructions, data) if value)
+
+
+def compile_output(node, transfer):
+    config = node.get('config', {})
+    if (not isinstance(config, dict) or config.get('format', 'text') != 'text'
+            or config.get('instructions') or set(config) - {'format', 'instructions'}):
+        raise ExportError('This export supports plain final-answer Output only.')
+    if transfer.get('mode') == 'none':
+        raise ExportError('Output requires data; control-only Output is not implemented.')
+    return transfer.get('max_chars')
+
+
+def compile_loop(prefix, incoming, records, root):
+    start, loop, output = prefix
+    config = loop.get('config')
+    known_fields(config, {'body', 'exit_condition', 'max_iterations'}, 'Loop configuration')
+    if config.get('exit_condition') != REVIEW_CONDITION:
+        raise ExportError('Native Loop requires result.verdict equals "accept".')
+    maximum = config.get('max_iterations', 3)
+    if type(maximum) is not int or not 1 <= maximum <= 5:
+        raise ExportError('Native Loop supports 1–5 iterations.')
+    _, body, control, _, edges = workflow_paths(config.get('body'))
+    if control or [n.get('kind', 'agent') for n in body] != ['start', 'agent', 'agent', 'output']:
+        raise ExportError('Native Loop body requires exactly Start → Developer → Reviewer → Output.')
+    body_start, developer, reviewer, body_output = body
+    if not all('agent_id' in node for node in (developer, reviewer)):
+        raise ExportError('Native Loop requires both Agents to reference saved versions.')
+    input_edge, review_edge, result_edge = [edges[node['id']][0].get('transfer', {})
+                                            for node in (developer, reviewer, body_output)]
+    first = compile_agent(developer, records, root, input_edge, {})
+    second = compile_agent(reviewer, records, root, review_edge, first)
+    if not first.get('native_output', {}).get('allowed_paths') or second.get('native_output', {}).get('kind') != 'review':
+        raise ExportError('Native Loop requires a declared candidate producer and a candidate Reviewer v1.')
+    options = dict(node=loop['id'], max_iterations=maximum, body_input=compile_start(body_start),
+                   start_limit=incoming[loop['id']][0].get('transfer', {}).get('max_chars'),
+                   task_limit=input_edge.get('max_chars'), review_limit=review_edge.get('max_chars'),
+                   body_output_limit=compile_output(body_output, result_edge),
+                   output_limit=compile_output(output, incoming[output['id']][0].get('transfer', {})))
+    return compile_start(start), options, [first, second]
+
+
 def compile_workflow(document, agents=None, workspace='.', *, native_config=False):
     """Pure code generation except reading the bundled fixed runtime template."""
     if native_config is not True:
@@ -365,6 +425,7 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
     name, prefix, control, branches, incoming = workflow_paths(document)
     records, normalized, calls, initial = agents or {}, {}, [], ''
     root = Path(workspace).resolve()
+    loop_workflow = any(node.get('kind') == 'loop' for node in prefix)
 
     def compile_path(path, previous=None, *, indent='    '):
         nonlocal initial
@@ -373,22 +434,10 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
             transfer = incoming[ident][0].get('transfer', {}) if incoming[ident] else {}
             limit = transfer.get('max_chars')
             if kind == 'start':
-                config = node.get('config', {})
-                if not isinstance(config, dict) or set(config) - {'instructions', 'initial_data'}:
-                    raise ExportError('Unsupported Start configuration.')
-                instructions = text(config.get('instructions', ''), 'Start instructions')
-                raw_data = text(config.get('initial_data', ''), 'Start initial data')
-                data = 'Initial data\n' + canonical(json.loads(raw_data)) if raw_data.strip() else ''
-                initial = '\n\n'.join(value for value in (instructions, data) if value)
+                initial = compile_start(node)
                 continue
             if kind == 'output':
-                config = node.get('config', {})
-                if (not isinstance(config, dict) or config.get('format', 'text') != 'text'
-                        or config.get('instructions') or set(config) - {'format', 'instructions'}):
-                    raise ExportError('This export supports plain final-answer Output only.')
-                if transfer.get('mode') == 'none':
-                    raise ExportError('Output requires data; control-only Output is not implemented.')
-                return previous, limit
+                return previous, compile_output(node, transfer)
             actual_source = incoming[ident][0]['source'] if incoming[ident] else None
             agent = compile_agent(node, records, root, transfer, normalized.get(actual_source, {}))
             index = len(normalized)
@@ -408,12 +457,17 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
                          + indent + "    raise WorkflowError('Saved Output limit exceeded; full answer retained in node logs.')")
         calls.append(indent + f'return results[{previous!r}]')
 
-    upstream, final_limit = compile_path(prefix)
-    manifest = dict(version=1, compiler_version=6, name=name, policy='native-cli (not the V2 managed sandbox)',
-                    input=initial, source_sha256=sha256(canonical(document).encode()).hexdigest())
-    if not control:
-        finish_path(upstream, final_limit, '    ')
+    manifest = dict(version=1, compiler_version=7, name=name, policy='native-cli (not the V2 managed sandbox)',
+                    source_sha256=sha256(canonical(document).encode()).hexdigest())
+    if loop_workflow:
+        initial, manifest['loop'], loop_agents = compile_loop(prefix, incoming, records, root)
+        manifest['agents'] = loop_agents
+        calls.append('    return run_loop(context, WORKFLOW, task)')
     else:
+        upstream, final_limit = compile_path(prefix)
+        if not control:
+            finish_path(upstream, final_limit, '    ')
+    if control:
         node_id, kind = control['id'], control['kind']
         decision = dict(node=node_id, branches={port: [node['id'] for node in path] for port, path in branches.items()})
         manifest[kind] = decision
@@ -438,9 +492,11 @@ def compile_workflow(document, agents=None, workspace='.', *, native_config=Fals
                     keyword = 'if' if index == 0 else 'elif'
                     calls.append(f'    {keyword} port == {port!r}:')
                 finish_path(*compile_path(path, upstream, indent='        '), '        ')
-    manifest['agents'] = list(normalized.values())
+    manifest['input'] = initial
+    if not loop_workflow:
+        manifest['agents'] = list(normalized.values())
     runtime = Path(__file__).with_name('workflow_script_runtime.py').read_text(encoding='utf-8')
-    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v6.\n'
+    source = '#!/usr/bin/env python3\n# Generated by DevFlower native-script compiler v7.\n'
     source += '# Native CLI settings/permissions apply. Review before execution. No GUI/service dependency.\n'
     contract = Path(__file__).with_name('workflow_output_contract.py').read_text(encoding='utf-8')
     runtime, replacements = re.subn(r'^from workflow_output_contract import \(.*\n[^\n]+# EMBED_OUTPUT_CONTRACT$',

@@ -242,7 +242,7 @@ class ExportTests(unittest.TestCase):
         self.assertIn('42',self.calls()[0]['prompt'])
 
     def test_reject_unsupported_control_nodes(self):
-        for kind in ('loop','merge','approval','tool','validation'):
+        for kind in ('merge','approval','tool','validation'):
             doc=graph();doc['nodes'][0]['kind']=kind
             with self.subTest(kind=kind),self.assertRaisesRegex(export.ExportError,'not implemented'):
                 export.compile_workflow(doc,native_config=True)

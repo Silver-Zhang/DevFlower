@@ -202,10 +202,26 @@ def hash_candidate_file(root_fd, mount, path):
                 return (meta.st_dev, meta.st_ino, meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
             if len(data) != before.st_size or stamp(before) != stamp(after):
                 raise OutputContractError('Candidate file changed during hashing.')
-    return dict(path=path, bytes=len(data), sha256=sha256(data).hexdigest())
+    return dict(path=path, bytes=len(data), sha256=sha256(data).hexdigest()), data
 
 
-def candidate_record(workspace, paths):
+def save_candidate_file(root_fd, path, data):
+    parts = artifact_parts(path)
+    with ExitStack() as opened:
+        directory = root_fd
+        for part in parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=directory)
+            except FileExistsError:
+                pass
+            directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            opened.callback(os.close, directory)
+        fd = os.open(parts[-1], os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+
+
+def candidate_record(workspace, paths, *, snapshot=None):
     paths = artifact_selection(paths)
     if not paths:
         raise OutputContractError('Candidate requires at least one file.')
@@ -214,13 +230,20 @@ def candidate_record(workspace, paths):
         workspace = Path(workspace)
         if workspace.resolve(strict=True) != workspace:
             raise OutputContractError('Candidate workspace path has changed.')
-        fd = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
+        with ExitStack() as opened:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            fd = os.open(workspace, flags)
+            opened.callback(os.close, fd)
+            if snapshot is not None:
+                snapshot.mkdir(mode=0o700)
+                snapshot_fd = os.open(snapshot, flags)
+                opened.callback(os.close, snapshot_fd)
             mount = candidate_mount(fd)
             for path in sorted(paths):
-                files.append(hash_candidate_file(fd, mount, path))
-        finally:
-            os.close(fd)
+                file, data = hash_candidate_file(fd, mount, path)
+                files.append(file)
+                if snapshot is not None:
+                    save_candidate_file(snapshot_fd, path, data)
     except (OSError, RuntimeError):
         raise OutputContractError('Candidate file is missing, unreadable or uses a symbolic link.') from None
     if sum(row['bytes'] for row in files) > CANDIDATE_TOTAL_BYTES:

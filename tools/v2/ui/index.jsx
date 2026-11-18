@@ -1064,8 +1064,12 @@ function App(){
  const actualInputs=e?(edgeTarget?.inputs||[]).filter(i=>i.edge===e.id&&i.source===e.source&&i.target_activation===edgeTarget.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- const nativeScript=agentVersions?.workspace===workspace?.id&&doc.nodes.some(node=>
-  agentVersions.records?.get(node.agent_id)?.config.execution==='native-cli');
+ function usesNativeAgents(nodes){
+  return nodes.some(node=>node.native_output||
+   (agentVersions?.workspace===workspace?.id&&agentVersions?.records?.get(node.agent_id)?.config.execution==='native-cli')||
+   (node.config?.body?.nodes&&usesNativeAgents(node.config.body.nodes)));
+ }
+ const nativeScript=usesNativeAgents(doc.nodes);
  const launchBlock=nativeScript?(taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':''):
   doc.nodes.map(runtimeBlock).find(Boolean);
  const approval=runSnapshot?.nodes?.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);

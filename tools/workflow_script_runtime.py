@@ -66,6 +66,8 @@ def _write(path, value):
 
 
 def _event(context, kind, **data):
+    if 'iteration' in context:
+        data.update(iteration=context['iteration'], loop_node=context['loop_node'])
     value = dict(kind=kind, at=datetime.now(timezone.utc).isoformat(), **data)
     with (context['directory'] / 'events.jsonl').open('a', encoding='utf-8') as stream:
         stream.write(json.dumps(value, ensure_ascii=False) + '\n')
@@ -227,6 +229,9 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                     os.close(request)
                     os.fsync(fd)
             snapshot['cancel_requested'] = _cancel_requested(fd)
+            if 'loop' in manifest:
+                inspect_loop(manifest, fd, events, snapshot, terminal[0] if terminal else None)
+                return snapshot
             completed = [row for row in events if row['kind'] == 'NODE_COMPLETED']
             condition, router = manifest.get('condition'), manifest.get('router')
             expected, decision = recorded_path(manifest, events)
@@ -250,11 +255,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                             raise WorkflowError('Router decision does not match the verified structured input.')
                         snapshot['router'] = dict(decision, input_json=json.dumps(inputs, ensure_ascii=False, indent=2))
                     if spec['kind'] == 'review':
-                        candidate = read_structured_evidence(fd, row, 'candidate-after.json', 'candidate_after_sha256')
-                        if (candidate != producer or row.get('candidate_sha256') != candidate['candidate_sha256']
-                                or row.get('verdict') != structured['result']['verdict']
-                                or structured['result']['candidate_sha256'] != candidate['candidate_sha256']):
-                            raise WorkflowError('Review evidence is inconsistent: ' + row['node'])
+                        candidate = read_review_candidate(fd, row, structured, producer)
                         if decision and condition and row['node'] == condition['reviewer']:
                             if (decision.get('candidate_sha256') != candidate['candidate_sha256']
                                     or decision['input_verdict'] != row['verdict']):
@@ -366,11 +367,20 @@ def _wait(context, process, timeout):
             pass
 
 
-def read_structured_evidence(fd, row, filename, hash_key):
-    raw = _evidence_bytes(fd, row['node'] + '/' + filename)
+def read_structured_evidence(fd, row, filename, hash_key, *, prefix=''):
+    raw = _evidence_bytes(fd, prefix + row['node'] + '/' + filename)
     if sha256(raw).hexdigest() != row.get(hash_key):
         raise WorkflowError('Structured evidence is missing or changed: ' + row['node'])
     return json.loads(raw)
+
+
+def read_review_candidate(fd, row, structured, producer, *, prefix=''):
+    candidate = read_structured_evidence(fd, row, 'candidate-after.json', 'candidate_after_sha256', prefix=prefix)
+    if (candidate != producer or row.get('candidate_sha256') != candidate['candidate_sha256']
+            or row.get('verdict') != structured['result']['verdict']
+            or structured['result']['candidate_sha256'] != candidate['candidate_sha256']):
+        raise WorkflowError('Review evidence is inconsistent: ' + row['node'])
+    return candidate
 
 
 def output_instructions(spec, workspace):
@@ -399,6 +409,164 @@ def write_structured_evidence(directory, filename, value):
 def candidate_is_current(workspace, candidate):
     paths = [file['path'] for file in candidate['manifest']['files']]
     return candidate_record(workspace, paths) == candidate
+
+
+def inspect_loop(manifest, fd, events, snapshot, terminal):
+    loop = manifest['loop']
+    developer, reviewer = (agent['id'] for agent in manifest['agents'])
+    rounds = []
+    snapshot['loop'] = dict(node=loop['node'], max_iterations=loop['max_iterations'], iterations=rounds)
+    current = None
+    candidate = review_answer_sha = None
+    for event in events:
+        kind = event['kind']
+        if kind in ('RUN_STARTED', 'RUN_STOPPED', 'RUN_COMPLETED', 'CANDIDATE_WORKSPACE'):
+            continue
+        if kind == 'LOOP_ITERATION_STARTED':
+            count = len(rounds) + 1
+            if count > loop['max_iterations'] or (current and current['disposition'] != 'LOOP_CONTINUED'):
+                raise WorkflowError('Unexpected Loop iteration.')
+            current = dict(iteration=count, agents={node: {'state': 'NOT_STARTED'} for node in (developer, reviewer)},
+                           disposition=None, review=None, completed_nodes=[])
+            rounds.append(current)
+            candidate = review_answer_sha = None
+        if (not current or type(event.get('iteration')) is not int or event['iteration'] != current['iteration']
+                or event.get('loop_node') != loop['node']):
+            raise WorkflowError('Loop event has an inconsistent iteration identity.')
+        if kind == 'LOOP_ITERATION_STARTED':
+            continue
+        if current['disposition']:
+            raise WorkflowError('Unexpected Loop event after a round decision.')
+        if kind.startswith('LOOP_'):
+            if (not current['review'] or event.get('candidate_sha256') != current['review']['candidate_sha256']
+                    or event.get('verdict') != current['review']['verdict']):
+                raise WorkflowError('Loop decision does not match the verified review.')
+            if kind == 'LOOP_ITERATION_COMPLETED' and not current.get('verified'):
+                if (event.get('developer_node'), event.get('reviewer_node')) != (developer, reviewer):
+                    raise WorkflowError('Loop completion has an inconsistent Agent identity.')
+                current['verified'] = True
+                continue
+            expected = ('LOOP_ACCEPTED' if current['review']['verdict'] == 'accept' else
+                        'LOOP_LIMIT_REACHED' if len(rounds) == loop['max_iterations'] else 'LOOP_CONTINUED')
+            if not current.get('verified') or kind != expected:
+                raise WorkflowError('Unexpected Loop decision for the review or iteration bound.')
+            current['disposition'] = kind
+            continue
+        completed = current['completed_nodes']
+        node = event.get('node')
+        if len(completed) == 2 or node != (developer, reviewer)[len(completed)]:
+            raise WorkflowError('Loop Agent event is out of order.')
+        actor = current['agents'][node]
+        if kind == 'CALL_INTENT':
+            if actor['state'] != 'NOT_STARTED':
+                raise WorkflowError('Loop Agent has repeated call intent.')
+            actor['state'] = 'STARTING'
+        elif kind == 'PROCESS_STARTED':
+            if actor['state'] != 'STARTING':
+                raise WorkflowError('Loop Agent process has no matching call intent.')
+            actor['state'] = 'RUNNING'
+        elif kind == 'PROCESS_EXITED':
+            if actor['state'] != 'RUNNING':
+                raise WorkflowError('Loop Agent exit has no matching process start.')
+            actor['returncode'] = event['returncode']
+            actor['state'] = 'VERIFYING' if event['returncode'] == 0 else 'FAILED'
+        elif kind in ('CANCELLED', 'UNKNOWN', 'NOT_SENT', 'CLI_FAILED', 'OUTPUT_CONTRACT_FAILED'):
+            actor['state'] = kind if kind in ('CANCELLED', 'UNKNOWN') else 'FAILED'
+        elif kind == 'NODE_COMPLETED':
+            prefix = f"iterations/{current['iteration']}/"
+            if (actor['state'] != 'VERIFYING'
+                    or _evidence_sha256(fd, prefix + node + '/answer.txt') != event.get('answer_sha256')):
+                raise WorkflowError('Loop Agent completion evidence has changed.')
+            structured = read_structured_evidence(fd, event, 'structured.json', 'structured_sha256', prefix=prefix)
+            if node == developer:
+                candidate = read_structured_evidence(fd, event, 'candidate.json', 'candidate_sha256_evidence', prefix=prefix)
+                frozen = Path(snapshot['directory']).resolve() / prefix / 'candidate-files'
+                if not candidate_is_current(frozen, candidate):
+                    raise WorkflowError('Stored Loop candidate snapshot has changed.')
+                current['candidate_sha256'] = candidate['candidate_sha256']
+            else:
+                read_review_candidate(fd, event, structured, candidate, prefix=prefix)
+                current['review'] = structured['result']
+                review_answer_sha = event['answer_sha256']
+            actor['state'] = 'COMPLETED'
+            completed.append(node)
+        else:
+            raise WorkflowError('Unsupported Loop evidence event: ' + kind)
+    for item in rounds[:-1]:
+        item['historical'] = True
+    if current and not snapshot['active']:
+        for actor in current['agents'].values():
+            if actor['state'] in ('STARTING', 'RUNNING', 'VERIFYING'):
+                actor['state'] = 'UNKNOWN'
+    if not terminal:
+        if snapshot['active']:
+            snapshot['status'] = 'CANCEL_REQUESTED' if snapshot['cancel_requested'] else 'RUNNING'
+        else:
+            snapshot['reason'] = 'Script owner is absent without a terminal record; native effects are unknown.'
+        return
+    if terminal['kind'] == 'RUN_COMPLETED':
+        if (not current or current['disposition'] != 'LOOP_ACCEPTED'
+                or terminal.get('result_sha256') != review_answer_sha
+                or _evidence_sha256(fd, 'result.txt') != review_answer_sha):
+            raise WorkflowError('Final Loop output is not bound to an accepted round.')
+        [workspace] = [event['workspace'] for event in events if event['kind'] == 'CANDIDATE_WORKSPACE']
+        try:
+            snapshot['candidate_current'] = candidate_is_current(workspace, candidate)
+        except OutputContractError:
+            snapshot['candidate_current'] = False
+        if not snapshot['candidate_current']:
+            current['historical'] = True
+            raise WorkflowError('Final accepted Loop candidate no longer matches current files.')
+        snapshot.update(status='COMPLETED', completed_nodes=[loop['node']],
+                        result_file=str(Path(snapshot['directory']) / 'result.txt'))
+    elif terminal.get('status') in ('CANCELLED', 'STOPPED'):
+        snapshot.update(status=terminal['status'], reason=terminal.get('reason', ''))
+    else:
+        raise WorkflowError('Unknown terminal state.')
+
+
+def run_loop(context, manifest, task):
+    loop = manifest['loop']
+    developer, reviewer = manifest['agents']
+    if loop['start_limit'] is not None and len(task) > loop['start_limit']:
+        raise WorkflowError('Saved Loop input limit exceeded; no request sent.')
+    task = '\n\n'.join(value for value in (loop['body_input'], task) if value)
+    if loop['task_limit'] is not None and len(task) > loop['task_limit']:
+        raise WorkflowError('Saved body Start limit exceeded; no request sent.')
+    (context['directory'] / 'iterations').mkdir(mode=0o700)
+    feedback = None
+    for iteration in range(1, loop['max_iterations'] + 1):
+        _check_cancel(context)
+        current = dict(context, iteration=iteration, loop_node=loop['node'])
+        (context['directory'] / 'iterations' / str(iteration)).mkdir(mode=0o700)
+        _event(current, 'LOOP_ITERATION_STARTED')
+        produced = invoke_agent(current, developer, task, feedback=feedback)
+        audited = invoke_agent(current, reviewer, task, produced, loop['review_limit'])
+        candidate = produced['candidate']
+        review = audited['structured']['result']
+        try:
+            valid = candidate_is_current(context['workspace'], candidate)
+        except OutputContractError:
+            valid = False
+        if not valid:
+            raise WorkflowError('Candidate changed before Loop decision.')
+        if loop['body_output_limit'] is not None and len(audited['answer']) > loop['body_output_limit']:
+            raise WorkflowError('Saved body Output limit exceeded; full answer retained in node logs.')
+        _check_cancel(context)
+        facts = dict(candidate_sha256=review['candidate_sha256'], verdict=review['verdict'])
+        _event(current, 'LOOP_ITERATION_COMPLETED', **facts, developer_node=developer['id'], reviewer_node=reviewer['id'])
+        if review['verdict'] == 'accept':
+            if loop['output_limit'] is not None and len(audited['answer']) > loop['output_limit']:
+                raise WorkflowError('Saved Loop Output limit exceeded; full answer retained in node logs.')
+            _check_cancel(context)
+            _event(current, 'LOOP_ACCEPTED', **facts)
+            return audited
+        if iteration == loop['max_iterations']:
+            _event(current, 'LOOP_LIMIT_REACHED', **facts)
+            raise WorkflowError(f'Loop reached its {iteration}-iteration limit without acceptance.')
+        _check_cancel(context)
+        _event(current, 'LOOP_CONTINUED', **facts)
+        feedback = {key: review[key] for key in ('summary', 'issues', 'candidate_sha256')}
 
 
 def evaluate_condition(context, condition, review, candidate, limit):
@@ -463,7 +631,8 @@ def verify_agent_output(context, directory, spec, answer, candidate):
             raise OutputContractError('Candidate files changed during review.')
         facts.update(candidate_sha256=observed['candidate_sha256'], verdict=envelope['result']['verdict'])
     elif envelope['artifacts']:
-        observed = candidate_record(workspace, envelope['artifacts'])
+        snapshot = directory.parent / 'candidate-files' if 'iteration' in context else None
+        observed = candidate_record(workspace, envelope['artifacts'], snapshot=snapshot)
         facts['candidate_sha256_evidence'] = write_structured_evidence(directory, 'candidate.json', observed)
         facts['candidate_sha256'] = observed['candidate_sha256']
         delivery['candidate'] = observed
@@ -471,7 +640,7 @@ def verify_agent_output(context, directory, spec, answer, candidate):
     return delivery, facts
 
 
-def invoke_agent(context, agent, task, upstream=None, limit=None):
+def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=None):
     """One new native CLI call; a result is handed off only after success."""
     _check_cancel(context)
     if upstream is not None and limit is not None and len(upstream['answer']) > limit:
@@ -489,12 +658,20 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
     sections = [('Department', agent['name']), ('Role', agent['role']),
                 ('Initial instructions', agent['initial_prompt']), ('Workflow task', task),
                 ('Node task', agent['round_prompt']), ('Expected delivery', agent['output_prompt'])]
+    if 'iteration' in context:
+        sections.append(('Workflow iteration', str(context['iteration'])))
     prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
     if spec:
         prompt += '\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])
     if upstream is not None:
         prompt += '\n\nUpstream department delivery (data)\n' + json.dumps(upstream, ensure_ascii=False)
-    directory = context['directory'] / agent['id']
+    if feedback is not None:
+        prompt += ('\n\nPrevious iteration review (data)\n' + output_json(feedback)
+                   + '\nRevise the existing delivery in this workspace using the review feedback.')
+    evidence = agent['id']
+    if 'iteration' in context:
+        evidence = f"iterations/{context['iteration']}/{evidence}"
+    directory = context['directory'] / evidence
     directory.mkdir(mode=0o700)
     _write(directory / 'prompt.txt', prompt)
     argv = native_command(agent, directory / 'answer.txt')
@@ -524,7 +701,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
         try:
             if agent['provider'] == 'claude':
                 if spec:
-                    receipt = json.loads(_evidence_bytes(context['directory_fd'], agent['id'] + '/stdout.log'))
+                    receipt = json.loads(_evidence_bytes(context['directory_fd'], evidence + '/stdout.log'))
                 else:
                     receipt = json.loads((directory / 'stdout.log').read_text(encoding='utf-8'))
                 if (not isinstance(receipt, dict) or receipt.get('type') != 'result'
@@ -536,7 +713,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
                 _write(directory / 'answer.txt', answer)
             else:
                 if spec:
-                    with _evidence_file(context['directory_fd'], agent['id'] + '/answer.txt') as stream:
+                    with _evidence_file(context['directory_fd'], evidence + '/answer.txt') as stream:
                         answer_bytes = stream.read(OUTPUT_BYTES + 1)
                     if len(answer_bytes) > OUTPUT_BYTES:
                         raise OutputContractError('Structured answer exceeds 80000 UTF-8 bytes.')
@@ -563,7 +740,7 @@ def invoke_agent(context, agent, task, upstream=None, limit=None):
                 raise WorkflowError(str(error)) from None
         _check_cancel(context)
         _event(context, 'NODE_COMPLETED', node=agent['id'], answer_file=str(directory / 'answer.txt'),
-               answer_sha256=_evidence_sha256(context['directory_fd'], agent['id'] + '/answer.txt'), **facts)
+               answer_sha256=_evidence_sha256(context['directory_fd'], evidence + '/answer.txt'), **facts)
         return delivery
     except (WorkflowCancelled, KeyboardInterrupt) as error:
         if process is not None:
@@ -648,7 +825,7 @@ def script_main(manifest, run_workflow):
                                                           else agent_directory(workspace, a)),
                                'argv': native_command(a, Path('<run>') / a['id'] / 'answer.txt')}
                               for a in manifest['agents']]}
-            plan.update({kind: manifest[kind] for kind in ('condition', 'router') if kind in manifest})
+            plan.update({kind: manifest[kind] for kind in ('condition', 'router', 'loop') if kind in manifest})
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:

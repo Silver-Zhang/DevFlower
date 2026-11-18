@@ -48,6 +48,28 @@ def condition_graph():
     return document
 
 
+def loop_graph(maximum=3):
+    body = graph()
+    records = {}
+    for index, node in enumerate(body['nodes'], 1):
+        key, revision = str(index)*32, str(index)*64
+        retained = {'id', 'name', 'kind', 'artifact_paths', 'native_output', 'output_contract'}
+        config = {field:value for field, value in node.items() if field not in retained - {'name'}}
+        records[key] = dict(id=key, revision=revision, config=config)
+        body['nodes'][index-1] = {field:value for field,value in node.items() if field in retained}
+        body['nodes'][index-1].update(agent_id=key, agent_revision=revision)
+    body['nodes'] += [dict(id='BodyStart', kind='start'), dict(id='BodyEnd', kind='output')]
+    body['edges'] += [dict(id='bodyEntry',source='BodyStart',target='Developer'),
+                      dict(id='bodyExit',source='Reviewer',target='BodyEnd')]
+    document = dict(version=1, name='Loop fixture', nodes=[
+        dict(id='Start',kind='start'),
+        dict(id='Loop',kind='loop',config=dict(body=body,max_iterations=maximum,
+             exit_condition=dict(field='result.verdict',op='equals',value='accept'))),
+        dict(id='End',kind='output'),
+    ], edges=[dict(id='startLoop',source='Start',target='Loop'),dict(id='endLoop',source='Loop',target='End')])
+    return document, records
+
+
 def router_graph():
     classifier = dict(id='Classifier', name='Classifier', kind='agent', execution='native-cli',
                       provider='codex', cwd='.', role='Classify', round_prompt='Classify', output_prompt='Deliver',
@@ -78,6 +100,44 @@ prompt = sys.stdin.read()
 if 'P2_FIXTURE_CORRECTION' in prompt:
     mode = 'correction'
 department = prompt.splitlines()[1]
+if 'P3_LOOP' in prompt:
+    iteration = int(prompt.split('Workflow iteration\n',1)[1].splitlines()[0])
+    mode = os.environ.get('LOOP_FIXTURE','2')
+    with Path('loop-calls.log').open('a') as calls:
+        calls.write(f'{iteration} {department}\n')
+    if department == 'Developer':
+        if mode == 'developer-failed':
+            sys.exit(7)
+        if iteration > 1:
+            feedback = json.loads(prompt.split('Previous iteration review (data)\n',1)[1].splitlines()[0])
+            assert feedback.keys() == {'summary','issues','candidate_sha256'}
+            assert feedback['summary'] == 'Review '+str(iteration-1)
+            assert feedback['issues'][0]['suggestion'] == 'Improve '+str(iteration-1)
+            assert feedback['candidate_sha256'] == Path('previous-digest.txt').read_text()
+        else:
+            assert 'Previous iteration review (data)' not in prompt
+        for name in ('a.py','b.py'):
+            Path(name).write_text(f'# {iteration} {name}\n')
+        answer = dict(result=dict(schema_version=1,summary='Delivered',data={'done':True}),artifacts=['a.py','b.py'])
+        Path(sys.argv[3]).write_text(json.dumps(answer))
+        print('fixture producer stdout')
+    else:
+        if mode == 'reviewer-failed':
+            sys.exit(9)
+        if mode == 'cancel':
+            time.sleep(30)
+        upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
+        candidate = upstream['candidate']
+        digest = candidate['candidate_sha256']
+        Path('previous-digest.txt').write_text(digest)
+        if mode == 'mutate':
+            Path('a.py').write_text('changed during review')
+        accept = mode.isnumeric() and iteration >= int(mode) or mode == 'mutate'
+        issues = [] if accept else [dict(severity='major',file='a.py',description='More work',suggestion='Improve '+str(iteration))]
+        answer = dict(result=dict(schema_version=1,summary='Review '+str(iteration),issues=issues,
+                                  candidate_sha256=digest,verdict='accept' if accept else 'needs_correction'),artifacts=[])
+        print(json.dumps(dict(type='result',is_error=False,result='invalid' if mode=='bad-json' else json.dumps(answer))))
+    sys.exit(0)
 if department == 'Classifier':
     raw = os.environ.get('ROUTER_FIXTURE')
     if raw is None:
@@ -501,3 +561,111 @@ class ContractTests(unittest.TestCase):
                 else:
                     doc['nodes'].append(dict(id='Extra', kind='router' if mode=='nested' else 'condition'))
                 compile_workflow(doc, workspace=self.workspace, native_config=True)
+
+    def test_loop_runs_only_verified_rounds_and_preserves_each_candidate(self):
+        bin_dir = self.install_cli_fixture()
+        for mode, maximum, expected, calls in (
+            ('1', 5, 'COMPLETED', 2), ('2', 3, 'COMPLETED', 4), ('3', 3, 'COMPLETED', 6),
+            ('5', 2, 'STOPPED', 4), ('bad-json', 3, 'STOPPED', 2), ('mutate', 3, 'STOPPED', 2),
+            ('developer-failed', 3, 'STOPPED', 1), ('reviewer-failed', 3, 'STOPPED', 2),
+            ('cancel', 3, 'CANCELLED', 2),
+        ):
+            with self.subTest(mode=mode):
+                doc, records = loop_graph(maximum)
+                name, source = compile_workflow(doc, records, self.workspace, native_config=True)
+                self.assertEqual((name, source), compile_workflow(doc, records, self.workspace, native_config=True))
+                self.assertIn('return run_loop(context, WORKFLOW, task)', source)
+                project = self.root/mode
+                project.mkdir()
+                script = project/name
+                script.write_text(source)
+                run = project/'run'
+                command = [sys.executable, '-I', str(script), '--run-dir', str(run)]
+                env = dict(os.environ, PATH=str(bin_dir), LOOP_FIXTURE=mode)
+                with subprocess.Popen([*command, '--workspace', str(project), '--task', 'P3_LOOP'],
+                                      env=env, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                    if mode == 'cancel':
+                        deadline = time.monotonic() + 3
+                        journal = run/'events.jsonl'
+                        while time.monotonic() < deadline:
+                            if journal.exists() and '"kind": "PROCESS_STARTED"' in journal.read_text() and (
+                                    project/'loop-calls.log').exists() and 'Reviewer' in (project/'loop-calls.log').read_text():
+                                break
+                            time.sleep(.02)
+                        subprocess.run([*command, '--cancel'], capture_output=True, check=True, timeout=5)
+                    _, err = proc.communicate(timeout=14)
+                self.assertEqual(proc.returncode == 0, expected == 'COMPLETED', err.decode())
+                journal = run/'events.jsonl'
+                before_query = journal.read_bytes()
+                status = json.loads(subprocess.check_output([*command, '--status', '--details'], cwd=self.root))
+                self.assertEqual(journal.read_bytes(), before_query)
+                self.assertEqual(status['status'], expected, status.get('reason'))
+                self.assertEqual((project/'loop-calls.log').read_text().splitlines(),
+                                 [f'{idx//2+1} {("Developer","Reviewer")[idx%2]}' for idx in range(calls)])
+                rounds = status['loop']['iterations']
+                self.assertEqual(len(rounds), (calls+1)//2)
+                self.assertEqual((run/'result.txt').is_file(), expected == 'COMPLETED')
+                if expected == 'COMPLETED' or mode == '5':
+                    digests = set()
+                    for row in rounds:
+                        index = row['iteration']
+                        evidence = run/'iterations'/str(index)
+                        candidate = candidate_record(evidence/'candidate-files', ['a.py', 'b.py'])
+                        self.assertEqual(candidate['candidate_sha256'], row['review']['candidate_sha256'])
+                        self.assertEqual((evidence/'candidate-files'/'a.py').read_text(), f'# {index} a.py\n')
+                        self.assertEqual(row['completed_nodes'], ['Developer', 'Reviewer'])
+                        self.assertTrue((evidence/'Developer'/'stdout.log').is_file())
+                        self.assertTrue((evidence/'Reviewer'/'stderr.log').is_file())
+                        self.assertEqual(bool(row.get('historical')), index < len(rounds))
+                        digests.add(candidate['candidate_sha256'])
+                    self.assertEqual(len(digests), len(rounds))
+                    expected_last = 'LOOP_LIMIT_REACHED' if mode == '5' else 'LOOP_ACCEPTED'
+                    self.assertEqual(rounds[-1]['disposition'], expected_last)
+                    self.assertTrue(all(row['disposition']=='LOOP_CONTINUED' for row in rounds[:-1]))
+                    if expected == 'COMPLETED':
+                        self.assertTrue(status['candidate_current'])
+                        (project/'a.py').write_text('changed after acceptance')
+                        stale = json.loads(subprocess.check_output([*command, '--status'], cwd=self.root))
+                        self.assertEqual(stale['status'], 'RECOVERY_REQUIRED')
+                        self.assertFalse(stale['candidate_current'])
+                        self.assertTrue(stale['loop']['iterations'][-1]['historical'])
+                        if mode == '3':
+                            missing_start = [event for event in status['events'] if not (
+                                event['kind'] == 'PROCESS_STARTED' and event.get('iteration') == 2
+                                and event['node'] == 'Reviewer')]
+                            journal.write_text(''.join(json.dumps(event)+'\n' for event in missing_start))
+                            uncertain = json.loads(subprocess.check_output([*command, '--status'], cwd=self.root))
+                            self.assertEqual(uncertain['status'], 'RECOVERY_REQUIRED')
+                            self.assertIn('no matching process start', uncertain['reason'])
+                else:
+                    self.assertIsNone(rounds[-1]['disposition'])
+                    self.assertIsNone(rounds[-1]['review'])
+
+    def test_loop_rejects_unsupported_shapes_and_stale_configs(self):
+        for mode, message in (
+            ('bound', '1–5'), ('exit-condition', 'verdict equals'), ('shape', 'Start → Loop → Output'),
+            ('nested', 'Loop'), ('branch', 'Loop'), ('paths', 'declared artifacts'),
+            ('stale', 'stale saved Agent revision'), ('inline', 'reference saved versions'),
+        ):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ExportError, message):
+                doc, records = loop_graph()
+                loop = doc['nodes'][1]
+                body = loop['config']['body']
+                if mode == 'bound':
+                    loop['config']['max_iterations'] = True
+                elif mode == 'exit-condition':
+                    loop['config']['exit_condition']['value'] = 'needs_correction'
+                elif mode == 'shape':
+                    doc['nodes'][0]['kind'] = 'agent'
+                elif mode == 'nested':
+                    loop['config']['body'] = loop_graph()[0]
+                elif mode == 'branch':
+                    loop['config']['body'] = condition_graph()
+                elif mode == 'paths':
+                    body['nodes'][0].pop('artifact_paths')
+                elif mode == 'stale':
+                    records[body['nodes'][0]['agent_id']]['revision'] = 'b'*64
+                else:
+                    body['nodes'][0].pop('agent_id')
+                    body['nodes'][0].pop('agent_revision')
+                compile_workflow(doc, records, self.workspace, native_config=True)

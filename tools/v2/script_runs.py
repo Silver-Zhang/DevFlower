@@ -9,7 +9,7 @@ import sys
 from threading import Thread
 import time
 
-from devflower_export import ExportError, compile_workflow, read_saved
+from devflower_export import ExportError, compile_workflow, document_agents, read_saved
 from orchestration.common import canonical
 from studio.graph import Invalid
 from studio.server import Conflict
@@ -23,9 +23,8 @@ EXECUTION = 'native-cli'
 
 
 def compile_native(document, records, root):
-    nodes = [node for node in document['nodes'] if node.get('kind', 'agent') == 'agent']
     if any(records.get(node.get('agent_id'), {}).get('config', {}).get('execution') != EXECUTION
-           for node in nodes):
+           for node in document_agents(document)):
         raise ExportError('脚本运行需要每个 Agent 节点绑定已保存的原生 CLI 配置；受管工作流请使用原有运行入口。')
     return compile_workflow(document, records, root, native_config=True)
 
@@ -52,7 +51,7 @@ class ScriptRuns:
         document = validate_draft(document)
         try:
             records = {node['agent_id']: self.agents.get(workspace, node['agent_id'], node['agent_revision'])
-                       for node in document['nodes'] if 'agent_id' in node}
+                       for node in document_agents(document) if 'agent_id' in node}
             compile_native(document, records, root)
         except (ExportError, Invalid, Conflict, OSError, ValueError) as error:
             return dict(issues=[dict(message=str(error))], execution_available=False)
@@ -79,7 +78,7 @@ class ScriptRuns:
         artifact_sha = artifact['sha256']
         agent_versions = {node['id']: dict(id=node['agent_id'], revision=node['agent_revision'],
                           provider=records[node['agent_id']]['config']['provider'])
-                          for node in document['nodes'] if 'agent_id' in node}
+                          for node in document_agents(document) if 'agent_id' in node}
 
         def publish(db, run_id):
             row = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (draft_id,)).fetchone()
@@ -179,20 +178,35 @@ class ScriptRuns:
             raise Conflict(str(error)) from None
         return dict(filename=artifact['filename'], sha256=artifact['sha256'], source=source.decode('utf-8'))
 
-    def evidence(self, record, node=None):
+    def evidence(self, record, node=None, iteration=None):
         if node is not None and node not in record['agents']:
             raise Invalid('节点不属于本次脚本运行。')
+        loop = next((item for item in record['document']['nodes'] if item.get('kind') == 'loop'), None)
+        prefix = ''
+        if node is not None and loop:
+            if (not isinstance(iteration, str) or not re.fullmatch(r'[1-5]', iteration)
+                    or int(iteration) > loop['config'].get('max_iterations', 3)):
+                raise Invalid('请选择本次循环的有效轮次。')
+            prefix = 'iterations/' + iteration + '/'
+        elif iteration is not None:
+            raise Invalid('轮次证据需要本次循环的 Agent 节点。')
         folder = self.folder(record['run']['id'])
         try:
             self.artifact(folder, record['artifact'])
             with _run_directory(folder / 'evidence') as fd:
                 if node is None:
                     return dict(result=self.excerpt(fd, 'result.txt'))
-                return dict(prompt=self.excerpt(fd, node + '/prompt.txt'),
-                            answer=self.excerpt(fd, node + '/answer.txt'),
-                            structured=self.excerpt(fd, node + '/structured.json'),
-                            candidate=self.excerpt(fd, node + '/candidate.json'),
-                            stderr=self.excerpt(fd, node + '/stderr.log', tail=True))
+                base = prefix + node + '/'
+                result = dict(prompt=self.excerpt(fd, base + 'prompt.txt'),
+                              answer=self.excerpt(fd, base + 'answer.txt'),
+                              structured=self.excerpt(fd, base + 'structured.json'),
+                              candidate=self.excerpt(fd, base + 'candidate.json'),
+                              stderr=self.excerpt(fd, base + 'stderr.log', tail=True))
+                if prefix:
+                    result['stdout'] = self.excerpt(fd, base + 'stdout.log')
+                    if not result['candidate']:
+                        result['candidate'] = self.excerpt(fd, base + 'candidate-after.json')
+                return result
         except FileNotFoundError:
             return {}
         except (OSError, WorkflowError):

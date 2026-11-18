@@ -32,16 +32,23 @@ function EvidenceText({label,value}) {
  </section>;
 }
 
+const loopStates={NOT_STARTED:'未开始',STARTING:'准备调用',RUNNING:'运行中',VERIFYING:'核验中',
+ COMPLETED:'已完成',FAILED:'失败',CANCELLED:'已取消',UNKNOWN:'待核验'};
+const loopDecisions={LOOP_CONTINUED:'继续返工',LOOP_ACCEPTED:'接受',LOOP_LIMIT_REACHED:'达到迭代上限'};
+
 export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const {run,script,state}=snapshot;
  const [choice,setChoice]=useState(selected||'');
  const [evidence,setEvidence]=useState(null);
  const [error,setError]=useState('');
  const events=script.events||[];
- const node=Object.hasOwn(script.agents,choice)?choice:'';
- const agent=script.agents[node];
- const completed=script.completed_nodes||[];
- const facts=events.filter(event=>event.node===node);
+ const loop=script.loop;
+ const [iteration,selectedNode]=loop?choice.split('/'):[null,choice];
+ const node=Object.hasOwn(script.agents,selectedNode)?selectedNode:'';
+ const agent=node?script.agents[node]:null;
+ const round=loop?.iterations.find(item=>String(item.iteration)===iteration);
+ const completed=(loop?round?.completed_nodes:script.completed_nodes)||[];
+ const facts=events.filter(event=>event.node===node&&(!loop||String(event.iteration)===iteration));
  const command=facts.find(event=>event.kind==='CALL_INTENT');
  const exit=facts.find(event=>event.kind==='PROCESS_EXITED');
  const reviews=events.filter(event=>event.kind==='NODE_COMPLETED'&&event.verdict&&completed.includes(event.node));
@@ -50,12 +57,14 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const skippedPorts=Object.keys(decision?.branches||{}).filter(port=>port!==decision.selected_port);
  const skipped=skippedPorts.flatMap(port=>decision.branches[port]);
  const started=events.filter(event=>event.kind==='PROCESS_STARTED');
- const nameOf=id=>script.document.nodes.find(item=>item.id===id)?.name||id;
+ const body=script.document.nodes.find(item=>item.id===loop?.node)?.config.body;
+ const nameOf=id=>body?.nodes.find(item=>item.id===id)?.name||script.document.nodes.find(item=>item.id===id)?.name||id;
  const rules=script.document.nodes.find(item=>item.id===router?.node)?.config.rules||[];
  const labelPort=port=>router?(port==='fallback'?'默认分支（fallback）':(rules.find(rule=>rule.id===port)?.label||port)+'（'+port+'）'):
   port==='true'?'满足（true）':'不满足（false）';
  const pathLabel=port=>decision.branches[port].map(nameOf).join(' → ');
- const path=new URLSearchParams({workspace:run.workspace,id:run.id,...(node?{node}:{})}).toString();
+ const path=new URLSearchParams({workspace:run.workspace,id:run.id,...(node?{node}:{}),
+  ...(node&&round?{iteration}:{} )}).toString();
  useEffect(()=>{
   if(!trusted)return;
   let current=true;
@@ -76,9 +85,12 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
    sha256:script.artifact.sha256,draft_revision:run.draft_revision,agents:script.agents,evidence_directory:script.directory
   },null,2)}</pre></details>
   {error&&<p className="error-text" role="alert">{error}</p>}
-  <label className="field"><span>查看证据</span><select value={node} onChange={event=>setChoice(event.target.value)}>
+  <label className="field"><span>查看证据</span><select value={node?choice:''} onChange={event=>setChoice(event.target.value)}>
    <option value="">最终结果</option>
-   {script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)).map(item=><option key={item.id} value={item.id}>
+   {loop?loop.iterations.flatMap(item=>Object.keys(item.agents).map(id=>{
+    const key=item.iteration+'/'+id;
+    return <option key={key} value={key}>第 {item.iteration} 轮 · {nameOf(id)}</option>;
+   })):script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)).map(item=><option key={item.id} value={item.id}>
     {item.name}{skipped.includes(item.id)?'（分支未选中）':''}
    </option>)}
   </select></label>
@@ -95,10 +107,30 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
     {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
      {event.at} · {event.kind}{event.reason?' · '+event.reason:''}
     </li>)}</ol>}
+    <EvidenceText label="原生 CLI stdout（隐藏敏感值）" value={shown?.stdout}/>
     <EvidenceText label="原生 CLI stderr（隐藏敏感值）" value={shown?.stderr}/>
    </details>
    {!command&&<p>{skipped.includes(node)?'此 Agent 所在分支未选中。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div>
+   {loop&&<section aria-label="循环轮次">
+    <h3>{nameOf(loop.node)} · 最多 {loop.max_iterations} 轮</h3>
+    {loop.iterations.map(item=><section key={item.iteration} aria-label={'第 '+item.iteration+' 轮'}>
+     <h4>第 {item.iteration} 轮{item.historical?' · 历史候选':''}
+      {item.disposition?' · '+loopDecisions[item.disposition]:''}</h4>
+     <ul>{Object.entries(item.agents).map(([id,actor])=><li key={id}>
+      <button type="button" onClick={()=>setChoice(item.iteration+'/'+id)}>{nameOf(id)}</button>
+      {' · '+loopStates[actor.state]}
+     </li>)}</ul>
+     {item.candidate_sha256&&<p>候选摘要 <code>{item.candidate_sha256}</code></p>}
+     {item.review&&<div>
+      <p>审核 <code>{item.review.verdict}</code> · {item.review.summary}</p>
+      {item.review.issues.length>0&&<ul>{item.review.issues.map((issue,index)=><li key={index}>
+       <code>{issue.file}</code> · {issue.severity} · {issue.description} · {issue.suggestion}
+      </li>)}</ul>}
+     </div>}
+    </section>)}
+    {script.candidate_current===false&&<p>最终候选已变化，原审核保留为历史记录。</p>}
+   </section>}
    {decision&&<section aria-label={router?'路由分支':'条件分支'}>
     <h3>{nameOf(decision.node)}</h3>
     {router?<><p>上游 {nameOf(router.source_node)} · <button type="button"
@@ -122,6 +154,7 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
    {state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:<p>尚无已核验的最终结果。</p>}
    {events.length>0&&<details><summary>运行日志</summary><ol>{events.map((event,index)=><li key={index}>
     {event.at} · {event.kind}{event.node?' · '+event.node:''}
+    {event.iteration?' · 第 '+event.iteration+' 轮':''}
     {typeof event.returncode==='number'?' · 退出码 '+event.returncode:''}
    </li>)}</ol></details>}
   </div>}

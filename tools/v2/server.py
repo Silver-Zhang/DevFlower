@@ -457,16 +457,17 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         result.extend(inspector.clean(history.runs(workspace)))
                 elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):
                     required = {'workspace', 'id'}
-                    extra = {'node'} if path.endswith('/evidence') else set()
+                    extra = {'node', 'iteration'} if path.endswith('/evidence') else set()
                     if not required <= query.keys() <= required | extra:
                         raise Invalid('读取脚本证据需要明确的工作空间和运行身份。')
                     record = scripts.get(query['workspace'], query['id'])
                     if record is None:
                         raise Invalid('找不到此脚本运行。')
                     if path.endswith('/evidence'):
-                        result = scripts.evidence(record, query.get('node'))
-                        if stderr := result.get('stderr'):
-                            result['stderr'] = dict(stderr, text=inspector.text(stderr['text']))
+                        result = scripts.evidence(record, query.get('node'), query.get('iteration'))
+                        for log in ('stdout', 'stderr'):
+                            if value := result.get(log):
+                                result[log] = dict(value, text=inspector.text(value['text']))
                     else:
                         result = scripts.source(record)
                 elif not post and path == '/api/v2/local-delivery/preview' and managed_available and set(query) == {'workspace', 'run'}:

@@ -650,5 +650,90 @@ with sqlite3.connect(sys.argv[1]) as db:
    assert.equal(fs.readFileSync(file,'utf8'),source);
   }
  });
+ await test('native-loop-freezes-saved-body-and-shows-round-evidence',async()=>{
+  const button=name=>page.getByRole('button',{name,exact:true});
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const project=path.join(process.env.V2_WORKSPACES,'A');
+  const nodes=[];
+  for(const [name,provider] of [['Developer','codex'],['Reviewer','claude']]){
+   const agent=await api('agents/save',{workspace,id:null,expected:null,session_revision:null,
+    config:{execution:'native-cli',name,provider,cwd:project,role:name,round_prompt:'Fixture',output_prompt:'Deliver'}});
+   assert(agent.revision,JSON.stringify(agent));
+   nodes.push({id:name,name,kind:'agent',agent_id:agent.id,agent_revision:agent.revision,
+    position:{x:240+nodes.length*240,y:130},native_output:{version:1,kind:name==='Developer'?'result':'review'}});
+  }
+  nodes[0].artifact_paths=['a.py','b.py'];
+  const typed=(id,kind,x)=>({id,name:id,kind,position:{x,y:130},config_version:1,config:{}});
+  const edges=ids=>ids.slice(1).map((target,i)=>({id:'edge'+i,source:ids[i],target}));
+  const bodyGraph={version:1,name:'P3 冻结子流程',nodes:[typed('BodyStart','start',0),...nodes,typed('BodyEnd','output',720)],
+   edges:edges(['BodyStart','Developer','Reviewer','BodyEnd'])};
+  const body=await api('drafts/save',{workspace,id:null,expected:null,document:bodyGraph});
+  assert(body.revision,JSON.stringify(body));
+  const name='P3 原生循环夹具';
+  const outer=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,
+   nodes:[typed('Start','start',0),typed('Loop','loop',260),typed('End','output',520)],edges:edges(['Start','Loop','End'])}});
+  assert(outer.revision,JSON.stringify(outer));
+  await page.reload();
+  await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name,exact:true}).click();
+  await page.getByLabel('适应画布',{exact:true}).click();await node('Loop');
+  await page.getByLabel('循环子流程',{exact:true}).selectOption(body.id);
+  await button('使用候选审核条件').click();
+  await page.getByLabel('最多迭代次数',{exact:true}).fill('2');
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  const request='draft?'+new URLSearchParams({workspace,id:outer.id});
+  const frozen=(await api(request)).graph.nodes.find(current=>current.id==='Loop').config;
+  assert.equal(frozen.max_iterations,2);
+  assert.deepEqual(frozen.body,bodyGraph);
+  const changed=await api('drafts/save',{workspace,id:body.id,expected:body.revision,
+   document:{...bodyGraph,name:'P3 已修改的源子流程'}});
+  assert(changed.revision&&changed.revision!==body.revision);
+  await page.reload();
+  assert.deepEqual((await api(request)).graph.nodes.find(current=>current.id==='Loop').config,frozen);
+  await button('检查').click();
+  await page.getByText('原生脚本编译通过。检查未启动 CLI。',{exact:true}).waitFor();
+  await page.getByLabel('关闭检查结果',{exact:true}).click();
+  await button('预览 Python').click();
+  const preview=page.getByRole('dialog',{name:'Python 脚本预览'});
+  const source=await preview.locator('pre').textContent();
+  assert.match(source,/return run_loop\(context, WORKFLOW, task\)/);
+  await preview.getByRole('button',{name:'关闭预览'}).click();
+  const [exported]=await Promise.all([page.waitForEvent('download'),button('导出 Python（原生 CLI）').click()]);
+  const exportedPath=path.join(out,'loop-exported.py');await exported.saveAs(exportedPath);
+  assert.equal(fs.readFileSync(exportedPath,'utf8'),source);
+  const task=page.getByLabel('本次运行上下文',{exact:true}).locator('summary');
+  await task.click();await page.getByLabel('本次任务',{exact:true}).fill('P3_LOOP');await task.click();
+  const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')),button('启动').click()]);
+  const {run}=await response.json();
+  assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+  const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
+  if(!await monitor.isVisible())await button('运行检查器').click();
+  const rounds=monitor.getByRole('region',{name:'循环轮次'});
+  const first=rounds.getByRole('region',{name:'第 1 轮',exact:true});
+  const second=rounds.getByRole('region',{name:'第 2 轮',exact:true});
+  await first.getByText('needs_correction',{exact:true}).waitFor();
+  await first.getByText(/历史候选/).waitFor();
+  await first.getByText(/Improve 1/).waitFor();
+  await second.getByText('accept',{exact:true}).waitFor();
+  assert.notEqual(await first.getByText(/^候选摘要 /).textContent(),await second.getByText(/^候选摘要 /).textContent());
+  assert.equal(JSON.parse(await monitor.getByLabel('工作流最终回答',{exact:true}).textContent()).result.verdict,'accept');
+  await second.getByRole('button',{name:'Developer',exact:true}).click();
+  const actualRequest=monitor.getByLabel('实际请求（含上游交接）',{exact:true});
+  await actualRequest.waitFor();
+  assert.match(await actualRequest.textContent(),/Improve 1/);
+  await monitor.getByLabel('查看证据').selectOption('1/Developer');
+  await actualRequest.waitFor();
+  await until(async()=>!(await actualRequest.textContent()).includes('Previous iteration review'));
+  const evidencePath=new URLSearchParams({workspace,id:run.id,node:'Developer',iteration:'3'});
+  assert.match((await api('script-run/evidence?'+evidencePath)).error,/有效轮次/);
+  const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);
+  const file=path.join(out,run.id+'.py');await download.saveAs(file);
+  assert.equal(fs.readFileSync(file,'utf8'),source);
+  fs.writeFileSync(path.join(project,'a.py'),'changed after Loop completion');
+  await monitor.getByLabel('查看证据').selectOption('');
+  await button('重新读取').click();
+  await page.getByLabel('运行状态',{exact:true}).getByText('待核验',{exact:true}).waitFor();
+  await rounds.getByText(/最终候选已变化/).waitFor();
+  assert.equal(await monitor.getByLabel('工作流最终回答',{exact:true}).count(),0);
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});
