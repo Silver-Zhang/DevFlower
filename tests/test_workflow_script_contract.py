@@ -70,12 +70,18 @@ def loop_graph(maximum=3):
     return document, records
 
 
+def insert_command(document, edge_id, argv, *, node='Validation', **config):
+    edge = next(edge for edge in document['edges'] if edge['id'] == edge_id)
+    target = edge['target']
+    edge['target'] = node
+    document['nodes'].append(dict(id=node, kind='tool', config=dict(tool='command', argv=argv, **config)))
+    document['edges'].append(dict(id='after'+node, source=node, target=target, target_port=edge.pop('target_port', 'in')))
+
+
 def validation_loop(argv, *, maximum=2, timeout=5):
     document, records = loop_graph(maximum)
     body = document['nodes'][1]['config']['body']
-    body['nodes'].append(dict(id='Validation', kind='tool', config=dict(tool='command', argv=argv, timeout=timeout)))
-    body['edges'][0]['target'] = 'Validation'
-    body['edges'].append(dict(id='validated', source='Validation', target='Reviewer'))
+    insert_command(body, 'handoff', argv, timeout=timeout)
     return document, records
 
 
@@ -190,7 +196,11 @@ if department == 'Classifier':
     sys.exit(0)
 if department in ('Research', 'Development', 'Priority', 'General'):
     upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
-    assert upstream['node'] == 'Classifier' and 'data' in upstream['structured']['result']
+    delivered = upstream['structured']['result']
+    if 'P4_BRANCH' in prompt and department in ('Research','General'):
+        assert delivered['tool'] == 'command' and delivered['success']
+    else:
+        assert upstream['node'] == 'Classifier' and 'data' in delivered
     Path(sys.argv[3]).write_text(department.upper()+'_FINISHED')
     sys.exit(0)
 if department in ('Success', 'Correction'):
@@ -198,8 +208,11 @@ if department in ('Success', 'Correction'):
     with (workspace/'calls.log').open('a') as calls:
         calls.write(department+'\n')
     delivered = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])['structured']['result']
-    assert delivered['verdict'] == ('accept' if department == 'Success' else 'needs_correction')
-    assert len(delivered['candidate_sha256']) == 64
+    if 'P4_BRANCH' in prompt and department == 'Success':
+        assert delivered['tool'] == 'command' and delivered['success']
+    else:
+        assert delivered['verdict'] == ('accept' if department == 'Success' else 'needs_correction')
+        assert len(delivered['candidate_sha256']) == 64
     if department == 'Correction':
         (workspace/'a.py').write_text('corrected after decision')
         print(json.dumps(dict(type='result', is_error=False, result='CORRECTION_FINISHED')))
@@ -221,8 +234,14 @@ if program == 'codex':
 else:
     if mode == 'reviewer-failure':
         sys.exit(9)
-    candidate = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])['candidate']
+    upstream = json.loads(prompt.rsplit('Upstream department delivery (data)\n',1)[1])
+    candidate = upstream['candidate']
     assert [file['path'] for file in candidate['manifest']['files']] == ['a.py','b.py']
+    if 'P4_TOOL' in prompt:
+        result = upstream['structured']['result']
+        assert result['tool'] == 'command' and result['success'] == (result['returncode'] == 0)
+        assert result['argv'][-1] == 'literal ; argument' and result['cwd'] == 'qa'
+        assert result['stdout'].endswith('command stdout\n') and result['stderr'] == 'command stderr\n'
     if mode == 'mutate':
         Path('b.py').write_text('changed')
     verdict = 'needs_correction' if mode == 'correction' else 'accept'
@@ -784,3 +803,101 @@ class ContractTests(unittest.TestCase):
                 doc, records = validation_loop(['python3', '-V'])
                 doc['nodes'][1]['config']['body']['nodes'][-1]['config'].update(patch)
                 compile_workflow(doc, records, self.workspace, native_config=True)
+
+    def test_command_tool_handoffs_failures_and_real_process_logs(self):
+        cli = self.install_cli_fixture()
+        for mode, expected in (('pass','COMPLETED'),('multiple','COMPLETED'),('nonzero','COMPLETED'),
+                               ('missing','STOPPED'),('timeout','STOPPED'),('cancel','CANCELLED'),
+                               ('change-candidate','STOPPED')):
+            with self.subTest(mode=mode):
+                workspace = self.root/mode
+                (workspace/'qa').mkdir(parents=True)
+                code = ("import sys,time; from pathlib import Path; assert sys.argv[2]=='literal ; argument'; "
+                        "print('z'*33000+'\\ncommand stdout',flush=True); print('command stderr',file=sys.stderr); "
+                        "mode=sys.argv[1]; "
+                        "Path('../a.py').write_text('changed') if mode=='change-candidate' else None; "
+                        "time.sleep(30) if mode in ('timeout','cancel') else None; sys.exit(7 if mode=='nonzero' else 0)")
+                argv = ['./missing'] if mode == 'missing' else [sys.executable,'-B','-c',code,mode,'literal ; argument']
+                doc = graph()
+                insert_command(doc, 'handoff', argv, cwd='qa', timeout=1 if mode=='timeout' else 10)
+                if mode == 'multiple':
+                    insert_command(doc, 'afterValidation', argv, cwd='qa', node='Second')
+                filename, source = compile_workflow(doc, workspace=workspace, native_config=True)
+                self.assertEqual((filename,source), compile_workflow(doc, workspace=workspace, native_config=True))
+                script = workspace/filename
+                script.write_text(source)
+                run = workspace/'run'
+                command = [sys.executable,'-I',str(script),'--run-dir',str(run)]
+                with subprocess.Popen([*command,'--workspace',str(workspace),'--task','P4_TOOL'],
+                                      env=dict(os.environ,PATH=str(cli)),stdout=subprocess.PIPE,stderr=subprocess.PIPE) as proc:
+                    if mode == 'cancel':
+                        log = run/'Validation'/'stdout.log'
+                        deadline = time.monotonic()+5
+                        while time.monotonic()<deadline and not (log.is_file() and log.stat().st_size):
+                            time.sleep(.02)
+                        subprocess.run([*command,'--cancel'], check=True,capture_output=True,timeout=5)
+                    _, stderr = proc.communicate(timeout=14)
+                status = json.loads(subprocess.check_output([*command,'--status','--details']))
+                self.assertEqual(status['status'], expected, (status.get('reason'),stderr))
+                started = [e['node'] for e in status['events'] if e['kind']=='PROCESS_STARTED']
+                expected_calls = ['Developer'] + ([] if mode=='missing' else ['Validation'])
+                if mode == 'multiple':
+                    expected_calls.append('Second')
+                if expected == 'COMPLETED':
+                    expected_calls.append('Reviewer')
+                self.assertEqual(started, expected_calls)
+                if expected == 'COMPLETED':
+                    raw = (run/'Validation'/'stdout.log').read_text()
+                    self.assertEqual(raw, 'z'*33000+'\ncommand stdout\n')
+                    self.assertEqual((run/'Validation'/'stderr.log').read_text(), 'command stderr\n')
+                    result = json.loads((run/'Validation'/'structured.json').read_text())['result']
+                    self.assertEqual(result['returncode'], 7 if mode=='nonzero' else 0)
+                    self.assertIs(result['success'], mode!='nonzero')
+                    self.assertTrue(result['stdout'].startswith('[tail] '))
+                    self.assertLess(len(result['stdout']), 2100)
+                    prompt = (run/'Reviewer'/'prompt.txt').read_text()
+                    self.assertIn('command stdout', prompt)
+                    self.assertNotIn('z'*3000, prompt)
+                    if mode == 'nonzero':
+                        (run/'Validation'/'stderr.log').write_text('unexpected change')
+                        invalid = json.loads(subprocess.check_output([*command,'--status']))
+                        self.assertEqual(invalid['status'],'RECOVERY_REQUIRED')
+                        self.assertIn('Tool log has changed',invalid['reason'])
+
+    def test_command_tools_follow_condition_and_router_selection(self):
+        cli = self.install_cli_fixture()
+        argv = [sys.executable,'-B','-c',"print('branch command')"]
+        for weather, port, expected, attached in (
+            ('condition-true','true',['Developer','Reviewer','TrueTool','Success'],'condition'),
+            ('condition-false','false',['Developer','Reviewer','Correction'],'condition'),
+            ('router-rule','research',['Classifier','RuleTool','Research'],'router'),
+            ('router-fallback','fallback',['Classifier','FallbackTool','General'],'router'),
+        ):
+            with self.subTest(case=weather):
+                workspace = self.root/weather
+                workspace.mkdir()
+                env = dict(os.environ,PATH=str(cli))
+                if attached == 'condition':
+                    doc = condition_graph()
+                    insert_command(doc,'yes',argv,node='TrueTool')
+                    env['CONTRACT_FIXTURE'] = 'accept' if port=='true' else 'correction'
+                else:
+                    doc = router_graph()
+                    insert_command(doc,'routeResearch',argv,node='RuleTool')
+                    insert_command(doc,'routeGeneral',argv,node='FallbackTool')
+                    env['ROUTER_FIXTURE'] = output_json(dict(category='research' if port=='research' else 'other',
+                                                             ready=False,rank=1))
+                (workspace/expected[-1].lower()).mkdir()
+                filename,source = compile_workflow(doc,workspace=workspace,native_config=True)
+                script = workspace/filename
+                script.write_text(source)
+                run = workspace/'run'
+                command = [sys.executable,'-I',str(script),'--run-dir',str(run)]
+                subprocess.run([*command,'--workspace',str(workspace),'--task','P4_BRANCH'],
+                               env=env,check=True,capture_output=True,timeout=10)
+                status = json.loads(subprocess.check_output([*command,'--status','--details']))
+                self.assertEqual(status['status'],'COMPLETED',status.get('reason'))
+                self.assertEqual(status[attached]['selected_port'],port)
+                self.assertEqual([e['node'] for e in status['events'] if e['kind']=='PROCESS_STARTED'],expected)
+                for node in ('TrueTool','RuleTool','FallbackTool'):
+                    self.assertEqual((run/node).exists(),node in expected)

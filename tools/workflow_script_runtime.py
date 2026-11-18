@@ -149,14 +149,14 @@ def review_port(verdict):
 
 
 def recorded_path(manifest, events):
-    agents = [agent['id'] for agent in manifest['agents']]
+    steps = manifest.get('steps') or [agent['id'] for agent in manifest['agents']]
     condition = manifest.get('condition')
     control = condition or manifest.get('router')
     if not control:
-        return agents, None
+        return steps, None
     branches = control['branches']
     branch_nodes = branch_node_ids(control)
-    prefix = [node for node in agents if node not in branch_nodes]
+    prefix = [node for node in steps if node not in branch_nodes]
     expected, completed, decision = prefix, [], None
     for event in events:
         kind, node = event['kind'], event.get('node')
@@ -242,10 +242,27 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
             reviews = []
             producer = None
             agents = {agent['id']: agent for agent in manifest['agents']}
+            tools = manifest.get('tools', {})
             for row in completed:
-                agent = agents[row['node']]
-                if _evidence_sha256(fd, row['node'] + '/answer.txt') != row.get('answer_sha256'):
-                    raise WorkflowError('Recorded node answer has changed: ' + row['node'])
+                node = row['node']
+                if _evidence_sha256(fd, node + '/answer.txt') != row.get('answer_sha256'):
+                    raise WorkflowError('Recorded node answer has changed: ' + node)
+                if node in tools:
+                    result = read_structured_evidence(fd, row, 'structured.json', 'answer_sha256')['result']
+                    exits = [event.get('returncode') for event in events if event['kind'] == 'PROCESS_EXITED'
+                             and event.get('node') == node]
+                    if (exits != [row['returncode']] or result['returncode'] != row['returncode']
+                            or result['success'] is not (row['returncode'] == 0)):
+                        raise WorkflowError('Tool outcome does not match its process: ' + node)
+                    for channel in ('stdout', 'stderr'):
+                        if _evidence_sha256(fd, node + '/' + channel + '.log') != row.get(channel + '_sha256'):
+                            raise WorkflowError('Tool log has changed: ' + channel)
+                    if 'candidate_sha256' not in row:
+                        producer = None
+                    elif not producer or row['candidate_sha256'] != producer['candidate_sha256']:
+                        raise WorkflowError('Tool handoff does not match the upstream candidate: ' + node)
+                    continue
+                agent = agents[node]
                 if spec := agent.get('native_output'):
                     structured = read_structured_evidence(fd, row, 'structured.json', 'structured_sha256')
                     if decision and router and row['node'] == router['source_node']:
@@ -413,6 +430,55 @@ def candidate_is_current(workspace, candidate):
     return candidate_record(workspace, paths) == candidate
 
 
+@contextmanager
+def command_process(context, tool, prefix):
+    _check_cancel(context)
+    try:
+        cwd = agent_directory(context['workspace'], tool)
+    except WorkflowError as error:
+        _event(context, 'NOT_SENT', node=tool['id'], reason=str(error))
+        raise
+    directory = context['directory'] / prefix
+    directory.mkdir(mode=0o700)
+    with observed_process(context, tool['id'], tool['argv'], cwd, directory, tool['timeout'], tool=True) as code:
+        _check_cancel(context)
+        yield code
+
+
+def command_logs(context, prefix):
+    summaries, checksums = {}, {}
+    fd = context['directory_fd']
+    for channel in ('stdout', 'stderr'):
+        relative = prefix + '/' + channel + '.log'
+        checksums[channel + '_sha256'] = _evidence_sha256(fd, relative)
+        with _evidence_file(fd, relative) as stream:
+            end = stream.seek(0, os.SEEK_END)
+            stream.seek(max(end - 2048, 0))
+            summaries[channel] = ('[tail] ' if end > 2048 else '') + stream.read(2048).decode('utf-8', errors='replace')
+    return summaries, checksums
+
+
+def invoke_tool(context, tool, upstream, limit):
+    node = tool['id']
+    if upstream is not None and limit is not None and len(upstream['answer']) > limit:
+        raise WorkflowError('Saved Tool handoff limit exceeded; command did not run.')
+    with command_process(context, tool, node) as code:
+        summaries, hashes = command_logs(context, node)
+        result = dict(tool='command', argv=tool['argv'], cwd=tool['cwd'], returncode=code, success=code == 0, **summaries)
+        envelope = {'result': result}
+        directory = context['directory'] / node
+        checksum = write_structured_evidence(directory, 'structured.json', envelope)
+        answer = output_json(envelope)
+        _write(directory / 'answer.txt', answer)
+        delivery = dict(node=node, name=tool['name'], answer=answer, structured=envelope)
+        if upstream and 'candidate' in upstream:
+            delivery['candidate'] = upstream['candidate']
+            hashes['candidate_sha256'] = delivery['candidate']['candidate_sha256']
+        _check_cancel(context)
+        _event(context, 'NODE_COMPLETED', node=node, returncode=code, answer_sha256=checksum, **hashes)
+        return delivery
+
+
 def run_validation(context, tool, produced):
     node, candidate = tool['id'], produced['candidate']
     paths = [item['path'] for item in candidate['manifest']['files']]
@@ -422,14 +488,11 @@ def run_validation(context, tool, produced):
         before = candidate_record(context['workspace'], paths)
         if before != candidate:
             raise WorkflowError('Candidate changed before validation.')
-        cwd = agent_directory(context['workspace'], tool)
     except (OutputContractError, WorkflowError) as error:
         _event(context, 'NOT_SENT', node=node, reason=str(error))
         raise WorkflowError(str(error)) from None
     prefix = f"iterations/{context['iteration']}/{node}"
-    directory = context['directory'] / prefix
-    directory.mkdir(mode=0o700)
-    with observed_process(context, node, tool['argv'], cwd, directory, tool['timeout'], tool=True) as code:
+    with command_process(context, tool, prefix) as code:
         if code < 0:
             raise WorkflowError(f'Validation terminated by signal {-code}; no retry.')
         _check_cancel(context)
@@ -442,17 +505,9 @@ def run_validation(context, tool, produced):
         if before != after:
             _event(context, 'VALIDATION_INVALID', node=node, **facts)
             raise WorkflowError('Candidate files changed during validation.')
-        summaries = {}
-        fd = context['directory_fd']
-        for channel in ('stdout', 'stderr'):
-            relative = prefix + '/' + channel + '.log'
-            facts[channel + '_sha256'] = _evidence_sha256(fd, relative)
-            with _evidence_file(fd, relative) as stream:
-                end = stream.seek(0, os.SEEK_END)
-                stream.seek(max(end - 2048, 0))
-                summaries[channel] = ('[tail] ' if end > 2048 else '') + stream.read(2048).decode('utf-8', errors='replace')
+        summaries, hashes = command_logs(context, prefix)
         _check_cancel(context)
-        _event(context, 'VALIDATION_COMPLETED', node=node, **facts)
+        _event(context, 'VALIDATION_COMPLETED', node=node, **facts, **hashes)
         return dict(returncode=code, candidate_sha256=before['candidate_sha256'],
                     reason=f'Validation failed (exit {code}).' if code else 'Validation passed.', **summaries)
 
@@ -915,6 +970,11 @@ def script_main(manifest, run_workflow):
             plan.update({kind: manifest[kind] for kind in ('condition', 'router', 'loop') if kind in manifest})
             if tool := manifest.get('loop', {}).get('validation'):
                 plan['calls'].insert(1, dict(node=tool['id'], argv=tool['argv'], cwd=str(workspace / tool['cwd'])))
+            if 'tools' in manifest:
+                by_node = {call['node']: call for call in plan['calls']}
+                by_node.update({node: dict(node=node, argv=tool['argv'], cwd=str(workspace / tool['cwd']))
+                                for node, tool in manifest['tools'].items()})
+                plan['calls'] = [by_node[node] for node in manifest['steps']]
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
         with _cancellation_signals() as cancellation:

@@ -64,7 +64,7 @@ export function runtimeBlock(node){
    return config.permission==='workspace-write'&&/^[^/\\]+(?:\/[^/\\]+)*\.json$/.test(path)&&
     !path.split('/').includes('..')?'':'请选择工作区读写权限并填写新建 .json 文件的相对路径。';
   }
-  if(config.tool==='command')return '原生验证命令只在冻结的 Loop 子流程中运行。';
+  if(config.tool==='command')return config.argv?.[0]?.trim()?'':'请填写命令参数。';
   if(config.tool!=='read-file'||config.permission!=='workspace-read')return '仅支持固定工作区文件的只读预览。';
   if(!config.path?.trim())return '请指定固定的工作区相对文件路径。';
  }

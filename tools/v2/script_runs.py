@@ -179,9 +179,13 @@ class ScriptRuns:
         return dict(filename=artifact['filename'], sha256=artifact['sha256'], source=source.decode('utf-8'))
 
     def evidence(self, record, node=None, iteration=None):
-        loop = next((item for item in record['document']['nodes'] if item.get('kind') == 'loop'), None)
-        tool = next((item['id'] for item in loop['config']['body']['nodes'] if item.get('kind') == 'tool'), None) if loop else None
-        if node is not None and node not in record['agents'] and node != tool:
+        nodes = record['document']['nodes']
+        loop = next((item for item in nodes if item.get('kind') == 'loop'), None)
+        if loop:
+            nodes = loop['config']['body']['nodes']
+        tool = any(item['id'] == node and item.get('kind') == 'tool' and item['config'].get('tool') == 'command'
+                   for item in nodes)
+        if node is not None and node not in record['agents'] and not tool:
             raise Invalid('节点不属于本次脚本运行。')
         prefix = ''
         if node is not None and loop:
@@ -203,8 +207,9 @@ class ScriptRuns:
                               structured=self.excerpt(fd, base + 'structured.json'),
                               candidate=self.excerpt(fd, base + 'candidate.json'),
                               stderr=self.excerpt(fd, base + 'stderr.log', tail=True))
-                if prefix:
+                if prefix or tool:
                     result['stdout'] = self.excerpt(fd, base + 'stdout.log')
+                if prefix:
                     if not result['candidate']:
                         result['candidate'] = self.excerpt(fd, base + 'candidate-after.json')
                 return result

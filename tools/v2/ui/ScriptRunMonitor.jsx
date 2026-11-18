@@ -50,7 +50,8 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
  const loop=script.loop;
  const [iteration,selectedNode]=loop?choice.split('/'):[null,choice];
  const round=loop?.iterations.find(item=>String(item.iteration)===iteration);
- const tool=round?.validation?.node===selectedNode&&Boolean(selectedNode);
+ const tool=Boolean(selectedNode)&&(loop?round?.validation?.node===selectedNode:
+  script.document.nodes.some(item=>item.id===selectedNode&&item.config?.tool==='command'));
  const node=(tool||Object.hasOwn(script.agents,selectedNode))?selectedNode:'';
  const agent=node?script.agents[node]:null;
  const completed=(loop?round?.completed_nodes:script.completed_nodes)||[];
@@ -96,16 +97,21 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
    {loop?loop.iterations.flatMap(item=>roundActors(item).map(([id])=>{
     const key=item.iteration+'/'+id;
     return <option key={key} value={key}>第 {item.iteration} 轮 · {nameOf(id)}</option>;
-   })):script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)).map(item=><option key={item.id} value={item.id}>
+   })):script.document.nodes.filter(item=>Object.hasOwn(script.agents,item.id)||item.config?.tool==='command').map(item=><option key={item.id} value={item.id}>
     {item.name}{skipped.includes(item.id)?'（分支未选中）':''}
    </option>)}
   </select></label>
   {node?<div>
-   <p>{tool?'验证命令':agent.provider==='codex'?'Codex CLI':'Claude Code'}{exit?' · 退出码 '+exit.returncode:''}</p>
+   <p>{tool?(loop?'验证命令':nameOf(node)):agent.provider==='codex'?'Codex CLI':'Claude Code'}
+    {tool&&!loop&&' · '+(completed.includes(node)?(exit?.returncode===0?'成功':'失败'):
+     skipped.includes(node)?'未执行':facts.some(event=>event.kind==='CANCELLED')?'已取消':
+     facts.some(event=>event.kind==='NOT_SENT')?'启动失败':
+     script.active&&command?'运行中':command?'未完成':'未启动')}
+    {exit?' · 退出码 '+exit.returncode:''}</p>
    {tool&&command&&<pre aria-label="实际命令与工作目录">{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
    <EvidenceText label="实际请求（含上游交接）" value={shown?.prompt}/>
-   <EvidenceText label={completed.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>
-   {completed.includes(node)&&(shown?.structured||shown?.candidate)&&<details><summary>结构化交付与候选文件</summary>
+   {!tool&&<EvidenceText label={completed.includes(node)?'最终回答':'已保存的回答文本'} value={shown?.answer}/>}
+   {completed.includes(node)&&(shown?.structured||shown?.candidate)&&<details open={tool?true:undefined}><summary>结构化交付与候选文件</summary>
     <EvidenceText label="结构化结果" value={shown?.structured}/>
     <EvidenceText label="候选清单" value={shown?.candidate}/>
    </details>}
@@ -114,10 +120,11 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected}) {
     {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
      {event.at} · {event.kind}{event.reason?' · '+event.reason:''}
     </li>)}</ol>}
-    <EvidenceText label={tool?'验证 stdout':'原生 CLI stdout（隐藏敏感值）'} value={shown?.stdout}/>
-    <EvidenceText label={tool?'验证 stderr':'原生 CLI stderr（隐藏敏感值）'} value={shown?.stderr}/>
+    <EvidenceText label={tool?(loop?'验证 stdout':'命令 stdout'):'原生 CLI stdout（隐藏敏感值）'} value={shown?.stdout}/>
+    <EvidenceText label={tool?(loop?'验证 stderr':'命令 stderr'):'原生 CLI stderr（隐藏敏感值）'} value={shown?.stderr}/>
    </details>
-   {!command&&<p>{skipped.includes(node)?'此 Agent 所在分支未选中。':'尚无 CLI 调用记录。'}</p>}
+   {!command&&<p>{skipped.includes(node)?(tool?'此命令所在分支未选中。':'此 Agent 所在分支未选中。'):
+    tool?'尚无命令调用记录。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div>
    {loop&&<section aria-label="循环轮次">
     <h3>{nameOf(loop.node)} · 最多 {loop.max_iterations} 轮</h3>

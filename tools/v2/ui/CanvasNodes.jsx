@@ -179,7 +179,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
    if(field.type==='choice')return <Field key={key} label={field.label}><select value={value} onChange={e=>{
     const chosen=e.target.value;
     onChange({[key]:chosen,...(key==='tool'&&['verify-json','check-json'].includes(chosen)?{permission:'workspace-read'}:
-     key==='tool'&&['delivery-gate','write-file'].includes(chosen)?{permission:'none'}:{})});
+     key==='tool'&&['command','delivery-gate','write-file'].includes(chosen)?{permission:'none'}:{})});
    }}>
     {Object.entries(field.options).map(([option,label])=><option key={option} value={option}>{label}</option>)}
    </select></Field>;

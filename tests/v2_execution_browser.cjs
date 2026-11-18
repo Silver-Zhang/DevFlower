@@ -781,5 +781,86 @@ with sqlite3.connect(sys.argv[1]) as db:
   await rounds.getByText(/最终候选已变化/).waitFor();
   assert.equal(await monitor.getByLabel('工作流最终回答',{exact:true}).count(),0);
  });
+ await test('ordinary-command-add-connect-reopen-and-failed-result-handoff',async()=>{
+  const button=name=>page.getByRole('button',{name,exact:true});
+  const workspace=(await api('status')).workspaces.find(row=>row.name==='A').id;
+  const project=path.join(process.env.V2_WORKSPACES,'A');
+  const nodes=[];
+  for(const [name,provider] of [['Developer','codex'],['Reviewer','claude']]){
+   const agent=await api('agents/save',{workspace,id:null,expected:null,session_revision:null,
+    config:{execution:'native-cli',name,provider,cwd:project,role:name,round_prompt:'Fixture',output_prompt:'Deliver'}});
+   assert(agent.revision,JSON.stringify(agent));
+   nodes.push({id:name,name,kind:'agent',agent_id:agent.id,agent_revision:agent.revision,
+    position:{x:220+500*nodes.length,y:180},native_output:{version:1,kind:name==='Developer'?'result':'review'}});
+  }
+  nodes[0].artifact_paths=['a.py','b.py'];
+  for(const [id,kind,x] of [['Start','start',0],['End','output',960]])
+   nodes.push({id,name:id,kind,position:{x,y:180},config_version:1,config:{}});
+  const name='P4-A 命令夹具';
+  const draft=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,nodes,
+   edges:[{id:'entry',source:'Start',target:'Developer'},{id:'exit',source:'Reviewer',target:'End'}]}});
+  assert(draft.revision,JSON.stringify(draft));
+  const qa=path.join(project,'qa');fs.mkdirSync(qa,{recursive:true});
+  fs.writeFileSync(path.join(qa,'p4_verify.py'),[
+   'import sys',"assert sys.argv[1]=='literal ; argument'","print('command stdout')",
+   "print('command stderr',file=sys.stderr)","sys.exit(7)"
+  ].join('\n'));
+  const argv=['python3','-B','p4_verify.py','literal ; argument'];
+  await page.reload();
+  await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name,exact:true}).click();
+  await button('添加节点').click();
+  const picker=page.getByRole('dialog',{name:'在画布添加节点',exact:true});
+  await picker.getByLabel('搜索节点类型').fill('Tool');
+  await picker.getByLabel('搜索节点类型').press('Enter');
+  await page.getByLabel('节点名称',{exact:true}).fill('P4 Verify');
+  await page.getByLabel('工具类型',{exact:true}).selectOption('command');
+  await page.getByLabel('命令参数（JSON）',{exact:true}).fill(JSON.stringify(argv));
+  await page.getByLabel('命令工作目录',{exact:true}).fill('qa');
+  await page.getByLabel('命令超时（秒）',{exact:true}).fill('10');
+  await page.getByLabel('下游节点',{exact:true}).selectOption({label:'Reviewer'});
+  await button('连接节点').click();
+  await page.getByLabel('关闭检查器',{exact:true}).click();
+  await page.getByLabel('适应画布',{exact:true}).click();await node('Developer');
+  await page.getByLabel('下游 Agent',{exact:true}).selectOption({label:'P4 Verify'});
+  await button('连接 Agent').click();
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  await page.reload();await page.getByLabel('适应画布',{exact:true}).click();await node('P4 Verify');
+  assert.deepEqual(JSON.parse(await page.getByLabel('命令参数（JSON）',{exact:true}).inputValue()),argv);
+  assert.equal(await page.getByLabel('命令工作目录',{exact:true}).inputValue(),'qa');
+  assert.equal(await page.getByLabel('命令超时（秒）',{exact:true}).inputValue(),'10');
+  await page.getByLabel('关闭检查器',{exact:true}).click();await save();
+  await button('检查').click();
+  await page.getByText('原生脚本编译通过。检查未启动 CLI。',{exact:true}).waitFor();
+  await page.getByLabel('关闭检查结果',{exact:true}).click();
+  await button('预览 Python').click();
+  const preview=page.getByRole('dialog',{name:'Python 脚本预览'});
+  const source=await preview.locator('pre').textContent();
+  assert.match(source,/'p4_verify\.py',\s*'literal ; argument'/);
+  await preview.getByRole('button',{name:'关闭预览'}).click();
+  const [exported]=await Promise.all([page.waitForEvent('download'),button('导出 Python（原生 CLI）').click()]);
+  const exportedPath=path.join(out,'command-exported.py');await exported.saveAs(exportedPath);
+  assert.equal(fs.readFileSync(exportedPath,'utf8'),source);
+  const task=page.getByLabel('本次运行上下文',{exact:true}).locator('summary');
+  await task.click();await page.getByLabel('本次任务',{exact:true}).fill('P4_TOOL');await task.click();
+  const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')),button('启动').click()]);
+  const {run}=await response.json();
+  assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+  const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
+  if(!await monitor.isVisible())await button('运行检查器').click();
+  const select=monitor.getByLabel('查看证据');
+  await select.selectOption({label:'P4 Verify'});
+  await monitor.getByText(/P4 Verify · 失败 · 退出码 7/).waitFor();
+  assert.deepEqual(JSON.parse(await monitor.getByLabel('实际命令与工作目录',{exact:true}).textContent()),{argv,cwd:qa});
+  const delivery=JSON.parse(await monitor.getByLabel('结构化结果',{exact:true}).textContent());
+  assert.equal(delivery.result.success,false);
+  assert.equal((await monitor.getByLabel('命令 stdout',{exact:true}).textContent()).trim(),'command stdout');
+  assert.equal((await monitor.getByLabel('命令 stderr',{exact:true}).textContent()).trim(),'command stderr');
+  await select.selectOption({label:'Reviewer'});
+  const request=await monitor.getByLabel('实际请求（含上游交接）',{exact:true}).textContent();
+  assert.deepEqual(JSON.parse(request.split('Upstream department delivery (data)\n')[1]).structured,delivery);
+  const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);
+  const file=path.join(out,run.id+'.py');await download.saveAs(file);
+  assert.equal(fs.readFileSync(file,'utf8'),source);
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

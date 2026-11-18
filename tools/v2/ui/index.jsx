@@ -1051,11 +1051,14 @@ function App(){
    if(Object.entries(decision.branches).some(([port,path])=>port!==decision.selected_port&&path.includes(id)))
     return {state:'SKIPPED'};
   }
-  if(!Object.hasOwn(scriptRun.agents,id))return null;
+  const tool=shown.nodes.some(node=>node.id===id&&node.config?.tool==='command');
+  if(!tool&&!Object.hasOwn(scriptRun.agents,id))return null;
+  const complete=scriptRun.completed_nodes?.includes(id);
   const started=events.some(event=>event.node===id&&event.kind==='PROCESS_STARTED');
-  const failed=events.some(event=>event.node===id&&event.kind==='CLI_FAILED');
+  const failed=events.some(event=>event.node===id&&(event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
+   tool&&complete&&event.kind==='PROCESS_EXITED'&&event.returncode!==0));
   const cancelled=events.some(event=>event.node===id&&event.kind==='CANCELLED');
-  return {state:scriptRun.completed_nodes?.includes(id)?'COMPLETED':failed?'FAILED':cancelled?'CANCELLED':
+  return {state:failed?'FAILED':complete?'COMPLETED':cancelled?'CANCELLED':
    started?(scriptRun.active?'RUNNING':'UNKNOWN'):'UNACTIVATED'};
  },n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
@@ -1064,12 +1067,12 @@ function App(){
  const actualInputs=e?(edgeTarget?.inputs||[]).filter(i=>i.edge===e.id&&i.source===e.source&&i.target_activation===edgeTarget.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
- function usesNativeAgents(nodes){
-  return nodes.some(node=>node.native_output||
+ function usesNativeScript(nodes){
+  return nodes.some(node=>node.native_output||node.config?.tool==='command'||
    (agentVersions?.workspace===workspace?.id&&agentVersions?.records?.get(node.agent_id)?.config.execution==='native-cli')||
-   (node.config?.body?.nodes&&usesNativeAgents(node.config.body.nodes)));
+   (node.config?.body?.nodes&&usesNativeScript(node.config.body.nodes)));
  }
- const nativeScript=usesNativeAgents(doc.nodes);
+ const nativeScript=usesNativeScript(doc.nodes);
  const launchBlock=nativeScript?(taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':''):
   doc.nodes.map(runtimeBlock).find(Boolean);
  const approval=runSnapshot?.nodes?.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
@@ -1260,7 +1263,7 @@ function App(){
      onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
    </div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><div className="run-command-bar">
-   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动 CLI '+(scriptRun.events?.filter(event=>event.kind==='PROCESS_STARTED').length??'未知')+' 次':
+   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动进程 '+(scriptRun.events?.filter(event=>event.kind==='PROCESS_STARTED').length??'未知')+' 次':
     '实际调用 '+(runSnapshot?.run?.actual_calls??'未知')+' 次'}{!runTrusted?'（上次读取）':''}</span>
    <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runInspectorOpen?'返回运行图':'运行检查器'}</Button>
    <Button disabled={!runSnapshot||cancelling||(scriptRun?(!runTrusted||!scriptRun.active||scriptRun.cancel_requested||ended(runSnapshot.state)):
