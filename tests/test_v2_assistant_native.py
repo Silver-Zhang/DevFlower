@@ -69,6 +69,19 @@ class NativeAssistantTests(unittest.TestCase):
         with patch.object(self.assistant, 'native_status', return_value=dict(state='COMPLETED', reply=reply)):
             return apply(self.assistant, turn, request)
 
+    def test_condition_expression_requires_object_and_duplicate_node_reports_id(self):
+        expression = dict(field='result.verdict', op='equals', value='accept')
+        with self.assertRaisesRegex(Invalid, r'config\.expression 需要 JSON 对象.*result\.verdict'):
+            self.preview([node('Condition', 'condition', dict(expression=json.dumps(expression)))])
+        oversized = expression
+        for _ in range(6):
+            oversized = {'not': oversized}
+        with self.assertRaisesRegex(Invalid, '条件组合超过 4 层或 32 个判定'):
+            self.preview([node('Condition', 'condition', dict(expression=oversized))])
+        with self.assertRaisesRegex(Invalid, r'operations\[2\].*add-node 的 id 已使用.*update-node'):
+            self.preview([node('Condition', 'condition', dict(expression=expression)),
+                          node('Condition', 'condition', dict(expression=expression))])
+
     def test_native_provider_error_facts_keep_status_and_local_failure_separate(self):
         fixture = (
             ('API Error: 401', 'PROVIDER_HTTP_401', 401),

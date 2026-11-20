@@ -57,7 +57,8 @@ def native_examples():
 NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若用户问答或询问运行原因，返回 {"answer":"Markdown 回答"}，
 运行事实引用所给 Run ID、节点、轮次和真实事件。证据未覆盖之处明确说明；绝不发起执行或重放。
 若用户明确要求创建或修改当前原生工作流，返回 summary、operations，可选 name（画布名称）与 profiles（拟新增的原生 Agent）。
-只使用本次当前草稿身份；以前问答仅用于理解指代。summary 为不超过 1000 字符的单个字符串，
+只使用本次当前草稿身份；以前问答仅用于理解指代。保留用户未要求变更的节点和配置。
+summary 为不超过 1000 字符的单个字符串，
 禁止数组、对象或 Markdown 分段。仅改工作流名称时用 name 和空的 operations 数组。
 修改已有节点时用 update-node 和此节点的原 id；add-node 必须选当前图中及本次操作内都未使用的节点 id。
 调整已有 Loop 的轮次时只更新该 Loop 的 config.max_iterations，保留 body 及其他配置。
@@ -188,8 +189,10 @@ def proposal(base_document, reply_text, *, native_profiles=None):
             nodes, edges = candidate['nodes'], candidate['edges']
             if op == 'add-node':
                 kind = operation['kind']
-                if ident in used_nodes or not isinstance(kind, str) or kind not in NODE_KINDS | ({'tool'} if native else set()):
-                    raise Invalid('新增节点的身份已使用，或其类型需要在画布中明确配置。')
+                if ident in used_nodes:
+                    raise Invalid('add-node 的 id 已使用。请用 update-node 修改已有节点，或为新增节点选择唯一 id。')
+                if not isinstance(kind, str) or kind not in NODE_KINDS | ({'tool'} if native else set()):
+                    raise Invalid('add-node 的 kind 不受支持，请使用提案允许的节点类型。')
                 config = _config(operation, kind, native)
                 node = dict(id=ident, name=_name(operation['name']), kind=kind, position=_position(nodes))
                 if kind != 'agent':

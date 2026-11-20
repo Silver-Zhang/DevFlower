@@ -88,11 +88,13 @@ def validate_predicate(test):
         number(test['value'], -1e100, 1e100)
 
 
-def validate_expression(value, depth=0, budget=None):
+def validate_expression(value, depth=0, budget=None, *, label='条件表达式'):
+    if not isinstance(value, dict):
+        raise Invalid(label + ' 需要 JSON 对象，例如 {"field":"result.verdict","op":"equals","value":"accept"}。')
     if budget is None:
         budget = [32]
     budget[0] -= 1
-    if depth > 4 or budget[0] < 0 or not isinstance(value, dict):
+    if depth > 4 or budget[0] < 0:
         raise Invalid('条件组合超过 4 层或 32 个判定。')
     operators = {'all', 'any', 'not'} & value.keys()
     if not operators:
@@ -103,12 +105,12 @@ def validate_expression(value, depth=0, budget=None):
     operator, = operators
     item = value[operator]
     if operator == 'not':
-        validate_expression(item, depth + 1, budget)
+        validate_expression(item, depth + 1, budget, label=label)
         return
     if not isinstance(item, list) or not 1 <= len(item) <= 8:
         raise Invalid('全部/任一条件需要 1–8 项。')
     for child in item:
-        validate_expression(child, depth + 1, budget)
+        validate_expression(child, depth + 1, budget, label=label)
 
 
 def predicate_leaves(value):
@@ -137,7 +139,7 @@ def predicate_issue(test):
 
 def validation_expression(config):
     expression = json.loads(config['rules'], parse_constant=reject_constant)
-    validate_expression(expression)
+    validate_expression(expression, label='config.rules 解析值')
     return expression
 
 
@@ -169,7 +171,7 @@ def validate_config(node):
             if not isinstance(value, list) or any(not isinstance(arg, str) or '\0' in arg for arg in value):
                 raise Invalid('命令参数需要 JSON 字符串数组。')
         elif setting['type'] == 'predicate':
-            validate_expression(value)
+            validate_expression(value, label=f'config.{key}')
         elif setting['type'] == 'graph':
             if not isinstance(value, dict):
                 raise Invalid('循环子流程需要一个 V2 草稿对象。')
