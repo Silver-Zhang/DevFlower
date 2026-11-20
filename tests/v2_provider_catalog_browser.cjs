@@ -232,8 +232,11 @@ async function storage(page) {
   await page.getByText('已读取真实模型目录；目录和登录状态不代表推理已成功。',{exact:true}).waitFor();
   await show(page);
   await row(page,'fixture-7').waitFor();
+  await panel(page).getByLabel('原生 CLI 模型目录',{exact:true}).getByRole('button',{name:'助手模型与账号',exact:true}).waitFor();
   assert.deepEqual(requests.slice(before),[
-   {label:'source',path:'/api/v2/providers/discover',method:'POST'},{label:'source',path:endpoint,method:'GET'},
+   {label:'source',path:'/api/v2/providers/discover',method:'POST'},
+   {label:'source',path:'/api/v2/assistant/settings',method:'GET'},
+   {label:'source',path:endpoint,method:'GET'},
   ]);
  });
 

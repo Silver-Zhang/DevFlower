@@ -377,6 +377,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                     snapshot.update(status=status, result_file=str(directory / 'result.txt'))
                 elif last.get('status') in ('CANCELLED', 'STOPPED'):
                     snapshot.update(status=last['status'], reason=last.get('reason', ''))
+                    if business_outcomes:
+                        snapshot['failed_checks'] = failed_checks(completed, tools)
                 else:
                     raise WorkflowError('Unknown terminal state.')
             elif active:

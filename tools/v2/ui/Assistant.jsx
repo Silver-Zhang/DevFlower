@@ -88,6 +88,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   text,draft:currentDraft,files,run:run||null,...(legacy?{}:{inventory})};
  latest.current=payload;
  const turn=record?.turns?.at(-1),running=active.has(turn?.state),unknown=turn?.state==='RECOVERY_REQUIRED';
+ const originalAccount=turn&&choicesFor(settings,turn.config||{provider:turn.provider}).catalog;
+ const loginMissing=originalAccount?.authenticated===false;
  const matching=preview&&(preview.payload.mode==='probe'?
   ['provider','native_profile','model','effort'].every(key=>preview.payload[key]===selection[key]):
   eq(preview.payload,payload));
@@ -267,6 +269,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
        <dt>原生会话</dt><dd><code>{item.receipt.session_id}</code></dd>
       </dl></details>}
       {item.reply_truncated&&<p className="field-note">回复显示已按字节预算截取。</p>}
+      {item===turn&&loginMissing&&['NOT_SENT','FAILED','RECOVERY_REQUIRED'].includes(item.state)&&
+       <p>{providerNames[item.provider]} · {originalAccount.stale?'上次目录查询':'当前目录状态'}：CLI 未报告登录。请在原生客户端核对账号。</p>}
       {item.reason&&<p role="status">{item.reason}</p>}
       {item.execution_failure?.reason&&item.execution_failure.reason!==item.reason&&<p>{item.execution_failure.reason}</p>}
       {item.execution_failure?.action&&<p>{item.execution_failure.action}</p>}
@@ -320,7 +324,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      <button type="button" disabled={busy} onClick={()=>perform(verifyPending)}>核对本次发送</button>
     </div>}
     {unknown&&<div>
-     <p className="field-note">本次请求待核验。可检查账号、查询同一请求，或另开对话。</p>
+     <p className="field-note">请求 <code>{turn.intent}</code> 待核验。{loginMissing?
+      '核对登录后刷新模型目录，再查询此请求。仍无回执时可另开对话。':
+      '可检查账号、查询同一请求，或另开对话。'}</p>
      <button type="button" disabled={busy} onClick={()=>perform(async()=>{
       const result=await read();
       const receipt=result?.turns?.find(item=>item.intent===turn.intent);
@@ -333,7 +339,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
       setText(turn.text);setPreview(null);
       if(turn.mode!=='probe')setMode(turn.mode);
       setAttachDraft(Boolean(turn.context.draft));
-      onFiles(turn.context.files.map(file=>({path:file.path,start:file.start_line})));
+      onFiles((turn.context.files||[]).map(file=>({path:file.path,start:file.start_line})));
       onRun(turn.context.run?.id||null);
       setNotice('已恢复原请求和附件选择。核对账号与当前内容后预览并确认。');
      }}>恢复原请求以重试</button>}

@@ -993,5 +993,50 @@ with sqlite3.connect(sys.argv[1]) as db:
   await theme.selectOption('light');
   await page.setViewportSize({width:1440,height:900});
  });
+ await test('run-history-pages-interleaved-series-without-splitting-series',async()=>{
+  const seriesA='a'.repeat(32),seriesB='b'.repeat(32);
+  const metadata=(series,round,at)=>({id:series.slice(0,28)+round.toString(16).padStart(4,'0'),
+   name:series===seriesA?'十三轮工作流':'交错工作流',series:{id:series,round},execution:'native-cli',created_at:at});
+  const runs=[...Array.from({length:13},(_,index)=>metadata(seriesA,index+1,2*index+2)),
+   ...Array.from({length:6},(_,index)=>metadata(seriesB,index+1,4*index+5))];
+  const requests=[];
+  const listMatcher=url=>url.pathname==='/api/v2/runs';
+  const summariesMatcher=url=>url.pathname==='/api/v2/script-run/summaries';
+  const summarise=route=>{
+   const ids=new URL(route.request().url()).searchParams.get('ids').split(',');
+   if(ids.some(id=>!runs.some(row=>row.id===id)))return route.continue();
+   requests.push(ids);
+   return route.fulfill({json:ids.map(id=>{
+    const row=runs.find(item=>item.id===id);
+    const failed=(row.series.id===seriesA&&row.series.round===1)||(row.series.id===seriesB&&row.series.round===2);
+    return {id,state:failed?'CHECK_FAILED':'COMPLETED',task:'轮次任务 '+row.series.round,
+     failures:failed?[{name:'确定性检查',returncode:7}]:[]};
+   })});
+  };
+  await page.route(listMatcher,route=>route.fulfill({json:runs}));
+  await page.route(summariesMatcher,summarise);
+  try{
+   await page.getByRole('button',{name:'运行记录',exact:true}).click();
+   const panel=page.getByRole('main',{name:'运行记录',exact:true});
+   await panel.getByRole('button',{name:'刷新',exact:true}).click();
+   const long=panel.locator('details').filter({hasText:'十三轮工作流 · 系列 aaaaaaaa · 共 13 轮'});
+   const other=panel.locator('details').filter({hasText:'交错工作流 · 系列 bbbbbbbb · 共 6 轮'});
+   await long.getByRole('button',{name:/第 13 轮/}).waitFor();
+   assert.equal(await long.count(),1);
+   assert.equal(await other.count(),1);
+   await long.getByRole('button',{name:'较早轮次',exact:true}).click();
+   await long.getByRole('button',{name:/检查失败.*第 1 轮/}).waitFor();
+   await long.getByText('确定性检查（退出 7）',{exact:true}).waitFor();
+   await panel.getByRole('checkbox',{name:'只看失败',exact:true}).check();
+   await other.locator('summary').click();
+   await other.getByRole('button',{name:/检查失败.*第 2 轮/}).waitFor();
+   assert.equal(await other.locator('button.workflow-link').count(),1);
+   assert(requests.some(ids=>ids.length===12&&ids.every(id=>id.startsWith('a'))));
+   assert(requests.every(ids=>ids.length<=12));
+  }finally{
+   await page.unroute(listMatcher);
+   await page.unroute(summariesMatcher,summarise);
+  }
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});

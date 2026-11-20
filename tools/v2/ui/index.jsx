@@ -1563,9 +1563,9 @@ function App(){
    <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runEvidenceVisible?'返回运行图':'运行检查器'}</Button>
    {scriptRun&&<Button ref={pythonOpener} icon={Code} onClick={()=>openPython(true)}
     aria-expanded={sideView==='python'}>查看本次 Python</Button>}
-   {scriptRun&&runTrusted&&runState==='CHECK_FAILED'&&<span className="error-text">
+   {scriptRun&&runTrusted&&scriptRun.failed_checks?.length>0&&<span className="error-text">
     {scriptRun.failed_checks.length} 项检查失败 · {scriptRun.failed_checks.map(item=>
-     shownNodes.get(item.node)?.name||item.node).join('、')} · 修复后重新运行
+     shownNodes.get(item.node)?.name||item.node).join('、')}{runState==='CHECK_FAILED'&&' · 修复后重新运行'}
    </span>}
    {scriptRun&&runTrusted&&(runState==='COMPLETED'||scriptRun.historical_completion)&&scriptRun.series&&!launchAttempt&&
     <Button ref={continuationOpener} className="primary" icon={ArrowRight} disabled={launching} onClick={()=>{

@@ -46,7 +46,7 @@ async function run(){
  await assistant.getByLabel('助手消息',{exact:true}).fill('Rename AgentA to Reviewed Agent on the canvas.');
  await button('预览本次发送').click();
  const preview=assistant.getByLabel('本次发送预览',{exact:true});
- assert.equal(await preview.getByText('我的问题',{exact:true}).isVisible(),true);
+ await preview.getByText('我的问题',{exact:true}).waitFor();
  assert.equal(await preview.getByText(/SELECTED_ASSISTANT_ATTACHMENT/).isVisible(),false);
  await preview.getByText('本次发送的可见内容',{exact:true}).click();
  await preview.getByText(/SELECTED_ASSISTANT_ATTACHMENT/).waitFor();

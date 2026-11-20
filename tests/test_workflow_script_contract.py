@@ -1013,6 +1013,59 @@ print('consumed ' + delivery['candidate']['candidate_sha256'])
                         self.assertEqual(invalid['status'],'RECOVERY_REQUIRED')
                         self.assertIn('Tool log has changed',invalid['reason'])
 
+    def test_verified_tool_failure_survives_downstream_stop_or_cancel(self):
+        cli = self.root / 'bin'
+        cli.mkdir()
+        codex = cli / 'codex'
+        codex.write_text('#!' + sys.executable + '\n' + '''
+import json, os, sys, time
+from pathlib import Path
+payload = json.loads(sys.stdin.read().rsplit('Upstream department delivery (data)\\n', 1)[1])
+assert payload['structured']['result']['returncode'] == 7
+Path('downstream-observed').touch()
+if os.environ.get('WAIT_FOR_CANCELLATION'):
+    time.sleep(30)
+raise SystemExit(4)
+''')
+        codex.chmod(0o700)
+        for expected in ('STOPPED', 'CANCELLED'):
+            with self.subTest(expected=expected):
+                work = self.root / expected
+                work.mkdir()
+                doc = dict(version=1, name='Composite failure', nodes=[
+                    dict(id='Check', name='Check', kind='tool',
+                         config=dict(tool='command', argv=[sys.executable, '-c', 'raise SystemExit(7)'])),
+                    dict(id='Agent', name='Agent', provider='codex'),
+                ], edges=[dict(id='handoff', source='Check', target='Agent')])
+                filename, source = compile_workflow(doc, workspace=work, native_config=True)
+                script, run = work / filename, work / 'run'
+                script.write_text(source)
+                command = [sys.executable, str(script), '--run-dir', str(run)]
+                env = dict(os.environ, PATH=str(cli))
+                if expected == 'CANCELLED':
+                    env['WAIT_FOR_CANCELLATION'] = '1'
+                with subprocess.Popen([*command, '--workspace', str(work)], env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+                    if expected == 'CANCELLED':
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline and not (work / 'downstream-observed').exists():
+                            time.sleep(.02)
+                        subprocess.run([*command, '--cancel'], check=True, capture_output=True, timeout=8)
+                    _, stderr = child.communicate(timeout=12)
+                self.assertTrue((work / 'downstream-observed').exists(), stderr)
+                self.assertEqual(child.returncode, 143 if expected == 'CANCELLED' else 1, stderr)
+                state = json.loads(subprocess.check_output([*command, '--status', '--details']))
+                self.assertEqual(state['status'], expected, state)
+                self.assertEqual(state['failed_checks'], [dict(node='Check', returncode=7)])
+                self.assertFalse((run / 'result.txt').exists())
+                if expected == 'STOPPED':
+                    self.assertTrue(any(row.get('node') == 'Agent' and row.get('returncode') == 4
+                                        for row in state['events']))
+                (run / 'Check' / 'stderr.log').write_text('tampered')
+                invalid = json.loads(subprocess.check_output([*command, '--status']))
+                self.assertEqual(invalid['status'], 'RECOVERY_REQUIRED')
+                self.assertNotIn('failed_checks', invalid)
+
     def test_command_tools_follow_condition_and_router_selection(self):
         cli = self.install_cli_fixture()
         argv = [sys.executable,'-B','-c',"print('branch command')"]

@@ -163,8 +163,10 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
    {trusted&&script.reason&&<details open={!assistance}><summary>本次运行的原始原因</summary>
     <p className="error-text">{failed&&(failed.node||failed.loop_node)?eventName(failed)+' · ':''}{script.reason}</p>
    </details>}
-   {trusted&&state==='CHECK_FAILED'&&<div className="error-text">
-    <p>执行结束，{script.failed_checks.length} 项检查失败。修复后重新运行才能继续下一轮。</p>
+   {trusted&&state==='COMPLETED'&&script.failed_checks?.length===0&&<p>执行结束 · 0 项检查失败</p>}
+   {trusted&&script.failed_checks?.length>0&&<div className="error-text">
+    <p>{state==='CHECK_FAILED'?'执行结束，':'已记录 '}{script.failed_checks.length} 项检查失败。
+     {state==='CHECK_FAILED'&&'修复后重新运行才能继续下一轮。'}</p>
     <ul>{script.failed_checks.map(check=><li key={check.node}>
      <button type="button" onClick={()=>inspectChoice(check.node)}>{nameOf(check.node)}</button> · 退出码 {check.returncode}
     </li>)}</ul>

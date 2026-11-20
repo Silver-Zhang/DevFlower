@@ -15,7 +15,8 @@ from devflower_export import (ExportError, UnsupportedGraph, agent_record, bound
 from orchestration.common import canonical
 from studio.graph import Invalid
 from studio.server import Conflict
-from workflow_script_runtime import SERIES_HASH, WorkflowError, _evidence_file, _run_directory, agent_prompt, failed_checks, workflow_environment
+from workflow_script_runtime import (SERIES_HASH, WorkflowError, _evidence_bytes, _evidence_file, _run_directory,
+                                     agent_prompt, failed_checks, workflow_environment)
 
 from .documents import validate_draft
 from .store import private_directory
@@ -280,22 +281,29 @@ class ScriptRuns:
         snapshot = self.snapshot(workspace, run['id'], record=record)
         script = snapshot['script']
         names = {item['id']: item['name'] for item in record['document']['nodes']}
-        failures = script.get('failed_checks', [])
-        if not failures and snapshot['state'] == 'STOPPED':
+        failures = list(script.get('failed_checks', []))
+        if snapshot['state'] == 'STOPPED':
             for event in reversed(script.get('events', [])):
                 if event['kind'] in ('CLI_FAILED', 'NOT_SENT', 'PREFLIGHT_FAILED', 'UNKNOWN',
                                      'OUTPUT_CONTRACT_FAILED', 'LOOP_LIMIT_REACHED'):
                     ident = event.get('loop_node') or event.get('node') or event.get('failed_node')
-                    if ident:
-                        failures = [dict(node=ident, returncode=event.get('returncode'))]
+                    if ident and all(item['node'] != ident for item in failures):
+                        failures.append(dict(node=ident, returncode=event.get('returncode')))
                     break
-        try:
-            with _run_directory(self.folder(run['id'])) as fd:
-                task = self.excerpt(fd, 'task.txt')
-        except (OSError, WorkflowError):
-            task = None
+        task = ''
+        events = script.get('events', [])
+        if events and script.get('series') == run.get('series') and events[0].get('task_sha256'):
+            try:
+                folder = self.folder(run['id'])
+                with _run_directory(folder), _run_directory(folder / 'evidence') as fd:
+                    raw = _evidence_bytes(fd, 'task.txt')
+                    if sha256(raw).hexdigest() == events[0]['task_sha256']:
+                        task = raw.decode('utf-8')[:360]
+            except (OSError, UnicodeError, WorkflowError):
+                pass
         return dict(id=run['id'], state=snapshot['state'], failures=[dict(row, name=names.get(row['node'], row['node']))
-                    for row in failures], task=task['text'][:360] if task else '')
+                    for row in failures], task=task)
+
 
     @staticmethod
     def artifact(folder, artifact):
@@ -342,8 +350,6 @@ class ScriptRuns:
         evidence = self.snapshot(run['workspace'], run['id'], record=record)['script']
         if evidence['status'] == 'CHECK_FAILED':
             raise Conflict('前轮存在未处理的检查失败。修复后重新运行，才能继续下一轮。')
-        if evidence['status'] != 'COMPLETED' and not evidence.get('historical_completion'):
-            raise Conflict('前轮尚未核验为成功完成，不能继续下一轮。')
         folder = self.folder(run['id'])
         try:
             result = self.read_script(folder, artifact, '--continuation-options',

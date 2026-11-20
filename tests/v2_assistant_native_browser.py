@@ -15,6 +15,7 @@ from v2.cli_providers import CATALOG, empty
 from v2.server import create_server
 from v2.session_operations import KIND, operation_id
 from v2.store import DraftStore
+from studio.graph import Invalid
 
 
 def main():
@@ -29,7 +30,7 @@ def main():
     store = DraftStore(out / 'state', [project.parent])
     workspace = store.open_workspace(str(project))['id']
     model = dict(id='fixture-native-model', efforts=['low'], source='cli_catalog')
-    store.db.put(CATALOG, 'codex', dict(empty('codex', 'Codex CLI'), refreshed_at=time.time(),
+    store.db.put(CATALOG, 'codex', dict(empty('codex', 'Codex CLI'), refreshed_at=time.time(), authenticated=False,
         models=[model], default_model=model, default_effort='low', modes={'Ask': {'enabled': True}}))
     calls = []
 
@@ -53,6 +54,10 @@ def main():
                      config=dict(profile='ClaudeReview',task_prompt='CHECK_BROWSER_TASK')),
                 dict(op='remove-edge',id='Handoff'),node('Version','tool',dict(tool='command',argv=['python3','-V'])),
                 connect('ToTool','First','Version'),connect('ToReview','Version','Second')])
+        elif text == '恢复明确未发送的请求':
+            if calls.count(text) == 1:
+                raise Invalid('验收夹具：本机认证预检拒绝。')
+            reply = dict(answer='已收到明确重试的合成回执')
         else:
             raise AssertionError(text)
         store.db.put(KIND, operation_id(workspace,intent), dict(workspace=workspace,intent_key=intent,
@@ -71,7 +76,7 @@ def main():
                           draft_count=len(store.drafts(workspace)), managed_run_count=len(store.db.list('run')),
                           native_run_count=len(store.db.list('script-run')))
             print(json.dumps(status))
-            return int(bool(result.returncode or len(calls)!=2 or status['draft_count']!=2 or
+            return int(bool(result.returncode or len(calls)!=4 or status['draft_count']!=2 or
                             status['managed_run_count'] or status['native_run_count']))
         finally:
             server.shutdown()

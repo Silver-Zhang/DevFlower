@@ -80,7 +80,14 @@ async function main() {
   await page.getByLabel('撤销',{exact:true}).click();
   await graphNode('Second').waitFor();
   assert.equal(await graphNode('Version').count(),0);
-  await button('保存').click();
+  const [saveResponse]=await Promise.all([
+   page.waitForResponse(response=>response.url().endsWith('/api/v2/drafts/save')),button('保存').click(),
+  ]);
+  assert.equal(saveResponse.status(),200);
+  const savedGraph=(await saveResponse.json()).graph;
+  assert(savedGraph.nodes.some(node=>node.name==='Second'));
+  assert(!savedGraph.nodes.some(node=>node.name==='Version'));
+  await page.locator('.save-state').getByText('已保存',{exact:true}).waitFor();
   await page.reload();
   await graphNode('Second').waitFor();
   assert.equal(await graphNode('Version').count(),0);
@@ -132,6 +139,21 @@ async function main() {
   assert(await exportPython.isDisabled());
   await button('检查').click();
   await page.getByLabel('工作流检查结果',{exact:true}).getByText(/暂不支持编译/).first().waitFor();
+  await button('关闭检查结果').click();
+  await button('AI 助手').click();
+  await button('新建助手对话').click();
+  await message.fill('恢复明确未发送的请求');
+  await button('预览本次发送').click();
+  await button('确认发送').click();
+  await assistant.getByText(/CLI 未报告登录/).waitFor();
+  await assistant.getByText(/验收夹具：本机认证预检拒绝/).waitFor();
+  await button('恢复原请求以重试').click();
+  assert.equal(await message.inputValue(),'恢复明确未发送的请求');
+  assert.equal(await button('确认发送').count(),0);
+  await button('预览本次发送').click();
+  await button('确认发送').click();
+  await assistant.getByText('已收到明确重试的合成回执',{exact:true}).waitFor();
+  assert.equal(await button('恢复原请求以重试').count(),0);
   assert.deepEqual(errors,[]);
   console.log('PASS native proposal, save-response readback, Python preview, version conflict, undo, reload and native check admission');
  } catch(error) {

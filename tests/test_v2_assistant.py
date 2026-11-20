@@ -172,7 +172,9 @@ class AssistantTests(unittest.TestCase):
         self.initialize()
         self.operations.state='RECOVERY_REQUIRED'
         submitted,_ = self.confirm()
-        self.assertEqual(self.post('send',submitted)[1]['state'],'RECOVERY_REQUIRED')
+        first = self.post('send',submitted)[1]
+        self.assertEqual(first['state'],'RECOVERY_REQUIRED')
+        self.assertNotIn('retry_available', first)
         self.assertEqual(self.details()[1]['turns'][-1]['state'],'RECOVERY_REQUIRED')
         self.assertEqual(self.post('send',submitted)[1]['state'],'RECOVERY_REQUIRED')
         self.assertEqual(self.post('preview',dict(self.payload,text='second'))[0],409)
