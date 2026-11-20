@@ -83,7 +83,7 @@ class OperationJournal:
         from .execution_facts import provider_error_code
         if category := provider_error_code(detail):
             self.operations.store.db.change(KIND, self.row['id'], dict(
-                provider_error=dict(code=category, operation=process['operation_id'])))
+                provider_error=dict(**category, operation=process['operation_id'])))
 
     def __init__(self, operations, row, check):
         self.operations, self.row, self.check_before_spawn = operations, row, check
@@ -572,7 +572,7 @@ class SessionOperations:
                 and not any(process.get(key) for key in ('timeout','cancelled','overflow'))
                 and not group_alive(current['process']))
             observed = current.get('provider_error') or {}
-            provider_error = observed.get('code') if (sent and observed.get('operation') == step_key
+            provider_error = observed if (sent and observed.get('operation') == step_key
                 and process.get('operation_id') == step_key and process.get('process') == current.get('process')) else None
             fact = failure_fact(provider,exc,process=process,uncertain=uncertain,sent=sent,
                                 terminal_failed=failed,native_limit=current.get('native_limit'),

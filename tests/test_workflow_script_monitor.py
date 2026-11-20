@@ -47,16 +47,6 @@ class ScriptMonitorTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 self.child.kill()
                 self.child.communicate(timeout=5)
-        # Only this test's known CLI groups; needed for the intentional SIGKILL case.
-        events = self.run_dir / 'events.jsonl'
-        if self.child is not None and events.is_file():
-            for line in events.read_text().splitlines():
-                try:
-                    row = json.loads(line)
-                    if row.get('kind') == 'PROCESS_STARTED':
-                        os.killpg(row['pid'], signal.SIGKILL)
-                except (ValueError, ProcessLookupError):
-                    pass
 
     def command(self, *args):
         return [sys.executable, '-I', '-B', str(self.script), '--run-dir', str(self.run_dir), *args]
@@ -105,8 +95,10 @@ class ScriptMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         before = self.bytes_snapshot()
         for action in ('--status', '--cancel', '--status'):
-            status = self.observe(action)
+            result = self.observe(action, success=action != '--cancel')
+            status = json.loads(result.stdout) if action == '--cancel' else result
             self.assertEqual(status['status'], 'COMPLETED')
+            self.assertFalse(status.get('cancel_accepted', False))
             self.assertFalse(status['active'])
             self.assertFalse(status['automatic_retry'])
             self.assertEqual(status['completed_nodes'], ['Developer', 'Reviewer'])
@@ -161,11 +153,18 @@ class ScriptMonitorTests(unittest.TestCase):
         self.start_slow()
         self.child.kill()
         self.child.communicate(timeout=5)
+        status = self.observe('--status')
+        self.assertFalse(status['owner_active'])
+        deadline = time.monotonic() + 5
+        while status['active'] and time.monotonic() < deadline:
+            time.sleep(.02)
+            status = self.observe('--status')
+        self.assertFalse(status['active'])
+        self.assertEqual(status['status'], 'RECOVERY_REQUIRED')
         before = self.bytes_snapshot()
-        for action in ('--status', '--cancel'):
-            status = self.observe(action)
-            self.assertEqual(status['status'], 'RECOVERY_REQUIRED')
-            self.assertFalse(status['active'])
+        cancellation = json.loads(self.observe('--cancel', success=False).stdout)
+        self.assertFalse(cancellation['cancel_accepted'])
+        self.assertEqual(cancellation['status'], 'RECOVERY_REQUIRED')
         self.assertEqual(before, self.bytes_snapshot())
         self.assertEqual(len(self.calls.read_text().splitlines()), 1)
 

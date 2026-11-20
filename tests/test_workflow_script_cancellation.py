@@ -88,12 +88,13 @@ class CancellationTests(unittest.TestCase):
             # its Popen handle. Run this fault in the exported subprocess only.
             injection = '''
 _real_popen = subprocess.Popen
+_workflow_owner = os.getpid()
 def _cancel_before_handle_assignment(*args, **kwargs):
     process = _real_popen(*args, **kwargs)
     deadline = time.monotonic() + 5
     while not Path(os.environ['PIDS']).exists() and time.monotonic() < deadline:
         time.sleep(.01)
-    os.kill(os.getpid(), signal.SIGTERM)
+    os.kill(_workflow_owner, signal.SIGTERM)
     return process
 subprocess.Popen = _cancel_before_handle_assignment
 '''

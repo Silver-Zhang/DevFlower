@@ -5,6 +5,7 @@ from hashlib import sha256
 from http.client import HTTPConnection
 import json
 import os
+import re
 import signal
 import select
 from pathlib import Path
@@ -305,6 +306,36 @@ else:
             stopped = self.wait_for_state(service, route, lambda s: s['state'] == 'CANCELLED')
             self.assertEqual(stopped['script']['completed_nodes'], [])
             self.assertEqual(len((self.project/'calls.jsonl').read_text().splitlines()), 1)
+
+    def test_large_tool_handoff_keeps_utf8_characters_and_full_log_bytes(self):
+        prefix = '边界内容'
+        footer = '追加结尾'
+        output = ''.join(f'{prefix} LOG-{index:<4} {footer}\n' for index in range(1300)) + 'ending'
+        code = (
+            "import sys; "
+            "text=''.join(f'边界内容 LOG-{index:<4} 追加结尾\\n' for index in range(1300))+'ending'; "
+            "sys.stdout.buffer.write(text.encode()); sys.stderr.buffer.write(text.encode())"
+        )
+        graph = dict(version=1, name='Long logs', nodes=[
+            dict(id='Logs', name='Logs', kind='tool', config=dict(
+                tool='command', argv=[sys.executable, '-c', code]))], edges=[])
+        filename, source = compile_workflow(graph, workspace=self.project, native_config=True)
+        (self.project / filename).write_text(source)
+        run = self.project / 'evidence'
+        result = subprocess.run([sys.executable, '-I', str(self.project / filename), '--run-dir', str(run)],
+                                cwd=self.project, capture_output=True, timeout=5, check=True)
+        summary = json.loads(result.stdout)['result']
+        self.assertEqual(output.encode()[-2048] & 0xC0, 0x80)
+        for channel in ('stdout', 'stderr'):
+            raw = (run / 'Logs' / f'{channel}.log').read_bytes()
+            self.assertEqual(raw, output.encode())
+            excerpt = summary[channel]
+            marker = re.match(r'\[tail\] \[(\d+) bytes omitted\] ', excerpt)
+            self.assertIsNotNone(marker)
+            omitted = int(marker[1])
+            self.assertEqual(excerpt[marker.end():].encode(), raw[omitted:])
+            self.assertIn('LOG-1299', excerpt)
+            self.assertNotIn('�', excerpt)
 
     @unittest.skipUnless(sys.platform.startswith('linux') and hasattr(os, 'pidfd_open'), 'Linux pidfd required')
     def test_export_supervisor_cleans_owned_group_after_hard_owner_death(self):

@@ -1000,12 +1000,20 @@ with sqlite3.connect(sys.argv[1]) as db:
   const runs=[...Array.from({length:13},(_,index)=>metadata(seriesA,index+1,2*index+2)),
    ...Array.from({length:6},(_,index)=>metadata(seriesB,index+1,4*index+5))];
   const requests=[];
+  let holdSeriesA=false,releaseSeriesA,enteredSeriesA;
+  const aInFlight=new Promise(resolve=>{enteredSeriesA=resolve});
+  const aRelease=new Promise(resolve=>{releaseSeriesA=resolve});
   const listMatcher=url=>url.pathname==='/api/v2/runs';
   const summariesMatcher=url=>url.pathname==='/api/v2/script-run/summaries';
-  const summarise=route=>{
+  const summarise=async route=>{
    const ids=new URL(route.request().url()).searchParams.get('ids').split(',');
    if(ids.some(id=>!runs.some(row=>row.id===id)))return route.continue();
    requests.push(ids);
+   if(holdSeriesA&&ids.length===12&&ids.every(id=>id.startsWith('a'))){
+    holdSeriesA=false;
+    enteredSeriesA();
+    await aRelease;
+   }
    return route.fulfill({json:ids.map(id=>{
     const row=runs.find(item=>item.id===id);
     const failed=(row.series.id===seriesA&&row.series.round===1)||(row.series.id===seriesB&&row.series.round===2);
@@ -1019,11 +1027,22 @@ with sqlite3.connect(sys.argv[1]) as db:
    await page.getByRole('button',{name:'运行记录',exact:true}).click();
    const panel=page.getByRole('main',{name:'运行记录',exact:true});
    await panel.getByRole('button',{name:'刷新',exact:true}).click();
-   const long=panel.locator('details').filter({hasText:'十三轮工作流 · 系列 aaaaaaaa · 共 13 轮'});
-   const other=panel.locator('details').filter({hasText:'交错工作流 · 系列 bbbbbbbb · 共 6 轮'});
+   const long=panel.locator('details').filter({hasText:'十三轮工作流 · 系列 aaaaaaaa · 共 13 次运行'});
+   const other=panel.locator('details').filter({hasText:'交错工作流 · 系列 bbbbbbbb · 共 6 次运行'});
    await long.getByRole('button',{name:/第 13 轮/}).waitFor();
    assert.equal(await long.count(),1);
    assert.equal(await other.count(),1);
+   holdSeriesA=true;
+   await long.getByRole('button',{name:'核验整个系列',exact:true}).click();
+   await aInFlight;
+   await other.locator('summary').click();
+   const finalA=page.waitForResponse(response=>response.url().includes('ids=aaaaaaaaaaaaaaaaaaaaaaaaaaaa0001'));
+   releaseSeriesA();
+   await finalA;
+   assert.equal(await other.getByText(/本次已核验/).count(),0);
+   assert(await other.getByRole('button',{name:'核验整个系列',exact:true}).isEnabled());
+   await long.locator('summary').click();
+   await long.getByText('本次已核验 13/13 条',{exact:true}).waitFor();
    await long.getByRole('button',{name:'较早轮次',exact:true}).click();
    await long.getByRole('button',{name:/检查失败.*第 1 轮/}).waitFor();
    await long.getByText('确定性检查（退出 7）',{exact:true}).waitFor();

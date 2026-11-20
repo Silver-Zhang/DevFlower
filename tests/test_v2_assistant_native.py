@@ -18,6 +18,7 @@ from studio.server import Conflict
 from v2.assistant import Assistant
 from v2.assistant_native import apply, correction, stage
 from v2.assistant_proposals import native_examples
+from v2.execution_facts import failure_fact, provider_error_code
 from v2.store import DraftStore
 from v2.workflow_templates import WorkflowTemplates, loop_example
 
@@ -66,6 +67,24 @@ class NativeAssistantTests(unittest.TestCase):
                        preview_sha256=proof['sha256'], **changes)
         with patch.object(self.assistant, 'native_status', return_value=dict(state='COMPLETED', reply=reply)):
             return apply(self.assistant, turn, request)
+
+    def test_native_provider_error_facts_keep_status_and_local_failure_separate(self):
+        fixture = (
+            ('API Error: 401', 'PROVIDER_HTTP_401', 401),
+            ('HTTP/2 403 Forbidden', 'PROVIDER_HTTP_403', 403),
+            ('Claude is not logged in', 'PROVIDER_AUTHENTICATION', None),
+            ('API Error: 400 The supported API model names are alpha and beta, but you passed gamma.',
+             'PROVIDER_MODEL', 400),
+        )
+        for detail, code, status in fixture:
+            with self.subTest(code=code):
+                result = failure_fact('claude', RuntimeError(), uncertain=True, sent=True, process={'exit': 1},
+                                      provider_error=provider_error_code(detail))
+                self.assertEqual((result['code'], result.get('http_status')), (code, status))
+                self.assertEqual(result['source'], 'current_native_error')
+                self.assertEqual(result['effect'], 'unknown')
+        self.assertIsNone(provider_error_code('selected model series-401'))
+        self.assertIsNone(provider_error_code('API Error: 400 Invalid input encoding'))
 
     def test_name_only_and_explicit_compiler_regression_confirmation(self):
         tool = dict(id='Tool', name='Tool', kind='tool', position=dict(x=0, y=0),

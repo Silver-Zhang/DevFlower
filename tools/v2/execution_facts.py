@@ -23,15 +23,16 @@ def process_facts(process):
 
 def provider_error_code(detail):
     http = re.search(r'\b(?:HTTP(?:/[0-9.]+)?(?: error| status)?|API Error|status(?: code)?)'
-                     r'[: =]+(401|403)\b|\b(401) Unauthorized\b|\b(403) Forbidden\b', detail, re.I)
-    if http:
-        return 'PROVIDER_HTTP_' + next(value for value in http.groups() if value)
+                     r'[: =]+(400|401|403)\b|\b(401) Unauthorized\b|\b(403) Forbidden\b', detail, re.I)
+    status = int(next(value for value in http.groups() if value)) if http else None
+    if status in (401, 403):
+        return dict(code=f'PROVIDER_HTTP_{status}', http_status=status)
     if re.search(r'model[_ ]not[_ ]found|invalid[_ ]model|model .{0,120}(?:does not exist|not available|not supported)|'
-                 r'(?:invalid|unknown|unsupported) model', detail, re.I):
-        return 'PROVIDER_MODEL'
+                 r'(?:invalid|unknown|unsupported) model|supported API model names are .{1,750}but you passed', detail, re.I | re.S):
+        return dict(code='PROVIDER_MODEL', **({'http_status': status} if status else {}))
     if re.search(r'unauthorized|invalid api key|authentication[_ ]error|not (?:logged in|authenticated)|please log in',
                  detail, re.I):
-        return 'PROVIDER_AUTHENTICATION'
+        return dict(code='PROVIDER_AUTHENTICATION')
     return None
 
 
@@ -41,6 +42,8 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
     process = process_facts(process)
     text = str(error).casefold()
     source = 'local_process' if process else 'local_preflight'
+    provider_evidence = provider_error or {}
+    provider_error = provider_evidence.get('code')
     if provider_error in ('PROVIDER_HTTP_401', 'PROVIDER_HTTP_403'):
         status = provider_error.rsplit('_', 1)[1]
         code, reason = provider_error, f'{name} 的本次原生错误回执报告 HTTP {status}。'
@@ -52,7 +55,9 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
         action = '在原生客户端核对当前账号与服务访问权限。'
         source = 'current_native_error'
     elif provider_error == 'PROVIDER_MODEL':
-        code, reason = provider_error, f'{name} 的本次原生错误回执报告所请求模型不可用。'
+        status = provider_evidence.get('http_status')
+        code = provider_error
+        reason = f'{name} 的本次原生错误回执报告所请求模型不可用' + (f'（HTTP {status}）。' if status else '。')
         action = '刷新模型目录，并核对该原生账号可访问的模型。'
         source = 'current_native_error'
     elif isinstance(error,SessionRefused):
@@ -106,7 +111,11 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
         reason = f'{name} 执行未完成。' if uncertain or terminal_failed else f'{name} 本机预检未通过。'
         action = '查看原生客户端及当前工作区的配置，再核对本次记录。'
     effect = 'terminal-failed' if terminal_failed else 'unknown' if uncertain else 'not-sent'
-    return dict(code=code,reason=reason,action=action,effect=effect,source=source,input_recorded=bool(sent),process=process)
+    public = dict(code=code, reason=reason, action=action, effect=effect, source=source,
+                  input_recorded=bool(sent), process=process)
+    if source == 'current_native_error' and 'http_status' in provider_evidence:
+        public['http_status'] = provider_evidence['http_status']
+    return public
 
 
 def terminal_correlated(activation, process, binding, terminal_type, session_id, native_turn_id):

@@ -1178,7 +1178,7 @@ function App(){
    const letter=event.key.toLowerCase(),modifier=event.ctrlKey||event.metaKey;
    if(modifier&&letter==='s'){
     event.preventDefault();
-    if(workspaceRef.current&&viewMode==='draft'&&!primaryView&&!launchBusy.current)guard(save)();
+    if(workspaceRef.current&&viewMode==='draft'&&!primaryView&&!launchBusy.current&&!opening.current)guard(save)();
     return;
    }
    if(!editable||folder||pending||planApproval||(sideView&&sideView!=='python')||event.target.closest?.('input,textarea,select,[contenteditable]'))return;
@@ -1513,12 +1513,11 @@ function App(){
      navigate(async()=>{await openDraft(row);if(primaryView)setSideView('');setDrawer(false)},'打开其他工作流')
     }}><Workflow size={16}/><span>{row.graph.name}{drafts.some(other=>other.id!==row.id&&other.graph.name===row.graph.name)&&
      <small className="muted"> · {row.id.slice(0,8)}</small>}</span></button>)}
-    {!drafts.length&&<p className="muted small empty-list">尚无已保存的工作流</p>}
-    {workspace.moved_from&&<p className="muted small empty-list">
-     此文件夹原位于 {workspace.moved_from}。工作空间按路径登记，原草稿仍在旧工作空间。
-     可将文件夹恢复到原路径，打开旧工作空间并导出草稿，再从新路径导入副本。
-     <button type="button" onClick={chooseArchive}>导入已导出的工作流</button>
-    </p>}
+    {!drafts.length&&<div className="muted small empty-list">
+     <p>尚无已保存的工作流。工作空间按路径登记，复制或移动文件夹后可以导入已导出的草稿。</p>
+     {workspace.moved_from&&<p>此文件夹原位于 {workspace.moved_from}。要取回原草稿，可以先恢复文件夹的原路径并导出。</p>}
+     <button type="button" disabled={!!busy} onClick={chooseArchive}>导入已导出的工作流</button>
+    </div>}
    </nav>
    <div className="section-heading">工作空间工具</div>
    <nav className="workspace-actions supplementary-navigation" aria-label="工作空间工具">

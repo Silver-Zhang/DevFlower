@@ -5,6 +5,7 @@ SDK. Native CLI configuration remains authoritative. Logs are local/private;
 they can contain project source and native CLI output and are not sanitized.
 """
 import argparse
+import codecs
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
@@ -281,7 +282,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
             terminal = [row for row in events if row['kind'] in terminal_kinds]
             if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
                 raise WorkflowError('Terminal journal evidence is inconsistent.')
-            if cancel and owner_active and active and not terminal:
+            accepts_cancel = bool(cancel and owner_active and active and not terminal)
+            if accepts_cancel:
                 try:
                     request = os.open('cancel.request', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                       0o600, dir_fd=fd)
@@ -291,6 +293,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                     os.close(request)
                     os.fsync(fd)
             snapshot['cancel_requested'] = _cancel_requested(fd)
+            if cancel and manifest.get('compiler_version', 0) >= 15:
+                snapshot['cancel_accepted'] = accepts_cancel and snapshot['cancel_requested']
             outer = [row for row in events if 'iteration' not in row]
             completed = [row for row in outer if row['kind'] == 'NODE_COMPLETED']
             calls = defaultdict(list)
@@ -315,7 +319,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                             iterations.append(event)
                         elif event['kind'] == 'NODE_COMPLETED':
                             step += 1
-                accepted = inspect_loop(loop, fd, iterations, snapshot)
+                accepted = inspect_loop(loop, fd, iterations, snapshot, supervised=manifest.get('compiler_version', 0) >= 15)
             reviews = []
             producer = None
             agents = {agent['id']: agent for agent in manifest['agents']}
@@ -542,7 +546,7 @@ def _supervise_process(argv, cwd, source, stdout, stderr, lifeline, report, dire
             status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
             if status is not None:
                 code = status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
-                if tool:
+                if tool or code != 0:
                     _guarded_group(process)
                     process = None
                     os.write(report, f'exit {code}\n'.encode())
@@ -604,9 +608,10 @@ def _supervised_wait(context, node, argv, cwd, directory, timeout, source, stdou
                         raise OSError('Process supervisor ended without an exit receipt; inspect the launch group.')
                     kind, value, *identity = result
                     if kind == b'exit':
-                        if not tool:
+                        code = int(value)
+                        if not tool and code == 0:
                             os.write(control_write, b'A')
-                        return int(value)
+                        return code
                     if kind == b'error':
                         raise ProcessNotStarted(int(value), os.strerror(int(value)))
                     _event(context, 'PROCESS_STARTED', node=node, pid=int(value), supervisor_pid=supervisor,
@@ -710,6 +715,24 @@ def command_process(context, tool, prefix, upstream=None):
         yield code
 
 
+def log_excerpt(stream, limit, *, tail=False):
+    size = stream.seek(0, os.SEEK_END)
+    offset = max(0, size - limit) if tail else 0
+    stream.seek(offset)
+    value = stream.read(limit)
+    continuation = 0
+    if offset:
+        # The only discarded leading bytes are a UTF-8 continuation at the cut.
+        while continuation < min(3, len(value)) and value[continuation] & 0xC0 == 0x80:
+            continuation += 1
+        value = value[continuation:]
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    text = decoder.decode(value, final=tail or size <= limit)
+    retained = len(value) - len(decoder.getstate()[0])
+    return dict(text=text, truncated=size > retained, omitted_bytes=max(0, size - retained),
+                retained_from=offset + continuation)
+
+
 def command_logs(context, prefix):
     summaries, checksums = {}, {}
     fd = context['directory_fd']
@@ -717,9 +740,9 @@ def command_logs(context, prefix):
         relative = prefix + '/' + channel + '.log'
         checksums[channel + '_sha256'] = _evidence_sha256(fd, relative)
         with _evidence_file(fd, relative) as stream:
-            end = stream.seek(0, os.SEEK_END)
-            stream.seek(max(end - 2048, 0))
-            summaries[channel] = ('[tail] ' if end > 2048 else '') + stream.read(2048).decode('utf-8', errors='replace')
+            excerpt = log_excerpt(stream, 2048, tail=True)
+            label = f"[tail] [{excerpt['omitted_bytes']} bytes omitted] " if excerpt['truncated'] else ''
+            summaries[channel] = label + excerpt['text']
     return summaries, checksums
 
 
@@ -782,7 +805,7 @@ def run_validation(context, tool, produced):
                     reason=f'Validation failed (exit {code}).' if code else 'Validation passed.', **summaries)
 
 
-def inspect_loop(loop, fd, events, snapshot):
+def inspect_loop(loop, fd, events, snapshot, *, supervised=False):
     developer, reviewer = (agent['id'] for agent in loop['agents'])
     tool = loop.get('validation', {}).get('id')
     rounds = []
@@ -837,8 +860,12 @@ def inspect_loop(loop, fd, events, snapshot):
             if actor['state'] != 'NOT_STARTED':
                 raise WorkflowError('Loop Agent has repeated call intent.')
             actor['state'] = 'STARTING'
+        elif kind == 'PROCESS_SUPERVISOR' and supervised:
+            if actor['state'] != 'STARTING' or 'supervisor_pid' in actor or type(event.get('supervisor_pid')) is not int:
+                raise WorkflowError('Loop process supervisor has no matching call intent.')
+            actor['supervisor_pid'] = event['supervisor_pid']
         elif kind == 'PROCESS_STARTED':
-            if actor['state'] != 'STARTING':
+            if actor['state'] != 'STARTING' or actor.get('supervisor_pid') != event.get('supervisor_pid'):
                 raise WorkflowError('Loop Agent process has no matching call intent.')
             actor['state'] = 'RUNNING'
         elif kind == 'PROCESS_EXITED':
@@ -1441,7 +1468,7 @@ def script_main(manifest, run_workflow):
                                    historical=args.historical)
             print(json.dumps(snapshot, ensure_ascii=False, indent=2))
             if args.cancel and manifest.get('compiler_version', 0) >= 15:
-                return 0 if snapshot['status'] in ('CANCEL_REQUESTED', 'CANCELLED') else 1
+                return 0 if snapshot.get('cancel_accepted') or snapshot['status'] == 'CANCELLED' else 1
             return 0
         if args.details:
             raise WorkflowError('--details requires --status or --cancel.')

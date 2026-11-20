@@ -1,5 +1,4 @@
 """Publish and observe standalone Python artifacts from explicitly native drafts."""
-import codecs
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
@@ -18,7 +17,7 @@ from orchestration.common import canonical
 from studio.graph import Invalid
 from studio.server import Conflict
 from workflow_script_runtime import (SERIES_HASH, WorkflowError, _evidence_bytes, _evidence_file, _run_directory,
-                                     agent_prompt, failed_checks, workflow_environment)
+                                     agent_prompt, failed_checks, log_excerpt, workflow_environment)
 
 from .documents import validate_draft
 from .store import private_directory
@@ -322,26 +321,9 @@ class ScriptRuns:
     def excerpt(fd, name, *, tail=False):
         try:
             with _evidence_file(fd, name) as stream:
-                size = os.fstat(stream.fileno()).st_size
-                offset = max(0, size - 32000) if tail else 0
-                stream.seek(offset)
-                value = stream.read(32000)
+                return log_excerpt(stream, 32000, tail=tail)
         except FileNotFoundError:
             return None
-        if offset:
-            # A UTF-8 tail can begin in a continuation byte. Keep invalid
-            # bytes inside the retained log visible as replacement characters.
-            continuation = 0
-            while continuation < min(3, len(value)) and value[continuation] & 0xC0 == 0x80:
-                continuation += 1
-            value = value[continuation:]
-        else:
-            continuation = 0
-        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-        text = decoder.decode(value, final=tail or size <= 32000)
-        retained = len(value) - len(decoder.getstate()[0])
-        return dict(text=text, truncated=size > retained,
-                    omitted_bytes=max(0, size - retained), retained_from=offset + continuation)
 
     def source(self, record):
         artifact = record['artifact']
