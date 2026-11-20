@@ -340,7 +340,7 @@
 .workbench-state::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .workbench-state:is([data-state=COMPLETED], [data-state=BOUND]) { --state-text: var(--studio-sent); --state-bg: var(--workbench-good-bg); }
 .workbench-state:is([data-state=RUNNING], [data-state=STARTING], [data-state=READY]) { --state-text: var(--studio-primary-bg); --state-bg: var(--studio-selected); }
-.workbench-state:is([data-state=FAILED], [data-state=CANCEL_REQUESTED]) { --state-text: var(--studio-error); --state-bg: var(--studio-error-bg); }
+.workbench-state:is([data-state=FAILED], [data-state=CHECK_FAILED], [data-state=CANCEL_REQUESTED]) { --state-text: var(--studio-error); --state-bg: var(--studio-error-bg); }
 .workbench-state:is([data-state=WAITING_CONFIRMATION], [data-state=RECOVERY_REQUIRED], [data-state=NEEDS_CONFIG], [data-state=PAUSED], [data-state=UNKNOWN]) {
   --state-text: var(--workbench-warn);
   --state-bg: var(--workbench-warn-bg);
@@ -1021,3 +1021,38 @@
   }
   .python-divider { display: none; }
 }
+
+.topology-warning { margin: 4px 12px; }
+@media (max-width: 900px) {
+  .v2-app.side-tool-open.python-priority-code,
+  .v2-app.side-tool-open.python-priority-canvas {
+    --navigation-width: 0px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--chrome-height) minmax(0, 1fr);
+  }
+  .v2-app.side-tool-open.python-priority-code > .editor,
+  .v2-app.side-tool-open.python-priority-canvas > .python-panel { display: none; }
+  .v2-app.side-tool-open.python-priority-code > .python-panel,
+  .v2-app.side-tool-open.python-priority-canvas > .editor {
+    position: relative;
+    grid-area: 2 / 1;
+    inset: auto;
+    width: auto;
+  }
+  .v2-app.side-tool-open.python-priority-code .python-divider { display: none; }
+}
+.node-prompt-preview pre, .version-field pre {
+  margin: 4px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.node-prompt-preview pre { max-height: 280px; overflow: auto; }
+.version-field dd { margin: 0; }
+.assistant-send-summary dd { margin: 0 0 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.assistant-send-summary dt { font-weight: 600; }
+.canvas-node[data-compact=true] .node-ports span,
+.canvas-node[data-compact=true] .node-config-summary { visibility: hidden; }
+.canvas-node[data-compact=true] > header strong { font-size: 18px; }
+.canvas-node[data-compact=true] .workbench-state { font-size: 14px; }
+.native-environment { opacity: .85; }
+.native-environment pre { white-space: pre-wrap; overflow-wrap: anywhere; }

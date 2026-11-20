@@ -50,26 +50,27 @@ function PortRows({node,direction}){
 
 export function CanvasNodeCard({id,data,selected}){
  const n=data.node,kind=nodeKind(n),type=nodeType(n),Icon=icons[kind],agent=kind==='agent';
- const issue=data.referenceIssue||draftConfigIssue(n);
+ const issue=data.referenceIssue||(data.missingRoles?'还需绑定 '+data.missingRoles+' 个角色':'')||draftConfigIssue(n);
  const state=data.activation?.state||(issue?'NEEDS_CONFIG':agent&&n.agent_id?'BOUND':'DRAFT');
  const config=n.config||{};
  const summary={
   agent:n.agent_id?'固定版本':n.model||n.provider, tool:config.argv?.[0]||type.fields.tool?.options?.[config.tool],
   condition:config.expression?.field, router:`${config.rules?.length||0} 条规则 · 默认分支`,
-  loop:`最多 ${config.max_iterations??3} 轮`, start:config.instructions, output:type.fields.format?.options?.[config.format||'text'],
+  loop:[`最多 ${config.max_iterations??3} 轮`,...(data.loopRoles||[]).map(node=>node.name),
+   ...(config.body?.nodes.some(node=>node.config?.tool==='command')?['验证命令']:[])].join(' · '), start:config.instructions, output:type.fields.format?.options?.[config.format||'text'],
  }[kind];
- const detail=data.activation?.input_sent_sha256?'已写入 CLI':issue||summary;
+ const detail=data.activation?.input_sent_sha256?'已写入 CLI':kind==='loop'&&config.body?summary:issue||summary;
  const portsKey=JSON.stringify([ports(n,'inputs'),ports(n,'outputs')]);
  const update=useUpdateNodeInternals();
  useLayoutEffect(()=>{update(id)},[id,portsKey,update]);
- return <article className={'agent-card canvas-node'+(selected?' selected':'')} data-kind={kind} data-state={state}>
+ return <article className={'agent-card canvas-node'+(selected?' selected':'')} data-kind={kind} data-state={state} data-compact={data.compactView||undefined}>
   <header><span className="agent-icon"><Icon size={18} aria-hidden="true"/></span><div>
    <strong title={n.name}>{n.name||'未命名节点'}</strong><small>{type.english}</small></div></header>
   <div className={'canvas-node-ports'+(agent?' agent-ports':'')}>
    <PortRows node={n} direction="inputs"/><PortRows node={n} direction="outputs"/>
   </div>
   <footer>
-   <span className="workbench-state" data-state={state}>{data.activation?data.stateLabel:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
+   <span className="workbench-state" data-state={state}>{data.activation?data.stateLabel:data.missingRoles?`还需绑定 ${data.missingRoles} 个角色`:issue?'待配置':agent&&n.agent_id?'已绑定':'已配置'}</span>
    <span className="node-config-summary" title={detail||undefined}>{detail}</span>
   </footer>
  </article>;
@@ -246,12 +247,12 @@ export function CanvasAgentProfile({node,records,onBind,onCreate,Field}) {
  }
  return <div className="canvas-profile-picker">
   <Field label="Agent 配置版本">
-   <select disabled={!records||busy} value={current?.id||''} onChange={event=>{
+   <select disabled={!records||busy} value={current?current.id+':'+current.revision:''} onChange={event=>{
     const selected=records.get(event.target.value);
     if(selected)onBind(selected);
    }}>
     <option value="" disabled>{records?'选择已保存 Agent':'正在读取已保存 Agent'}</option>
-    {options.map(row=><option key={row.id} value={row.id}>{row.config.name} · {row.config.provider==='claude'?'Claude Code':'Codex CLI'} · {row.revision.slice(0,8)}</option>)}
+    {options.map(row=><option key={row.id+':'+row.revision} value={row.id+':'+row.revision}>{row.config.name} · {row.config.provider==='claude'?'Claude Code':'Codex CLI'} · {row.revision.slice(0,8)}</option>)}
    </select>
   </Field>
   {!open&&<button type="button" onClick={()=>setOpen(true)}>快速创建原生 Agent</button>}

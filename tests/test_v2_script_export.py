@@ -107,16 +107,41 @@ class ScriptExportTests(unittest.TestCase):
                     self.assertNotIn('source', result)
         self.assertEqual(self.snapshot(), before)
 
-    def test_export_rejects_stale_agent_and_does_not_launch_or_rebind(self):
-        self.agents.save(self.workspace, self.agent['id'], self.agent['revision'],
-                         dict(self.agent['config'], role='Changed'))
+    def test_export_rejects_unknown_agent_revision_and_does_not_rebind(self):
+        document = dict(self.document, nodes=[dict(self.document['nodes'][0], agent_revision='f'*64)])
+        draft = self.store.save(self.workspace, self.draft['id'], self.draft['revision'], document)
         before = self.snapshot()
         with self.running() as service, patch('subprocess.Popen') as spawn:
-            status, result = self.post(service)
+            status, result = self.post(service, dict(self.request, revision=draft['revision']))
             self.assertEqual(status, 400)
             self.assertIn('stale', result['error'])
             spawn.assert_not_called()
         self.assertEqual(self.snapshot(), before)
+
+    def test_exact_native_agent_versions_coexist_and_compile_read_only(self):
+        new = self.agents.save(self.workspace, self.agent['id'], self.agent['revision'],
+                               dict(self.agent['config'], provider='claude', model='sonnet'))
+        self.assertEqual(self.agents.get_native_version(self.workspace, self.agent['id'], self.agent['revision']),
+                         self.agent)
+        self.assertEqual(self.agents.references(self.workspace, new['id'], new['revision'])['workflows'], [])
+        with self.running() as service, patch('subprocess.Popen') as spawn:
+            original_before = self.snapshot()
+            status, result = self.post(service)
+            self.assertEqual(status, 200, result)
+            self.assertEqual(self.snapshot(), original_before)
+            self.assertIn("'provider': 'codex'", result['source'])
+            nodes = self.document['nodes'] + [dict(self.document['nodes'][0], id='Reviewer', name='Reviewer',
+                                                  agent_revision=new['revision'])]
+            document = dict(self.document, nodes=nodes, edges=[dict(id='handoff', source='Developer', target='Reviewer')])
+            draft = self.store.save(self.workspace, self.draft['id'], self.draft['revision'], document)
+            before = self.snapshot()
+            status, result = self.post(service, dict(self.request, revision=draft['revision']))
+            self.assertEqual(status, 200, result)
+            self.assertIn("'provider': 'codex'", result['source'])
+            self.assertIn("'provider': 'claude'", result['source'])
+            self.assertIn("'model': 'sonnet'", result['source'])
+            self.assertEqual(self.snapshot(), before)
+            spawn.assert_not_called()
 
     def test_export_is_scoped_and_authenticated(self):
         other = self.project.parent / 'B'
@@ -185,6 +210,39 @@ else:
                 return snapshot
             time.sleep(.03)
         self.fail(snapshot)
+
+    def test_check_failure_projects_into_gui_and_blocks_both_continuation_paths(self):
+        command = dict(id='Check', name='Business check', kind='tool', config_version=1,
+                       position=dict(x=0, y=0), config=dict(tool='command', cwd='.',
+                       argv=[sys.executable, '-c', "print('CHECK-FAIL'); raise SystemExit(7)"]))
+        graph = dict(self.document, execution='native-cli', nodes=[command])
+        draft = self.store.save(self.workspace, self.draft['id'], self.draft['revision'], graph)
+        with self.running() as service:
+            for version in (13, 14):
+                with self.subTest(compiler_version=version), patch('devflower_export.COMPILER_VERSION', version):
+                    launch = dict(workspace=self.workspace, draft_id=draft['id'], revision=draft['revision'],
+                                  intent_key='business-check-version-' + str(version), task='Check evidence',
+                                  execution='native-cli')
+                    code, value = self.http(service, 'launch', launch)
+                    self.assertEqual(code, 200, value)
+                    run = value['run']
+                    params = '?workspace=' + self.workspace + '&id=' + run['id']
+                    final = self.wait_for_state(service, 'run' + params, lambda row: row['state'] == 'CHECK_FAILED')
+                    self.assertEqual(final['script']['failed_checks'], [dict(node='Check', returncode=7)])
+                    self.assertEqual(final['script'].get('legacy_tool_outcome', False), version == 13)
+                    code, listed = self.http(service, 'script-run/summaries?workspace=' + self.workspace + '&ids=' + run['id'])
+                    self.assertEqual(code, 200, listed)
+                    self.assertEqual(listed, [dict(id=run['id'], state='CHECK_FAILED', task='Check evidence',
+                                                  failures=[dict(node='Check', name='Business check', returncode=7)])])
+                    code, options = self.http(service, 'script-run/continuation' + params)
+                    self.assertEqual(code, 409, options)
+                    for choice in ('previous', 'current'):
+                        next_run = dict(launch, intent_key=f'blocked-continuation-{version}-{choice}',
+                                        continue_from=dict(run_id=run['id'], selection=['result'], version=choice,
+                                                           sha256=final['script']['artifact']['sha256']))
+                        code, result = self.http(service, 'launch', next_run)
+                        self.assertEqual(code, 409, result)
+            self.assertEqual(len(self.store.db.list('script-run')), 2)
 
     def test_duplicate_launch_reconnect_and_terminal_use_frozen_artifact(self):
         data, bin_dir = self.native_fixture()

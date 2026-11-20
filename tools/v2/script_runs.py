@@ -1,4 +1,5 @@
 """Publish and observe standalone Python artifacts from explicitly native drafts."""
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
 import os
@@ -9,11 +10,12 @@ import sys
 from threading import Thread
 import time
 
-from devflower_export import ExportError, UnsupportedGraph, compile_workflow, document_agents, read_saved, workflow_paths
+from devflower_export import (ExportError, UnsupportedGraph, agent_record, bound_record, compile_agent, compile_start, compile_workflow,
+                              document_agents, read_saved, reference_key, workflow_paths)
 from orchestration.common import canonical
 from studio.graph import Invalid
 from studio.server import Conflict
-from workflow_script_runtime import SERIES_HASH, WorkflowError, _evidence_file, _run_directory, workflow_environment
+from workflow_script_runtime import SERIES_HASH, WorkflowError, _evidence_file, _run_directory, agent_prompt, failed_checks, workflow_environment
 
 from .documents import validate_draft
 from .store import private_directory
@@ -24,7 +26,7 @@ EXECUTION = 'native-cli'
 
 def compile_native(document, records, root):
     for node in document_agents(document):
-        row = records.get(node.get('agent_id'), {})
+        row = bound_record(records, node)
         if row.get('config', {}).get('execution') != EXECUTION:
             raise ExportError(node['id'] + '：请选择已保存的原生 CLI Agent 配置；受管工作流可使用原有运行入口。')
     return compile_workflow(document, records, root, native_config=True)
@@ -47,15 +49,64 @@ class ScriptRuns:
         self.store = store
         self.agents = agents
 
+    def prompt_preview(self, workspace, document, ident, task, loop=None):
+        root = Path(self.store.workspace(workspace)['path'])
+        document = validate_draft(document)
+        if not isinstance(task, str) or len(task) > 20000 or '\0' in task:
+            raise Invalid('预览需要有效的任务文本。')
+        graph = document
+        parent = None
+        if loop is not None:
+            parent = next((node for node in document['nodes'] if node['id'] == loop and node.get('kind') == 'loop'), {})
+            graph = parent.get('config', {}).get('body')
+            if not graph:
+                raise Invalid('找不到固定的循环子流程。')
+        node = next((row for row in graph['nodes'] if row['id'] == ident and row.get('kind', 'agent') == 'agent'), None)
+        if not node or 'agent_id' not in node:
+            raise Invalid('请先为此节点绑定原生 CLI Agent。')
+        key = reference_key(node)
+        record = self.agents.get_native_version(workspace, *key)
+        try:
+            agent = compile_agent(node, {key: record}, root, {}, {}, preview=True)
+            def initial(canvas):
+                start = next((row for row in canvas['nodes'] if row.get('kind') == 'start'), None)
+                return compile_start(start) if start else ''
+
+            def receives(canvas, target):
+                sources = {row['id']: row for row in canvas['nodes']}
+                return any(edge['target'] == target and edge.get('transfer', {}).get('mode') != 'none'
+                           and sources[edge['source']].get('kind') != 'start' for edge in canvas['edges'])
+
+            entry_task = '\n\n'.join(part for part in (initial(graph) if parent else '', initial(document),
+                                     task or '〔启动时填写的本次任务〕') if part)
+            body_entry = bool(parent and any(edge['target'] == ident and any(
+                row['id'] == edge['source'] and row.get('kind') == 'start' for row in graph['nodes'])
+                for edge in graph['edges']))
+            handoff = receives(document, loop) if body_entry else receives(graph, ident)
+            return dict(node=ident, revision=record['revision'], prompt=agent_prompt(
+                agent, entry_task, root, iteration='〔实际循环轮次〕' if loop else None,
+                handoff='〔运行时核验后的上游交接〕' if handoff else None,
+                feedback={'review': '〔仅返工轮次收到的核验证据〕'} if body_entry else None))
+        except (ExportError, ValueError) as error:
+            raise Invalid(str(error)) from None
+
     def check(self, workspace, document, *, proposed=()):
         root = self.store.workspace(workspace)['path']
         document = validate_draft(document)
-        records = {row['id']: row for row in proposed}
+        loops = [node for node in document['nodes'] if node.get('kind') == 'loop']
+        branches = [node for node in document['nodes'] if node.get('kind') in ('router', 'condition')]
+        if loops and branches:
+            names = '、'.join(node['name'] for node in loops + branches)
+            return dict(status='unsupported', execution_available=False,
+                        message='暂不支持在同一原生脚本中组合循环与分支。可以保留草稿。',
+                        issues=[dict(node_id=node['id'], message=names + '：请将分支和循环拆成独立工作流。')
+                                for node in loops + branches])
+        records = {(row['id'], row['revision']): row for row in proposed}
         issues = []
         for node in document_agents(document):
             try:
-                key = node.get('agent_id')
-                row = records.get(key) or (self.agents.get(workspace, key, node['agent_revision']) if key else {})
+                key = reference_key(node)
+                row = records.get(key) or (self.agents.get_native_version(workspace, *key) if key[0] else {})
                 if row.get('revision') != node.get('agent_revision') or row.get('config', {}).get('execution') != EXECUTION:
                     raise Invalid('请选择已保存的原生 CLI Agent 配置。')
                 records[key] = row
@@ -135,8 +186,7 @@ class ScriptRuns:
                 if (current.get('revision'), current.get('workspace')) != (revision, workspace):
                     raise Conflict('草稿在启动前已变化。')
             for key, record in records.items():
-                row = db.execute("SELECT data FROM records WHERE kind='agent-config' AND id=?", (key,)).fetchone()
-                if not row or json.loads(row[0]) != record:
+                if agent_record(db, *key) != record:
                     raise Conflict('Agent 配置在启动前已变化。')
             folder = self.folder(run_id, create=True)
             for filename, content in ((artifact['filename'], source_bytes), ('task.txt', task_bytes)):
@@ -168,8 +218,9 @@ class ScriptRuns:
     @staticmethod
     def versions(document, records):
         def versions(nodes):
+            fields = ('provider', 'model', 'effort', 'role', 'round_prompt', 'output_prompt', 'cwd')
             return {node['id']: dict(id=node['agent_id'], revision=node['agent_revision'],
-                    provider=records[node['agent_id']]['config']['provider'])
+                    **{key: bound_record(records, node)['config'].get(key) for key in fields})
                     for node in nodes if 'agent_id' in node}
 
         body = next((node['config']['body'] for node in document['nodes'] if node.get('kind') == 'loop'), None)
@@ -217,6 +268,35 @@ class ScriptRuns:
         self.store.workspace(workspace)
         return [record['run'] for record in self.store.db.list(KIND) if record['run']['workspace'] == workspace]
 
+    def summaries(self, workspace, ids):
+        if not 1 <= len(ids) <= 12 or len(ids) != len(set(ids)):
+            raise Invalid('每次可核对 1 至 12 条原生运行记录。')
+        records = [record for run_id in ids if (record := self.get(workspace, run_id))]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            return list(pool.map(lambda record: self.summary(workspace, record), records))
+
+    def summary(self, workspace, record):
+        run = record['run']
+        snapshot = self.snapshot(workspace, run['id'], record=record)
+        script = snapshot['script']
+        names = {item['id']: item['name'] for item in record['document']['nodes']}
+        failures = script.get('failed_checks', [])
+        if not failures and snapshot['state'] == 'STOPPED':
+            for event in reversed(script.get('events', [])):
+                if event['kind'] in ('CLI_FAILED', 'NOT_SENT', 'PREFLIGHT_FAILED', 'UNKNOWN',
+                                     'OUTPUT_CONTRACT_FAILED', 'LOOP_LIMIT_REACHED'):
+                    ident = event.get('loop_node') or event.get('node') or event.get('failed_node')
+                    if ident:
+                        failures = [dict(node=ident, returncode=event.get('returncode'))]
+                    break
+        try:
+            with _run_directory(self.folder(run['id'])) as fd:
+                task = self.excerpt(fd, 'task.txt')
+        except (OSError, WorkflowError):
+            task = None
+        return dict(id=run['id'], state=snapshot['state'], failures=[dict(row, name=names.get(row['node'], row['node']))
+                    for row in failures], task=task['text'][:360] if task else '')
+
     @staticmethod
     def artifact(folder, artifact):
         filename = artifact['filename']
@@ -259,6 +339,11 @@ class ScriptRuns:
         run, artifact = record['run'], record['artifact']
         if not run.get('series'):
             raise Conflict('本次运行早于工作流续接协议，仍可查看原始脚本与证据。')
+        evidence = self.snapshot(run['workspace'], run['id'], record=record)['script']
+        if evidence['status'] == 'CHECK_FAILED':
+            raise Conflict('前轮存在未处理的检查失败。修复后重新运行，才能继续下一轮。')
+        if evidence['status'] != 'COMPLETED' and not evidence.get('historical_completion'):
+            raise Conflict('前轮尚未核验为成功完成，不能继续下一轮。')
         folder = self.folder(run['id'])
         try:
             result = self.read_script(folder, artifact, '--continuation-options',
@@ -280,6 +365,8 @@ class ScriptRuns:
         run = record['run']
         result['draft_id'] = run['draft_id']
         result['previous_revision'] = run['draft_revision']
+        result['previous_agents'] = record['agents']
+        result['previous_loop_agents'] = record.get('loop_agents', {})
         try:
             draft = self.store.draft(workspace, run['draft_id'])
             document, records, _, artifact = compile_saved(
@@ -299,8 +386,14 @@ class ScriptRuns:
                         item = after or before
                         name = (item['name'] if key == 'nodes'
                                 else item['source'] + ' → ' + item['target'])
+                        fields = ('name', 'task_prompt', 'provider', 'model', 'effort', 'round_prompt',
+                                  'output_prompt', 'agent_revision', 'native_output', 'config') if key == 'nodes' else (
+                                      'source', 'source_port', 'target', 'target_port', 'transfer')
+                        before, after = before or {}, after or {}
                         changes.append(dict(kind=key, name=name,
-                                            change='updated' if before and after else 'added' if after else 'removed'))
+                                            change='updated' if before and after else 'added' if after else 'removed',
+                                            fields=[dict(key=field, before=before.get(field), after=after.get(field))
+                                                    for field in fields if before.get(field) != after.get(field)]))
             result['changes'] = changes
         except (ExportError, Invalid, Conflict, OSError, ValueError) as error:
             result['current_error'] = str(error)
@@ -356,10 +449,17 @@ class ScriptRuns:
             if (not cancel and run.get('series') and not evidence.get('active') and
                     (evidence['status'] == 'COMPLETED' or evidence.get('candidate_current') is False)):
                 historical = self.read_script(folder, artifact, *flags, '--historical')
-                if evidence['status'] == 'COMPLETED':
+                if evidence['status'] == 'COMPLETED' or historical.get('status') == 'CHECK_FAILED':
                     evidence = historical
                 elif historical.get('status') == 'COMPLETED' and historical.get('series') == run['series']:
                     evidence['historical_completion'] = True
+            if (evidence['status'] == 'COMPLETED' or evidence.get('historical_completion')) and 'failed_checks' not in evidence:
+                legacy = [item['id'] for item in record['document']['nodes']
+                          if item.get('kind') == 'tool' and item.get('config', {}).get('tool') == 'command']
+                proof = historical if evidence.get('historical_completion') else evidence
+                failures = failed_checks(proof.get('events', []), legacy)
+                if failures:
+                    evidence = dict(proof, status='CHECK_FAILED', failed_checks=failures, legacy_tool_outcome=True)
             if evidence['script_sha256'] != artifact['sha256']:
                 raise WorkflowError('运行证据与保存的脚本不一致。')
             if run.get('series') and evidence.get('series') != run['series']:

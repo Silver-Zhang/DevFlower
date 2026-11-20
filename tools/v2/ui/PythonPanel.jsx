@@ -76,7 +76,7 @@ function highlight(part,matches,current){
  return chunks;
 }
 
-export function PythonPanel({value,onClose,onResize,width}){
+export function PythonPanel({value,onClose,onResize,width,onCanvas}){
  const {artifact,loading,error}=value;
  const source=artifact?.source??'';
  const [query,setQuery]=useState(''),[current,setCurrent]=useState(0),[feedback,setFeedback]=useState('');
@@ -117,6 +117,7 @@ export function PythonPanel({value,onClose,onResize,width}){
    <Code size={18} aria-hidden="true"/>
    <div><small>{value.frozen?'本次运行 · 冻结脚本':value.dirty?'已保存版本 · 画布有未保存修改':'已保存工作流'}</small>
     <h2 title={artifact?.filename}>{artifact?.filename||'Python 脚本'}</h2></div>
+   {onCanvas&&<button type="button" onClick={onCanvas}>切换到画布</button>}
    <button aria-label="关闭预览" title="关闭预览" onClick={onClose}><X size={17}/></button>
   </header>
   {loading&&<p className="python-message" role="status">正在读取 Python 脚本…</p>}

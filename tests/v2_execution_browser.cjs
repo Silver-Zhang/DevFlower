@@ -922,11 +922,13 @@ with sqlite3.connect(sys.argv[1]) as db:
   await task.click();await page.getByLabel('本次任务',{exact:true}).fill('P4_TOOL');await task.click();
   const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/v2/launch')),button('启动').click()]);
   const {run}=await response.json();
-  assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');await complete();
+  assert.equal(response.status(),200);assert.equal(run.execution,'native-cli');
+  await page.getByLabel('运行状态',{exact:true}).getByText('检查失败',{exact:true}).waitFor();
+  assert.equal(await button('以此结果继续下一轮').count(),0);
   const monitor=page.getByLabel('原生脚本运行证据',{exact:true});
   if(!await monitor.isVisible())await button('运行检查器').click();
   await monitor.getByRole('region',{name:'运行概览'}).getByText(/总耗时/).waitFor();
-  await monitor.getByLabel('工作流最终回答',{exact:true}).waitFor();
+  await monitor.getByLabel('执行结束时的结果（含失败检查）',{exact:true}).waitFor();
   const select=monitor.getByLabel('查看证据');
   await select.selectOption({label:'P4 Verify'});
   await monitor.getByText(/P4 Verify · 失败 · 退出码 7/).waitFor();

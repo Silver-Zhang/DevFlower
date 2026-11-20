@@ -5,8 +5,7 @@ from orchestration.common import canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 
-from devflower_export import document_agents
-from .agent_records import KIND as AGENTS
+from devflower_export import agent_record, document_agents
 from .assistant_proposals import parse_envelope, proposal
 from .canvas_structure import ID, fields, node_kind, text
 from .designer_graph import document_nodes
@@ -93,8 +92,12 @@ def stage(assistant, turn, reply):
     # Reuse the exact profile snapshots that were available to the model.
     for key, revision in sorted((after_refs - before_refs) - added):
         assistant.agents.get(workspace, key, revision)
-    bindings = assistant.agents.list(workspace)['agents']
-    current = {(row['id'], row['revision']): row for row in bindings}
+    current = {(row['id'], row['revision']): row for row in assistant.agents.list(workspace)['agents']}
+    with assistant.store.db.tx(read=True) as db:
+        for pair in after_refs & before_refs:
+            if row := agent_record(db, *pair):
+                if row['workspace'] == workspace:
+                    current[pair] = row
     current.update({(row['id'], row['revision']): row for row in new})
     checks = assistant.scripts.check(workspace, after, proposed=new)
     result = dict(summary=result['summary'], before=before, after=after, agents=new,
@@ -149,8 +152,7 @@ def apply(assistant, turn, data):
         for row in staged['bindings']:
             if row['id'] in added:
                 continue
-            raw = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (AGENTS, row['id'])).fetchone()
-            if not raw or raw[0] != canonical(row).decode():
+            if agent_record(db, row['id'], row['revision']) != row:
                 raise Conflict('已绑定的 Agent 配置已变化，请重新生成。')
         for row in staged['agents']:
             assistant.agents.save_prepared(db, row, None)

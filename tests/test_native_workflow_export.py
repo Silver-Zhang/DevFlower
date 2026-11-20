@@ -165,7 +165,9 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(self.calls(),[])
         self.assertIn('Missing CLI: claude', result.stderr)
         journal = [json.loads(line) for line in (self.run_dir/'events.jsonl').read_text().splitlines()]
-        self.assertEqual([row['kind'] for row in journal], ['RUN_STARTED', 'RUN_STOPPED'])
+        self.assertEqual([row['kind'] for row in journal], ['RUN_STARTED', 'PREFLIGHT_FAILED', 'RUN_STOPPED'])
+        self.assertEqual(journal[1]['failure_kind'], 'MISSING_CLI')
+        self.assertEqual(journal[1]['failed_node'], 'Reviewer')
         self.assertEqual(journal[-1]['status'], 'STOPPED')
 
     def test_failure_stops_downstream_without_retry(self):
@@ -317,7 +319,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(database.read_bytes(),before)
         with self.assertRaisesRegex(export.ExportError,'revision changed'):
             export.read_saved(database,'workspace','draft',expected_revision='c'*64)
-        records[ident]['revision']='c'*64
+        records[(ident,revision)]['revision']='c'*64
         with self.assertRaisesRegex(export.ExportError,'stale'):
             export.compile_workflow(loaded,records,root,native_config=True)
         with self.assertRaises(export.ExportError):

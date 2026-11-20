@@ -114,7 +114,7 @@ class NativeAgentContractTests(unittest.TestCase):
             self.agents.save(self.workspace, saved['id'], None, config, 'stale-session-proof')
         self.assertEqual(self.agents.get(self.workspace, saved['id']), saved)
 
-    def test_saved_native_chain_exports_read_only_and_rejects_stale_agent_version(self):
+    def test_saved_native_chain_exports_read_only_and_preserves_pinned_agent_version(self):
         developer = self.save()
         reviewer = self.save(name='Reviewer', provider='claude', role='Reviewer',
                              round_prompt='Review the upstream result.')
@@ -134,6 +134,8 @@ class NativeAgentContractTests(unittest.TestCase):
         self.agents.save(self.workspace, developer['id'], developer['revision'],
                          dict(developer['config'], round_prompt='Changed task.'))
         document, agents, workspace = read_saved(self.store.state / 'v2.sqlite', self.workspace, draft['id'])
+        self.assertEqual((filename, source), compile_workflow(document, agents, workspace, native_config=True))
+        next(node for node in document['nodes'] if node.get('agent_id') == developer['id'])['agent_revision'] = 'f'*64
         with self.assertRaisesRegex(ExportError, 'revision'):
             compile_workflow(document, agents, workspace, native_config=True)
 

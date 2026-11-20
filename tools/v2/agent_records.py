@@ -4,13 +4,14 @@ from pathlib import Path
 import re
 import secrets
 
-from devflower_export import ExportError, validate_native_agent
+from devflower_export import (AGENT_HISTORY, AGENT_RECORD, ExportError, agent_record, document_agents,
+                              validate_native_agent)
 from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 
 
-KIND = 'agent-config'
+KIND = AGENT_RECORD
 KEY = re.compile(r'[0-9a-f]{32}')
 HASH = re.compile(r'[0-9a-f]{64}')
 PROVIDERS = ('codex', 'claude')
@@ -101,9 +102,33 @@ class AgentRecords:
             raise Invalid('Agent 工作目录须为当前工作空间内的实际目录。')
         return cwd
 
-    def list(self, workspace):
+    def list(self, workspace, *, history=False):
         self.store.workspace(workspace)
-        return {'agents': [row for row in self.store.db.list(KIND) if row['workspace'] == workspace]}
+        current = [row for row in self.store.db.list(KIND) if row['workspace'] == workspace]
+        result = {'agents': current}
+        if history:
+            ids = {row['id'] for row in current}
+            result['versions'] = [row for row in self.store.db.list(AGENT_HISTORY)
+                                  if row['workspace'] == workspace and row['id'] in ids]
+        return result
+
+    def references(self, workspace, key, revision):
+        self.get(workspace, key, revision)
+        return {'workflows': [dict(id=row['id'], revision=row['revision'], name=row['graph']['name'], nodes=nodes)
+                              for row in self.store.db.list('draft') if row['workspace'] == workspace
+                              if (nodes := [dict(id=node['id'], name=node['name'])
+                                            for node in document_agents(row['graph'])
+                                            if node.get('agent_id') == key and node.get('agent_revision') == revision])]}
+
+    def get_native_version(self, workspace, key, revision):
+        self.store.workspace(workspace)
+        if not matches(KEY, key) or not matches(HASH, revision):
+            raise Invalid('Agent 身份或版本无效。')
+        with self.store.db.tx(read=True) as db:
+            row = agent_record(db, key, revision)
+        if not row or row['workspace'] != workspace or row['config'].get('execution') != 'native-cli':
+            raise Conflict('当前工作区中找不到绑定的原生 Agent 版本。')
+        return row
 
     def get(self, workspace, key, revision=None):
         self.store.workspace(workspace)
@@ -268,6 +293,9 @@ class AgentRecords:
                 return prior
             if prior['workspace'] != workspace or prior['revision'] != expected:
                 raise Conflict('Agent 已在另一处更改，请重新读取。')
+            if prior['config'].get('execution') == 'native-cli':
+                db.execute('INSERT INTO records VALUES(?,?,?)',
+                           (AGENT_HISTORY, key + ':' + prior['revision'], previous[0]))
         elif expected is not None:
             raise Conflict('Agent 已删除或不存在。')
         db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?)', (KIND, key, canonical(result).decode()))
@@ -283,6 +311,7 @@ class AgentRecords:
             if prior.get('workspace') != workspace or prior.get('revision') != expected:
                 raise Conflict('Agent 已在另一处更改，请重新读取。')
             db.execute('DELETE FROM records WHERE kind=? AND id=?', (KIND, key))
+            db.execute('DELETE FROM records WHERE kind=? AND id GLOB ?', (AGENT_HISTORY, key + ':*'))
         return {'removed': key}
 
     def skills(self, workspace, provider, cwd, *, authority=False):

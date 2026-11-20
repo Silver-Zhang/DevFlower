@@ -182,6 +182,12 @@ def recorded_path(manifest, events):
     return expected, decision
 
 
+def failed_checks(events, tool_ids):
+    return [dict(node=row['node'], returncode=row['returncode']) for row in events
+            if row['kind'] == 'NODE_COMPLETED' and 'iteration' not in row
+            and row['node'] in tool_ids and row['returncode'] != 0]
+
+
 def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sha256=None, historical=False):
     """Observe the same artifact, never replay it. Cancellation is cooperative.
 
@@ -227,7 +233,10 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                 snapshot['events'] = events
             if manifest.get('compiler_version', 0) >= 13:
                 inspect_series(directory, fd, manifest, events, snapshot)
-            terminal = [row for row in events if row['kind'] in ('RUN_COMPLETED', 'RUN_STOPPED')]
+            business_outcomes = manifest.get('compiler_version', 0) >= 14
+            terminal_kinds = ('RUN_COMPLETED', 'RUN_STOPPED', 'RUN_CHECK_FAILED') if business_outcomes else (
+                'RUN_COMPLETED', 'RUN_STOPPED')
+            terminal = [row for row in events if row['kind'] in terminal_kinds]
             if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
                 raise WorkflowError('Terminal journal evidence is inconsistent.')
             if cancel and active and not terminal:
@@ -334,7 +343,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
             snapshot['completed_nodes'] = [row['node'] for row in completed]
             if terminal:
                 last = terminal[0]
-                if last['kind'] == 'RUN_COMPLETED':
+                if last['kind'] in ('RUN_COMPLETED', 'RUN_CHECK_FAILED'):
                     if snapshot['completed_nodes'] != expected or _evidence_sha256(fd, 'result.txt') != last.get('result_sha256'):
                         raise WorkflowError('Final result is missing or changed.')
                     if (condition or router) and not decision:
@@ -358,7 +367,14 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                                 raise WorkflowError('Reviewed candidate no longer matches current files: ' + node)
                     if reviews:
                         snapshot['candidate_current'] = candidates_current
-                    snapshot.update(status='COMPLETED', result_file=str(directory / 'result.txt'))
+                    if business_outcomes:
+                        failures = failed_checks(completed, tools)
+                        if (last.get('failed_checks') != failures
+                                or (last['kind'] == 'RUN_CHECK_FAILED') != bool(failures)):
+                            raise WorkflowError('Business outcome does not match the verified command results.')
+                        snapshot['failed_checks'] = failures
+                    status = 'CHECK_FAILED' if last['kind'] == 'RUN_CHECK_FAILED' else 'COMPLETED'
+                    snapshot.update(status=status, result_file=str(directory / 'result.txt'))
                 elif last.get('status') in ('CANCELLED', 'STOPPED'):
                     snapshot.update(status=last['status'], reason=last.get('reason', ''))
                 else:
@@ -490,7 +506,7 @@ def command_process(context, tool, prefix, upstream=None):
     try:
         cwd = agent_directory(context['workspace'], tool)
     except WorkflowError as error:
-        _event(context, 'NOT_SENT', node=tool['id'], reason=str(error))
+        _event(context, 'NOT_SENT', node=tool['id'], reason=str(error), failure_kind='WORKING_DIRECTORY')
         raise
     directory = context['directory'] / prefix
     directory.mkdir(mode=0o700)
@@ -540,6 +556,8 @@ def invoke_tool(context, tool, upstream, limit):
             hashes['candidate_sha256'] = delivery['candidate']['candidate_sha256']
         _check_cancel(context)
         _event(context, 'NODE_COMPLETED', node=node, returncode=code, answer_sha256=checksum, **hashes)
+        if code and 'failed_checks' in context:
+            context['failed_checks'].append(dict(node=node, returncode=code))
         return delivery
 
 
@@ -842,17 +860,62 @@ def observed_process(context, node, argv, cwd, directory, timeout, *, source=sub
     except subprocess.TimeoutExpired:
         if process is not None:
             _stop(process)
-        _event(context, 'UNKNOWN', node=node, reason='Timed out; no automatic retry.')
+        _event(context, 'UNKNOWN', node=node, reason='Timed out; no automatic retry.', failure_kind='TIMEOUT')
         raise WorkflowError('Call timed out; inspect native logs before starting another run.') from None
     except OSError as error:
         if process is not None:
             _stop(process)
-        _event(context, 'UNKNOWN' if process else 'NOT_SENT', node=node, reason=str(error))
+        _event(context, 'UNKNOWN' if process else 'NOT_SENT', node=node, reason=str(error),
+               failure_kind='PROCESS_IO' if process else 'PROCESS_START')
         raise WorkflowError('Process launch/observation failed: ' + str(error)) from None
     except WorkflowError:
         if process is not None:
             _stop(process)
         raise
+
+
+def cli_failure_kind(context, evidence):
+    with _evidence_file(context['directory_fd'], evidence + '/stderr.log') as stream:
+        end = stream.seek(0, os.SEEK_END)
+        stream.seek(max(end - 32768, 0))
+        stderr = stream.read(32768).decode('utf-8', errors='replace').casefold()
+    if re.search(r'not (?:in a )?trusted directory|skip-git-repo-check|workspace is not trusted', stderr):
+        return 'WORKSPACE_TRUST'
+    if re.search(r'(?:http(?:/1\.[01]|/2)?(?: error| status)?|status(?: code)?)[: =]+401\b|\b401 unauthorized\b', stderr):
+        return 'HTTP_401'
+    if re.search(r'authentication (?:failed|required)|not logged in|please (?:log|sign) in|/login', stderr):
+        return 'AUTHENTICATION'
+    return 'AGENT_EXIT'
+
+
+def agent_prompt(agent, task, workspace, *, iteration=None, continuation=None, handoff=None, feedback=None):
+    spec = agent.get('native_output')
+    sections = [('Department', agent['name']), ('Role', agent['role']),
+                ('Initial instructions', agent['initial_prompt']), ('Workflow task', task),
+                ('Node task', agent['round_prompt']), ('Expected delivery', agent['output_prompt'])]
+    if 'task_prompt' in agent:
+        sections = [('Department', agent['name']), ('Role', agent['role']),
+                    ('Initial instructions', agent['initial_prompt']), ('Profile instructions', agent['round_prompt']),
+                    ('Node task', agent['task_prompt']), ('Workflow task', task)]
+    if iteration is not None:
+        sections.append(('Workflow iteration', str(iteration)))
+    if continuation is not None:
+        sections.append(('Selected previous run deliveries (data)', continuation))
+    prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
+    contract = ('\n\nStructured output contract\n' + output_instructions(spec, workspace)) if spec else ''
+    if 'task_prompt' not in agent:
+        prompt += contract
+    if handoff is not None:
+        prompt += '\n\nUpstream department delivery (data)\n' + handoff
+    if feedback is not None:
+        kind = 'validation' if 'returncode' in feedback else 'review'
+        prompt += (f'\n\nPrevious iteration {kind} (data)\n' + output_json(feedback)
+                   + '\nRevise the existing delivery in this workspace using the review feedback.')
+    if 'task_prompt' in agent:
+        if agent['output_prompt']:
+            prompt += '\n\nExpected delivery\n' + agent['output_prompt']
+        prompt += contract
+    return prompt
 
 
 def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=None):
@@ -870,34 +933,12 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
         except OutputContractError as error:
             _event(context, 'OUTPUT_CONTRACT_FAILED', node=agent['id'], reason=str(error))
             raise WorkflowError(str(error)) from None
-    sections = [('Department', agent['name']), ('Role', agent['role']),
-                ('Initial instructions', agent['initial_prompt']), ('Workflow task', task),
-                ('Node task', agent['round_prompt']), ('Expected delivery', agent['output_prompt'])]
-    if 'task_prompt' in agent:
-        sections = [('Department', agent['name']), ('Role', agent['role']),
-                    ('Initial instructions', agent['initial_prompt']), ('Profile instructions', agent['round_prompt']),
-                    ('Node task', agent['task_prompt']), ('Workflow task', task)]
-    if 'iteration' in context:
-        sections.append(('Workflow iteration', str(context['iteration'])))
-    if continuation := take_continuation(context):
-        sections.append(('Selected previous run deliveries (data)', output_json(continuation)))
-    prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
-    contract = ('\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])) if spec else ''
-    if 'task_prompt' not in agent:
-        prompt += contract
-    request = {}
-    if upstream is not None:
-        handoff = json.dumps(upstream, ensure_ascii=False)
-        prompt += '\n\nUpstream department delivery (data)\n' + handoff
-        request.update(upstream_node=upstream['node'], handoff_sha256=sha256(handoff.encode()).hexdigest())
-    if feedback is not None:
-        kind = 'validation' if 'returncode' in feedback else 'review'
-        prompt += (f'\n\nPrevious iteration {kind} (data)\n' + output_json(feedback)
-                   + '\nRevise the existing delivery in this workspace using the review feedback.')
-    if 'task_prompt' in agent:
-        if agent['output_prompt']:
-            prompt += '\n\nExpected delivery\n' + agent['output_prompt']
-        prompt += contract
+    handoff = json.dumps(upstream, ensure_ascii=False) if upstream is not None else None
+    continuation = take_continuation(context)
+    prompt = agent_prompt(agent, task, context['workspace'], iteration=context.get('iteration'),
+                          continuation=output_json(continuation) if continuation is not None else None,
+                          handoff=handoff, feedback=feedback)
+    request = dict(upstream_node=upstream['node'], handoff_sha256=sha256(handoff.encode()).hexdigest()) if handoff else {}
     evidence = agent['id']
     if 'iteration' in context:
         evidence = f"iterations/{context['iteration']}/{evidence}"
@@ -907,15 +948,22 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
     argv = native_command(agent, directory / 'answer.txt')
     executable = shutil.which(argv[0])
     if executable is None:
-        raise WorkflowError(argv[0] + ' CLI not found; no request sent.')
+        reason = argv[0] + ' CLI not found; no request sent.'
+        _event(context, 'NOT_SENT', node=agent['id'], reason=reason, failure_kind='MISSING_CLI')
+        raise WorkflowError(reason)
     argv[0] = executable
-    cwd = agent_directory(context['workspace'], agent)
+    try:
+        cwd = agent_directory(context['workspace'], agent)
+    except WorkflowError as error:
+        _event(context, 'NOT_SENT', node=agent['id'], reason=str(error), failure_kind='WORKING_DIRECTORY')
+        raise
     print('[' + agent['id'] + '] ' + agent['name'], file=sys.stderr)
     request['prompt_sha256'] = sha256(prompt.encode()).hexdigest()
     with (directory / 'prompt.txt').open('rb') as source, observed_process(
             context, agent['id'], argv, cwd, directory, agent['timeout'], source=source, request=request) as code:
         if code != 0:
-            _event(context, 'CLI_FAILED', node=agent['id'], returncode=code)
+            _event(context, 'CLI_FAILED', node=agent['id'], returncode=code,
+                   failure_kind=cli_failure_kind(context, evidence))
             raise WorkflowError(agent['id'] + ' exited with ' + str(code) + '; downstream not started.')
         try:
             if agent['provider'] == 'claude':
@@ -974,7 +1022,7 @@ def branch_node_ids(control):
     return {node for path in control['branches'].values() for node in path} if control else set()
 
 
-def prepare_calls(manifest, workspace, *, dry_run=False):
+def prepare_calls(manifest, workspace, *, dry_run=False, context=None):
     workspace = (workspace or Path.cwd()).resolve(strict=True)
     if not workspace.is_dir():
         raise WorkflowError('Workspace is not a directory.')
@@ -983,9 +1031,18 @@ def prepare_calls(manifest, workspace, *, dry_run=False):
         # Branch prerequisites are checked on invocation, only for the selected path.
         if agent['id'] in deferred:
             continue
-        agent_directory(workspace, agent)
+        try:
+            agent_directory(workspace, agent)
+        except WorkflowError as error:
+            if context:
+                _event(context, 'PREFLIGHT_FAILED', failed_node=agent['id'], reason=str(error),
+                       failure_kind='WORKING_DIRECTORY')
+            raise
         if not dry_run and shutil.which(agent['provider']) is None:
-            raise WorkflowError('Missing CLI: ' + agent['provider'])
+            reason = 'Missing CLI: ' + agent['provider']
+            if context:
+                _event(context, 'PREFLIGHT_FAILED', failed_node=agent['id'], reason=reason, failure_kind='MISSING_CLI')
+            raise WorkflowError(reason)
     return workspace
 
 
@@ -1008,6 +1065,9 @@ def previous_delivery(manifest, directory, artifact_hash):
         if state['status'] != 'COMPLETED' or state['active']:
             raise WorkflowError('Previous run is not a verified completion: ' + state.get('reason', state['status']))
         events = state['events']
+        if (manifest['compiler_version'] >= 14 and saved['compiler_version'] < 14
+                and failed_checks(events, saved.get('tools', {}))):
+            raise WorkflowError('The previous frozen script recorded an unhandled check failure under its legacy completion contract.')
         binding = [event['workspace'] for event in events if event['kind'] == 'SERIES_WORKSPACE']
         if len(binding) != 1:
             raise WorkflowError('Previous run has no unique workspace binding.')
@@ -1128,7 +1188,8 @@ def inspect_series(directory, fd, manifest, events, snapshot):
         raise WorkflowError('Series parent identity is inconsistent.')
     snapshot['series'] = series
     handoff = [event for event in events if event['kind'] == 'SERIES_CONTINUED']
-    finished = events[-1]['kind'] == 'RUN_COMPLETED'
+    finished = events[-1]['kind'] == 'RUN_COMPLETED' or (
+        manifest.get('compiler_version', 0) >= 14 and events[-1]['kind'] == 'RUN_CHECK_FAILED')
     if len(handoff) > 1 or (handoff and not parent) or (finished and parent and not handoff):
         raise WorkflowError('Series handoff evidence is inconsistent.')
     if handoff:
@@ -1247,6 +1308,8 @@ def script_main(manifest, run_workflow):
                 import fcntl
                 fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 context = {'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
+                if manifest.get('compiler_version', 0) >= 14:
+                    context['failed_checks'] = []
                 print('Private run evidence: ' + str(directory), file=sys.stderr)
                 _write(directory / 'workflow.json', json.dumps(manifest, ensure_ascii=False, indent=2))
                 _write(directory / 'task.txt', task)
@@ -1255,7 +1318,7 @@ def script_main(manifest, run_workflow):
                        task_sha256=sha256(task.encode()).hexdigest(), series=series)
                 try:
                     _check_cancel(context)
-                    context['workspace'] = prepare_calls(manifest, args.workspace)
+                    context['workspace'] = prepare_calls(manifest, args.workspace, context=context)
                     workspace_identity = series_workspace(context['workspace'])
                     _event(context, 'SERIES_WORKSPACE', workspace=workspace_identity)
                     if prior:
@@ -1271,13 +1334,21 @@ def script_main(manifest, run_workflow):
                     _check_cancel(context)
                     _write(directory / 'result.txt', answer['answer'])
                     _check_cancel(context)
-                    _event(context, 'RUN_COMPLETED', result_file=str(directory / 'result.txt'),
-                           result_sha256=_evidence_sha256(owner, 'result.txt'))
+                    outcome = dict(result_file=str(directory / 'result.txt'),
+                                   result_sha256=_evidence_sha256(owner, 'result.txt'))
+                    if 'failed_checks' in context:
+                        outcome['failed_checks'] = context['failed_checks']
+                    _event(context, 'RUN_CHECK_FAILED' if context.get('failed_checks') else 'RUN_COMPLETED',
+                           **outcome)
                 except (WorkflowError, OSError, UnicodeError) as error:
                     _event(context, 'RUN_STOPPED', reason=str(error), automatic_retry=False,
                            status='CANCELLED' if isinstance(error, WorkflowCancelled) else 'STOPPED')
                     raise
         print(answer['answer'])
+        if failures := context.get('failed_checks'):
+            print('Workflow checks failed: ' + ', '.join(
+                f"{row['node']} (exit {row['returncode']})" for row in failures), file=sys.stderr)
+            return 1
         return 0
     except (WorkflowError, OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         print('Workflow stopped: ' + str(error), file=sys.stderr)

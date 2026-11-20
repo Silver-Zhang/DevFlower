@@ -254,7 +254,7 @@ answer.write_text('first native answer' if 'TASK_FIRST' in prompt else 'second n
                 if evidence['state'] == 'COMPLETED':
                     break
                 time.sleep(.02)
-            self.assertEqual(evidence['state'], 'COMPLETED', evidence)
+            self.assertEqual(evidence['state'], 'CHECK_FAILED', evidence)
             self.assertEqual(evidence['nodes'][0]['returncode'], 7)
             output = evidence['nodes'][0]['evidence']['failure']
             self.assertIn('verified fixture reason', output['command_output']['text'])

@@ -35,6 +35,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  const [notice, setNotice] = useState('');
  const [busy, setBusy] = useState(false);
  const [deleteAsk, setDeleteAsk] = useState(false);
+ const [impact,setImpact]=useState(null);
  const [directTask, setDirectTask] = useState('');
  const [pendingRun, setPendingRun] = useState(null);
  const alive = useRef(true);
@@ -81,12 +82,12 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
    catch {}
   }
   setPendingRun(pending);
-  setError(''); setNotice(''); setDeleteAsk(false);
+  setError(''); setNotice(''); setDeleteAsk(false); setImpact(null);
   if (!row) requestAnimationFrame(() => nameInput.current?.focus());
  }
- function change(fields) {setConfig(old => ({...old, ...fields}));}
+ function change(fields) {setImpact(null);setConfig(old => ({...old, ...fields}));}
  function changeExecution(execution) {
-  setConfig(old => {
+  setImpact(null);setConfig(old => {
    const next = execution === 'native-cli' ? nativeProfileDefaults(workspace) : freshManaged(workspace);
    for (const key of ['name', 'provider', 'cwd', 'role', 'round_prompt', 'output_prompt', 'model', 'effort']) next[key] = old[key];
    if (execution !== 'native-cli' && next.model) next.model_source = 'manual';
@@ -117,9 +118,14 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   const result = await api('agent-skills?' + query);
   if (alive.current) setSkills(result);
  }
- async function save(event) {
+ async function save(event,confirmed=false) {
   event.preventDefault();
   await action(async () => {
+   if(!confirmed&&record?.config.execution==='native-cli'){
+    const result=await api('agents/references?'+new URLSearchParams({workspace:workspace.id,id:record.id,revision:record.revision}));
+    if(!alive.current)return;
+    if(result.workflows.length){setImpact(result.workflows);return;}
+   }
    const changedSession = !isNative && config.session.kind === 'existing'
     && (config.session.handle !== record?.config.session?.handle || config.provider !== record?.config.provider
      || config.cwd !== record?.config.cwd || config.native_profile !== record?.config.native_profile);
@@ -127,7 +133,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
     config, session_revision: changedSession ? sessions?.revision ?? null : null});
    if (!alive.current) return;
    setRows(items => [saved, ...items.filter(item => item.id !== saved.id)]);
-   setRecord(saved); setConfig(saved.config); setNotice('Agent 配置已保存。'); onChanged?.();
+   setRecord(saved); setConfig(saved.config); setImpact(null); setNotice('Agent 配置已保存。'); onChanged?.();
   });
  }
  async function remove() {
@@ -359,10 +365,16 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
      </>}
      </div>
      <footer>
+      {impact&&<section aria-label="引用当前 Agent 版本的工作流">
+       <p>以下节点会继续使用当前版本。保存后可以在各节点选择新版本。</p>
+       <ul>{impact.map(row=><li key={row.id}>{row.name} · {row.nodes.map(node=>node.name).join('、')}</li>)}</ul>
+       <button type="button" className="primary" disabled={busy} onClick={event=>save(event,true)}>保存新版本</button>
+       <button type="button" disabled={busy} onClick={()=>setImpact(null)}>取消版本更新</button>
+      </section>}
       {error && <p className="error-text" role="alert">{error}</p>}
       {notice && <p className="field-note" role="status">{notice}</p>}
       <button type="submit" className={isDirty?'primary':undefined} aria-describedby={missingIdentity?'agent-save-hint':undefined}
-       disabled={busy || profileUnavailable || missingIdentity}>保存 Agent</button>
+       disabled={busy || !!impact || profileUnavailable || missingIdentity}>保存 Agent</button>
       {!isNative&&<button type="button" disabled={busy || !record || (isDirty || profileUnavailable) && !pendingRun} onClick={launch}>
        {pendingRun ? '核验 Agent 启动' : '运行此 Agent'}</button>}
       <button type="button" className={'bind-agent'+(!isDirty&&record&&!profileUnavailable?' primary':'')} disabled={busy || profileUnavailable || isDirty || !record} onClick={() => onBind(record)}>

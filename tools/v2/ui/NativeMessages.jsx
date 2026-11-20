@@ -99,6 +99,11 @@ function groupPage(parts) {
  return messages;
 }
 
+function isEnvironmentMessage(message){
+ if(message.role!=='user'||!message.text.startsWith('<environment_context>'))return false;
+ return /^<environment_context>\s*<cwd>[^<>]+<\/cwd>\s*<shell>[^<>]+<\/shell>\s*(?:<current_date>\d{4}-\d{2}-\d{2}<\/current_date>\s*)?(?:<timezone>[^<>]+<\/timezone>\s*)?(?:<filesystem>[^]*?<\/filesystem>\s*)?<\/environment_context>\s*$/.test(message.text);
+}
+
 export function NativeMessages({label, messages, format, paged = false, truncated, empty}) {
  const markdown = format === 'markdown';
  const missing = !Array.isArray(messages);
@@ -110,6 +115,9 @@ export function NativeMessages({label, messages, format, paged = false, truncate
     <p className="native-message-note muted small">{paged ? INCOMPLETE : TRUNCATED}</p>
    </article>;
    const text = message.text;
+   if((!paged||!message.note)&&isEnvironmentMessage(message))return <details className="native-environment" key={index}>
+    <summary>运行环境</summary><pre>{text}</pre>
+   </details>;
    const labeledPart = paged && Number.isSafeInteger(message.part_index) && Number.isSafeInteger(message.part_count)
     && message.part_count > 1;
    let note = markdown && paged ? message.note : null;

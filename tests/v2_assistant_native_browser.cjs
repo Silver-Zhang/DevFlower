@@ -29,6 +29,10 @@ async function main() {
    await button('确认发送').click();
    await proposal.getByText(/可导出独立 Python/).waitFor();
   }
+  await message.fill('关闭后保留尚未发送的草稿');
+  await button('关闭 AI 助手').click();
+  await button('AI 助手').click();
+  assert.equal(await message.inputValue(),'关闭后保留尚未发送的草稿');
   await send('创建两个使用同一配置的任务节点');
   await proposal.getByLabel('提案画布预览',{exact:true}).waitFor();
   assert.equal(await canvas.locator('.canvas-node').count(),0);
@@ -49,6 +53,14 @@ async function main() {
   const beforeResize=await preview.evaluate(panel=>panel.offsetWidth);
   await preview.getByRole('separator',{name:'调整 Python 面板宽度'}).press('ArrowLeft');
   await page.waitForFunction(width=>document.querySelector('.python-panel').offsetWidth>width,beforeResize);
+  await page.setViewportSize({width:768,height:900});
+  await preview.getByRole('button',{name:'切换到画布',exact:true}).click();
+  await canvas.waitFor({state:'visible'});
+  assert.equal(await preview.isVisible(),false);
+  await button('切换到 Python').click();
+  await preview.waitFor({state:'visible'});
+  assert.equal(await canvas.isVisible(),false);
+  await page.setViewportSize({width:1440,height:900});
   await button('关闭预览').click();
   await send('把第二个改为 Claude 并在前面插入版本检查');
   await proposal.getByLabel('Version 命令参数',{exact:true}).waitFor();

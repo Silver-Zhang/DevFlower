@@ -8,6 +8,7 @@ import sys
 import time
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from devflower_export import ExportError, compile_workflow
 from workflow_output_contract import (OutputContractError, candidate_record, output_json,
@@ -763,7 +764,7 @@ class ContractTests(unittest.TestCase):
         header = 'Upstream department delivery (data)\n'
         for mode, rounds, expected in (
             ('upstream-agent','1','COMPLETED'), ('downstream-agent','2','COMPLETED'),
-            ('command-pass','2','COMPLETED'), ('command-fail','2','COMPLETED'),
+            ('command-pass','2','COMPLETED'), ('command-fail','2','CHECK_FAILED'),
             ('no-handoff','1','COMPLETED'), ('input-limit','1','STOPPED'), ('output-limit','1','STOPPED'),
             ('loop-limit','5','STOPPED'), ('reviewer-failed','reviewer-failed','STOPPED'), ('cancel','cancel','CANCELLED'),
         ):
@@ -824,13 +825,16 @@ print('consumed ' + delivery['candidate']['candidate_sha256'])
                 status = json.loads(subprocess.check_output([*command,'--status','--details']))
                 self.assertEqual(status['status'],expected,(status.get('reason'),stderr))
                 self.assertEqual(status['steps'],before+['Loop']+after)
+                finished = expected in ('COMPLETED', 'CHECK_FAILED')
                 self.assertEqual(status['completed_nodes'],
-                                 before+(['Loop']+after if expected=='COMPLETED' else ['Loop'] if mode=='output-limit' else []))
-                if expected!='COMPLETED':
+                                 before+(['Loop']+after if finished else ['Loop'] if mode=='output-limit' else []))
+                if not finished:
                     self.assertFalse(any(event.get('node') in after for event in status['events']))
                     if mode=='input-limit':
                         self.assertEqual(status['loop']['iterations'],[])
                     continue
+                self.assertEqual(process.returncode, 1 if mode == 'command-fail' else 0)
+                self.assertEqual(status['failed_checks'], [dict(node='Preflight', returncode=7)] if mode == 'command-fail' else [])
                 for round_ in status['loop']['iterations']:
                     prompt = (run/'iterations'/str(round_['iteration'])/'Developer'/'prompt.txt').read_text()
                     self.assertIn(marker,prompt)
@@ -938,8 +942,8 @@ print('consumed ' + delivery['candidate']['candidate_sha256'])
 
     def test_command_tool_handoffs_failures_and_real_process_logs(self):
         cli = self.install_cli_fixture()
-        for mode, expected in (('pass','COMPLETED'),('multiple','COMPLETED'),('nonzero','COMPLETED'),
-                               ('missing','STOPPED'),('timeout','STOPPED'),('cancel','CANCELLED'),
+        for mode, expected in (('pass','COMPLETED'),('multiple','COMPLETED'),('nonzero','CHECK_FAILED'),
+                               ('nonzero-v13','COMPLETED'), ('missing','STOPPED'),('timeout','STOPPED'),('cancel','CANCELLED'),
                                ('change-candidate','STOPPED')):
             with self.subTest(mode=mode):
                 workspace = self.root/mode
@@ -948,14 +952,19 @@ print('consumed ' + delivery['candidate']['candidate_sha256'])
                         "print('z'*33000+'\\ncommand stdout',flush=True); print('command stderr',file=sys.stderr); "
                         "mode=sys.argv[1]; "
                         "Path('../a.py').write_text('changed') if mode=='change-candidate' else None; "
-                        "time.sleep(30) if mode in ('timeout','cancel') else None; sys.exit(7 if mode=='nonzero' else 0)")
+                        "time.sleep(30) if mode in ('timeout','cancel') else None; sys.exit(7 if mode.startswith('nonzero') else 0)")
                 argv = ['./missing'] if mode == 'missing' else [sys.executable,'-B','-c',code,mode,'literal ; argument']
                 doc = graph()
                 insert_command(doc, 'handoff', argv, cwd='qa', timeout=1 if mode=='timeout' else 10)
                 if mode == 'multiple':
                     insert_command(doc, 'afterValidation', argv, cwd='qa', node='Second')
-                filename, source = compile_workflow(doc, workspace=workspace, native_config=True)
-                self.assertEqual((filename,source), compile_workflow(doc, workspace=workspace, native_config=True))
+                if mode == 'nonzero-v13':
+                    with patch('devflower_export.COMPILER_VERSION', 13):
+                        filename, source = compile_workflow(doc, workspace=workspace, native_config=True)
+                        self.assertEqual((filename,source), compile_workflow(doc, workspace=workspace, native_config=True))
+                else:
+                    filename, source = compile_workflow(doc, workspace=workspace, native_config=True)
+                    self.assertEqual((filename,source), compile_workflow(doc, workspace=workspace, native_config=True))
                 script = workspace/filename
                 script.write_text(source)
                 run = workspace/'run'
@@ -975,22 +984,30 @@ print('consumed ' + delivery['candidate']['candidate_sha256'])
                 expected_calls = ['Developer'] + ([] if mode=='missing' else ['Validation'])
                 if mode == 'multiple':
                     expected_calls.append('Second')
-                if expected == 'COMPLETED':
+                if expected in ('COMPLETED', 'CHECK_FAILED'):
                     expected_calls.append('Reviewer')
                 self.assertEqual(started, expected_calls)
-                if expected == 'COMPLETED':
+                if expected in ('COMPLETED', 'CHECK_FAILED'):
+                    self.assertEqual(proc.returncode, 1 if expected == 'CHECK_FAILED' else 0)
                     raw = (run/'Validation'/'stdout.log').read_text()
                     self.assertEqual(raw, 'z'*33000+'\ncommand stdout\n')
                     self.assertEqual((run/'Validation'/'stderr.log').read_text(), 'command stderr\n')
                     result = json.loads((run/'Validation'/'structured.json').read_text())['result']
-                    self.assertEqual(result['returncode'], 7 if mode=='nonzero' else 0)
-                    self.assertIs(result['success'], mode!='nonzero')
+                    self.assertEqual(result['returncode'], 7 if mode.startswith('nonzero') else 0)
+                    self.assertIs(result['success'], not mode.startswith('nonzero'))
                     self.assertTrue(result['stdout'].startswith('[tail] '))
                     self.assertLess(len(result['stdout']), 2100)
                     prompt = (run/'Reviewer'/'prompt.txt').read_text()
                     self.assertIn('command stdout', prompt)
                     self.assertNotIn('z'*3000, prompt)
                     if mode == 'nonzero':
+                        self.assertEqual(status['failed_checks'], [dict(node='Validation', returncode=7)])
+                        request = [sys.executable, '-I', str(script), '--continuation-options',
+                                   '--continue-from', str(run), '--workspace', str(workspace)]
+                        options = subprocess.run(request, capture_output=True, timeout=5)
+                        self.assertNotEqual(options.returncode, 0)
+                        self.assertIn(b'CHECK_FAILED', options.stderr)
+                    if mode.startswith('nonzero'):
                         (run/'Validation'/'stderr.log').write_text('unexpected change')
                         invalid = json.loads(subprocess.check_output([*command,'--status']))
                         self.assertEqual(invalid['status'],'RECOVERY_REQUIRED')

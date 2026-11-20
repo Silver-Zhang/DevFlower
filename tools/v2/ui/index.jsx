@@ -8,6 +8,7 @@ import './style.css';
 import './workbench.css';
 import {ProjectFiles} from './ProjectFiles.jsx';
 import {ProviderCatalog} from './ProviderCatalog.jsx';
+import {RunHistory} from './RunHistory.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {NativePty} from './NativePty.jsx';
 import {AgentManager,nativeProfileDefaults} from './AgentManager.jsx';
@@ -36,6 +37,7 @@ import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKi
 const Assistant=lazy(()=>import('./Assistant.jsx').then(module=>({default:module.Assistant})));
 const GitWorkspace=lazy(()=>import('./GitWorkspace.jsx').then(module=>({default:module.GitWorkspace})));
 const LocalDelivery=lazy(()=>import('./LocalDelivery.jsx').then(module=>({default:module.LocalDelivery})));
+const agentVersionKey=(id,revision)=>id+':'+revision;
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const uid=prefix=>prefix+crypto.randomUUID().replaceAll('-','');
 const frozenFit={padding:.18,maxZoom:1.25};
@@ -60,16 +62,35 @@ async function api(path,data,{raw=false,binary=false}={}){
 }
 const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
 const samePayload=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
+function NodePromptPreview({workspace,graph,node,task,loop=null}){
+ const [open,setOpen]=useState(false),[evidence,setEvidence]=useState(null);
+ useEffect(()=>{
+  if(!open)return;
+  let current=true;
+  setEvidence(null);
+  api('script-run/prompt-preview',{workspace,document:graph,node:node.id,task,loop}).then(value=>{
+   if(current&&value.node===node.id&&value.revision===node.agent_revision)setEvidence(value);
+  }).catch(error=>{if(current)setEvidence({error:error.message})});
+  return()=>{current=false};
+ },[open,workspace,graph,node.id,node.agent_revision,task,loop]);
+ return <details className="node-prompt-preview" onToggle={event=>setOpen(event.currentTarget.open)}>
+  <summary>预览此节点的实际请求结构</summary>
+  <p className="field-note">角色和长期指令来自绑定配置，节点任务来自画布，本次任务来自运行上下文。动态内容在运行时填入。</p>
+  {!evidence&&open&&<p role="status">正在组装请求…</p>}
+  {evidence?.error&&<p className="error-text">{evidence.error}</p>}
+  {evidence?.prompt&&<pre>{evidence.prompt}</pre>}
+ </details>;
+}
 function Button({icon:Icon,children,...props}){return <button type="button" {...props}>{Icon&&<Icon size={16} aria-hidden="true"/>}<span>{children}</span></button>}
 function Field({label,children,note}){return <label className="field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label,...children.props})}{note&&<small>{note}</small>}</label>}
 function CanvasHandoffEdge(props){
  return <HandoffEdge {...props} geometry={props.data.route}/>;
 }
 const nodeTypes={canvas:CanvasNodeCard},edgeTypes={handoff:CanvasHandoffEdge};
-const ended=state=>['COMPLETED','FAILED','STOPPED','CANCELLED'].includes(state);
+const ended=state=>['COMPLETED','CHECK_FAILED','FAILED','STOPPED','CANCELLED'].includes(state);
 const durablyEnded=snapshot=>ended(snapshot?.state)&&ended(snapshot.run?.persisted_state??snapshot.state)||
  (snapshot?.state==='RECOVERY_REQUIRED'&&snapshot.script?.active===false);
-const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',FAILED:'失败',STOPPED:'脚本已停止',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
+const stateLabel=state=>({QUEUED:'等待启动',UNACTIVATED:'尚无激活',PENDING:'等待调度',READY:'可运行',WAITING:'等待上游',WAITING_CONFIRMATION:'等待人工审批',PAUSED:'已暂停',STARTING:'准备调用',RUNNING:'运行中',CANCEL_REQUESTED:'取消已请求',COMPLETED:'已完成',CHECK_FAILED:'检查失败',FAILED:'失败',STOPPED:'脚本已停止',CANCELLED:'本机调度已取消',SKIPPED:'未执行',RECOVERY_REQUIRED:'待核验',UNKNOWN:'状态未确认'}[state]||state);
 const outcomeLabel=value=>({completed:'终结成功已核验',failed:'终结失败已核验',not_sent:'没有请求发送证据',completed_partial:'部分节点已完成，其余未发送',pending:'正在等待终结证据',unknown:'结果未知，不能据本机停止推断 Provider 未执行'}[value]||'尚未核验');
 const readable=value=>typeof value==='string'?value:JSON.stringify(value,null,2);
 function ControlEvidence({activation,trusted}){
@@ -166,10 +187,10 @@ function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
  const [runInspectorOpen,setRunInspectorOpen]=useState(false),[pythonPreview,setPythonPreview]=useState(null);
- const [pythonWidth,setPythonWidth]=useState(480);
+ const [pythonWidth,setPythonWidth]=useState(480),[pythonPriority,setPythonPriority]=useState('code');
  const pythonRead=useRef(null),pythonOpener=useRef(null),continuationOpener=useRef(null);
  const runViewToggle=useRef(null),nativeEscape=useRef(null),runsOpener=useRef(null);
- const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]);
+ const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]),[hoverEdge,setHoverEdge]=useState(null);
  const [canvasMode,setCanvasMode]=useState('select'),[canvasFocused,setCanvasFocused]=useState(false),[minimap,setMinimap]=useState(false);
  const [canvasMenu,setCanvasMenu]=useState(null),[nodePicker,setNodePicker]=useState(null),[arrangeOpen,setArrangeOpen]=useState(false);
  const menuRef=useRef(null),canvasRef=useRef(null),clipboard=useRef(null);
@@ -184,7 +205,7 @@ function App(){
  const sideViewRef=useRef(sideView);sideViewRef.current=sideView;
  const [runTerminal,setRunTerminal]=useState(null),[linkedActivation,setLinkedActivation]=useState(null);
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
- const [assistantNative,setAssistantNative]=useState(false);
+ const [assistantNative,setAssistantNative]=useState(false),[assistantSettings,setAssistantSettings]=useState(false);
  const applyingAssistant=useRef(false);
  const [taskFiles,setTaskFiles]=useState([]),[taskText,setTaskText]=useState('');
  const assistantOpener=useRef(null),gitOpener=useRef(null);
@@ -221,6 +242,21 @@ function App(){
  const launchRef=useRef(null),launchBusy=useRef(false),runRef=useRef(null),runEpoch=useRef(0),runRead=useRef(null),runListRead=useRef(0),draftListRead=useRef(0),environmentRef=useRef(null),cancelBusy=useRef(null);
  const docRef=useRef(doc),savedRef=useRef(saved),workspaceRef=useRef(workspace),generation=useRef(0),saving=useRef(false),saveAttempt=useRef(null),dragBase=useRef(null),pendingRef=useRef(null),lastFocus=useRef(null),folderEpoch=useRef(0),folderOpen=useRef(false);
  const viewModeRef=useRef(viewMode);viewModeRef.current=viewMode;
+ const draftViewport=useRef(null);
+ const viewportZoom=useStore(state=>state.transform[2]);
+ function viewportKey(id){return 'df-v2-viewport:'+environmentRef.current+':'+workspaceRef.current?.id+':'+id}
+ function rememberViewport(id){
+  if(id&&draftViewport.current)try{localStorage.setItem(viewportKey(id),JSON.stringify(draftViewport.current))}catch{}
+ }
+ function restoreViewport(row,initial){
+  draftViewport.current=initial;
+  if(!row)return;
+  try{
+   const savedView=JSON.parse(localStorage.getItem(viewportKey(row.id)));
+   if(savedView&&[savedView.x,savedView.y,savedView.zoom].every(Number.isFinite)&&savedView.zoom>=.2&&savedView.zoom<=2)
+    draftViewport.current=savedView;
+  }catch{}
+ }
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
  const admissionKey=workspace&&viewMode==='draft'&&!dirty&&saved?.graph.execution==='native-cli'?
@@ -289,7 +325,7 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){if(['python','continuation'].includes(sideViewRef.current))setSideView('');commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false){setNotice('');restoreViewport(row,next.viewport);if(['python','continuation'].includes(sideViewRef.current))setSideView('');commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(applyingAssistant.current||same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -320,7 +356,16 @@ function App(){
    const rows=await api('runs?workspace='+w.id);
    if(!current())return;
    if(!Array.isArray(rows))throw connectionError('runs');
-   setRuns(rows);
+   setRuns(previous=>{
+    const states=new Map(previous.filter(row=>row.state).map(row=>[row.id,row]));
+    return rows.map(row=>row.state?row:{...states.get(row.id),...row});
+   });
+   const ids=rows.filter(row=>row.execution==='native-cli').slice(0,4).map(row=>row.id).join(',');
+   if(ids&&!verifyIntent)api('script-run/summaries?'+new URLSearchParams({workspace:w.id,ids})).then(results=>{
+    if(!current())return;
+    const states=new Map(results.map(row=>[row.id,row.state]));
+    setRuns(previous=>previous.map(row=>states.has(row.id)?{...row,state:states.get(row.id)}:row));
+   }).catch(()=>{});
    if(verifyIntent&&sameIntent()&&rows.every(row=>
       typeof row?.id==='string'&&/^[0-9a-f]{32}$/.test(row.id)&&
       typeof row.launch_intent==='string'&&/^[a-zA-Z0-9_-]{16,128}$/.test(row.launch_intent))&&
@@ -334,7 +379,7 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){if(primaryView||['python','continuation'].includes(sideViewRef.current))setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment);refreshDrafts(w).catch(()=>{})}
+ function showRun(id,w=workspaceRef.current,environment){setNotice('');if(primaryView||['python','continuation'].includes(sideViewRef.current))setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment);refreshDrafts(w).catch(()=>{})}
  function returnToDraft(){if(primaryView||['python','continuation'].includes(sideViewRef.current))setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  function editRunDraft(){
   const run=runRef.current,source=runSourceDraft;
@@ -432,7 +477,7 @@ function App(){
     const rows=await api('drafts?workspace='+w.id);current();setDrafts(rows);
     const remote=rows.find(row=>row.id===attempt.id);
     if(remote&&samePayload(remote.graph,attempt.document)){
-     const verified={...remote,graph:copy(attempt.document)};savedRef.current=verified;setSaved(verified);saveAttempt.current=null;remember(w,verified);
+     const verified={...remote,graph:copy(attempt.document)};savedRef.current=verified;setSaved(verified);saveAttempt.current=null;remember(w,verified);rememberViewport(verified.id);
      const unchanged=same(attempt.document,docRef.current);setNotice(unchanged?'已核验上次保存 · '+remote.graph.name:'已核验上次提交；当前后续修改尚未保存，请再次点击保存。');return unchanged;
     }
     if(remote?remote.revision!==attempt.expected:attempt.expected!==null)throw new RequestError('已保存版本与上次提交不同，不能覆盖。'+conflictHelp,{status:409});
@@ -442,14 +487,14 @@ function App(){
    saveAttempt.current=attempt;let result;
    try{result=await api('drafts/save',{workspace:w.id,id:attempt.id,expected:attempt.expected,document:attempt.document})}
    catch(e){if(!e.uncertain&&e.status!==409&&saveAttempt.current===attempt)saveAttempt.current=null;throw e}
-   current();savedRef.current=result;setSaved(result);saveAttempt.current=null;remember(w,result);setNotice('已保存 · '+result.graph.name);
+   current();savedRef.current=result;setSaved(result);saveAttempt.current=null;remember(w,result);rememberViewport(result.id);setNotice('已保存 · '+result.graph.name);
    try{await refreshDrafts(w)}catch(e){throw new RequestError('本次保存已确认，但工作流列表未刷新。'+e.message,{status:e.status})}
    return same(attempt.document,docRef.current);
   }finally{saving.current=false;setBusy('')}
  }
  const guard=fn=>async(...args)=>{
-  const epoch=workspaceEpoch.current;setError('');
-  try{await fn(...args)}catch(e){if(epoch===workspaceEpoch.current)setError(e.message||'操作失败，请重试')}
+  const epoch=workspaceEpoch.current,gen=generation.current;setError('');
+  try{await fn(...args)}catch(e){if(epoch===workspaceEpoch.current&&gen===generation.current)setError(e.message||'操作失败，请重试')}
  };
  function cancelTransfer(){transferTicket.current=null;fileChoice.current=null}
  useEffect(()=>{
@@ -561,11 +606,6 @@ function App(){
   setCanvasFocused(false);
   setSideView('python');
   setPythonPreview({...ticket,loading:true});
-  if(narrowDock)requestAnimationFrame(()=>requestAnimationFrame(()=>{
-   if(pythonRead.current!==ticket)return;
-   checkMove.current=true;
-   flow.fitView(frozenFit).then(moved=>{if(!moved)checkMove.current=false});
-  }));
   const current=()=>pythonRead.current===ticket&&workspaceRef.current===w&&
    (frozen?runRef.current===selected:savedRef.current===selected);
   try{
@@ -698,7 +738,8 @@ function App(){
   setNotice('已选择 '+path+'。启动时会核验文件摘要。');
  }
  function closeGit(){closeSideView(gitOpener)}
- function openAssistant({file,run,native=!file&&!run}={}){
+ function openAssistant({file,run,native=!file&&!run,settings=false}={}){
+  setAssistantSettings(settings);
   setAssistantNative(native);
   if(file)setAssistantFiles(list=>list.some(item=>(typeof item==='string'?item:item.path)===file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
@@ -863,7 +904,7 @@ function App(){
   setAgentRefresh(value=>value+1);
  }
  function renderProfilePicker(node,loopId=null){
-  const list=agentVersions?.workspace===workspace?.id?agentVersions.records:null;
+  const list=agentVersions?.workspace===workspace?.id?agentVersions.byVersion:null;
   const records=list&&new Map([...list].filter(([,row])=>row.config.execution==='native-cli'));
   return <CanvasAgentProfile node={node} records={records} Field={Field}
    onBind={record=>applyProfile(record,node.id,loopId)}
@@ -878,12 +919,19 @@ function App(){
  function renderLoopBody(loop,body){
   const update=(id,patch)=>updateNode(loop.id,{config:{...loop.config,body:{...body,
    nodes:body.nodes.map(node=>node.id===id?{...node,...patch}:node)}}});
-  return <details><summary>配置循环步骤</summary>
-   {body.nodes.filter(node=>['agent','tool'].includes(nodeKind(node))).map(node=><fieldset key={node.id}>
+  const pendingRoles=body.nodes.filter(node=>nodeKind(node)==='agent'&&(!node.agent_id||referenceIssue(node)));
+  return <details open={pendingRoles.length>0||undefined}><summary>配置循环步骤</summary>
+   {pendingRoles.length>0&&<p className="field-note">还需绑定 {pendingRoles.length} 个角色</p>}
+   {pendingRoles.map(node=><button type="button" key={node.id} onClick={()=>{
+    document.getElementById('loop-role-'+loop.id+'-'+node.id)?.querySelector('select')?.focus();
+   }}>绑定 {node.name}</button>)}
+   {body.nodes.filter(node=>['agent','tool'].includes(nodeKind(node))).map(node=><fieldset
+    id={'loop-role-'+loop.id+'-'+node.id} key={node.id}>
     <legend>{node.name}</legend>
     {nodeKind(node)==='agent'?<>
      {renderProfilePicker(node,loop.id)}
      {renderNodeTask(node,task_prompt=>update(node.id,{task_prompt}))}
+     {node.agent_id&&<NodePromptPreview workspace={workspace.id} graph={doc} node={node} task={taskText} loop={loop.id}/>}
     </>:<TypedNodeConfig node={node} onChange={patch=>update(node.id,{config:{...node.config,...patch}})}
      bodyChoices={[]} siblingNodes={body.nodes} nativeScript connected={new Set()} Field={Field} commandDrafts={commandDrafts.current}/>}
    </fieldset>)}
@@ -948,7 +996,7 @@ function App(){
  function hideFolder(){folderOpen.current=false;folderEpoch.current++;setFolder(null);lastFocus.current?.focus()}
  function showFolder(){lastFocus.current=document.activeElement;setDrawer(false);folderOpen.current=true;setFolderPath(status?.roots?.[0]||'');setFolder({entries:[],roots:status?.roots||[],loading:true});browse()}
  useEffect(()=>{if(!folder&&!pending)return;const dialogs=document.querySelectorAll('[role="dialog"]'),dialog=dialogs[dialogs.length-1],previous=document.activeElement;if(!dialog)return;if(!dialog.contains(document.activeElement))dialog.querySelector('input,button,select,textarea')?.focus();const trap=e=>{if(e.key!=='Tab')return;const items=[...dialog.querySelectorAll('input,button,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled&&x.getClientRects().length);const first=items[0],last=items.at(-1);if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};dialog.addEventListener('keydown',trap);return()=>{dialog.removeEventListener('keydown',trap);if(previous?.isConnected)previous.focus()}},[Boolean(folder),Boolean(pending)]);
- function resetCanvasSelection(){setNodeSelection([]);setEdgeSelection([]);setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);dragBase.current=null}
+ function resetCanvasSelection(){setHoverEdge(null);setNodeSelection([]);setEdgeSelection([]);setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);dragBase.current=null}
  function clearSelection(){setSelected(null);setEdge(null);setEdgeSelection([]);setCanvasMenu(null);setArrangeOpen(false)}
  function closeInspector(){clearSelection();setTimeout(()=>canvasRef.current?.focus(),0)}
  function toggleRunEvidence(){
@@ -1162,6 +1210,26 @@ function App(){
   change(d=>d.edges.push(legacy?{id:uid('e'),source,target}:{id:uid('e'),...candidate}));
   setError('');setNotice('已添加草稿连线。');
  }
+ function insertOnEdge(edge,kind){
+  if(!editable)return;
+  const current=docRef.current;
+  if(!current.edges.some(item=>same(item,edge)))return;
+  if(current.nodes.length>=64||current.edges.length>=128){setError('草稿节点或连线已达到上限。');return}
+  const from=current.nodes.find(node=>node.id===edge.source),to=current.nodes.find(node=>node.id===edge.target);
+  const id=uid('n'),name=kind==='agent'?'新 Agent':'新工具';
+  const position={x:coordinate((from.position.x+to.position.x)/2),y:coordinate((from.position.y+to.position.y)/2)};
+  const node=kind==='agent'?{id,name,kind,position}:{id,name,kind,position,config_version:1,config:defaultConfig(kind)};
+  const first={id:uid('e'),source:from.id,target:id,source_port:edge.source_port??'out',target_port:'in'};
+  const second={...edge,id:uid('e'),source:id,source_port:'out'};
+  if(edge.transfer?.mode==='none')first.transfer={...edge.transfer};
+  else if(edge.transfer?.max_chars)first.transfer={mode:nativeScript?'answer':defaultEdgeMode(from,node),
+   max_chars:edge.transfer.max_chars};
+  const next={...current,nodes:[...current.nodes,node],edges:current.edges.filter(item=>item.id!==edge.id)};
+  const issue=connectionIssue(next,first)||connectionIssue({...next,edges:[...next.edges,first]},second);
+  if(issue){setError(issue);return}
+  next.edges.push(first,second);
+  edit(next);setSelected(id);setEdge(null);setEdgeSelection([]);
+ }
  function rfConnection(value){
   return {source:value.source,target:value.target,source_port:value.sourceHandle??'out',target_port:value.targetHandle??'in'};
  }
@@ -1188,7 +1256,7 @@ function App(){
  function referenceIssue(node){
   if(!node.agent_id||agentVersions?.workspace!==workspace?.id)return '';
   if(agentVersions.failed)return '无法核对 Agent 配置版本。';
-  return agentVersions.records.get(node.agent_id)?.revision===node.agent_revision?'':'此 Agent 配置版本在当前工作空间不可用，请重新选择。';
+  return agentVersions.byVersion.has(agentVersionKey(node.agent_id,node.agent_revision))?'':'此 Agent 配置版本在当前工作空间不可用，请重新选择。';
  }
  function hasAgentRefs(nodes){
   return nodes.some(node=>node.agent_id||node.config?.body?.nodes&&hasAgentRefs(node.config.body.nodes));
@@ -1198,8 +1266,9 @@ function App(){
   if(viewMode!=='draft'||!workspace||!needsProfileOptions)return;
   let alive=true;
   const id=workspace.id;
-  api('agents?workspace='+id).then(result=>{
-   if(alive)setAgentVersions({workspace:id,records:new Map(result.agents.map(row=>[row.id,row]))});
+  api('agents?'+new URLSearchParams({workspace:id,history:'1'})).then(result=>{
+   if(alive)setAgentVersions({workspace:id,records:new Map(result.agents.map(row=>[row.id,row])),
+    byVersion:new Map([...result.agents,...(result.versions||[])].map(row=>[agentVersionKey(row.id,row.revision),row]))});
   }).catch(()=>{if(alive)setAgentVersions({workspace:id,failed:true})});
   return()=>{alive=false};
  },[workspace?.id,viewMode,agentRefresh,needsProfileOptions]);
@@ -1247,20 +1316,25 @@ function App(){
     live&&process.kind==='CALL_INTENT'?'STARTING':'UNKNOWN'):'UNACTIVATED'};
  },n=shown.nodes.find(n=>n.id===selected),e=shown.edges.find(e=>e.id===edge);
  const boundAgent=n?.agent_id&&!referenceIssue(n)&&agentVersions?.workspace===workspace?.id?
-  agentVersions.records?.get(n.agent_id):null;
+  agentVersions.byVersion?.get(agentVersionKey(n.agent_id,n.agent_revision)):null;
  const edgeTarget=e&&activation(e.target);
  const actualInputs=e?(edgeTarget?.inputs||[]).filter(i=>i.edge===e.id&&i.source===e.source&&i.target_activation===edgeTarget.id):[];
  const completedPlans=runTrusted&&runSnapshot?.run?.persisted_state==='COMPLETED'?
   runSnapshot.nodes.filter(a=>a.receipt_verified&&a.receipt?.native_plan?.finalized):[];
  function usesNativeScript(nodes){
   return nodes.some(node=>node.native_output||node.config?.tool==='command'||
-   (agentVersions?.workspace===workspace?.id&&agentVersions?.records?.get(node.agent_id)?.config.execution==='native-cli')||
+   (agentVersions?.workspace===workspace?.id&&agentVersions?.byVersion?.get(agentVersionKey(node.agent_id,node.agent_revision))?.config.execution==='native-cli')||
    (node.config?.body?.nodes&&usesNativeScript(node.config.body.nodes)));
  }
  const managedAgent=doc.nodes.some(node=>(nodeKind(node)==='agent'&&!node.kind&&!node.agent_id)||
-  (agentVersions?.records?.get(node.agent_id)?.config.execution!=='native-cli'&&agentVersions?.records?.has(node.agent_id)));
+  (agentVersions?.byVersion?.get(agentVersionKey(node.agent_id,node.agent_revision))?.config.execution!=='native-cli'&&agentVersions?.byVersion?.has(agentVersionKey(node.agent_id,node.agent_revision))));
  const nativeScript=doc.execution==='native-cli'||usesNativeScript(doc.nodes)||!managedAgent&&doc.nodes.some(node=>node.kind==='agent'&&!node.agent_id);
  const compileBlock=admissionProblem||(checks?.status&&checks.status!=='compilable'&&checks.message);
+ const loopsInDraft=doc.nodes.filter(node=>nodeKind(node)==='loop');
+ const branchInDraft=doc.nodes.filter(node=>['condition','router'].includes(nodeKind(node)));
+ const controlWarning=nativeScript&&loopsInDraft.length&&branchInDraft.length?
+  '「'+branchInDraft.map(node=>node.name).join('、')+'」与「'+loopsInDraft.map(node=>node.name).join('、')+
+  '」目前不能在同一原生脚本运行。可保存当前设计，或将路由与独立循环拆成两个工作流。':'';
  const launchBlock=nativeScript?(compileBlock|| (taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':'')):
   doc.nodes.map(runtimeBlock).find(Boolean);
  const approval=runSnapshot?.nodes?.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
@@ -1270,21 +1344,37 @@ function App(){
   const value=readOnly?{...(activation(node.id)||{state:'UNACTIVATED'}),...(!runTrusted?{state:'UNKNOWN'}:{})}:null;
   return {id:node.id,type:'canvas',position:node.position,selected:nodeSelection.includes(node.id),
    draggable:editable&&canvasMode==='select',connectable:editable,
-   data:{node,activation:value,stateLabel:value&&stateLabel(value.state),referenceIssue:!readOnly&&referenceIssue(node)},
+   data:{node,activation:value,stateLabel:value&&stateLabel(value.state),referenceIssue:!readOnly&&referenceIssue(node),
+    compactView:viewportZoom<.65,loopRoles:node.kind==='loop'&&node.config?.body?.nodes.filter(item=>nodeKind(item)==='agent'),
+    missingRoles:!readOnly&&node.kind==='loop'&&node.config?.body?.nodes.filter(item=>nodeKind(item)==='agent'&&(!item.agent_id||referenceIssue(item))).length},
    ...(measurements.has(node.id)?{measured:measurements.get(node.id)}:{})};
  });
  const shownNodes=new Map(shown.nodes.map(node=>[node.id,node]));
  const geometry=useStore(canvasGeometry,sameCanvasGeometry);
  const outside=useStore(allNodesOutside);
  const routes=useMemo(()=>routeEdges(shown.edges,geometry),[shown.edges,geometry]);
+ const emphasis=new Set();
+ const activeEdge=hoverEdge||edge;
+ const initialEdge=shown.edges.find(item=>item.id===activeEdge);
+ const extend=(node,direction)=>{
+  const from=direction==='up'?'target':'source',to=direction==='up'?'source':'target';
+  for(let current=node;current;){
+   const options=shown.edges.filter(item=>item[from]===current);
+   if(options.length!==1||emphasis.has(options[0].id))break;
+   emphasis.add(options[0].id);current=options[0][to];
+  }
+ };
+ if(initialEdge){emphasis.add(initialEdge.id);extend(initialEdge.source,'up');extend(initialEdge.target,'down')}
+ else if(selected){extend(selected,'up');extend(selected,'down');}
  const rfEdges=shown.edges.map(item=>{
   const {source,target}=item,sourceHandle=item.source_port??'out',targetHandle=item.target_port??'in';
   const output=ports(shownNodes.get(source),'outputs').find(([id])=>id===sourceHandle)?.[1]||sourceHandle;
   const input=ports(shownNodes.get(target),'inputs').find(([id])=>id===targetHandle)?.[1]||targetHandle;
+  const highlighted=emphasis.has(item.id);
   return {id:item.id,type:'handoff',source,target,sourceHandle,targetHandle,selected:edgeSelection.includes(item.id),
-   markerEnd:{type:MarkerType.ArrowClosed},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
+   markerEnd:{type:MarkerType.ArrowClosed,...(highlighted?{color:'var(--studio-primary-bg)',width:24,height:24}:{})},label:item.transfer?transferModes[item.transfer.mode]:edgeSelection.includes(item.id)?output+' → '+input:undefined,
    ariaLabel:shownNodes.get(source).name+' '+output+' → '+shownNodes.get(target).name+' '+input,
-   data:{route:routes.get(item.id),hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:2}};
+   data:{route:routes.get(item.id),hitArea:true,issues:checks?.issues.filter(issue=>issue.edge_id===item.id)},style:{strokeWidth:highlighted?3:2,...(highlighted?{stroke:'var(--studio-primary-bg)'}:emphasis.size?{opacity:.45}:{})}};
  });
  const panelEpoch=workspaceEpoch.current;
  const models=catalog?.models||[],model=models.find(m=>m.id===n?.model),modelKnown=model&&(model.efforts||[]).includes(n?.effort)&&n?.provider==='codex';
@@ -1298,7 +1388,7 @@ function App(){
   needsEndpoints?'使用「添加节点」补齐输入或输出，再检查工作流。':'');
  const startHint=launchAttempt?'核验此前的启动请求。':!workspace?'先打开工作空间。':!doc.nodes.length?
   '添加节点后可以启动工作流。':launchBlock||(!nativeScript&&!status?.provider_available&&inlineAgent?catalog?.error||'请在 Agent 管理核对本机 CLI。':'');
- function renderRunRows(){return runs.slice().sort((a,b)=>b.created_at-a.created_at).map(row=><button key={row.id} className={'workflow-link'+(!sideView&&readOnly&&activeRun?.id===row.id?' active':'')}
+ function renderRunRows(){return runs.slice().sort((a,b)=>b.created_at-a.created_at).slice(0,12).map(row=><button key={row.id} className={'workflow-link'+(!sideView&&readOnly&&activeRun?.id===row.id?' active':'')}
     aria-current={!sideView&&readOnly&&activeRun?.id===row.id?'page':undefined} onClick={()=>{
      if(readOnly&&activeRun?.id===row.id){
       if(!sideView&&!runInspectorOpen){clearRunSummary();guard(rereadRun)()}
@@ -1355,7 +1445,8 @@ function App(){
   }
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
   (navigationOverlay?' navigation-overlay':'')+
-  (sideView?' side-tool-open':'')+(primaryView?' primary-workspace-open':'')}
+  (sideView?' side-tool-open':'')+(primaryView?' primary-workspace-open':'')+
+  (narrowDock&&sideView==='python'?' python-priority-'+pythonPriority:'')}
   style={sideView==='python'?{'--python-panel-width':pythonWidth+'px'}:undefined}
   onKeyDown={event=>{if(event.key===' '&&event.target.closest('summary'))event.stopPropagation()}}>
   <button type="button" className="skip-workbench" onClick={()=>document.getElementById(
@@ -1433,6 +1524,7 @@ function App(){
     <div className="document-meta"><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span>
      {exportNeedsSave&&<small id="v2-export-hint">请先保存当前工作流，再导出已保存版本。</small>}
      {admissionKey&&savedAdmission?.result?.execution_available&&<small>可编译</small>}
+     {narrowDock&&sideView==='python'&&<button type="button" onClick={()=>setPythonPriority('code')}>切换到 Python</button>}
     </div></div>
    </div>{!readOnly&&<div className="document-actions">
     {workspace&&<details ref={taskContext} className="task-context" aria-label="本次运行上下文">
@@ -1464,12 +1556,17 @@ function App(){
      title={startHint||(nativeScript?'启动将使用原生 CLI 配置和权限。':'明确启动将调用所选模型；不自动重试')} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
      onClick={guard(()=>start())}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
    </div>}
+   {!readOnly&&controlWarning&&<p className="error-text topology-warning" role="status">{controlWarning}</p>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><div className="run-command-bar">
    <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动进程 '+(scriptRun.events?runEventIndex.started.length:'未知')+' 次':
     '实际调用 '+(runSnapshot?.run?.actual_calls??'未知')+' 次'}{!runTrusted?'（上次读取）':''}</span>
    <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runEvidenceVisible?'返回运行图':'运行检查器'}</Button>
    {scriptRun&&<Button ref={pythonOpener} icon={Code} onClick={()=>openPython(true)}
     aria-expanded={sideView==='python'}>查看本次 Python</Button>}
+   {scriptRun&&runTrusted&&runState==='CHECK_FAILED'&&<span className="error-text">
+    {scriptRun.failed_checks.length} 项检查失败 · {scriptRun.failed_checks.map(item=>
+     shownNodes.get(item.node)?.name||item.node).join('、')} · 修复后重新运行
+   </span>}
    {scriptRun&&runTrusted&&(runState==='COMPLETED'||scriptRun.historical_completion)&&scriptRun.series&&!launchAttempt&&
     <Button ref={continuationOpener} className="primary" icon={ArrowRight} disabled={launching} onClick={()=>{
      setCanvasFocused(false);setSideView('continuation');
@@ -1539,6 +1636,7 @@ function App(){
     </details>
     </div>}
     <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodeClick={inspectNode} onEdgeClick={inspectEdge}
+     onEdgeMouseEnter={(_,value)=>setHoverEdge(value.id)} onEdgeMouseLeave={()=>setHoverEdge(null)}
      onPaneClick={closeInspector} onPaneContextMenu={event=>contextMenu(event)} onNodeContextMenu={contextMenu}
      onConnect={value=>connect(rfConnection(value))} onConnectEnd={explainConnection} onClickConnectEnd={explainConnection}
      isValidConnection={value=>editable&&!connectionIssue(docRef.current,rfConnection(value))}
@@ -1552,10 +1650,10 @@ function App(){
      onMoveEnd={(event,viewport)=>{
       const locating=checkMove.current;checkMove.current=false;
       if(!editable||locating&&!event)return;
-      const next=copy(docRef.current);
-      next.viewport={...viewport,x:coordinate(viewport.x),y:coordinate(viewport.y)};edit(next,false);
+      draftViewport.current=viewport;
+      rememberViewport(savedRef.current?.id);
      }}
-     defaultViewport={shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(frozenGraph):'draft:'+generation.current}
+     defaultViewport={readOnly?shown.viewport:draftViewport.current||shown.viewport} key={readOnly?'run:'+activeRun?.id+':'+Boolean(frozenGraph):'draft:'+generation.current}
      minZoom={.2} maxZoom={2} deleteKeyCode={null} colorMode={theme} proOptions={{hideAttribution:true}}>
      <RepairHandles/>{frozenGraph?.nodes.length>0&&<FitFrozenRun nodes={frozenGraph.nodes}/>}<Background gap={24} size={1}/>{readOnly&&<Controls showInteractive={false}/>}
      {minimap&&<MiniMap pannable zoomable/>}
@@ -1626,6 +1724,9 @@ function App(){
       版本 <code title={n.agent_revision}>{n.agent_revision?.slice(0,12)}</code></p>
      <p className="field-note">此节点引用已保存的 Agent 配置版本。</p>
      <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
+     {boundAgent?.config.execution==='native-cli'&&agentVersions.records?.get(n.agent_id)?.config.execution==='native-cli'&&
+      agentVersions.records.get(n.agent_id).revision!==n.agent_revision&&
+      <Button onClick={()=>applyProfile(agentVersions.records.get(n.agent_id),n.id)}>升级此节点到最新版本</Button>}
      {renderProfilePicker(n)}
      <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></section>:n.kind==='agent'?<>
     {renderProfilePicker(n)}
@@ -1678,13 +1779,22 @@ function App(){
      </>}
     </>}
     <NodeConnections node={n} graph={doc} onConnect={connect} Field={Field}/>
+    {nodeKind(n)==='agent'&&boundAgent?.config.execution==='native-cli'&&
+     <NodePromptPreview workspace={workspace.id} graph={doc} node={n} task={taskText}/>}
     {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}
     <Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[n.id]));closeInspector()}}>
      {nodeKind(n)==='agent'?'删除 Agent':'删除节点'}</Button>
-   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>连线交接配置</h3><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} nativeScript={nativeScript} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></div>}
+   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>连线交接配置</h3><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} nativeScript={nativeScript} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/>
+     <details key={e.id}><summary>在此连线插入步骤</summary>
+      <p>{shownNodes.get(e.source).name} → 新步骤 → {shownNodes.get(e.target).name}</p>
+      <p className="field-note">原下游端口和交接设置保留。确认后下游会接收新步骤的结果。</p>
+      <Button onClick={()=>insertOnEdge(e,'agent')}>确认插入 Agent</Button>
+      <Button onClick={()=>insertOnEdge(e,'tool')}>确认插入工具</Button>
+     </details><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></div>}
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
-   isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
+   isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}
+   api={api} workspace={workspace} onAssistant={()=>openAssistant({native:true,settings:true})} onAgent={()=>openAgents()}/>}
   {workspace&&filesOpen&&<ProjectFiles key={'files:'+workspace.id} api={api} workspace={workspace} onClose={closeFiles} onAttach={nativeScript?undefined:file=>openAssistant({file})}
    onTaskAttach={!nativeScript&&!readOnly&&!launching&&!launchAttempt?attachTaskFile:undefined}/>}
   {workspace&&sideView==='templates'&&<aside className="project-panel template-panel" onKeyDown={event=>{
@@ -1698,7 +1808,7 @@ function App(){
    api={api} workspace={workspace} onClose={closeGit}/></Suspense>}
   {workspace&&(sideView==='assistant'||sideView==='python'&&pythonPreview?.returnToAssistant)&&
    <Suspense><Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} hidden={sideView!=='assistant'}
-   nativeEntry={assistantNative} onEditRunDraft={readOnly?(runSourceDraft?editRunDraft:returnToDraft):undefined}
+   nativeEntry={assistantNative} settingsEntry={assistantSettings} onEditRunDraft={readOnly?(runSourceDraft?editRunDraft:returnToDraft):undefined}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
    files={assistantFiles} onFiles={setAssistantFiles} run={assistantRun} onRun={setAssistantRun} runs={runs}
@@ -1708,9 +1818,8 @@ function App(){
    <header className="project-panel-header"><div><h2>运行记录</h2><p className="field-note">{workspace.name}</p></div>
     <Button icon={RefreshCw} disabled={!status?.execution_supported} onClick={()=>refreshRuns(workspace,{showError:true})}>刷新</Button>
     <button aria-label="关闭运行记录" onClick={()=>closeSideView(runsOpener)}><X size={16}/></button></header>
-   <div className="workspace-run-rows">
-    {runs.length?renderRunRows():<p className="field-note">尚无运行记录</p>}
-   </div>
+   <RunHistory key={workspace.id} api={api} workspace={workspace.id} runs={runs} stateLabel={stateLabel}
+    onOpen={row=>showRun(row.id)}/>
   </main>}
   {workspace&&nativeOpen&&<NativeSessions key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
     enabled={Boolean(status?.native_history_available)} writeProviders={status?.native_session_writes}
@@ -1727,7 +1836,8 @@ function App(){
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}
   {sideView==='python'&&pythonPreview&&<PythonPanel value={{...pythonPreview,dirty}} width={pythonWidth}
-   onResize={width=>setPythonWidth(Math.min(860,Math.max(300,width)))} onClose={closePython}/>}
+   onResize={width=>setPythonWidth(Math.min(860,Math.max(300,width)))} onClose={closePython}
+   onCanvas={narrowDock?()=>setPythonPriority('canvas'):null}/>}
   {sideView==='continuation'&&runSnapshot?.run&&<RunContinuation key={runSnapshot.run.id} api={api}
    run={runSnapshot.run} busy={launching} attempt={launchAttempt} onStart={start} onClose={()=>closeSideView(continuationOpener)}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}

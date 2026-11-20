@@ -433,8 +433,11 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                 elif post and path == '/api/v2/cli-providers/discover' and not query and set(data) in (
                         {'provider'}, {'provider', 'native_profile'}) and managed_available:
                     result = managed_runtime().cli_providers.discover(data['provider'],data.get('native_profile'))
-                elif not post and path == '/api/v2/agents' and set(query) == {'workspace'}:
-                    result = agents.list(query['workspace'])
+                elif not post and path == '/api/v2/agents' and (
+                        set(query) == {'workspace'} or set(query) == {'workspace', 'history'} and query['history'] == '1'):
+                    result = agents.list(query['workspace'], history='history' in query)
+                elif not post and path == '/api/v2/agents/references' and set(query) == {'workspace', 'id', 'revision'}:
+                    result = agents.references(query['workspace'], query['id'], query['revision'])
                 elif post and path == '/api/v2/agents/save' and not query and set(data) == {
                         'workspace', 'id', 'expected', 'config', 'session_revision'}:
                     if isinstance(data['config'], dict) and 'execution' not in data['config']:
@@ -470,6 +473,12 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = scripts.list(workspace)
                     if managed_available:
                         result.extend(inspector.clean(history.runs(workspace)))
+                elif post and path == '/api/v2/script-run/prompt-preview' and not query and set(data) == {
+                        'workspace', 'document', 'node', 'task', 'loop'}:
+                    result = scripts.prompt_preview(data['workspace'], data['document'], data['node'],
+                                                    data['task'], data['loop'])
+                elif not post and path == '/api/v2/script-run/summaries' and set(query) == {'workspace', 'ids'}:
+                    result = scripts.summaries(query['workspace'], query['ids'].split(','))
                 elif not post and path == '/api/v2/script-run/continuation' and set(query.keys()) == {'workspace', 'id'}:
                     result = scripts.continuation_options(query['workspace'], query['id'])
                 elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):

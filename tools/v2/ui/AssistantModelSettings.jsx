@@ -25,7 +25,7 @@ export function choicesFor(settings,selection){
  return {profiles,profile,catalog,models,chosen,efforts,canSend};
 }
 
-export function AssistantModelSettings({settings,selection,onChange,onSave,onRefresh,onTest,busy,turn}){
+export function AssistantModelSettings({settings,selection,onChange,onSave,onRefresh,onTest,busy,blocked,turn}){
  const {profiles,profile,catalog,models,efforts,canSend}=choicesFor(settings,selection);
  const identities=settings?.identities||[];
  const identity=identities.find(row=>row.id===selection.identity?.id&&row.revision===selection.identity?.revision);
@@ -85,7 +85,7 @@ export function AssistantModelSettings({settings,selection,onChange,onSave,onRef
    {identity&&!useAgentModel&&<p className="field-note">当前 Provider、原生配置或模型与此 Agent 的设置不兼容。</p>}
    <div>
     <button onClick={onRefresh}>刷新模型目录</button>
-    <button disabled={!canSend} onClick={onTest}>测试真实推理</button>
+    <button disabled={!canSend||blocked} onClick={onTest}>测试真实推理</button>
     <button className="primary" disabled={!canSend||(selection.identity&&!identity)} onClick={onSave}>保存助手偏好</button>
    </div>
   </fieldset>

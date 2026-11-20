@@ -20,9 +20,12 @@ const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const pendingRequests=new Map();
 const probeText='连接测试：请只回复 DEVFLOWER_ASSISTANT_OK。';
 const pendingKey=(key,id)=>key+':pending:'+id;
+const draftKey=(key,id)=>key+':draft:'+id;
 function loadPending(key){
- const intent=sessionStorage.getItem(key);
- return pendingRequests.get(key)||(intent?{intent}:null);
+ const stored=sessionStorage.getItem(key);
+ if(pendingRequests.has(key))return pendingRequests.get(key);
+ if(!stored)return null;
+ try{return JSON.parse(stored)}catch{return {intent:stored}}
 }
 function clearPending(key){
  pendingRequests.delete(key);sessionStorage.removeItem(key);
@@ -61,10 +64,10 @@ function Diagnosis({value}){
 }
 
 export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover,draft,files,onFiles,
- run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose,nativeEntry,onEditRunDraft,hidden}){
+ run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose,nativeEntry,settingsEntry,onEditRunDraft,hidden}){
  const storeKey='devflower-v2-assistant:'+storageKey+':'+workspace.id;
  const [conversation,setConversation]=useState(()=>localStorage.getItem(storeKey)||uid());
- const [view,setView]=useState('chat'),[record,setRecord]=useState(null),[history,setHistory]=useState([]);
+ const [view,setView]=useState(settingsEntry?'settings':'chat'),[record,setRecord]=useState(null),[history,setHistory]=useState([]);
  const [before,setBefore]=useState(null),[diagnosis,setDiagnosis]=useState(null);
  const [settings,setSettings]=useState(null),[selection,setSelection]=useState(emptySelection);
  const [legacy,setLegacy]=useState(!nativeEntry&&providers.length>0),[legacyProvider,setLegacyProvider]=useState(providers.includes('codex')?'codex':providers[0]||'');
@@ -72,8 +75,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const {catalog:configuredCatalog,chosen,canSend}=choicesFor(settings,selection);
  const [mode,setMode]=useState(nativeEntry?'native':run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
  const [inventory,setInventory]=useState(true);
- const [text,setText]=useState(''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
- const [retry,setRetry]=useState(false);
+ const [text,setDraftText]=useState(()=>sessionStorage.getItem(draftKey(storeKey,conversation))||''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
  const historySelection=useRef(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const alive=useRef(false),sequence=useRef(0),loadFlight=useRef(null);
@@ -90,6 +92,11 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   ['provider','native_profile','model','effort'].every(key=>preview.payload[key]===selection[key]):
   eq(preview.payload,payload));
  const intentStore=pendingKey(storeKey,conversation);
+ function setText(value,id=conversation){
+  if(value)sessionStorage.setItem(draftKey(storeKey,id),value);
+  else sessionStorage.removeItem(draftKey(storeKey,id));
+  setDraftText(value);
+ }
  useEffect(()=>{
   alive.current=true;closing.current?.focus();
   api(route('settings',{workspace:workspace.id})).then(result=>{
@@ -103,7 +110,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  useEffect(()=>{
   localStorage.setItem(storeKey,conversation);
   const stored=loadPending(intentStore);
-  sequence.current++;setRecord(null);pendingRef.current=stored;setPending(stored);setRetry(false);loadFlight.current=null;
+  sequence.current++;setRecord(null);pendingRef.current=stored;setPending(stored);loadFlight.current=null;
+  setDraftText(sessionStorage.getItem(draftKey(storeKey,conversation))||'');
   read(conversation).catch(failure=>alive.current&&setError(failure.message));
  },[conversation]);
  useEffect(()=>{
@@ -114,6 +122,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   },failure=>{if(current)setError(failure.message)});
   return()=>{current=false;setDiagnosis(null)};
  },[run]);
+ useEffect(()=>{if(settingsEntry)setView('settings')},[settingsEntry]);
  useEffect(()=>{if(nativeEntry){setLegacy(false);setMode('native')}},[nativeEntry]);
  useEffect(()=>{
   if(!running||view==='history')return;
@@ -133,7 +142,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      historySelection.current=null;restoreLegacy(value.turns.at(-1));
     }
     if(pendingRef.current&&value.turns.some(item=>item.intent===pendingRef.current.intent)){
-     clearPending(pendingKey(storeKey,id));pendingRef.current=null;setPending(null);setRetry(false);setPreview(null);setText('');
+     const request=pendingRef.current;
+     clearPending(pendingKey(storeKey,id));pendingRef.current=null;setPending(null);setPreview(null);
+     if(request.mode!=='probe'&&sessionStorage.getItem(draftKey(storeKey,id))===request.text)setText('',id);
     }
    }
    return value;
@@ -156,7 +167,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  function switchTo(id,fromHistory=false){
   historySelection.current=fromHistory&&id!==conversation?id:null;
   if(fromHistory&&id===conversation)restoreLegacy(record?.turns.at(-1));
-  setView('chat');setText('');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
+  setView('chat');setDraftText(sessionStorage.getItem(draftKey(storeKey,id))||'');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
  }
  async function loadHistory(cursor=null){
   const result=await api(route('history',{workspace:workspace.id,...(cursor?{before:cursor}:{})}));
@@ -183,11 +194,11 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   if(alive.current){setSettings(result);setLegacy(false);setNotice('已保存当前工作空间的助手偏好。')}
  }
  async function submit(submitted){
-  pendingRequests.set(intentStore,submitted);sessionStorage.setItem(intentStore,submitted.intent);
-  pendingRef.current=submitted;setPending(submitted);setRetry(false);
+  pendingRequests.set(intentStore,submitted);sessionStorage.setItem(intentStore,JSON.stringify({intent:submitted.intent,text:submitted.text,mode:submitted.mode}));
+  pendingRef.current=submitted;setPending(submitted);
   try{
    await api(route('send'),submitted);
-   if(alive.current){setPreview(null);setText('');await read()}
+   if(alive.current){setPreview(null);await read()}
   }catch(failure){
    if(!failure.uncertain&&Number.isInteger(failure.status)&&failure.status<500){
     clearPending(intentStore);
@@ -202,8 +213,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  async function verifyPending(){
   const result=await read();
   if(result&&pending&&!result.turns.some(item=>item.intent===pending.intent)){
-   if(pending.preview_sha256)setRetry(true);
-   else setNotice('当前未查到原意图的回执。仍可重新核对，或另开对话。');
+   setNotice('尚未查到原请求的回执。可以继续查询，或保留原请求后另开对话。');
   }
  }
  const valid=(legacy?!!legacyProvider&&(legacyProvider!=='codex'||(legacyModel&&legacyEffort)):canSend)
@@ -222,7 +232,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   </header>
   {view==='settings'?<div className="v2-assistant-scroll">
    <AssistantModelSettings settings={settings} selection={selection} onChange={changeConfig} turn={turn}
-    busy={busy||running||unknown||!!pending} onRefresh={()=>perform(refreshModels)} onSave={()=>perform(saveConfig)}
+    busy={busy||running||!!pending} blocked={unknown} onRefresh={()=>perform(refreshModels)} onSave={()=>perform(saveConfig)}
     onTest={()=>perform(()=>showPreview(true))}/>
   </div>:view==='history'?<section className="assistant-history" aria-label="助手会话列表">
    {!history.length&&<PanelEmpty icon={History} title="还没有助手对话"><p>切回对话即可开始提问或准备画布提案。</p></PanelEmpty>}
@@ -249,7 +259,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      {record?.turns?.map(item=><article className="v2-assistant-turn" key={item.id}>
       <p className="assistant-user">{item.text}</p>
       <small>{item.provider} · {labels[item.state]||item.state}</small>
-      {item.reply&&(['proposal','team'].includes(item.mode)||item.mode==='native'&&item.reply.startsWith('{')?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
+      {item.reply&&!item.proposal&&(['proposal','team'].includes(item.mode)||item.mode==='native'&&item.reply.startsWith('{')?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
        <Markdown skipHtml remarkPlugins={[remarkGfm]}>{item.reply}</Markdown>)}
       {item.receipt&&<details><summary>Provider 回执</summary><dl>
        <dt>请求模型 / 强度</dt><dd>{item.receipt.requested_model||'原生默认'} / {item.receipt.requested_effort||'原生默认'}</dd>
@@ -258,6 +268,12 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
       </dl></details>}
       {item.reply_truncated&&<p className="field-note">回复显示已按字节预算截取。</p>}
       {item.reason&&<p role="status">{item.reason}</p>}
+      {item.execution_failure?.reason&&item.execution_failure.reason!==item.reason&&<p>{item.execution_failure.reason}</p>}
+      {item.execution_failure?.action&&<p>{item.execution_failure.action}</p>}
+      <details><summary>本次请求记录</summary><p>请求 ID <code>{item.intent}</code></p>
+       <p>发送状态 {labels[item.state]||item.state}</p>
+       {item.execution_failure?.process?.exit!=null&&<p>进程退出码 {item.execution_failure.process.exit}</p>}
+      </details>
       {item.prompt&&<details><summary>{item.state==='COMPLETED'?'核验回执对应的可见输入':'本次确认的可见输入'}</summary><pre>{item.prompt}</pre>
        <small>SHA-256 <code>{item.prompt_sha256}</code></small></details>}
      </article>)}
@@ -272,32 +288,55 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     {turn?.proposal&&<section className="assistant-proposal" aria-label="画布提案">
      <h3>画布提案</h3><p>{turn.proposal.summary}</p>
      {turn.proposal.check?<NativeProposal value={turn.proposal}/>:<ProposalDiff before={turn.proposal.before} after={turn.proposal.after}/>}
-     <details><summary>展开变更前后内容</summary><pre>{JSON.stringify({before:turn.proposal.before,after:turn.proposal.after},null,2)}</pre></details>
      <button className="primary" disabled={!draft||busy} onClick={()=>perform(async()=>{
       const sha=turn.proposal.sha256;
       await onApply({workspace:workspace.id,conversation,turn:turn.id,draft,...(sha?{preview_sha256:sha}:{})});
       if(sha)await read();
       if(alive.current)setNotice(sha?'已应用并保存。可以从画布撤销，再保存恢复后的版本。':'已应用到当前草稿，可以撤销。')
      })}>{turn.proposal.sha256?'应用并保存草稿':'应用到画布草稿'}</button>
+     <details><summary>展开变更前后内容</summary><pre>{JSON.stringify({before:turn.proposal.before,after:turn.proposal.after},null,2)}</pre></details>
     </section>}
     {matching&&<section className="assistant-preview" aria-label="本次发送预览">
      <h3>{preview.payload.mode==='probe'?'真实推理测试':'发送预览'}</h3>
-     <p>将经本机 {providerNames[preview.payload.provider]} 使用已配置的服务。{preview.payload.mode==='probe'?'测试可能计费。':''}</p>
-     {preview.context.config&&<p>{preview.context.config.native_profile||'默认 HOME'} · {preview.context.config.requested_model||'原生默认模型'} · {preview.context.config.requested_effort||'原生默认强度'}</p>}
-     <p>附加草稿 {preview.context.draft?'1':'0'}、文件 {preview.context.files.length}、运行 {preview.context.run?'1':'0'}、已核验历史 {preview.context.previous_turns} 轮。</p>
-     {preview.context.inventory&&<p>已附加 {preview.context.inventory.agents} 个 Agent、{preview.context.inventory.workflows} 个工作流的概览。</p>}
-     {preview.context.files.length>0&&<ul>{preview.context.files.map(file=><li key={file.path}>
-      {file.path}:{file.start_line}–{file.end_line}{file.truncated?' · 节选':''}</li>)}</ul>}
-     <details open><summary>本次发送的可见内容</summary><pre>{preview.prompt}</pre></details>
+     <dl className="assistant-send-summary">
+      <dt>我的问题</dt><dd>{preview.payload.text}</dd>
+      <dt>接收方</dt><dd>{providerNames[preview.payload.provider]} ·
+       {' '+(preview.context.config?.requested_model||'原生默认模型')}
+       {preview.payload.mode==='probe'&&' · 测试可能计费'}</dd>
+      <dt>附带内容</dt><dd>{preview.context.draft?'当前草稿 · ':''}
+       {preview.context.run?'运行证据 · ':''}{preview.context.files.length} 个文件
+       {preview.context.previous_turns>0&&' · '+preview.context.previous_turns+' 轮历史'}
+       {preview.context.files.length>0&&<ul>{preview.context.files.map(file=><li key={file.path}>{file.path}</li>)}</ul>}</dd>
+     </dl>
      <button className="primary" disabled={busy||!!pending} onClick={()=>perform(send)}>确认发送</button>
+     <details><summary>本次发送的可见内容</summary><pre>{preview.prompt}</pre></details>
      <button disabled={busy} onClick={()=>setPreview(null)}>关闭发送预览</button>
     </section>}
    </div>
    <section className="assistant-composer" aria-label="助手发送">
-    {pending&&<button disabled={busy} onClick={()=>perform(verifyPending)}>核对本次发送</button>}
-    {pending&&<p className="field-note">正在核对原意图。查询不会再次发送。</p>}
-    {pending&&retry&&<button disabled={busy} onClick={()=>perform(()=>submit(pending))}>重新提交原意图</button>}
-    {unknown&&<p className="field-note">本对话的发送结果待核验。可以另开对话。</p>}
+    {pending&&<div>
+     <p role="status">正在核对原请求 · <code>{pending.intent}</code></p>
+     {pending.text&&<details><summary>查看原始输入</summary><p>{pending.text}</p></details>}
+     <button type="button" disabled={busy} onClick={()=>perform(verifyPending)}>核对本次发送</button>
+    </div>}
+    {unknown&&<div>
+     <p className="field-note">本次请求待核验。可检查账号、查询同一请求，或另开对话。</p>
+     <button type="button" disabled={busy} onClick={()=>perform(async()=>{
+      const result=await read();
+      const receipt=result?.turns?.find(item=>item.intent===turn.intent);
+      if(receipt)setNotice('请求 '+receipt.intent+' · '+(labels[receipt.state]||receipt.state));
+     })}>查询发送回执</button>
+     <button type="button" disabled={busy} onClick={()=>setView('settings')}>检查账号与模型</button>
+    </div>}
+    {turn?.retry_available&&!running&&!pending&&<button type="button" disabled={busy}
+     onClick={()=>{
+      setText(turn.text);setPreview(null);
+      if(turn.mode!=='probe')setMode(turn.mode);
+      setAttachDraft(Boolean(turn.context.draft));
+      onFiles(turn.context.files.map(file=>({path:file.path,start:file.start_line})));
+      onRun(turn.context.run?.id||null);
+      setNotice('已恢复原请求和附件选择。核对账号与当前内容后预览并确认。');
+     }}>恢复原请求以重试</button>}
     <div className="assistant-selects">
      {legacy?<label>Provider<select aria-label="助手 Provider" value={legacyProvider} disabled={busy||running} onChange={event=>setLegacyProvider(event.target.value)}>
       {providers.map(key=><option key={key} value={key}>{providerNames[key]}</option>)}

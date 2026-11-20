@@ -37,7 +37,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
 CONTROL_KINDS = ('condition', 'router')
-COMPILER_VERSION = 13
+COMPILER_VERSION = 14
 
 
 def canonical(value):
@@ -112,6 +112,36 @@ def document_agents(document):
             yield from document_agents(body)
 
 
+AGENT_RECORD = 'agent-config'
+AGENT_HISTORY = 'agent-config-version'
+
+
+def agent_record(db, agent_id, revision, *, allow_history=True):
+    row = db.execute('SELECT data FROM records WHERE kind=? AND id=?', (AGENT_RECORD, agent_id)).fetchone()
+    if not row:
+        return None
+    current = json.loads(row[0])
+    if current['revision'] == revision:
+        return current
+    if allow_history:
+        row = db.execute('SELECT data FROM records WHERE kind=? AND id=?',
+                         (AGENT_HISTORY, agent_id + ':' + revision)).fetchone()
+        if row:
+            previous = json.loads(row[0])
+            if (previous['id'], previous['revision'], previous['workspace']) == (
+                    agent_id, revision, current['workspace']) and previous['config'].get('execution') == 'native-cli':
+                return previous
+    return None
+
+
+def reference_key(node):
+    return node.get('agent_id'), node.get('agent_revision')
+
+
+def bound_record(records, node):
+    return records.get(reference_key(node), records.get(node.get('agent_id'), {}))
+
+
 def read_saved(database, workspace, draft_id, *, expected_revision=None):
     """One SQLite read transaction; never starts services or writes product data."""
     database = Path(database).resolve(strict=True)
@@ -140,10 +170,11 @@ def read_saved(database, workspace, draft_id, *, expected_revision=None):
         agents = {}
         for node in document_agents(graph):
             if 'agent_id' in node:
-                row = record('agent-config', node['agent_id'])
-                if row.get('workspace') != workspace:
-                    raise ExportError('Agent belongs to another workspace.')
-                agents[node['agent_id']] = row
+                key = reference_key(node)
+                row = agent_record(db, *key)
+                if not row or row.get('workspace') != workspace:
+                    raise ExportError(node['id'] + ': missing or stale saved Agent revision.')
+                agents[key] = row
         return graph, agents, space['path']
 
 
@@ -299,10 +330,10 @@ def workflow_paths(document):
     return name, prefix, control, branches, incoming
 
 
-def compile_agent(node, records, root, transfer, producer):
+def compile_agent(node, records, root, transfer, producer, *, preview=False):
     ident = node['id']
     if 'agent_id' in node:
-        row = records.get(node['agent_id'])
+        row = bound_record(records, node)
         if not row or row.get('id') != node['agent_id'] or row.get('revision') != node.get('agent_revision'):
             raise ExportError(ident + ': missing or stale saved Agent revision.')
         config = row['config']
@@ -360,7 +391,7 @@ def compile_agent(node, records, root, transfer, producer):
             raise ExportError(ident + ': ' + str(error)) from None
         if any(not (Path(root) / path).is_relative_to(root / relative) for path in spec['allowed_paths']):
             raise ExportError(ident + ': declared artifacts must be inside the producing Agent directory.')
-        if spec['kind'] == 'review':
+        if spec['kind'] == 'review' and not preview:
             upstream = producer.get('native_output', {})
             if not upstream.get('allowed_paths') or transfer.get('mode') == 'none':
                 raise ExportError(ident + ': review requires a handoff from a structured producer with declared artifacts.')

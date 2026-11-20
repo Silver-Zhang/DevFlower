@@ -11,6 +11,35 @@ function EvidenceText({label,value}) {
 const loopStates={NOT_STARTED:'未开始',STARTING:'准备调用',RUNNING:'运行中',VERIFYING:'核验中',
  COMPLETED:'已完成',PASSED:'通过',FAILED:'失败',INVALID:'候选已变化',SKIPPED:'未执行',CANCELLED:'已取消',UNKNOWN:'待核验'};
 const loopDecisions={LOOP_CONTINUED:'继续返工',LOOP_ACCEPTED:'接受',LOOP_LIMIT_REACHED:'达到迭代上限'};
+const failureHelp={
+ WORKSPACE_TRUST:['目录未受信任','在原生 CLI 中核对项目目录的信任设置，然后重新运行。'],
+ HTTP_401:['账号请求返回 HTTP 401','在对应原生 CLI 中重新核对账号登录与服务访问权限。'],
+ AUTHENTICATION:['原生 CLI 登录或认证失败','在对应的原生 CLI 中检查登录与账号访问权限。'],
+ WORKING_DIRECTORY:['工作目录不可用','核对节点的工作目录，选择当前项目中存在的目录。'],
+ MISSING_CLI:['未找到原生 CLI','安装相应 CLI，并确认本机服务可以在 PATH 中找到它。'],
+ TIMEOUT:['达到等待上限','核对原日志和本机状态，需要时调整节点超时后重新运行。'],
+ PROCESS_START:['本机进程启动失败','核对程序和工作目录是否存在，并检查执行权限。'],
+ PROCESS_IO:['无法核验进程结果','查看原始日志后核对进程结果。'],
+ AGENT_EXIT:['原生 CLI 执行失败','打开原始日志查看 CLI 给出的退出原因。'],
+ CANCELLED:['已取消本机执行','保留原运行。查看本机日志核对已执行的步骤。'],
+};
+const eventLabels={RUN_STARTED:'开始运行',SERIES_WORKSPACE:'绑定工作目录',SERIES_CONTINUED:'继承前轮成果',
+ CALL_INTENT:'准备调用',PROCESS_STARTED:'进程已启动',PROCESS_EXITED:'进程已退出',NODE_COMPLETED:'节点已交付',
+ RUN_COMPLETED:'运行已完成',RUN_CHECK_FAILED:'检查失败',RUN_STOPPED:'执行已停止',CANCELLED:'取消本机执行',
+ CLI_FAILED:'CLI 执行失败',OUTPUT_CONTRACT_FAILED:'输出核验失败',PREFLIGHT_FAILED:'预检失败',
+ NOT_SENT:'启动失败',UNKNOWN:'调用结果待核验',ROUTER_EVALUATED:'选定路由分支',
+ CONDITION_EVALUATED:'判定条件',LOOP_ITERATION_STARTED:'开始循环轮次',LOOP_ITERATION_COMPLETED:'循环轮次结束',
+ LOOP_CONTINUED:'进入返工',LOOP_ACCEPTED:'审核通过',LOOP_LIMIT_REACHED:'达到迭代上限',
+ VALIDATION_COMPLETED:'验证命令已结束',VALIDATION_INVALID:'候选核验失败',CANDIDATE_WORKSPACE:'绑定候选目录'};
+function LogEvent({event,name}){
+ const date=new Date(event.at);
+ return <li><details><summary><time dateTime={event.at}>{Number.isNaN(date.valueOf())?'时间未知':date.toLocaleString()}</time>
+  {' · '+(eventLabels[event.kind]||'运行事件')}{name?' · '+name:''}
+  {Number.isInteger(event.returncode)?' · 退出码 '+event.returncode:''}</summary>
+  <p><code>{event.at}</code> · <code>{event.kind}</code>{event.node&&' · '+event.node}</p>
+  {event.reason&&<p>{event.reason}</p>}
+ </details></li>;
+}
 function roundActors(round){
  const actors=Object.entries(round.agents);
  if(round.validation)actors.splice(1,0,[round.validation.node,round.validation]);
@@ -67,14 +96,16 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
  const nameOf=id=>script.document.nodes.find(item=>item.id===id)?.name||id;
  const roundName=id=>body?.nodes.find(item=>item.id===id)?.name||id;
  const eventName=event=>event.iteration&&event.node?'第 '+event.iteration+' 轮 · '+roundName(event.node):
-  nameOf(event.node||event.loop_node);
- const terminal=events.findLast(event=>['RUN_COMPLETED','RUN_STOPPED'].includes(event.kind));
+  nameOf(event.node||event.failed_node||event.loop_node);
+ const terminal=events.findLast(event=>['RUN_COMPLETED','RUN_CHECK_FAILED','RUN_STOPPED'].includes(event.kind));
  const lastProcess=events.findLast(event=>['PROCESS_STARTED','PROCESS_EXITED','CANCELLED','UNKNOWN','NOT_SENT'].includes(event.kind));
  const live=trusted&&script.active&&['RUNNING','CANCEL_REQUESTED'].includes(state)&&!terminal;
  const current=live&&lastProcess?.kind==='PROCESS_STARTED'?eventName(lastProcess):'';
- const failed=trusted&&state==='STOPPED'&&events.findLast(event=>[
-  'CLI_FAILED','OUTPUT_CONTRACT_FAILED','NOT_SENT','UNKNOWN','VALIDATION_INVALID','CONDITION_REJECTED','ROUTER_REJECTED','LOOP_LIMIT_REACHED',
+ const failed=trusted&&['STOPPED','CANCELLED'].includes(state)&&events.findLast(event=>[
+  'CANCELLED','CLI_FAILED','OUTPUT_CONTRACT_FAILED','NOT_SENT','PREFLIGHT_FAILED','UNKNOWN','VALIDATION_INVALID','CONDITION_REJECTED','ROUTER_REJECTED','LOOP_LIMIT_REACHED',
  ].includes(event.kind));
+ const assistance=failed&&failureHelp[failed.failure_kind||failed.kind];
+ const failedNode=failed?.node&&(failed.iteration?failed.iteration+'/':'')+failed?.node;
  const startedAt=Date.parse(events[0]?.at);
  const spent=trusted&&!['RECOVERY_REQUIRED','UNKNOWN'].includes(state)?
   durationBetween(startedAt,live?Date.now():Date.parse((terminal||events.at(-1))?.at)):'';
@@ -124,7 +155,20 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
     {spent&&<span>{terminal?'总耗时':'已用时'} <strong>{spent}</strong></span>}
     {current&&<span>正在执行 <strong>{current}</strong></span>}
    </div>
-   {trusted&&script.reason&&<p className="error-text">{failed&&(failed.node||failed.loop_node)?eventName(failed)+' · ':''}{script.reason}</p>}
+   {trusted&&assistance&&<div className="error-text">
+    <p><strong>{eventName(failed)} · {assistance[0]}</strong>{Number.isInteger(failed.returncode)&&' · 退出码 '+failed.returncode}</p>
+    <p>{assistance[1]}</p>
+    {failedNode&&<button type="button" onClick={()=>inspectChoice(failedNode)}>查看原始日志</button>}
+   </div>}
+   {trusted&&script.reason&&<details open={!assistance}><summary>本次运行的原始原因</summary>
+    <p className="error-text">{failed&&(failed.node||failed.loop_node)?eventName(failed)+' · ':''}{script.reason}</p>
+   </details>}
+   {trusted&&state==='CHECK_FAILED'&&<div className="error-text">
+    <p>执行结束，{script.failed_checks.length} 项检查失败。修复后重新运行才能继续下一轮。</p>
+    <ul>{script.failed_checks.map(check=><li key={check.node}>
+     <button type="button" onClick={()=>inspectChoice(check.node)}>{nameOf(check.node)}</button> · 退出码 {check.returncode}
+    </li>)}</ul>
+   </div>}
    {!trusted&&<p className="field-note">下方是上次读取的证据。</p>}
   </section>
   {error&&<p className="error-text" role="alert">{error}</p>}
@@ -159,16 +203,15 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
    <details><summary>调用与错误记录</summary>
     {tool&&command&&<pre aria-label="实际命令与工作目录">{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
     {!tool&&command&&<pre>{JSON.stringify({argv:command.argv,cwd:command.cwd},null,2)}</pre>}
-    {facts.length>0&&<ol>{facts.map((event,index)=><li key={index}>
-     {event.at} · {event.kind}{event.reason?' · '+event.reason:''}
-    </li>)}</ol>}
+    {facts.length>0&&<ol>{facts.map((event,index)=><LogEvent key={index} event={event} name={eventName(event)}/>)}</ol>}
     <EvidenceText label={tool?(iteration?'验证 stdout':'命令 stdout'):'原生 CLI stdout'} value={shown?.stdout}/>
     <EvidenceText label={tool?(iteration?'验证 stderr':'命令 stderr'):'原生 CLI stderr'} value={shown?.stderr}/>
    </details>
    {!command&&<p>{skipped.includes(node)?(tool?'此命令所在分支未选中。':'此 Agent 所在分支未选中。'):
     tool?'尚无命令调用记录。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div className="script-evidence-detail">
-   {trusted&&state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:
+   {trusted&&['COMPLETED','CHECK_FAILED'].includes(state)?<EvidenceText
+    label={state==='CHECK_FAILED'?'执行结束时的结果（含失败检查）':'工作流最终回答'} value={shown?.result}/>:
     <>
      <p>尚无已核验的最终结果。</p>
      {trusted&&script.historical_completion&&<details><summary>查看已核验的历史结果</summary>
@@ -227,11 +270,8 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
     {nameOf(review.node)} · {review.verdict==='accept'?'接受':'需要返工'}
     {state!=='COMPLETED'||script.candidate_current===false?'（历史审核记录）':''} · <code>{review.candidate_sha256}</code>
    </p>)}
-   {events.length>0&&<details><summary>运行日志</summary><ol>{events.map((event,index)=><li key={index}>
-    {event.at} · {event.kind}{event.node?' · '+event.node:''}
-    {event.iteration?' · 第 '+event.iteration+' 轮':''}
-    {typeof event.returncode==='number'?' · 退出码 '+event.returncode:''}
-   </li>)}</ol></details>}
+   {events.length>0&&<details><summary>运行日志</summary><ol>{events.map((event,index)=>
+    <LogEvent key={index} event={event} name={eventName(event)}/>)}</ol></details>}
   </div>}
   <details className="script-artifact"><summary>脚本与配置版本</summary><pre>{JSON.stringify({
    filename:script.artifact.filename,sha256:script.artifact.sha256,draft_revision:run.draft_revision,agents:script.agents,

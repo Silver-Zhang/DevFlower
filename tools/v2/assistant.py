@@ -194,6 +194,8 @@ class Assistant:
             value['config'] = self.inspector.clean(row['config'])
         if operation.get('execution_failure'):
             value['execution_failure'] = self.inspector.clean(operation['execution_failure'])
+        if operation['state'] == 'NOT_SENT':
+            value['retry_available'] = True
         if with_proposal:
             value['prompt'] = self.inspector.text(row['prompt'])
         if operation['state'] == 'COMPLETED':
@@ -658,10 +660,10 @@ class Assistant:
                 operations.send_bound(value['binding'], row['native_intent'], value['prompt'], request_sha)
             else:
                 operations.send(payload)
-        except (Blocked, Invalid, Conflict, SessionRefused):
+        except (Blocked, Invalid, Conflict, SessionRefused) as error:
             if operations.operation(workspace, row['native_intent'])['state'] == 'UNREGISTERED':
                 row = self.store.db.change(TURN,key,dict(dispatch_state='NOT_SENT',
-                    reason='原生发送未登记。请检查选中的 Provider、模型目录和本机配置。'))
+                    reason='原生发送未登记。' + self.inspector.text(str(error))))
         except (OSError, sqlite3.Error, RuntimeError):
             row = self.store.db.change(TURN,key,dict(dispatch_state='RECOVERY_REQUIRED',
                 reason='发送状态待核验。已保留本次记录，未重发。'))

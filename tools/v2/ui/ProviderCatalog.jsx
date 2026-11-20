@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {X} from 'lucide-react';
+import {providerNames} from './AssistantModelSettings.jsx';
 
 const PATH = '/api/v2/provider-catalog/copilot';
 const UNAVAILABLE = 'Copilot 模型目录暂不可用，请核对配置';
@@ -13,7 +14,8 @@ function asStale(value, error) {
   availability:'unavailable', error};
 }
 
-export function ProviderCatalog({token, isCurrent, onClose}) {
+export function ProviderCatalog({token, isCurrent, onClose,api,workspace,onAssistant,onAgent}) {
+ const [native,setNative]=useState(null),[nativeError,setNativeError]=useState('');
  const [result, setResult] = useState(null);
  const [waiting, setWaiting] = useState(true);
  const operation = useRef(null);
@@ -48,6 +50,14 @@ export function ProviderCatalog({token, isCurrent, onClose}) {
   }
  }
 
+ useEffect(()=>{
+  if(!workspace)return;
+  let active=true;
+  api('assistant/settings?'+new URLSearchParams({workspace:workspace.id})).then(value=>{
+   if(active&&isCurrent())setNative(value.providers||[]);
+  }).catch(failure=>{if(active&&isCurrent())setNativeError(failure.message)});
+  return()=>{active=false};
+ },[workspace?.id]);
  useEffect(() => {
   closeButton.current?.focus();
   read();
@@ -71,6 +81,20 @@ export function ProviderCatalog({token, isCurrent, onClose}) {
    <button ref={closeButton} aria-label="关闭 Provider 模型目录" onClick={onClose}><X size={17}/></button>
   </header>
   <div className="provider-catalog-content">
+   {workspace&&<section aria-label="原生 CLI 模型目录">
+    <h3>原生 CLI</h3>
+    <p className="field-note">工作流 Agent 使用各自配置的原生 CLI。助手有独立的模型与账号设置。</p>
+    {nativeError&&<p className="error-text">{nativeError}</p>}
+    {!native&&!nativeError&&<p role="status">正在查询原生目录…</p>}
+    {native?.map(row=><details key={row.provider}>
+     <summary>{providerNames[row.provider]} · {row.stale?'目录待刷新':'目录已读取'} ·
+      {' '+(row.authenticated===true?'认证已报告':row.authenticated===false?'未报告登录':'认证待核验')}</summary>
+     {row.error&&<p className="field-note">{row.error}</p>}
+     <ul>{row.models?.map(model=><li key={model.id}><code>{model.id}</code>{model.source&&' · '+model.source}</li>)}</ul>
+    </details>)}
+    <button type="button" onClick={onAssistant}>助手模型与账号</button>
+    <button type="button" onClick={onAgent}>工作流 Agent 配置</button>
+   </section>}
    <h3>GitHub Copilot</h3>
    <dl>
     <dt>配置</dt><dd>{AVAILABILITY.get(result?.availability) || '正在读取'}</dd>

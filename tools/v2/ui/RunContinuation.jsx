@@ -2,30 +2,48 @@ import React,{useEffect,useState} from 'react';
 import {ArrowRight,GitBranch,X} from 'lucide-react';
 
 const deliveryLabels={result:'最终结果',structured:'结构化交付',artifact:'冻结文件'};
-const configureLabel=(row)=>row?[row.provider,row.profile_revision?.slice(0,8)].filter(Boolean).join(' · '):'—';
+const fieldLabels={name:'名称',task_prompt:'节点任务',provider:'Provider',model:'模型',effort:'推理强度',
+ role:'角色',round_prompt:'长期指令',output_prompt:'交付要求',agent_revision:'配置版本',
+ native_output:'结构化输出',source:'来源节点',source_port:'来源端口',target:'目标节点',
+ target_port:'目标端口',transfer:'交接设置',argv:'命令参数',cwd:'工作目录',timeout:'超时',
+ expression:'条件',rules:'路由规则',exit_condition:'退出条件',max_iterations:'轮数上限',body:'循环子流程'};
+const describe=value=>value==null?'—':typeof value==='string'?value:JSON.stringify(value,null,2);
+
+function FieldDifference({field,before,after}){
+ const fields=field==='config'?new Set([...Object.keys(before||{}),...Object.keys(after||{})]):null;
+ if(fields)return [...fields].filter(key=>describe(before?.[key])!==describe(after?.[key])).map(key=>
+  <FieldDifference key={key} field={key} before={before?.[key]} after={after?.[key]}/>);
+ return <dl className="version-field"><dt>{fieldLabels[field]||field}</dt>
+  <dd><small>前轮</small><pre>{describe(before)}</pre></dd>
+  <dd><small>当前</small><pre>{describe(after)}</pre></dd></dl>;
+}
 
 function VersionDetails({data}){
- const previous=data.previous_version;
- const current=data.current;
+ const previous=data.previous_version,current=data.current;
  const changes=[];
- for(const [label,old,next] of [['',previous.agents,current.agents],['Loop / ',previous.loop_agents,current.loop_agents]]){
-  for(const node of new Set([...Object.keys(old),...Object.keys(next)])){
-   const before=old[node],after=next[node];
-   if(before?.profile_id!==after?.id||before?.profile_revision!==after?.revision||before?.provider!==after?.provider)
-    changes.push([label+node,configureLabel(before),configureLabel(after&&{...after,profile_revision:after.revision})]);
+ for(const [frozen,prior,next] of [[previous.agents,data.previous_agents,current.agents],
+  [previous.loop_agents,data.previous_loop_agents,current.loop_agents]]){
+  for(const node of new Set([...Object.keys(frozen),...Object.keys(next)])){
+   const old=frozen[node],stored=prior?.[node],after=next[node];
+   const before=old?{...old,...stored,agent_revision:old.profile_revision}:null;
+   const fields=['provider','model','effort','agent_revision','role','round_prompt','output_prompt','cwd']
+    .filter(key=>(!old||!after||Object.hasOwn(before,key))&&describe(before?.[key])!==describe(
+     key==='agent_revision'?after?.revision:after?.[key]));
+   if(fields.length)changes.push({node,fields,before,after});
   }
  }
  return <details className="continuation-versions"><summary>查看两个版本的差异</summary>
-  <dl><dt>前轮 · {previous.name}</dt><dd><code>{data.previous_revision}</code></dd>
+  {data.changes?.map((change,index)=><section key={index}><h3>
+   {change.kind==='nodes'?'节点':'连线'} · {change.name} · {({added:'新增',removed:'移除',updated:'更新'})[change.change]}</h3>
+   {change.fields.map(field=><FieldDifference key={field.key} field={field.key} before={field.before} after={field.after}/>)}
+  </section>)}
+  {changes.map(({node,fields,before,after},index)=><section key={index}><h3>Agent 配置 · {node}</h3>
+   {fields.map(field=><FieldDifference key={field} field={field} before={before?.[field]}
+    after={field==='agent_revision'?after?.revision:after?.[field]}/>)}
+  </section>)}
+  <details><summary>版本核验摘要</summary><dl><dt>前轮 · {previous.name}</dt><dd><code>{data.previous_revision}</code></dd>
    <dd><code>{data.previous_hash}</code></dd>
-   <dt>当前 · {current.name}</dt><dd><code>{current.revision}</code></dd><dd><code>{current.sha256}</code></dd></dl>
-  {previous.source_sha256!==current.revision&&<p>工作流定义的保存版本有变化。</p>}
-  {data.changes?.length>0&&<ul>{data.changes.map((change,index)=><li key={index}>
-   {change.kind==='nodes'?'节点':'连线'} · {change.name} · {({added:'新增',removed:'移除',updated:'更新'})[change.change]}
-  </li>)}</ul>}
-  {changes.length>0&&<ul>{changes.map(([node,before,after])=><li key={node}>
-   {node} · {before} → {after}
-  </li>)}</ul>}
+   <dt>当前 · {current.name}</dt><dd><code>{current.revision}</code></dd><dd><code>{current.sha256}</code></dd></dl></details>
  </details>;
 }
 
