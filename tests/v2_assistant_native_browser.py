@@ -54,6 +54,10 @@ def main():
                      config=dict(profile='ClaudeReview',task_prompt='CHECK_BROWSER_TASK')),
                 dict(op='remove-edge',id='Handoff'),node('Version','tool',dict(tool='command',argv=['python3','-V'])),
                 connect('ToTool','First','Version'),connect('ToReview','Version','Second')])
+        elif text == '把工作流重命名为研究核验 P59，保持节点与连线。':
+            reply = dict(name='研究核验 P59', operations=[])
+        elif text.startswith('请按当前画布核对并纠正上一条提案。'):
+            reply = dict(summary='只重命名工作流', name='研究核验 P59', operations=[])
         elif text == '恢复明确未发送的请求':
             if calls.count(text) == 1:
                 raise Invalid('验收夹具：本机认证预检拒绝。')
@@ -76,7 +80,7 @@ def main():
                           draft_count=len(store.drafts(workspace)), managed_run_count=len(store.db.list('run')),
                           native_run_count=len(store.db.list('script-run')))
             print(json.dumps(status))
-            return int(bool(result.returncode or len(calls)!=4 or status['draft_count']!=2 or
+            return int(bool(result.returncode or len(calls)!=6 or status['draft_count']!=2 or
                             status['managed_run_count'] or status['native_run_count']))
         finally:
             server.shutdown()

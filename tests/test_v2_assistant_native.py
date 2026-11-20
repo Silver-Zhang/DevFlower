@@ -51,7 +51,7 @@ class NativeAssistantTests(unittest.TestCase):
         self.factory = Mock(side_effect=AssertionError('native path initialized managed runtime'))
         self.assistant = Assistant(self.store, None, None, runtime_factory=self.factory)
         self.document = dict(version=1, name='Native fixture', nodes=[], edges=[])
-        self.turn = dict(id='a'*64, workspace=self.workspace, base=self.assistant.draft(
+        self.turn = dict(id='a'*64, workspace=self.workspace, text='Keep the requested changes', base=self.assistant.draft(
             self.workspace, dict(id=None, revision=None, document=self.document)), native_profiles=[])
 
     def preview(self, operations, profiles=(), turn=None):
@@ -121,22 +121,82 @@ class NativeAssistantTests(unittest.TestCase):
         saved = self.confirm(reply, proof, accept_design_only=True)
         self.assertEqual(len(saved['draft']['graph']['nodes']), 2)
 
+    def test_proposal_envelope_identifies_invalid_fields(self):
+        proposed = dict(name='研究核验 P59', operations=[])
+        cases = (
+            (proposed, r'缺少必填字段.*summary'),
+            (dict(proposed, summary=['说明']), r'summary.*字符串'),
+            (dict(proposed, summary='改' * 1001), r'summary.*1000'),
+            (dict(proposed, summary='重命名', settings={}), r'不支持的字段.*settings'),
+            (dict(name=proposed['name'], summary='重命名'), r'缺少必填字段.*operations'),
+            (dict(proposed, summary='重命名', operations={}), r'operations.*数组'),
+        )
+        for payload, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(Invalid, message):
+                stage(self.assistant, self.turn, json.dumps(payload))
+        self.assertEqual(self.store.drafts(self.workspace), [])
+
+    def test_rename_correction_preserves_saved_identity_and_rejects_wider_changes(self):
+        reply, initial = self.preview(self.chain(), [profile('Shared')])
+        self.confirm(reply, initial)
+        saved, = self.store.drafts(self.workspace)
+        turn = dict(self.turn, id='b' * 64, text='把工作流重命名为研究核验 P59，保持节点与连线。',
+                    base=self.assistant.draft(self.workspace, dict(
+                        id=saved['id'], revision=saved['revision'], document=saved['graph'])))
+        proposed = dict(name='研究核验 P59', operations=[])
+        raw = '```json\n' + json.dumps(proposed, ensure_ascii=False) + '\n```'
+        lock, proof = correction(self.assistant, turn, raw)
+        self.assertEqual(proof['original_reply'], raw)
+        self.assertEqual(proof['original_request'], turn['text'])
+        self.assertTrue(lock['rename_only'])
+        corrected = dict(turn, correction_lock=lock)
+        valid = dict(proposed, summary='仅重命名')
+        injections = (dict(valid, name='Other'), dict(answer='已完成'),
+                      dict(valid, operations=[dict(op='update-node', id='A', name='Unrelated')]),
+                      dict(valid, profiles=[profile('Other')]), dict(valid, execution='native-cli'))
+        for payload in injections:
+            with self.subTest(payload=payload), self.assertRaises(Invalid):
+                stage(self.assistant, corrected, json.dumps(payload))
+        retry_lock, _ = correction(self.assistant, corrected, json.dumps(injections[2]))
+        self.assertEqual(retry_lock, lock)
+        reply = json.dumps(valid)
+        preview = stage(self.assistant, corrected, reply)
+        expected = dict(saved['graph'], name=proposed['name'])
+        self.assertEqual(preview['after'], expected)
+        self.assertTrue(preview['check']['execution_available'])
+        self.assertEqual(self.store.draft(self.workspace, saved['id']), saved)
+        updated = self.confirm(reply, preview, turn=corrected)['draft']
+        self.assertEqual(updated['id'], saved['id'])
+        self.assertNotEqual(updated['revision'], saved['revision'])
+        self.assertEqual(updated['graph'], expected)
+        self.assertEqual(self.store.draft(self.workspace, saved['id']), updated)
+        self.assertEqual(len(self.assistant.agents.list(self.workspace)['agents']), 1)
+
+    def test_rename_does_not_add_execution_settings_to_an_existing_draft(self):
+        reply = json.dumps(dict(name='Renamed', operations=[], summary='Rename only'))
+        proof = stage(self.assistant, self.turn, reply)
+        self.assertEqual(proof['after'], dict(self.document, name='Renamed'))
+
     def test_directed_correction_keeps_independent_operations_after_a_bad_one(self):
         long_task = '保留的精确任务。' * 400
-        first = node('First', 'agent', dict(task_prompt=long_task))
+        shared = profile('Shared')
+        first = node('First', 'agent', dict(profile='Shared', task_prompt=long_task))
         missing = dict(op='remove-node', id='Missing')
         last = node('Last', 'agent', dict(task_prompt='Independent exact task'))
-        reply = json.dumps(dict(summary='Fix only the broken operation', operations=[first, missing, last]),
-                           ensure_ascii=False)
+        reply = json.dumps(dict(summary='Fix only the broken operation', operations=[first, missing, last],
+                                profiles=[shared]), ensure_ascii=False)
         self.assertGreater(len(reply), 2200)
         locked, proof = correction(self.assistant, self.turn, reply)
         self.assertEqual(locked['operations'], [first, last])
-        self.assertEqual(proof['original']['operations'][0]['config']['task_prompt'], long_task)
+        self.assertEqual(locked['profiles'], [shared])
+        self.assertEqual(proof['original_reply'], reply)
         self.assertEqual([item['index'] for item in proof['rejected']], [2])
         fixed = dict(self.turn, correction_lock=locked)
         with self.assertRaisesRegex(Invalid, '遗漏或改动'):
-            self.preview([first, node('Last', 'agent')], turn=fixed)
-        _, ready = self.preview([first, last], turn=fixed)
+            self.preview([first, node('Last', 'agent')], [shared], turn=fixed)
+        with self.assertRaisesRegex(Invalid, '改动了已核验操作所绑定的 Agent 配置'):
+            self.preview([first, last], [dict(shared, role='Changed role')], turn=fixed)
+        _, ready = self.preview([first, last], [shared], turn=fixed)
         self.assertEqual([item['id'] for item in ready['after']['nodes']], ['First', 'Last'])
         self.assertEqual(self.store.drafts(self.workspace), [])
 

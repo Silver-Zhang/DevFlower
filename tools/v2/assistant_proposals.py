@@ -113,17 +113,25 @@ def parse_envelope(reply):
     return result
 
 
-def _parse(reply, native=False):
-    result = parse_envelope(reply)
+def validate_proposal_envelope(result, *, native=False):
     required = {'summary', 'operations'}
-    fields(result, required | ({'profiles', 'name'} if native else set()), required)
-    if not isinstance(result['summary'], str) or not 0 < len(result['summary'].strip()) <= 1000:
-        raise Invalid('summary：请用一个简短字符串说明修改（最多 1000 字符）。')
-    text(result['summary'], 1000, 'summary')
+    if not isinstance(result, dict):
+        raise Invalid('助手提案必须是 JSON 对象。')
+    if missing := required - result.keys():
+        raise Invalid(f"助手提案缺少必填字段：{', '.join(sorted(missing))}。")
+    allowed = required | ({'profiles', 'name'} if native else set())
+    if unknown := result.keys() - allowed:
+        names = ', '.join(json.dumps(key[:80], ensure_ascii=False) for key in sorted(unknown)[:5])
+        raise Invalid(f'助手提案包含不支持的字段：{names}。')
+    if not isinstance(result['summary'], str):
+        raise Invalid('summary：必须是一个字符串。')
+    if not result['summary'].strip() or len(result['summary']) > 1000 or '\x00' in result['summary']:
+        raise Invalid('summary：请填写 1–1000 字符的简短说明，不能包含空字符。')
+    if not isinstance(result['operations'], list):
+        raise Invalid('operations：必须是有序修改数组。')
     minimum = 0 if native and 'name' in result and not result.get('profiles') else 1
-    if not isinstance(result['operations'], list) or not minimum <= len(result['operations']) <= MAX_OPERATIONS:
+    if not minimum <= len(result['operations']) <= MAX_OPERATIONS:
         raise Invalid(f'operations：请提供 {minimum}–20 条有序修改；仅改工作流名称时使用 name。')
-    return result
 
 
 def _has_approval(graph):
@@ -167,7 +175,8 @@ def _name(value):
 def proposal(base_document, reply_text, *, native_profiles=None):
     """Preserve the base and validate the final graph before presenting a diff."""
     native = native_profiles is not None
-    value = _parse(reply_text, native)
+    value = parse_envelope(reply_text)
+    validate_proposal_envelope(value, native=native)
     candidate = validate_draft(base_document)
     protected = _has_approval(candidate) or contains_development(candidate)
     if 'name' in value:

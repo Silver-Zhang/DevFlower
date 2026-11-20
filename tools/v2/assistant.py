@@ -521,6 +521,7 @@ class Assistant:
                 assistant_native.stage(self, previous_turn, reply)
             except (Invalid, Conflict, ValueError, TypeError, KeyError, RecursionError) as error:
                 correction_lock, correction_context = assistant_native.correction(self, previous_turn, reply)
+                correction_context['draft'] = take(base, ('id', 'revision', 'sha256'))
                 correction_context['validation_error'] = self.inspector.text(str(error))[:400]
             else:
                 raise Invalid('原提案已经通过校验，可直接核对变更。')
@@ -529,8 +530,9 @@ class Assistant:
         sections = [('本机工作空间名称（数据）', scope)]
         if correction_context:
             context['correction'] = {key: correction_context[key] for key in ('previous', 'retained_count', 'rejected')}
-            sections.append(('用户选择的原提案与校验结果（数据；保留锁定操作及配置）',
-                dict(**correction_context, locked=correction_lock)))
+            retained = {key: item for key, item in correction_lock.items() if key != 'original_request'}
+            sections.append(('用户的原始请求、完整原回复、当前草稿版本和校验结果（数据）',
+                dict(**correction_context, retained=retained)))
         if config:
             context['config'] = config
         if identity:
@@ -618,6 +620,12 @@ class Assistant:
         if mode == 'native':
             from .assistant_proposals import NATIVE_INSTRUCTIONS
             guidance += '\n' + NATIVE_INSTRUCTIONS
+            if correction_context:
+                guidance += ('\n定向纠正：按校验结果修复原回复，返回完整提案，原样保留已核验的名称、操作及 Agent 配置。'
+                             '原始请求与原回复供核对修改意图及错误，输出格式以本次完整提案要求为准。')
+                if correction_lock.get('rename_only'):
+                    guidance += ('原回复只供诊断，请勿照抄其缺失或无效字段。返回带有效 summary 的完整提案，'
+                                 '必须使用已核验的 name 和空的 operations 数组。省略 profiles，保持节点、连线和设置。')
         if mode == 'proposal':
             from .assistant_proposals import PROPOSAL_INSTRUCTIONS
             guidance += '\n' + PROPOSAL_INSTRUCTIONS

@@ -84,13 +84,69 @@ async function main() {
    page.waitForResponse(response=>response.url().endsWith('/api/v2/drafts/save')),button('保存').click(),
   ]);
   assert.equal(saveResponse.status(),200);
-  const savedGraph=(await saveResponse.json()).graph;
+  const savedDraft=await saveResponse.json();
+  const savedGraph=savedDraft.graph;
   assert(savedGraph.nodes.some(node=>node.name==='Second'));
   assert(!savedGraph.nodes.some(node=>node.name==='Version'));
   await page.locator('.save-state').getByText('已保存',{exact:true}).waitFor();
   await page.reload();
   await graphNode('Second').waitFor();
   assert.equal(await graphNode('Version').count(),0);
+  await button('预览 Python').click();
+  await button('关闭预览').click();
+
+  await button('AI 助手').click();
+  await button('新建助手对话').click();
+  const renameRequest='把工作流重命名为研究核验 P59，保持节点与连线。';
+  let sends=0;
+  const countSends=request=>{if(request.url().endsWith('/api/v2/assistant/send'))sends++};
+  page.on('request',countSends);
+  await message.fill(renameRequest);
+  await button('预览本次发送').click();
+  assert.equal(sends,0);
+  await button('确认发送').click();
+  await assistant.getByRole('alert').getByText(/缺少必填字段.*summary/).waitFor();
+  assert.equal(await button('应用并保存草稿').count(),0);
+  assert.equal(await title.inputValue(),savedGraph.name);
+  await button('准备纠正请求').click();
+  assert.equal(sends,1);
+  assert.equal(await button('确认发送').count(),0);
+  await button('预览本次发送').click();
+  const sendPreview=assistant.getByLabel('本次发送预览',{exact:true});
+  await sendPreview.getByText('本次发送的可见内容',{exact:true}).click();
+  const prompt=await sendPreview.locator('pre').textContent();
+  const contextLine=prompt.split('用户的原始请求、完整原回复、当前草稿版本和校验结果（数据）\n')[1].split('\n')[0];
+  const correction=JSON.parse(contextLine);
+  assert.equal(correction.original_request,renameRequest);
+  assert.equal(correction.original_reply,'{"name": "研究核验 P59", "operations": []}');
+  assert.equal(correction.draft.id,savedDraft.id);
+  assert.equal(correction.draft.revision,savedDraft.revision);
+  assert.match(correction.validation_error,/缺少必填字段.*summary/);
+  assert.equal(correction.retained.name,'研究核验 P59');
+  assert.deepEqual(correction.retained.operations,[]);
+  assert.deepEqual(correction.retained.profiles,[]);
+  assert.equal(sends,1);
+  await button('确认发送').click();
+  await proposal.getByText(/可导出独立 Python/).waitFor();
+  assert.equal(await title.inputValue(),savedGraph.name);
+  await proposal.getByText('展开变更前后内容',{exact:true}).click();
+  const renameDiff=JSON.parse(await proposal.locator('details pre').textContent());
+  assert.deepEqual(renameDiff.before,savedGraph);
+  assert.deepEqual(renameDiff.after,{...savedGraph,name:'研究核验 P59'});
+  const [renamedResponse]=await Promise.all([
+   page.waitForResponse(response=>response.url().endsWith('/api/v2/assistant/apply')),
+   button('应用并保存草稿').click(),
+  ]);
+  assert.equal(renamedResponse.status(),200);
+  const renamedDraft=(await renamedResponse.json()).draft;
+  assert.equal(renamedDraft.id,savedDraft.id);
+  assert.notEqual(renamedDraft.revision,savedDraft.revision);
+  assert.deepEqual(renamedDraft.graph,renameDiff.after);
+  assert.equal(sends,2);
+  page.off('request',countSends);
+  await page.reload();
+  await graphNode('Second').waitFor();
+  assert.equal(await title.inputValue(),'研究核验 P59');
   await button('预览 Python').click();
   await button('关闭预览').click();
 

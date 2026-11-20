@@ -6,7 +6,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 
 from devflower_export import agent_record, document_agents
-from .assistant_proposals import parse_envelope, proposal
+from .assistant_proposals import MAX_OPERATIONS, parse_envelope, proposal, validate_proposal_envelope
 from .canvas_structure import ID, fields, node_kind, text
 from .designer_graph import document_nodes
 from .development_graph import configured_tool
@@ -42,10 +42,10 @@ def correction(assistant, previous, reply):
     """Retain independently valid operations and record every rejected index."""
     value = parse_envelope(reply)
     operations = value.get('operations') if isinstance(value, dict) else None
-    if not isinstance(operations, list) or len(operations) > 20:
+    if not isinstance(operations, list) or len(operations) > MAX_OPERATIONS:
         raise Invalid('原回执没有可核对的操作清单。请重新生成提案。')
-    if len(canonical(value)) > 15000:
-        raise Invalid('原提案超过定向纠正的完整保留预算。请拆分需求后重新生成，当前草稿仍可编辑。')
+    if len(reply.encode()) > 15000:
+        raise Invalid('原回复超过定向纠正可完整保留的 15,000 字节。请拆分需求后重新生成，当前草稿仍可编辑。')
     profiles = value.get('profiles', [])
     if not isinstance(profiles, list):
         profiles = []
@@ -66,13 +66,33 @@ def correction(assistant, previous, reply):
         else:
             retained = trial
             retained_profiles = used
-    return dict(operations=retained, profiles=retained_profiles), dict(
-        previous=previous['id'], original=value, retained_count=len(retained), rejected=rejected)
+    locked = dict(operations=retained, profiles=retained_profiles)
+    prior_lock = previous.get('correction_lock') or {}
+    original_request = prior_lock.get('original_request', previous['text'])
+    if prior_lock.get('rename_only'):
+        # A rejected correction cannot widen a previously verified rename.
+        locked = prior_lock
+    elif 'name' in value:
+        try:
+            stage(assistant, unlocked, canonical(dict(summary='校验可保留的名称',
+                                                     name=value['name'], operations=[])).decode())
+        except (Invalid, Conflict, UnicodeError):
+            pass
+        else:
+            locked['name'] = value['name']
+            if not operations and value.get('profiles', []) == []:
+                locked.update(rename_only=True, original_request=original_request)
+    return locked, dict(previous=previous['id'], original_request=original_request, original_reply=reply,
+                        retained_count=len(locked['operations']), rejected=rejected)
 
 
 def require_correction_lock(value, locked):
     if not locked:
         return
+    if 'name' in locked and (not isinstance(value, dict) or value.get('name') != locked['name']):
+        raise Invalid('纠正回复必须保留已核验的工作流名称（name）。')
+    if locked.get('rename_only') and (value.get('operations') != [] or value.get('profiles', []) != []):
+        raise Invalid('纠正范围仅限工作流重命名。请保留空的 operations，且不添加 profiles。')
     operations = value.get('operations') if isinstance(value, dict) else None
     profiles = value.get('profiles', []) if isinstance(value, dict) else []
     if not isinstance(operations, list) or not isinstance(profiles, list):
@@ -95,6 +115,7 @@ def stage(assistant, turn, reply):
     base = turn['base']
     if not base:
         raise Invalid('打开可编辑草稿后再请求工作流修改。')
+    validate_proposal_envelope(value, native=True)
     workspace = turn['workspace']
     root = assistant.store.workspace(workspace)['path']
     profiles = {item['id']: item for item in turn['native_profiles']}
@@ -127,7 +148,7 @@ def stage(assistant, turn, reply):
             raise Invalid('此草稿含受管节点或未核验的 Agent。请在画布中明确调整执行路径。')
     result = proposal(before, reply, native_profiles=profiles)
     after = result['document']
-    if not legacy:
+    if not legacy and value['operations']:
         after['execution'] = EXECUTION
     before_refs = references(before)
     after_refs = references(after)
