@@ -248,7 +248,7 @@ class LazyRuntimeTests(unittest.TestCase):
             self.assertEqual(self.http(service, 'agents?workspace=' + self.workspace)[1]['agents'], [self.agent])
             self.assertEqual(self.store.db.list('run'), [])
 
-    def test_assistant_and_git_entries_keep_the_shared_managed_runtime(self):
+    def test_basic_assistant_is_independent_and_legacy_paths_share_the_managed_runtime(self):
         instance = self.stub_runtime()
         factory = Mock(return_value=instance)
         with self.server(factory) as service, patch('v2.assistant.Assistant') as assistant, \
@@ -257,10 +257,20 @@ class LazyRuntimeTests(unittest.TestCase):
             platform.return_value.read.return_value = {'bound': False}
             self.assertEqual(self.http(service, 'assistant/settings?workspace=' + self.workspace),
                              (200, {'configured': False}))
+            factory.assert_not_called()
+            self.assertEqual(assistant.call_args.args, (self.store, None, None))
+            load_managed = assistant.call_args.kwargs['runtime_factory']
+            def legacy_diagnosis(**_):
+                self.assertIs(load_managed(), instance)
+                return {'legacy': True}
+            assistant.return_value.diagnosis.side_effect = legacy_diagnosis
+            run = 'd' * 32
+            self.assertEqual(self.http(service, 'assistant/diagnosis?workspace=' + self.workspace + '&run=' + run),
+                             (200, {'legacy': True}))
             self.assertEqual(self.http(service, 'git-platform/repository?workspace=' + self.workspace),
                              (200, {'bound': False}))
             factory.assert_called_once_with()
-            assistant.assert_called_once_with(self.store, None, instance)
+            assistant.assert_called_once()
             assistant.return_value.settings.assert_called_once_with(workspace=self.workspace)
             platform.assert_called_once_with(self.store, instance)
             platform.return_value.read.assert_called_once_with('repository', workspace=self.workspace)

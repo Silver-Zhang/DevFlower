@@ -136,7 +136,7 @@ function CompoundPredicate({value,onChange,Field,depth=0}){
  </>;
 }
 
-export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,nativeScript,Field,commandDrafts}){
+export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNodes,nativeScript,Field,commandDrafts,renderLoopBody}){
  const type=nodeType(node);
  const nativeCondition=nativeScript&&nodeKind(node)==='condition';
  const nativeLoop=nativeScript&&nodeKind(node)==='loop';
@@ -190,6 +190,7 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
      <p className="field-note">{value.nodes.length} 个节点 · {value.edges.length} 条连线</p>
      <details><summary>查看固定的子流程节点</summary><ul>{value.nodes.map(item=>
       <li key={item.id}>{item.name||item.id} · {nodeType(item).label}</li>)}</ul></details>
+     {renderLoopBody?.(value)}
      <button type="button" onClick={()=>onChange({[key]:undefined})}>移除循环子工作流</button>
     </div>}
    </div>;
@@ -220,4 +221,54 @@ export function TypedNodeConfig({node,onChange,connected,bodyChoices,siblingNode
   {nodeKind(node)==='router'&&<RouterRules node={node} onChange={onChange} connected={connected} nativeScript={nativeScript} Field={Field}/>}
   {draftConfigIssue(node)&&<p className="error-text">{draftConfigIssue(node)}</p>}
  </>;
+}
+
+
+export function CanvasAgentProfile({node,records,onBind,onCreate,Field}) {
+ const [open,setOpen]=useState(false),[name,setName]=useState(node.name),[role,setRole]=useState('');
+ const [provider,setProvider]=useState('codex'),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [model,setModel]=useState(''),[effort,setEffort]=useState('');
+ const attempt=React.useRef(null);
+ const options=Array.from(records?.values()||[]);
+ const current=options.find(row=>row.id===node.agent_id&&row.revision===node.agent_revision);
+ async function create(event){
+  event.preventDefault();
+  if(busy||!name.trim()||!role.trim())return;
+  const config={name:name.trim(),role:role.trim(),provider,model:model.trim()||null,effort:effort.trim()||null};
+  const signature=JSON.stringify(config);
+  if(attempt.current?.signature!==signature)attempt.current={signature,id:crypto.randomUUID().replaceAll('-','')};
+  setBusy(true);setError('');
+  try{
+   await onCreate(attempt.current.id,config);
+   attempt.current=null;setOpen(false);
+  }catch(failure){setError(failure.message)}
+  finally{setBusy(false)}
+ }
+ return <div className="canvas-profile-picker">
+  <Field label="Agent 配置版本">
+   <select disabled={!records||busy} value={current?.id||''} onChange={event=>{
+    const selected=records.get(event.target.value);
+    if(selected)onBind(selected);
+   }}>
+    <option value="" disabled>{records?'选择已保存 Agent':'正在读取已保存 Agent'}</option>
+    {options.map(row=><option key={row.id} value={row.id}>{row.config.name} · {row.config.provider==='claude'?'Claude Code':'Codex CLI'} · {row.revision.slice(0,8)}</option>)}
+   </select>
+  </Field>
+  {!open&&<button type="button" onClick={()=>setOpen(true)}>快速创建原生 Agent</button>}
+  {open&&<form className="canvas-profile-form" aria-label="快速创建原生 Agent" onSubmit={create}>
+   <Field label="配置名称"><input maxLength={160} required value={name} onChange={event=>setName(event.target.value)}/></Field>
+   <Field label="原生 Provider"><select value={provider} onChange={event=>setProvider(event.target.value)}>
+    <option value="codex">Codex CLI</option><option value="claude">Claude Code</option>
+   </select></Field>
+   <Field label="角色说明"><textarea rows={2} maxLength={4000} required value={role} onChange={event=>setRole(event.target.value)}/></Field>
+   <details><summary>模型与推理强度</summary>
+    <Field label="模型覆盖"><input maxLength={200} value={model} onChange={event=>setModel(event.target.value)}/></Field>
+    <Field label="推理强度覆盖"><input maxLength={200} value={effort} onChange={event=>setEffort(event.target.value)}/></Field>
+   </details>
+   <p className="field-note">工作目录使用当前项目。其余设置继承原生 CLI。</p>
+   <div><button type="submit" className="primary" disabled={busy||!name.trim()||!role.trim()}>保存并绑定</button>
+    <button type="button" disabled={busy} onClick={()=>setOpen(false)}>取消</button></div>
+   {error&&<p className="error-text" role="alert">{error}</p>}
+  </form>}
+ </div>;
 }

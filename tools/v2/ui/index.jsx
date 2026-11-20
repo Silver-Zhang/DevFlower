@@ -10,7 +10,7 @@ import {ProjectFiles} from './ProjectFiles.jsx';
 import {ProviderCatalog} from './ProviderCatalog.jsx';
 import {NativeSessions} from './NativeSessions.jsx';
 import {NativePty} from './NativePty.jsx';
-import {AgentManager} from './AgentManager.jsx';
+import {AgentManager,nativeProfileDefaults} from './AgentManager.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
 import {downloadPython,PythonPreview,ScriptRunMonitor} from './ScriptRunMonitor.jsx';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
@@ -27,7 +27,7 @@ import {allNodesOutside,canvasGeometry,routeEdges,sameCanvasGeometry} from './ca
 import {HandoffEdge} from '../../studio/workbench_ui/HandoffEdge.jsx';
 import {ContractEditor} from '../../studio/workbench_ui/RouterEditor.jsx';
 import {PayloadPages,RunInspector} from './RunInspector.jsx';
-import {CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
+import {CanvasAgentProfile, CanvasNodeCard, TypedNodeConfig, nodeKinds} from './CanvasNodes.jsx';
 import {EdgeDraftConfig, NodeConnections} from './CanvasLinks.jsx';
 import {connectionIssue, defaultConfig, defaultEdgeMode, defaultTransfer, nodeKind, nodeType, ports, runtimeBlock, transferModes} from './canvasModel.mjs';
 const Assistant=lazy(()=>import('./Assistant.jsx').then(module=>({default:module.Assistant})));
@@ -172,12 +172,15 @@ function App(){
  const [past,setPast]=useState([]),[future,setFuture]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const [folder,setFolder]=useState(null),[folderPath,setFolderPath]=useState(''),[folderError,setFolderError]=useState('');
  const [pending,setPending]=useState(null),[checks,setChecks]=useState(null);
+ const [nativeAdmission,setNativeAdmission]=useState(null);
  const commandDrafts=useRef(new Map()),checkMove=useRef(false);
  const [agentVersions,setAgentVersions]=useState(null),[agentRefresh,setAgentRefresh]=useState(0);
  const [sideView,setSidePanel]=useState('');
  const sideViewRef=useRef(sideView);sideViewRef.current=sideView;
  const [runTerminal,setRunTerminal]=useState(null),[linkedActivation,setLinkedActivation]=useState(null);
  const [assistantFiles,setAssistantFiles]=useState([]),[assistantRun,setAssistantRun]=useState(null);
+ const [assistantNative,setAssistantNative]=useState(false);
+ const applyingAssistant=useRef(false);
  const [taskFiles,setTaskFiles]=useState([]),[taskText,setTaskText]=useState('');
  const assistantOpener=useRef(null),gitOpener=useRef(null);
  const [agentPanel,setAgentPanel]=useState(null);
@@ -213,6 +216,30 @@ function App(){
  const viewModeRef=useRef(viewMode);viewModeRef.current=viewMode;
  const dirty=(!saved&&transferred)||!same(doc,saved?.graph||blank());
  const dirtyRef=useRef(dirty);dirtyRef.current=dirty;
+ const admissionKey=workspace&&viewMode==='draft'&&!dirty&&saved?.graph.execution==='native-cli'?
+  [workspace.id,saved.id,saved.revision,generation.current,runEpoch.current,agentRefresh].join(':'):null;
+ const savedAdmission=nativeAdmission?.key===admissionKey?nativeAdmission:null;
+ const admissionPending=Boolean(admissionKey&&!savedAdmission);
+ const admissionProblem=admissionKey&&(
+  admissionPending?'正在检查已保存的原生工作流。':
+  savedAdmission.error?'无法核验原生编译结果。点击「检查」重试。':
+  !savedAdmission.result.execution_available?[savedAdmission.result.message,savedAdmission.result.issues[0]?.message].filter(Boolean).join(' '):'');
+ useEffect(()=>{
+  if(!admissionKey)return;
+  const snapshot=saved.graph,w=workspace;
+  let current=true;
+  async function verify(){
+   try{
+    const result=await api('check',{workspace:w.id,document:snapshot,execution:'native-cli'});
+    if(current&&same(snapshot,docRef.current))setNativeAdmission({key:admissionKey,result});
+   }catch(failure){
+    if(current&&same(snapshot,docRef.current))setNativeAdmission({key:admissionKey,error:failure.message});
+   }
+  }
+  verify();
+  return()=>{current=false};
+ },[admissionKey]);
+
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
  useEffect(()=>{
   const query=matchMedia('(max-width: 760px)');
@@ -253,7 +280,7 @@ function App(){
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
  function install(next,row=null,fromArchive=false){commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
- function edit(next,history=true){if(same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
+ function edit(next,history=true){if(applyingAssistant.current||same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
  function remember(w,row){
@@ -376,7 +403,7 @@ function App(){
    }throw e}finally{launchBusy.current=false;setLaunching(false)}
  }
  async function save(preservedTransfer=null){
-  if(saving.current)throw Error('正在保存，请稍候');const w=workspaceRef.current;if(!w)throw Error('先打开工作空间再保存');
+  if(saving.current||applyingAssistant.current)throw Error('正在保存，请稍候');const w=workspaceRef.current;if(!w)throw Error('先打开工作空间再保存');
   if(transferTicket.current!==preservedTransfer)cancelTransfer();
   const gen=generation.current;let attempt=saveAttempt.current;saving.current=true;setBusy('save');setError('');setNotice('');
   const current=()=>{if(gen!==generation.current||workspaceRef.current?.id!==w.id)throw Error('保存响应属于先前的文档，当前编辑未替换；请从原工作空间核对')};
@@ -578,6 +605,7 @@ function App(){
   }
  }
  function navigate(action,title,transfer=null){
+  if(applyingAssistant.current)return;
   if(busy||launchBusy.current)return;
   if(providerOpen)setSideView('');
   clearRunSummary();
@@ -624,9 +652,11 @@ function App(){
   setNotice('已选择 '+path+'。启动时会核验文件摘要。');
  }
  function closeGit(){closeSideView(gitOpener)}
- function openAssistant({file,run}={}){
+ function openAssistant({file,run,native=!file&&!run}={}){
+  setAssistantNative(native);
   if(file)setAssistantFiles(list=>list.some(item=>(typeof item==='string'?item:item.path)===file)?list:[...list,file].slice(-3));
   if(run)setAssistantRun(run);
+  else if(native)setAssistantRun(null);
   setSideView('assistant');
  }
  function closeAssistant(){closeSideView(assistantOpener)}
@@ -635,10 +665,33 @@ function App(){
   const sameDraft=()=>w&&data.workspace===w.id&&inWorkspace(w,epoch)&&generation.current===gen&&viewModeRef.current==='draft'&&
    same(data.draft.document,docRef.current)&&data.draft.id===(savedRef.current?.id??null)&&
    data.draft.revision===(savedRef.current?.revision??null)&&!saving.current&&!launchBusy.current;
-  if(!sameDraft())throw Error('当前草稿已变化，提案未应用。');
-  const result=await api('assistant/apply',data);
-  if(!sameDraft())throw Error('验证期间草稿已变化，提案未应用。');
-  edit(result.document);
+  if(!sameDraft()||applyingAssistant.current)throw Error('当前草稿已变化，提案未应用。');
+  if(!data.preview_sha256){
+   const result=await api('assistant/apply',data);
+   if(!sameDraft())throw Error('验证期间草稿已变化，提案未应用。');
+   edit(result.document);
+   return;
+  }
+  applyingAssistant.current=true;setBusy('assistant-apply');
+  let result;
+  try{
+   try{result=await api('assistant/apply',data)}
+   catch(failure){
+    if(!failure.uncertain)throw failure;
+    const conversation=await api('assistant/conversation?'+new URLSearchParams({workspace:w.id,conversation:data.conversation}));
+    const applied=conversation.turns.find(row=>row.id===data.turn)?.native_saved;
+    if(!applied)throw failure;
+    const draft=await api('draft?'+new URLSearchParams({workspace:w.id,id:applied.id}));
+    if(draft.revision!==applied.revision)throw Error('提案已保存，工作流之后又有修改。请重新打开工作流以核对。');
+    result={draft};
+   }
+  }finally{applyingAssistant.current=false;setBusy('')}
+  if(!sameDraft())throw Error('提案已保存。当前画布已切换，请从工作流列表打开已保存版本。');
+  edit(result.draft.graph);
+  savedRef.current=result.draft;setSaved(result.draft);remember(w,result.draft);
+  setChecks(result.check?.execution_available?null:result.check||null);setAgentRefresh(value=>value+1);
+  refreshDrafts(w).catch(()=>{});
+  requestAnimationFrame(()=>{checkMove.current=true;fitCanvas()});
  }
  async function saveAssistantTeam(data){
   const w=workspaceRef.current,epoch=workspaceEpoch.current,gen=generation.current;
@@ -726,20 +779,69 @@ function App(){
    if(workspaceRef.current?.id===value.workspace)setPlanError(failure.message);
   }finally{planBusyRef.current=false;setPlanBusy(false)}
  }
- function bindAgent(record){
-  if(!editable)return;
-  const previous=docRef.current.nodes.find(node=>node.id===agentPanel?.node);
-  if(agentPanel?.node&&(!previous||nodeKind(previous)!=='agent')){setError('原节点已变化，请重新选择画布节点。');return}
+ function applyProfile(record,nodeId,loopId=null,managedPicker=false){
+  if(viewModeRef.current!=='draft'||applyingAssistant.current||!workspaceRef.current)return;
+  const current=docRef.current;
+  const graph=loopId?current.nodes.find(item=>item.id===loopId)?.config?.body:current;
+  const previous=graph?.nodes.find(node=>node.id===nodeId);
+  if(!graph||nodeId&&(!previous||nodeKind(previous)!=='agent')){
+   throw Error('原节点已变化，请重新选择画布节点。');
+  }
   const id=previous?.id||uid('n');
   change(d=>{
-   const node={id,name:record.config.name,agent_id:record.id,agent_revision:record.revision,
-    position:previous?.position||{x:100+d.nodes.length*300,y:160},...(!previous||previous.kind?{kind:'agent'}:{})};
-   if(previous?.native_output)node.native_output=previous.native_output;
-   if(previous?.output_contract?.length)node.output_contract=previous.output_contract;
-   if(previous?.artifact_paths?.length)node.artifact_paths=previous.artifact_paths;
-   if(previous)d.nodes=d.nodes.map(item=>item.id===id?node:item);else d.nodes.push(node);
+   const target=loopId?d.nodes.find(item=>item.id===loopId).config.body:d;
+   const node={id,name:managedPicker||!previous?record.config.name:previous.name,
+    agent_id:record.id,agent_revision:record.revision,
+    position:previous?.position||{x:100+target.nodes.length*300,y:160},...(!previous||previous.kind?{kind:'agent'}:{})};
+   for(const key of ['task_prompt','native_output','output_contract','artifact_paths']){
+    if(previous&&Object.hasOwn(previous,key))node[key]=previous[key];
+   }
+   if(previous)target.nodes=target.nodes.map(item=>item.id===id?node:item);
+   else target.nodes.push(node);
+   if(!managedPicker&&!managedAgent&&record.config.execution==='native-cli')d.execution='native-cli';
   });
-  setSelected(id);setEdge(null);setEdgeSelection([]);setAgentRefresh(value=>value+1);closeAgents();
+  if(!loopId){setSelected(id);setEdge(null);setEdgeSelection([])}
+ }
+ function bindAgent(record){
+  if(!editable)return;
+  applyProfile(record,agentPanel?.node,null,true);
+  setAgentRefresh(value=>value+1);closeAgents();
+ }
+ async function quickProfile(id,config,nodeId,loopId){
+  const w=workspaceRef.current,gen=generation.current,epoch=workspaceEpoch.current;
+  const saved=await api('agents/save',{workspace:w.id,id,expected:null,
+   config:{...nativeProfileDefaults(w),...config},session_revision:null});
+  if(!inWorkspace(w,epoch)||gen!==generation.current||viewModeRef.current!=='draft'||applyingAssistant.current)
+   throw Error('Agent 已保存。画布已切换，可从配置列表选择它。');
+  applyProfile(saved,nodeId,loopId);
+  setAgentRefresh(value=>value+1);
+ }
+ function renderProfilePicker(node,loopId=null){
+  const list=agentVersions?.workspace===workspace?.id?agentVersions.records:null;
+  const records=list&&new Map([...list].filter(([,row])=>row.config.execution==='native-cli'));
+  return <CanvasAgentProfile node={node} records={records} Field={Field}
+   onBind={record=>applyProfile(record,node.id,loopId)}
+   onCreate={(id,config)=>quickProfile(id,config,node.id,loopId)}/>;
+ }
+ function renderNodeTask(node,onChange){
+  return <Field label="节点任务" note="为此节点填写具体任务。可复用同一 Agent 配置处理不同任务。">
+   <textarea rows={3} maxLength={20000} value={node.task_prompt||''}
+    onChange={event=>onChange(event.target.value)}/>
+  </Field>;
+ }
+ function renderLoopBody(loop,body){
+  const update=(id,patch)=>updateNode(loop.id,{config:{...loop.config,body:{...body,
+   nodes:body.nodes.map(node=>node.id===id?{...node,...patch}:node)}}});
+  return <details><summary>配置循环步骤</summary>
+   {body.nodes.filter(node=>['agent','tool'].includes(nodeKind(node))).map(node=><fieldset key={node.id}>
+    <legend>{node.name}</legend>
+    {nodeKind(node)==='agent'?<>
+     {renderProfilePicker(node,loop.id)}
+     {renderNodeTask(node,task_prompt=>update(node.id,{task_prompt}))}
+    </>:<TypedNodeConfig node={node} onChange={patch=>update(node.id,{config:{...node.config,...patch}})}
+     bodyChoices={[]} siblingNodes={body.nodes} nativeScript connected={new Set()} Field={Field} commandDrafts={commandDrafts.current}/>}
+   </fieldset>)}
+  </details>;
  }
  async function openWorkspacePath(path,expectedWorkspace=null){
   const gen=generation.current,snapshot=copy(docRef.current);setBusy('open');
@@ -1031,7 +1133,7 @@ function App(){
   const next={...previous,...patch},issue=connectionIssue(docRef.current,next,id);
   if(issue){setError(issue);return}
   const from=docRef.current.nodes.find(node=>node.id===next.source),to=docRef.current.nodes.find(node=>node.id===next.target);
-  if(next.transfer?.mode===defaultEdgeMode(from,to)&&next.transfer.max_chars===defaultTransfer.max_chars)delete next.transfer;
+  if(next.transfer?.mode===(nativeScript?'answer':defaultEdgeMode(from,to))&&next.transfer.max_chars===defaultTransfer.max_chars)delete next.transfer;
   change(d=>{d.edges=d.edges.map(item=>item.id===id?next:item)});setError('');
  }
  function referenceIssue(node){
@@ -1039,16 +1141,19 @@ function App(){
   if(agentVersions.failed)return '无法核对 Agent 配置版本。';
   return agentVersions.records.get(node.agent_id)?.revision===node.agent_revision?'':'此 Agent 配置版本在当前工作空间不可用，请重新选择。';
  }
+ function hasAgentRefs(nodes){
+  return nodes.some(node=>node.agent_id||node.config?.body?.nodes&&hasAgentRefs(node.config.body.nodes));
+ }
+ const needsProfileOptions=hasAgentRefs(doc.nodes)||doc.nodes.some(node=>node.id===selected&&['agent','loop'].includes(node.kind));
  useEffect(()=>{
-  if(viewMode!=='draft'||!workspace||!doc.nodes.some(node=>node.agent_id))return;
+  if(viewMode!=='draft'||!workspace||!needsProfileOptions)return;
   let alive=true;
   const id=workspace.id;
-  setAgentVersions(null);
   api('agents?workspace='+id).then(result=>{
    if(alive)setAgentVersions({workspace:id,records:new Map(result.agents.map(row=>[row.id,row]))});
   }).catch(()=>{if(alive)setAgentVersions({workspace:id,failed:true})});
   return()=>{alive=false};
- },[workspace?.id,viewMode,agentRefresh,selected,doc.nodes.some(node=>node.agent_id)]);
+ },[workspace?.id,viewMode,agentRefresh,needsProfileOptions]);
  const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching);
  const scriptRun=runSnapshot?.script;
  const frozenGraph=readOnly?(scriptRun?.document||runSnapshot?.definition?.draft_document):null;
@@ -1099,8 +1204,11 @@ function App(){
    (agentVersions?.workspace===workspace?.id&&agentVersions?.records?.get(node.agent_id)?.config.execution==='native-cli')||
    (node.config?.body?.nodes&&usesNativeScript(node.config.body.nodes)));
  }
- const nativeScript=usesNativeScript(doc.nodes);
- const launchBlock=nativeScript?(taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':''):
+ const managedAgent=doc.nodes.some(node=>(nodeKind(node)==='agent'&&!node.kind&&!node.agent_id)||
+  (agentVersions?.records?.get(node.agent_id)?.config.execution!=='native-cli'&&agentVersions?.records?.has(node.agent_id)));
+ const nativeScript=doc.execution==='native-cli'||usesNativeScript(doc.nodes)||!managedAgent&&doc.nodes.some(node=>node.kind==='agent'&&!node.agent_id);
+ const compileBlock=admissionProblem||(checks?.status&&checks.status!=='compilable'&&checks.message);
+ const launchBlock=nativeScript?(compileBlock|| (taskFiles.length?'启动原生脚本前，请移除附件并在任务中引用项目路径。':'')):
   doc.nodes.map(runtimeBlock).find(Boolean);
  const approval=runSnapshot?.nodes?.find(row=>row.state==='WAITING_CONFIRMATION'&&row.id===runSnapshot.run?.waiting_approval);
  const typedActive=runTrusted&&runSnapshot?.run?.designer_runtime===1&&['RUNNING','WAITING_CONFIRMATION','PAUSED'].includes(runSnapshot.state);
@@ -1151,7 +1259,8 @@ function App(){
    <header><div>{!wide&&<small>运行检查器</small>}<h2>{wide?'运行证据':n?.name||(e?'交接记录':'运行详情')}</h2></div>
     {!wide&&<button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button>}</header>
    {scriptRun?<ScriptRunMonitor key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api}
-    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target} stateLabel={stateLabel}/>:
+    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target} stateLabel={stateLabel}
+    onExplain={()=>openAssistant({run:activeRun.id,native:true})}/>:
    <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted} wide={wide}
     selection={n?{node:n.id,activation:linkedActivation}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
     {current=>{
@@ -1217,6 +1326,8 @@ function App(){
     <Button icon={Workflow} aria-current={!sideView&&!readOnly&&!saved?'page':undefined} onClick={()=>{
      if(readOnly)returnToDraft();setSideView('');setDrawer(false);requestAnimationFrame(()=>document.getElementById('v2-editor')?.focus());
     }}>工作流</Button>
+    <Button ref={assistantOpener} icon={Sparkles} aria-expanded={sideView==='assistant'}
+     onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
     <Button ref={agentOpener} icon={Bot} aria-current={sideView==='agents'?'page':undefined} onClick={()=>sideView==='agents'?closeAgents():openAgents()}>Agent 管理</Button>
     <Button ref={nativeOpener} icon={MessageSquare} aria-current={nativeOpen?'page':undefined} onClick={()=>nativeOpen?closeNative():setSideView('native')}>原生会话</Button>
     <Button ref={runsOpener} icon={History} aria-current={runsOpen?'page':undefined} onClick={()=>{
@@ -1245,7 +1356,6 @@ function App(){
    <details className="compatibility-tools">
     <summary>兼容工具</summary>
     <nav className="workspace-actions supplementary-navigation" aria-label="兼容工具">
-    <Button ref={assistantOpener} icon={Sparkles} aria-expanded={sideView==='assistant'} onClick={()=>sideView==='assistant'?closeAssistant():openAssistant()}>AI 助手</Button>
     <Button ref={gitOpener} icon={GitBranch} aria-current={sideView==='git'?'page':undefined} onClick={()=>sideView==='git'?closeGit():setSideView('git')}>Git 平台</Button>
     </nav>
    </details></>}
@@ -1261,11 +1371,12 @@ function App(){
    <input ref={summaryInput} hidden type="file" accept=".json,application/json" aria-label="选择运行摘要文件"
     onChange={viewRunSummary} onCancel={()=>{if(summaryAction.current?.kind==='choose')clearRunSummary()}}/>
   </aside>
-  <main id="v2-editor" tabIndex={-1} className="editor" aria-label="工作流设计器" inert={Boolean(primaryView)} data-mode={readOnly?'run':'draft'}>
+  <main id="v2-editor" tabIndex={-1} className="editor" aria-label="工作流设计器" inert={Boolean(primaryView)||busy==='assistant-apply'} data-mode={readOnly?'run':'draft'}>
    {(workspace||readOnly)&&<div className={'document-bar'+(readOnly?' run-document-bar':'')}><div className="document-title"><span className="document-icon"><Workflow size={17} aria-hidden="true"/></span>
     <div className="document-name"><input aria-label="工作流名称" disabled={!workspace||readOnly} value={shown.name} onChange={e=>change(d=>d.name=e.target.value)}/>
     <div className="document-meta"><span className={'save-state '+(!readOnly&&dirty?'dirty':'')} aria-live="polite">{readOnly?'冻结版本 · 只读':workspace?(dirty?'未保存':saved?'已保存':'尚未保存'):'空白工作台'}</span>
      {exportNeedsSave&&<small id="v2-export-hint">请先保存当前工作流，再导出已保存版本。</small>}
+     {admissionKey&&savedAdmission?.result?.execution_available&&<small>可编译</small>}
     </div></div>
    </div>{!readOnly&&<div className="document-actions">
     {workspace&&<details ref={taskContext} className="task-context" aria-label="本次运行上下文">
@@ -1282,9 +1393,15 @@ function App(){
      </div>
     </details>}
     <Button icon={Save} disabled={!workspace||!!busy||launching} onClick={guard(save)}>{busy==='save'?'保存中…':'保存'}</Button>
-    <Button icon={Check} disabled={!workspace||!!busy||launching} onClick={guard(async()=>{const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current),r=await api('check',{workspace:w.id,document:snapshot,...(nativeScript?{execution:'native-cli'}:{})});if(gen===generation.current&&w.id===workspaceRef.current?.id&&same(snapshot,docRef.current))setChecks(r)})}>检查</Button>
-    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython(true)}>预览 Python</Button>}
-    <Button icon={Download} aria-label="导出 Python（原生 CLI）" disabled={!saved||dirty||!!busy||launching} onClick={()=>exportPython()}
+    <Button icon={Check} disabled={!workspace||!!busy||launching||admissionPending} onClick={guard(async()=>{
+     const w=workspaceRef.current,gen=generation.current,snapshot=copy(docRef.current);
+     const result=await api('check',{workspace:w.id,document:snapshot,...(nativeScript?{execution:'native-cli'}:{})});
+     if(gen!==generation.current||w.id!==workspaceRef.current?.id||viewModeRef.current!=='draft'||!same(snapshot,docRef.current))return;
+     setChecks(result);
+     if(admissionKey)setNativeAdmission({key:admissionKey,result});
+    })}>检查</Button>
+    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching||compileBlock} onClick={()=>exportPython(true)}>预览 Python</Button>}
+    <Button icon={Download} aria-label="导出 Python（原生 CLI）" disabled={!saved||dirty||!!busy||launching||compileBlock} onClick={()=>exportPython()}
      title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python</Button>
     <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!nativeScript&&!status?.provider_available&&inlineAgent))}
      title={startHint||(nativeScript?'启动将使用原生 CLI 配置和权限。':'明确启动将调用所选模型；不自动重试')} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
@@ -1296,7 +1413,7 @@ function App(){
    <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runInspectorOpen?'返回运行图':'运行检查器'}</Button>
    <Button disabled={!runSnapshot||cancelling||(scriptRun?(!runTrusted||!scriptRun.active||scriptRun.cancel_requested||ended(runSnapshot.state)):
     (runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||ended(runSnapshot?.state))} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':scriptRun?.cancel_requested?'取消已请求':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
-   {!scriptRun&&<Button disabled={!activeRun?.id} onClick={()=>openAssistant({run:activeRun.id})}>诊断本次运行</Button>}
+   <Button disabled={!activeRun?.id||!runSnapshot} onClick={()=>openAssistant({run:activeRun.id,native:Boolean(scriptRun)})}>诊断本次运行</Button>
    <Button onClick={guard(rereadRun)}>重新读取</Button>
    {runTrusted&&(runSourceDraft?
     <Button disabled={!!busy||launching} title={'打开来源工作流的可编辑草稿 · '+runSourceDraft.graph.name} onClick={editRunDraft}>编辑草稿</Button>:
@@ -1324,7 +1441,8 @@ function App(){
    </section>}
    {!scriptRun&&<details><summary>运行身份与冻结版本</summary><pre>{readable({run:activeRun?.id,definition:runSnapshot?.definition?.id,draft:runSnapshot?.run?.draft_id,draft_revision:runSnapshot?.run?.draft_revision,worker:runSnapshot?.worker_observation,local_status:runSnapshot?.run?.local_status})}</pre></details>}</section>}
    </div>}
-   {!readOnly&&workspace&&startHint&&!launchAttempt&&doc.nodes.length>0&&<p id="v2-start-hint" className="phase5-note">{startHint}</p>}
+   {!readOnly&&workspace&&startHint&&!launchAttempt&&doc.nodes.length>0&&
+    <p id="v2-start-hint" role={admissionProblem?'status':undefined} className="phase5-note">{startHint}</p>}
    {!readOnly&&launchAttempt&&<div className="launch-warning" role="status">上次启动结果待核验，身份已保留。即使切换草稿或刷新页面，“核验本次启动”也只核验原启动，不提交当前新编辑。</div>}
    {readOnly&&summaryError&&<div className="message error" role="alert">{summaryError}</div>}
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
@@ -1398,15 +1516,19 @@ function App(){
     {workspace&&!shown.nodes.length&&<div className="canvas-empty">
      <span className="empty-icon"><Workflow size={29} aria-hidden="true"/></span>
      <h1>{readOnly?'正在读取原运行':'开始设计工作流'}</h1>
-     <p>{readOnly?'正在读取已保存的运行记录。':'创建或选择可复用的 Agent 配置，再将它添加到画布。连好输入与输出后，检查配置并启动。'}</p>
+     <p>{readOnly?'正在读取已保存的运行记录。':'描述目标交给 AI 起草，或从空白画布添加节点。'}</p>
      {!readOnly&&<div className="empty-actions">
-      <Button className="primary" icon={Bot} disabled={!status||!!busy} onClick={()=>openAgents()}>配置第一个 Agent</Button>
+      <Button className="primary" icon={Sparkles} disabled={!!busy} onClick={()=>openAssistant({native:true})}>用 AI 创建工作流</Button>
+      <Button icon={Plus} disabled={!editable} onClick={()=>{
+       change(d=>{d.execution='native-cli'});canvasRef.current?.querySelector('[data-node-library]')?.click();
+      }}>空白画布</Button>
       <Button icon={LibraryBig} onClick={()=>setSideView('templates')}>从模板开始</Button>
+      <Button icon={Bot} disabled={!status||!!busy} onClick={()=>openAgents()}>配置第一个 Agent</Button>
      </div>}
     </div>}
    </div>
    {checks&&<section className="checks" aria-label="工作流检查结果">
-    <header><strong>配置检查{checks.issues.length>0?' · '+checks.issues.length+' 项':''}</strong>
+    <header><strong>{({compilable:'可编译',unsupported:'暂不支持编译',configuration_error:'配置错误'})[checks.status]||'配置检查'}{checks.issues.length>0?' · '+checks.issues.length+' 项':''}</strong>
      <button aria-label="关闭检查结果" onClick={()=>setChecks(null)}><X size={16}/></button></header>
     {checks.message&&<p role="status">{checks.message}</p>}
     {checks.issues.length?<ul>{checks.issues.map((issue,key)=>{
@@ -1427,6 +1549,7 @@ function App(){
    {n?<div className="inspector-content" key={n.id}><Field label={nodeKind(n)==='agent'?'Agent 名称':'节点名称'} note={n.agent_id?'此名称用于画布节点。':undefined}><input maxLength={160} value={n.name} onChange={e=>updateNode(n.id,{name:e.target.value})}/></Field>
     {nodeKind(n)!=='agent'?<TypedNodeConfig node={n} commandDrafts={commandDrafts.current} onChange={patch=>updateNode(n.id,{config:{...n.config,...patch}})}
      bodyChoices={drafts.filter(row=>row.id!==saved?.id)} siblingNodes={doc.nodes} nativeScript={nativeScript}
+     renderLoopBody={nativeScript?body=>renderLoopBody(n,body):undefined}
      connected={new Set(doc.edges.filter(item=>item.source===n.id).map(item=>item.source_port??'out'))} Field={Field}/>:
     n.agent_id?<section className="bound-agent" aria-label="已绑定的 Agent 配置">
      <h3>已绑定的 Agent 配置</h3>
@@ -1435,8 +1558,9 @@ function App(){
       版本 <code title={n.agent_revision}>{n.agent_revision?.slice(0,12)}</code></p>
      <p className="field-note">此节点引用已保存的 Agent 配置版本。</p>
      <p className={referenceIssue(n)?'error-text':'field-note'}>{referenceIssue(n)||(!agentVersions?'正在核对工作空间内的版本。':'已核对绑定版本。')}</p>
+     {renderProfilePicker(n)}
      <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button></section>:n.kind==='agent'?<>
-    <div className="session-note">从 Agent 管理绑定已保存的配置。节点会保留当时选择的版本。</div>
+    {renderProfilePicker(n)}
     <Button onClick={()=>openAgents(n.id)}>选择 Agent 配置版本</Button>
     </>:<>
     <div className="session-note">兼容旧草稿 · 每个节点使用独立新会话和只读提示词模式。</div>
@@ -1448,6 +1572,7 @@ function App(){
     <Field label="初始化提示词" note="每次新运行初始化此 Agent。"><textarea rows={3} value={n.initial_prompt||''} onChange={e=>updateNode(n.id,{initial_prompt:e.target.value})}/></Field><Field label="每轮提示词"><textarea rows={4} value={n.round_prompt||''} onChange={e=>updateNode(n.id,{round_prompt:e.target.value})}/></Field><Field label="输出与交接要求"><textarea rows={3} value={n.output_prompt||''} onChange={e=>updateNode(n.id,{output_prompt:e.target.value})}/></Field>
     <details><summary>权限与超时</summary><p className="field-note">Ask 只读、禁用文件/命令、Skills、子 Agent、浏览器与 MCP。CLI 可能保留询问用户工具；若出现询问阻断，将如实失败或待核验，不自动授权。</p><Field label="超时（秒）"><input type="number" min={10} max={3600} value={n.timeout??300} onChange={e=>updateNode(n.id,{timeout:Number(e.target.value)})}/></Field></details></>}
     {nodeKind(n)==='agent'&&<>
+     {(n.kind==='agent'||n.agent_id)&&renderNodeTask(n,task_prompt=>updateNode(n.id,{task_prompt}))}
      {(n.native_output||boundAgent?.config.execution==='native-cli')&&<Field label="原生输出合同">
       <select value={n.native_output?.kind||''} onChange={event=>{
        const kind=event.target.value;
@@ -1488,7 +1613,7 @@ function App(){
     {nodeKind(n)==='agent'&&<div className="runtime-placeholder">实际请求、Provider 回执和结果将在真实执行后显示。</div>}
     <Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[n.id]));closeInspector()}}>
      {nodeKind(n)==='agent'?'删除 Agent':'删除节点'}</Button>
-   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>连线交接配置</h3><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></div>}
+   </div>:<div className="inspector-content run-evidence"><p>{shown.nodes.find(n=>n.id===e.source)?.name} <ArrowRight size={15}/> {shown.nodes.find(n=>n.id===e.target)?.name}</p><h3>连线交接配置</h3><EdgeDraftConfig edge={e} source={shownNodes.get(e.source)} target={shownNodes.get(e.target)} nativeScript={nativeScript} onUpdate={patch=>updateEdge(e.id,patch)} Field={Field}/><Button className="danger" icon={Trash2} onClick={()=>{edit(removeSelection(docRef.current,[],[e.id]));closeInspector()}}>删除连线</Button></div>}
   </aside>}
   {providerOpen&&<ProviderCatalog key={providerGeneration} token={token}
    isCurrent={()=>providerEpoch.current===providerGeneration} onClose={closeProviderCatalog}/>}
@@ -1504,6 +1629,7 @@ function App(){
   {workspace&&sideView==='git'&&<Suspense><GitWorkspace key={workspace.id+':'+panelEpoch}
    api={api} workspace={workspace} onClose={closeGit}/></Suspense>}
   {workspace&&sideView==='assistant'&&<Suspense><Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
+   nativeEntry={assistantNative} onEditRunDraft={readOnly?(runSourceDraft?editRunDraft:returnToDraft):undefined}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
    files={assistantFiles} onFiles={setAssistantFiles} run={assistantRun} onRun={setAssistantRun} runs={runs}

@@ -60,6 +60,7 @@ def main(argv=None, *, ready=None):
                 catalog = CopilotCatalog.from_path(args.copilot_catalog_config, store, native_sessions=native)
             server, token = create_server(store, args.port, runtime=runtime,
                                           runtime_factory=managed_runtime if runtime is None else None,
+                                          codex_executable=args.codex_cli,
                                           native_sessions=native, copilot_catalog=catalog,
                                           session_operations=operations, git_delivery_targets=args.git_delivery_target)
             with server:

@@ -9,6 +9,7 @@ from .canvas_structure import EDGE_EXTENSION, ID, TYPES, fields, node_kind, text
 from .development_graph import contains_development
 from .documents import validate_draft
 from .native_history_config import unique_pairs
+from .workflow_templates import loop_example, router_example
 
 MAX_REPLY_BYTES = 60_000
 MAX_OPERATIONS = 20
@@ -20,19 +21,65 @@ OP_FIELDS = {
     'connect': ({'source', 'target'} | EDGE_EXTENSION, {'source', 'target'}),
     'remove-edge': (set(), set()),
 }
-PROPOSAL_INSTRUCTIONS = """只返回一个 JSON 对象，包含 summary（简短中文说明）和 operations（1–20 条有序修改）。
-每条修改包含 op 与 id。可用操作：
-add-node 增加 kind、name、可选 config。kind 为 start、agent、condition、router、merge、loop、approval、validation 或 output。
+OPERATION_INSTRUCTIONS = """每条修改包含 op 与 id。可用操作：
+add-node 增加 kind、name、可选 config。
 update-node 只接受 name 或要合并的 config。remove-node 移除节点及相邻边。
 connect 使用新的边 id，并填写 source、target、可选 source_port、target_port、transfer。
 remove-edge 删除指定边。ID 以字母开头，只使用字母、数字、下划线和连字符。
-已有节点和端口使用提供的身份。新 Agent 只能是未绑定草稿，已有 Agent 只可改名。
-在已有连线上插入节点时，先移除原连线，保留原来两端所用端口，并明确填写两条新连线的端口。
+在已有连线上插入节点时，先移除原连线，保留两端所用端口，并明确填写两条新连线的端口。
 路由输出使用规则 id 或 fallback。validation 的 config.rules 为 JSON 条件文本，例如 {"field":"result.passed","op":"equals","value":true}。
-保留现有工具、Agent 权限、循环子图及人工审批。含已有审批的图只提议改名。
-新增节点使用以下端口 id（输入 → 输出）：""" + '\n' + '\n'.join(
+"""
+PORTS = '\n'.join(
     f"{kind}: {', '.join(TYPES[kind]['inputs']) or '无'} → {', '.join(TYPES[kind]['outputs']) or '无'}"
     for kind in sorted(NODE_KINDS)
+)
+PROPOSAL_INSTRUCTIONS = """只返回一个 JSON 对象，包含 summary（简短中文说明）和 operations（1–20 条有序修改）。
+add-node 的 kind 为 start、agent、condition、router、merge、loop、approval、validation 或 output。
+已有节点和端口使用提供的身份。新 Agent 只能是未绑定草稿，已有 Agent 只可改名。
+保留现有工具、Agent 权限、循环子图及人工审批。含已有审批的图只提议改名。
+""" + OPERATION_INSTRUCTIONS + '\n新增节点端口（输入 → 输出）：\n' + PORTS
+
+
+def native_examples():
+    router = router_example()
+    agent, control = router['nodes'][1:3]
+    classifier = {key: agent[key] for key in ('task_prompt', 'native_output', 'output_contract')}
+    classifier['profile'] = 'Classifier'
+    loop = loop_example()['nodes'][1]['config']
+    # The native proposal uses profile aliases and retains the exact template graph shape.
+    for node in loop['body']['nodes']:
+        if node['kind'] == 'agent':
+            settings = {key: node.pop(key) for key in ('task_prompt', 'native_output', 'artifact_paths') if key in node}
+            node['config'] = dict(settings, profile={'Agent': 'Producer', 'Review': 'Reviewer'}[node['id']])
+    return dict(router_agent_config=classifier, router_config=control['config'], loop_config=loop)
+
+
+NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若用户问答或询问运行原因，返回 {"answer":"Markdown 回答"}，
+运行事实引用所给 Run ID、节点、轮次和真实事件。证据未覆盖之处明确说明；绝不发起执行或重放。
+若用户明确要求创建或修改当前原生工作流，返回 summary、operations，可选 name（画布名称）与 profiles（拟新增的原生 Agent）。
+只使用本次当前草稿身份；以前问答仅用于理解指代。遵循下面的操作、ID 与端口规则，但原生模式允许下列额外配置：
+- Agent 的 config 可含 task_prompt、native_output、output_contract、artifact_paths，以及一个 profile。
+- 优先复用列表中职责合适的原生 Agent，profile 为其 Agent ID。需要新配置时，profiles 提供 id（别名）、
+  name、role、provider（codex 或 claude），profile 引用别名。优先遵循用户指定的 Provider，否则使用默认 Codex。
+  用节点 task_prompt 写具体任务；勿创建强制的开发/测试/审核团队。
+- Tool 支持 config={"tool":"command","argv":["python3","-m","unittest"],"cwd":".","timeout":300,"permission":"none"}。
+  只有用户要求的命令或验证步骤才提议命令；命令作为数据供用户审核，不会立即执行。
+- 普通边使用默认交接。Router 直接接收结构化结果 Agent 的 result.* 已声明字段，
+  每条规则为 {"id":"High","label":"…","test":{"field":"result.data.score","op":"equals","value":true}}，
+  每规则和 fallback 各连接至独立 Output。output_contract 必须是数组，例如 [{"field":"result.data.score","type":"boolean","required":true}]。
+- Condition 使用 config.expression；候选审核使用 config 中 native_output={ "version":1,"kind":"review" }，
+  审核直接接收声明 artifact_paths 的 result Agent；原生 Condition 判定 result.verdict equals accept。
+- Loop config 可含 max_iterations、exit_condition 与完整的 version 1 body（name/nodes/edges）。body 节点使用
+  id/name/kind/position，Agent 的 config 同上；其他节点使用 config_version=1 和 config。
+  原生 Loop 为 Start → 产物 Agent → 可选命令 Tool → 审核 Agent → Output，exit_condition 是
+  {"field":"result.verdict","op":"equals","value":"accept"}。产物 Agent 要声明真实工作区相对路径和 native_output
+  kind=result，并在 task_prompt 要求生成该产物。审核 Agent 使用 native_output kind=review。
+- 用户若明确要求暂不受编译器支持的混合结构，保留所要求的节点和连线，由编译器报告限制。
+- 没有当前草稿时只回答，提示可返回来源草稿后再请求修改。
+原有 Agent 权限、已有人工审批和受保护 Gate 继续保留。
+""" + OPERATION_INSTRUCTIONS + '\n可用节点端口（输入 → 输出）：\n' + PORTS + (
+    '\ntool: in → out\n原生配置示例（示例中的 profile 为别名，请声明新配置或替换成已给出的配置 ID）：\n'
+    + json.dumps(native_examples(), ensure_ascii=False, separators=(',', ':'))
 )
 
 
@@ -53,9 +100,10 @@ def parse_envelope(reply):
     return result
 
 
-def _parse(reply):
+def _parse(reply, native=False):
     result = parse_envelope(reply)
-    fields(result, {'summary', 'operations'}, {'summary', 'operations'})
+    required = {'summary', 'operations'}
+    fields(result, required | ({'profiles', 'name'} if native else set()), required)
     text(result['summary'], 1000, '提案说明')
     if not result['summary'].strip() or not isinstance(result['operations'], list) or not (
             1 <= len(result['operations']) <= MAX_OPERATIONS):
@@ -78,14 +126,16 @@ def _position(nodes):
     raise Invalid('没有可用的新增节点位置。')
 
 
-def _config(operation, kind):
+def _config(operation, kind, native):
     config = operation.get('config', {})
     if not isinstance(config, dict):
         raise Invalid('节点配置必须是对象。')
-    if kind in ('agent', 'tool') and config:
+    if not native and kind in ('agent', 'tool') and config:
         raise Invalid('助手提案不能更改 Agent 绑定或工具配置。')
     if kind == 'loop' and 'body' in config:
-        raise Invalid('循环子流程需要在画布中明确选择。')
+        if not native:
+            raise Invalid('循环子流程需要在画布中明确选择。')
+        native_loop_body(config['body'])
     if kind == 'approval' and config.get('policy', 'single-reviewer') != 'single-reviewer':
         raise Invalid('提案中的人工审批必须采用本机单审核者策略。')
     return config
@@ -99,11 +149,16 @@ def _name(value):
     return name
 
 
-def proposal(base_document, reply_text):
+def proposal(base_document, reply_text, *, native_profiles=None):
     """Preserve the base and validate the final graph before presenting a diff."""
-    value = _parse(reply_text)
+    native = native_profiles is not None
+    value = _parse(reply_text, native)
     candidate = validate_draft(base_document)
     protected = _has_approval(candidate) or contains_development(candidate)
+    if 'name' in value:
+        if protected:
+            raise Invalid('受保护流程请直接在画布上改名。')
+        candidate['name'] = _name(value['name'])
     used_nodes = {node['id'] for node in candidate['nodes']}
     used_edges = {edge['id'] for edge in candidate['edges']}
     for operation in value['operations']:
@@ -121,12 +176,16 @@ def proposal(base_document, reply_text):
         nodes, edges = candidate['nodes'], candidate['edges']
         if op == 'add-node':
             kind = operation['kind']
-            if ident in used_nodes or not isinstance(kind, str) or kind not in NODE_KINDS:
+            if ident in used_nodes or not isinstance(kind, str) or kind not in NODE_KINDS | ({'tool'} if native else set()):
                 raise Invalid('新增节点的身份已使用，或其类型需要在画布中明确配置。')
-            config = _config(operation, kind)
+            config = _config(operation, kind, native)
             node = dict(id=ident, name=_name(operation['name']), kind=kind, position=_position(nodes))
             if kind != 'agent':
+                if kind == 'tool' and config.get('tool') != 'command':
+                    raise Invalid('原生助手可提议命令 Tool。其他工具可在画布中编辑。')
                 node.update(config_version=1, config=config)
+            elif native:
+                node.update(native_agent_fields(config, native_profiles))
             nodes.append(node)
             used_nodes.add(ident)
         elif op in ('update-node', 'remove-node'):
@@ -135,18 +194,28 @@ def proposal(base_document, reply_text):
                 raise Invalid('提案引用了当前草稿中不存在的节点。')
             kind = node_kind(node)
             if op == 'remove-node':
-                if kind in ('tool', 'approval'):
+                if kind == 'approval' or kind == 'tool' and (not native or node['config'].get('tool') != 'command'):
                     raise Invalid('工具与人工审批节点需要在画布中明确调整。')
                 nodes.remove(node)
                 candidate['edges'] = [edge for edge in edges if ident not in (edge['source'], edge['target'])]
             else:
                 if 'name' in operation:
                     node['name'] = _name(operation['name'])
-                config = _config(operation, kind)
+                config = _config(operation, kind, native)
                 if config:
                     if kind == 'approval':
                         raise Invalid('人工审批配置需要在画布中明确调整。')
-                    node['config'].update(config)
+                    if native and kind == 'agent':
+                        bind = native_agent_fields(config, native_profiles)
+                        if 'agent_id' in bind:
+                            for key in ('provider', 'model', 'effort', 'initial_prompt', 'round_prompt',
+                                        'output_prompt', 'permission', 'timeout'):
+                                node.pop(key, None)
+                        node.update(bind)
+                    else:
+                        if kind == 'tool' and (node['config'].get('tool') != 'command' or config.get('tool', 'command') != 'command'):
+                            raise Invalid('已有非命令 Tool 需要在画布中调整。')
+                        node['config'].update(config)
         elif op == 'connect':
             if ident in used_edges:
                 raise Invalid('新增连线身份已使用。')
@@ -161,7 +230,53 @@ def proposal(base_document, reply_text):
                 raise Invalid('提案引用了当前草稿中不存在的连线。')
             edges.remove(edge)
 
+    if native:
+        resolve_loop_profiles(candidate, native_profiles)
     document = validate_draft(candidate)
     if document == base_document:
         raise Invalid('提案没有产生可预览的草稿变更。')
     return {'summary': safe_text(value['summary']).strip(), 'document': document}
+
+
+def native_agent_fields(config, profiles):
+    fields(config, {'profile', 'task_prompt', 'native_output', 'output_contract', 'artifact_paths'})
+    patch = dict(config)
+    if isinstance(patch.get('output_contract'), dict):
+        wrapper = patch['output_contract']
+        fields(wrapper, {'fields'}, {'fields'})
+        patch['output_contract'] = wrapper['fields']
+    if 'profile' in patch:
+        alias = patch.pop('profile')
+        if not isinstance(alias, str) or alias not in profiles:
+            raise Invalid('提案引用了当前已选范围中不存在的原生 Agent。')
+        spec = profiles[alias]
+        patch.update(agent_id=spec['id'], agent_revision=spec['revision'])
+    return patch
+
+
+def resolve_loop_profiles(document, profiles, depth=0):
+    if depth > 2 or not isinstance(document, dict) or not isinstance(document.get('nodes'), list):
+        raise Invalid('循环提案需要有效的画布，最多嵌套两层。')
+    for node in document['nodes']:
+        if not isinstance(node, dict):
+            raise Invalid('循环节点无效。')
+        kind = node_kind(node)
+        if kind == 'agent' and 'config' in node:
+            node.update(native_agent_fields(node.pop('config'), profiles))
+        elif kind == 'loop' and isinstance(node.get('config'), dict) and 'body' in node['config']:
+            resolve_loop_profiles(node['config']['body'], profiles, depth + 1)
+
+
+def native_loop_body(document, depth=0):
+    if depth > 2 or not isinstance(document, dict) or not isinstance(document.get('nodes'), list):
+        raise Invalid('循环提案需要有效的画布，最多嵌套两层。')
+    for node in document['nodes']:
+        if not isinstance(node, dict):
+            raise Invalid('循环节点无效。')
+        kind, config = node_kind(node), node.get('config')
+        if kind == 'approval' or kind == 'tool' and (not isinstance(config, dict) or config.get('tool') != 'command'):
+            raise Invalid('循环提案只能加入原生命令 Tool；人工审批与受管工具请在画布中配置。')
+        if kind == 'agent' and node.keys() - {'id', 'name', 'kind', 'position', 'config'}:
+            raise Invalid('循环中的 Agent 只能引用本次提供的原生配置。')
+        if kind == 'loop' and isinstance(config, dict) and 'body' in config:
+            native_loop_body(config['body'], depth + 1)

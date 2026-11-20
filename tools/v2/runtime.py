@@ -420,6 +420,8 @@ class V2Runtime(ManagedRunHistory):
                 version=1, name=name, edges=[], nodes=[dict(id='agent', name=name, position={'x': 120, 'y': 120},
                                                            agent_id=direct_agent, agent_revision=record['revision'])]))
         if draft['revision'] != revision: raise Conflict('草稿已变化，请重新保存后启动')
+        if draft['graph'].get('execution') == 'native-cli':
+            raise Invalid('此草稿使用原生 Python 执行，请从原生脚本入口启动。')
         if any(node.get('kind') == 'agent' and 'agent_id' not in node for node in draft['graph']['nodes']):
             raise Invalid('请在 Agent 管理为未绑定的节点选择已保存配置版本。')
         files = freeze_task_files(self.store,workspace,refs)

@@ -22,6 +22,10 @@ class ExportError(ValueError):
     pass
 
 
+class UnsupportedGraph(ExportError):
+    pass
+
+
 NATIVE_AGENT_REQUIRED = {'execution', 'name', 'provider', 'cwd', 'role', 'round_prompt', 'output_prompt'}
 NATIVE_AGENT_FIELDS = NATIVE_AGENT_REQUIRED | {'model', 'effort', 'timeout'}
 # Explicit legacy conversion still requires --native-config. These are the
@@ -33,7 +37,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
 CONTROL_KINDS = ('condition', 'router')
-COMPILER_VERSION = 11
+COMPILER_VERSION = 12
 
 
 def canonical(value):
@@ -184,7 +188,7 @@ def workflow_paths(document):
             or document['version'] != 1 or not isinstance(document.get('nodes'), list)
             or not isinstance(document.get('edges'), list) or not document['nodes']):
         raise ExportError('Expected a nonempty version-1 canvas document.')
-    known_fields(document, {'version', 'name', 'nodes', 'edges', 'viewport'}, 'Workflow')
+    known_fields(document, {'version', 'name', 'nodes', 'edges', 'viewport', 'execution'}, 'Workflow')
     name = text(document.get('name'), 'Workflow name')
     if not name.strip():
         raise ExportError('Workflow name is empty.')
@@ -197,11 +201,11 @@ def workflow_paths(document):
             raise ExportError('Duplicate node: ' + ident)
         kind = node.get('kind', 'agent')
         if kind not in ('start', 'agent', 'output', 'loop', 'tool', *CONTROL_KINDS):
-            raise ExportError('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
+            raise UnsupportedGraph('Export not implemented for node ' + ident + ' (' + str(kind) + '). No graph was flattened.')
         if kind == 'agent':
             allowed = ({'agent_id', 'agent_revision'} if 'agent_id' in node
                        else LEGACY_AGENT_FIELDS | NATIVE_AGENT_FIELDS)
-            known_fields(node, NODE_FIELDS | allowed | {'output_contract', 'artifact_paths', 'native_output'}, ident)
+            known_fields(node, NODE_FIELDS | allowed | {'output_contract', 'artifact_paths', 'native_output', 'task_prompt'}, ident)
             if 'agent_revision' in node and 'agent_id' not in node:
                 raise ExportError(ident + ': Agent revision requires its saved identity.')
         else:
@@ -211,7 +215,7 @@ def workflow_paths(document):
         nodes[ident], incoming[ident], outgoing[ident] = node, [], []
     controls = [node for node in nodes.values() if node.get('kind') in CONTROL_KINDS]
     if len(controls) > 1:
-        raise ExportError('Native export supports a single Condition or Router; multiple control nodes are unsupported.')
+        raise UnsupportedGraph('Native export supports a single Condition or Router; multiple control nodes are unsupported.')
     control = controls[0] if controls else None
     control_id = control['id'] if control else None
     branch_ports = control_ports(control) if control else ()
@@ -234,7 +238,7 @@ def workflow_paths(document):
         if target_kind == 'router':
             modes += ('result',)
         if not isinstance(transfer, dict) or set(transfer) - {'mode', 'max_chars'} or transfer.get('mode', 'answer') not in modes:
-            raise ExportError('Unsupported handoff on ' + ident + '; structured data must not be silently discarded.')
+            raise UnsupportedGraph('Unsupported handoff on ' + ident + '; structured data must not be silently discarded.')
         limit = transfer.get('max_chars')
         if limit is not None and (type(limit) is not int or limit < 1):
             raise ExportError('Invalid handoff limit: ' + ident)
@@ -256,7 +260,7 @@ def workflow_paths(document):
     if len(roots) != 1:
         raise ExportError('Expected one root; the graph is disconnected or cyclic.')
     if any(len(incoming[key]) > 1 or (key != control_id and len(outgoing[key]) > 1) for key in nodes):
-        raise ExportError('Only Condition or Router may branch; shared nodes and branch merges are unsupported.')
+        raise UnsupportedGraph('Only Condition or Router may branch; shared nodes and branch merges are unsupported.')
     seen = set()
 
     def walk(current, stop=None):
@@ -287,7 +291,7 @@ def workflow_paths(document):
     if loops:
         if (len(loops) != 1 or control or prefix[0].get('kind') != 'start'
                 or prefix[-1].get('kind') != 'output'):
-            raise ExportError('Native Loop requires Start → optional Agent/Tool → one Loop → optional Agent/Tool → Output, without Condition or Router.')
+            raise UnsupportedGraph('Native Loop requires Start → optional Agent/Tool → one Loop → optional Agent/Tool → Output, without Condition or Router.')
         if 'iterations' in nodes and nodes['iterations'].get('kind', 'agent') in ('agent', 'tool'):
             raise ExportError('Outer node ID "iterations" is reserved for Loop evidence.')
     elif not any(n.get('kind', 'agent') in ('agent', 'tool') for n in prefix):
@@ -311,7 +315,7 @@ def compile_agent(node, records, root, transfer, producer):
     if 'execution' in config:
         portable = {key: value for key, value in config.items() if key not in NODE_FIELDS - {'name'}}
         # Node presentation metadata is separate from inline Agent settings.
-        portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths', 'native_output')}
+        portable = {key: value for key, value in portable.items() if key not in ('output_contract', 'artifact_paths', 'native_output', 'task_prompt')}
         validate_native_agent(portable)
     provider = config.get('provider')
     if provider not in ('codex', 'claude'):
@@ -339,6 +343,12 @@ def compile_agent(node, records, root, transfer, producer):
                  round_prompt=text(config.get('round_prompt',''), 'Node prompt'),
                  output_prompt=text(config.get('output_prompt',''), 'Delivery prompt'),
                  timeout=timeout, max_budget_usd=budget)
+    if 'task_prompt' in node:
+        task_prompt = text(node['task_prompt'], ident + ': node task')
+        if len(task_prompt) > 20000:
+            raise ExportError(ident + ': node task exceeds the saved text limit.')
+        if task_prompt.strip():
+            agent['task_prompt'] = task_prompt
     if 'native_output' in node:
         if config.get('execution') != 'native-cli':
             raise ExportError(ident + ': native output requires an explicit native-cli Agent.')
@@ -388,9 +398,9 @@ def compile_output(node, transfer):
     config = node.get('config', {})
     if (not isinstance(config, dict) or config.get('format', 'text') != 'text'
             or config.get('instructions') or set(config) - {'format', 'instructions'}):
-        raise ExportError('This export supports plain final-answer Output only.')
+        raise UnsupportedGraph('This export supports plain final-answer Output only.')
     if transfer.get('mode') == 'none':
-        raise ExportError('Output requires data; control-only Output is not implemented.')
+        raise UnsupportedGraph('Output requires data; control-only Output is not implemented.')
     return transfer.get('max_chars')
 
 
@@ -402,7 +412,7 @@ def compile_command(tool):
         command = {key: value for key, value in command.items() if key not in inactive or value != ''}
     known_fields(command, {'tool', 'argv', 'cwd', 'timeout', 'permission'}, 'Command Tool configuration')
     if command.get('tool') != 'command' or command.get('permission', 'none') != 'none':
-        raise ExportError('Native Tool requires command and uses the current user environment.')
+        raise UnsupportedGraph('Native Tool requires command and uses the current user environment.')
     argv = command.get('argv')
     if (not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and '\0' not in arg for arg in argv)
             or not argv[0].strip()):
@@ -428,7 +438,7 @@ def compile_loop(loop, records, root):
     _, body, control, _, edges = workflow_paths(config.get('body'))
     kinds = [n.get('kind', 'agent') for n in body]
     if control or kinds not in (['start', 'agent', 'agent', 'output'], ['start', 'agent', 'tool', 'agent', 'output']):
-        raise ExportError('Native Loop body requires Start → Developer → optional command Tool → Reviewer → Output.')
+        raise UnsupportedGraph('Native Loop body requires Start → Developer → optional command Tool → Reviewer → Output.')
     body_start, developer = body[:2]
     reviewer, body_output = body[-2:]
     if not all('agent_id' in node for node in (developer, reviewer)):

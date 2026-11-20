@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import secrets
+import subprocess
 import sqlite3
 from threading import Lock
 from urllib.parse import parse_qs, urlsplit
@@ -35,7 +36,7 @@ STATIC = Path(__file__).parent / 'static'
 
 
 def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_catalog=None, session_operations=None,
-                  git_delivery_targets=(), runtime_factory=None):
+                  git_delivery_targets=(), runtime_factory=None, codex_executable=None):
     token = secrets.token_urlsafe(32)
     if native_sessions is not None and runtime is not None:
         native_sessions.workflow_links = bool(runtime.provider or 'claude' in getattr(session_operations, 'profiles', {})
@@ -81,7 +82,18 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
         with assistant_lock:
             if assistant is None:
                 from .assistant import Assistant
-                assistant = Assistant(store, session_operations, managed_runtime())
+                from .cli_providers import ProviderRegistry
+                from .provider import CodexProvider, public_provider_error
+                registry = getattr(runtime, 'cli_providers', None)
+                if registry is None:
+                    provider = error = None
+                    try:
+                        provider = CodexProvider(store, codex_executable)
+                    except (Blocked, OSError, subprocess.SubprocessError) as failure:
+                        error = public_provider_error(failure)
+                    registry = ProviderRegistry(store, provider, error, executable=codex_executable)
+                assistant = Assistant(store, session_operations, runtime, runtime_factory=managed_runtime,
+                                      registry=registry, agents=agents, scripts=scripts)
             return assistant
 
     @cache
@@ -407,10 +419,13 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = scripts.check(data['workspace'], data['document'])
                 elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
                     store.workspace(data['workspace'])
-                    legacy = managed_runtime()
-                    result = legacy.inspect(data['workspace'],data['document']) if legacy else check_chain(data['document'])
-                    if not legacy:
-                        result['issues'].extend(agents.reference_issues(data['workspace'], data['document']['nodes']))
+                    if isinstance(data['document'], dict) and data['document'].get('execution') == EXECUTION:
+                        result = scripts.check(data['workspace'], data['document'])
+                    else:
+                        legacy = managed_runtime()
+                        result = legacy.inspect(data['workspace'],data['document']) if legacy else check_chain(data['document'])
+                        if not legacy:
+                            result['issues'].extend(agents.reference_issues(data['workspace'], data['document']['nodes']))
                 elif post and path == '/api/v2/providers/discover' and data == {} and managed_available:
                     result = managed_runtime().catalog(refresh=True)
                 elif not post and path == '/api/v2/cli-providers' and not query and managed_available:

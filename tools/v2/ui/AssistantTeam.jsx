@@ -26,7 +26,7 @@ function diagrams(graph,path='工作流'){
  return sections;
 }
 
-function WorkflowDiagram({graph}){
+export function WorkflowDiagram({graph,label='团队工作流图'}){
  const sections=diagrams(graph);
  const [selected,setSelected]=useState('');
  const current=sections.find(section=>section.id===selected)||sections[0];
@@ -35,7 +35,7 @@ function WorkflowDiagram({graph}){
   data:{label:<>{node.name}<small>{kinds[node.kind]||'Agent'}</small></>}}));
  const edges=current.graph.edges.map(edge=>({id:edge.id,source:edge.source,target:edge.target,
   label:edge.source_port==='out'?undefined:edge.source_port,markerEnd:{type:MarkerType.ArrowClosed}}));
- return <section aria-label="团队工作流图">
+ return <section aria-label={label}>
   {sections.length>1&&<label>预览范围<select aria-label="预览工作流范围" value={current.id}
    onChange={event=>setSelected(event.target.value)}>{sections.map(section=><option key={section.id}>{section.id}</option>)}</select></label>}
   <div className="assistant-team-diagram">

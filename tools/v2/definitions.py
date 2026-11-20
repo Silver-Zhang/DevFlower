@@ -174,9 +174,12 @@ def normalize_graph(doc, bind, *, designer, prefix=''):
             output['output_contract'] = field_contract(n['output_contract'])
         if n.get('artifact_paths'):
             output['artifact_paths'] = n['artifact_paths']
+        round_prompt = spec.get('round_prompt', '')
+        if n.get('task_prompt', '').strip():
+            round_prompt = '\n\n'.join(filter(None, (round_prompt, n['task_prompt'])))
         nodes.append(dict(id=n['id'], kind='agent', name=n['name'], mode=spec.get('mode', 'Ask'),
                            permission='workspace-write' if spec.get('permission') == 'workspace-write' else 'read',
-                           initial_prompt=spec.get('initial_prompt', ''), round_prompt=spec.get('round_prompt', ''),
+                           initial_prompt=spec.get('initial_prompt', ''), round_prompt=round_prompt,
                            handoff_prompt=spec.get('output_prompt', ''), timeout=spec.get('timeout', 300),
                            subagents='disabled', task_context=True, **output))
     agents = [node for node in nodes if node['kind'] == 'agent']

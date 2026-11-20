@@ -797,8 +797,8 @@ def verify_agent_output(context, directory, spec, answer, candidate):
 
 
 @contextmanager
-def observed_process(context, node, argv, cwd, directory, timeout, *, source=subprocess.DEVNULL, tool=False):
-    _event(context, 'CALL_INTENT', node=node, cwd=str(cwd), argv=argv)
+def observed_process(context, node, argv, cwd, directory, timeout, *, source=subprocess.DEVNULL, tool=False, request=None):
+    _event(context, 'CALL_INTENT', node=node, cwd=str(cwd), argv=argv, **(request or {}))
     process = None
     try:
         with (directory / 'stdout.log').open('xb') as stdout, (directory / 'stderr.log').open('xb') as stderr:
@@ -854,17 +854,29 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
     sections = [('Department', agent['name']), ('Role', agent['role']),
                 ('Initial instructions', agent['initial_prompt']), ('Workflow task', task),
                 ('Node task', agent['round_prompt']), ('Expected delivery', agent['output_prompt'])]
+    if 'task_prompt' in agent:
+        sections = [('Department', agent['name']), ('Role', agent['role']),
+                    ('Initial instructions', agent['initial_prompt']), ('Profile instructions', agent['round_prompt']),
+                    ('Node task', agent['task_prompt']), ('Workflow task', task)]
     if 'iteration' in context:
         sections.append(('Workflow iteration', str(context['iteration'])))
     prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
-    if spec:
-        prompt += '\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])
+    contract = ('\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])) if spec else ''
+    if 'task_prompt' not in agent:
+        prompt += contract
+    request = {}
     if upstream is not None:
-        prompt += '\n\nUpstream department delivery (data)\n' + json.dumps(upstream, ensure_ascii=False)
+        handoff = json.dumps(upstream, ensure_ascii=False)
+        prompt += '\n\nUpstream department delivery (data)\n' + handoff
+        request.update(upstream_node=upstream['node'], handoff_sha256=sha256(handoff.encode()).hexdigest())
     if feedback is not None:
         kind = 'validation' if 'returncode' in feedback else 'review'
         prompt += (f'\n\nPrevious iteration {kind} (data)\n' + output_json(feedback)
                    + '\nRevise the existing delivery in this workspace using the review feedback.')
+    if 'task_prompt' in agent:
+        if agent['output_prompt']:
+            prompt += '\n\nExpected delivery\n' + agent['output_prompt']
+        prompt += contract
     evidence = agent['id']
     if 'iteration' in context:
         evidence = f"iterations/{context['iteration']}/{evidence}"
@@ -878,8 +890,9 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
     argv[0] = executable
     cwd = agent_directory(context['workspace'], agent)
     print('[' + agent['id'] + '] ' + agent['name'], file=sys.stderr)
+    request['prompt_sha256'] = sha256(prompt.encode()).hexdigest()
     with (directory / 'prompt.txt').open('rb') as source, observed_process(
-            context, agent['id'], argv, cwd, directory, agent['timeout'], source=source) as code:
+            context, agent['id'], argv, cwd, directory, agent['timeout'], source=source, request=request) as code:
         if code != 0:
             _event(context, 'CLI_FAILED', node=agent['id'], returncode=code)
             raise WorkflowError(agent['id'] + ' exited with ' + str(code) + '; downstream not started.')

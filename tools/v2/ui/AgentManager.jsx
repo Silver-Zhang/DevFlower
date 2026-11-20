@@ -12,7 +12,7 @@ const SOURCES = {cli_catalog: 'CLI 目录', cli_alias: 'CLI 别名', configured_
  native_config: '原生配置', cli_configured: '原生配置'};
 const PERMISSIONS = {'none': '仅对话（无工具）', 'workspace-read': '读取工作区', 'workspace-write': '读写工作区',
  'controlled-command': '受控命令', 'native': 'CLI 原生权限', 'manual': '人工确认'};
-const fresh = workspace => ({execution: 'native-cli', name: '', provider: 'codex', cwd: workspace.path,
+export const nativeProfileDefaults = workspace => ({execution: 'native-cli', name: '', provider: 'codex', cwd: workspace.path,
  role: '', round_prompt: '', output_prompt: '', model: null, effort: null, timeout: null});
 const freshManaged = workspace => ({name: '', role: '', responsibilities: '', background: '', goal: '', template: 'custom',
  provider: 'codex', model: null, model_source: 'native_default', effort: null, mode: 'Ask', permission: 'none',
@@ -72,7 +72,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
   finally {running.current = false; if (alive.current) setBusy(false);}
  }
  function choose(row) {
-  setRecord(row); setConfig(row?.config || fresh(workspace)); setSessions(null); setSkills(null);
+  setRecord(row); setConfig(row?.config || nativeProfileDefaults(workspace)); setSessions(null); setSkills(null);
   newId.current = row?.id || crypto.randomUUID().replaceAll('-', '');
   setDirectTask('');
   let pending = null;
@@ -87,7 +87,7 @@ export function AgentManager({api, workspace, writeProviders, selectedNode, onBi
  function change(fields) {setConfig(old => ({...old, ...fields}));}
  function changeExecution(execution) {
   setConfig(old => {
-   const next = execution === 'native-cli' ? fresh(workspace) : freshManaged(workspace);
+   const next = execution === 'native-cli' ? nativeProfileDefaults(workspace) : freshManaged(workspace);
    for (const key of ['name', 'provider', 'cwd', 'role', 'round_prompt', 'output_prompt', 'model', 'effort']) next[key] = old[key];
    if (execution !== 'native-cli' && next.model) next.model_source = 'manual';
    return next;

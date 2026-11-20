@@ -9,7 +9,7 @@ import sys
 from threading import Thread
 import time
 
-from devflower_export import ExportError, compile_workflow, document_agents, read_saved
+from devflower_export import ExportError, UnsupportedGraph, compile_workflow, document_agents, read_saved, workflow_paths
 from orchestration.common import canonical
 from studio.graph import Invalid
 from studio.server import Conflict
@@ -23,9 +23,10 @@ EXECUTION = 'native-cli'
 
 
 def compile_native(document, records, root):
-    if any(records.get(node.get('agent_id'), {}).get('config', {}).get('execution') != EXECUTION
-           for node in document_agents(document)):
-        raise ExportError('脚本运行需要每个 Agent 节点绑定已保存的原生 CLI 配置；受管工作流请使用原有运行入口。')
+    for node in document_agents(document):
+        row = records.get(node.get('agent_id'), {})
+        if row.get('config', {}).get('execution') != EXECUTION:
+            raise ExportError(node['id'] + '：请选择已保存的原生 CLI Agent 配置；受管工作流可使用原有运行入口。')
     return compile_workflow(document, records, root, native_config=True)
 
 
@@ -46,16 +47,36 @@ class ScriptRuns:
         self.store = store
         self.agents = agents
 
-    def check(self, workspace, document):
+    def check(self, workspace, document, *, proposed=()):
         root = self.store.workspace(workspace)['path']
         document = validate_draft(document)
+        records = {row['id']: row for row in proposed}
+        issues = []
+        for node in document_agents(document):
+            try:
+                key = node.get('agent_id')
+                row = records.get(key) or (self.agents.get(workspace, key, node['agent_revision']) if key else {})
+                if row.get('revision') != node.get('agent_revision') or row.get('config', {}).get('execution') != EXECUTION:
+                    raise Invalid('请选择已保存的原生 CLI Agent 配置。')
+                records[key] = row
+            except (Invalid, Conflict) as error:
+                issues.append(dict(node_id=node['id'], message=node['name'] + '：' + str(error)))
+        status = 'configuration_error'
         try:
-            records = {node['agent_id']: self.agents.get(workspace, node['agent_id'], node['agent_revision'])
-                       for node in document_agents(document) if 'agent_id' in node}
-            compile_native(document, records, root)
+            if issues:
+                workflow_paths(document)
+            else:
+                compile_native(document, records, root)
+                return dict(issues=[], execution_available=True, status='compilable',
+                            message='原生脚本编译通过。检查未启动 CLI。')
         except (ExportError, Invalid, Conflict, OSError, ValueError) as error:
-            return dict(issues=[dict(message=str(error))], execution_available=False)
-        return dict(issues=[], execution_available=True, message='原生脚本编译通过。检查未启动 CLI。')
+            if isinstance(error, UnsupportedGraph):
+                status = 'unsupported'
+            location = next((node['id'] for node in document['nodes']
+                             if re.search(r'(?<![A-Za-z0-9_-])'+ re.escape(node['id']) + r'(?![A-Za-z0-9_-])', str(error))), None)
+            issues.insert(0, dict(message=str(error), **({'node_id':location} if location else {})))
+        message = '暂不支持编译 · 可以保存为设计草稿。' if status == 'unsupported' else '配置错误 · 可以保存草稿，修正后再编译。'
+        return dict(issues=issues, execution_available=False, status=status, message=message)
 
     def launch(self, workspace, draft_id, revision, intent_key, task, *, task_files=None):
         self.store.workspace(workspace)

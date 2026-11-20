@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {History,Plus,Settings2,Sparkles,X} from 'lucide-react';
 import {ProposalDiff} from '../../studio/workbench_ui/ProposalDiff.jsx';
+import {NativeProposal} from './NativeProposal.jsx';
 import {PanelEmpty} from './WorkbenchFeedback.jsx';
 import {AssistantTeam} from './AssistantTeam.jsx';
 import {AssistantRepair} from './AssistantRepair.jsx';
@@ -31,15 +32,21 @@ function Diagnosis({value}){
  if(!value)return null;
  return <section className="assistant-diagnosis" aria-label="运行只读诊断">
   <h3>运行诊断</h3><p>{value.state} · {value.reason||'无额外运行原因'}</p>
+  {value.execution==='native-cli'&&<><p className="field-note">运行 <code>{value.run}</code></p>
+   {!!value.not_observed_started?.length&&<p>未观察到进程启动的节点 · {value.not_observed_started.join('、')}</p>}
+   {!!value.loop_rounds?.length&&<details><summary>循环轮次与审核结果</summary><pre>{JSON.stringify(value.loop_rounds,null,2)}</pre></details>}
+  </>}
   {value.resume_available&&<p>此检查点可以从运行状态区显式恢复。</p>}
-  {!value.nodes.length&&<p>此运行未记录失败、跳过或待核验节点。</p>}
+  {!value.nodes.length&&<p>{value.execution==='native-cli'?'此运行尚未读到节点进程证据。':'此运行未记录失败、跳过或待核验节点。'}</p>}
   {value.recent_error_events?.length>0&&<details><summary>运行检查器中的错误事件</summary>
    <ul>{value.recent_error_events.map(event=><li key={event.seq}>#{event.seq} · {event.node||'运行级'} · {event.kind}</li>)}</ul>
   </details>}
   {value.nodes.map(row=><article key={row.activation}>
    <strong>{row.node} · {row.state}{row.iteration_path.length?' · 第 '+row.iteration_path.join('/')+' 轮':''}</strong>
    {row.diagnostic_outcome&&<p>{outcomes[row.diagnostic_outcome]}{row.event_seq!=null&&' · 事件 #'+row.event_seq}</p>}
-   {row.reason&&<p>{row.reason}{row.feedback_truncated&&' …'}</p>}<p>{row.advice}</p>
+   {row.reason&&<p>{row.reason}{row.feedback_truncated&&' …'}</p>}
+   {row.returncode!=null&&<p>进程退出码 {row.returncode}</p>}
+   {row.advice&&<p>{row.advice}</p>}
    {row.upstream.length>0&&<details><summary>实际记录的上游交接</summary><pre>{JSON.stringify(row.upstream,null,2)}</pre></details>}
    {row.evidence&&Object.keys(row.evidence).length>0&&<details><summary>实际请求、配置与错误回执</summary>
     {row.evidence.configuration&&<pre>{JSON.stringify(row.evidence.configuration,null,2)}</pre>}
@@ -54,27 +61,29 @@ function Diagnosis({value}){
 }
 
 export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover,draft,files,onFiles,
- run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose}){
+ run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose,nativeEntry,onEditRunDraft}){
  const storeKey='devflower-v2-assistant:'+storageKey+':'+workspace.id;
  const [conversation,setConversation]=useState(()=>localStorage.getItem(storeKey)||uid());
  const [view,setView]=useState('chat'),[record,setRecord]=useState(null),[history,setHistory]=useState([]);
  const [before,setBefore]=useState(null),[diagnosis,setDiagnosis]=useState(null);
  const [settings,setSettings]=useState(null),[selection,setSelection]=useState(emptySelection);
- const [legacy,setLegacy]=useState(providers.length>0),[legacyProvider,setLegacyProvider]=useState(providers.includes('codex')?'codex':providers[0]||'');
+ const [legacy,setLegacy]=useState(!nativeEntry&&providers.length>0),[legacyProvider,setLegacyProvider]=useState(providers.includes('codex')?'codex':providers[0]||'');
  const [legacyModel,setLegacyModel]=useState(''),[legacyEffort,setLegacyEffort]=useState('');
  const {catalog:configuredCatalog,chosen,canSend}=choicesFor(settings,selection);
- const [mode,setMode]=useState(run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
+ const [mode,setMode]=useState(nativeEntry?'native':run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
  const [inventory,setInventory]=useState(true);
  const [text,setText]=useState(''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
  const [retry,setRetry]=useState(false);
+ const historySelection=useRef(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const alive=useRef(false),sequence=useRef(0),loadFlight=useRef(false),loaded=useRef(null);
  const operation=useRef(false),closing=useRef(null),latest=useRef(null),pendingRef=useRef(null);
  const selectedModel=catalog?.models?.find(item=>item.id===legacyModel);
  const config=legacy?{provider:legacyProvider,model:legacyProvider==='codex'?legacyModel:null,
   effort:legacyProvider==='codex'?legacyEffort:null}:selection;
+ const currentDraft=mode==='native'?draft:attachDraft?draft:null;
  const payload={workspace:workspace.id,conversation,...config,mode:mode==='diagnosis'?'chat':mode,
-  text,draft:attachDraft?draft:null,files,run:run||null,...(legacy?{}:{inventory})};
+  text,draft:currentDraft,files,run:run||null,...(legacy?{}:{inventory})};
  latest.current=payload;
  const turn=record?.turns?.at(-1),running=active.has(turn?.state),unknown=turn?.state==='RECOVERY_REQUIRED';
  const matching=preview&&(preview.payload.mode==='probe'?
@@ -87,7 +96,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    if(!alive.current)return;
    setSettings(result);
    if(result.preferences){setSelection(result.preferences);setLegacy(false)}
-   else if(!providers.length&&!run&&!loadPending(pendingKey(storeKey,conversation)))setView('settings');
+   else if(!providers.length&&!run&&!loadPending(pendingKey(storeKey,conversation))&&!nativeEntry)setView('settings');
   },failure=>{if(alive.current)setError(failure.message)});
   return()=>{alive.current=false;sequence.current++};
  },[]);
@@ -105,6 +114,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   },failure=>{if(current)setError(failure.message)});
   return()=>{current=false;setDiagnosis(null)};
  },[run]);
+ useEffect(()=>{if(nativeEntry){setLegacy(false);setMode('native')}},[nativeEntry]);
  useEffect(()=>{
   if(!running||view==='history')return;
   const timer=setInterval(()=>read(conversation).catch(failure=>alive.current&&setError(failure.message)),1100);
@@ -120,6 +130,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
    const value=await api(route('conversation',{workspace:workspace.id,conversation:id}));
    if(alive.current&&ticket===sequence.current){
     loaded.current=value;setRecord(value);
+    if(historySelection.current===id){
+     historySelection.current=null;restoreLegacy(value.turns.at(-1));
+    }
     if(pendingRef.current&&value.turns.some(item=>item.intent===pendingRef.current.intent)){
      clearPending(pendingKey(storeKey,id));pendingRef.current=null;setPending(null);setRetry(false);setPreview(null);setText('');
     }
@@ -134,7 +147,14 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   catch(failure){if(alive.current)setError(failure.message)}
   finally{operation.current=false;if(alive.current)setBusy(false)}
  }
- function switchTo(id){
+ function restoreLegacy(item){
+  if(item&&!item.config&&providers.includes(item.provider)){
+   setLegacy(true);setLegacyProvider(item.provider);setMode('chat');setAttachDraft(false);
+  }
+ }
+ function switchTo(id,fromHistory=false){
+  historySelection.current=fromHistory&&id!==conversation?id:null;
+  if(fromHistory&&id===conversation)restoreLegacy(loaded.current?.turns.at(-1));
   setView('chat');setText('');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
  }
  async function loadHistory(cursor=null){
@@ -205,20 +225,22 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     onTest={()=>perform(()=>showPreview(true))}/>
   </div>:view==='history'?<section className="assistant-history" aria-label="助手会话列表">
    {!history.length&&<PanelEmpty icon={History} title="还没有助手对话"><p>切回对话即可开始提问或准备画布提案。</p></PanelEmpty>}
-   {history.map(row=><button key={row.id} onClick={()=>switchTo(row.id)}><span>{row.title}</span>
+   {history.map(row=><button key={row.id} onClick={()=>switchTo(row.id,true)}><span>{row.title}</span>
     <small>{new Date(row.updated_at*1000).toLocaleString()}</small></button>)}
    {before&&<button disabled={busy} onClick={()=>perform(()=>loadHistory(before))}>更早的助手对话</button>}
   </section>:<>
    <div className="v2-assistant-scroll">
     <Diagnosis value={diagnosis}/>
-    {diagnosis&&<AssistantRepair key={diagnosis.run} api={api} workspace={workspace.id} diagnosis={diagnosis}
+    {diagnosis?.execution==='native-cli'&&onEditRunDraft&&<button type="button" onClick={onEditRunDraft}>打开草稿以提出修改</button>}
+    {diagnosis&&diagnosis.execution!=='native-cli'&&<AssistantRepair key={diagnosis.run} api={api} workspace={workspace.id} diagnosis={diagnosis}
      agents={settings?.identities||[]} files={files} runs={runs} perform={perform} busy={busy} onRun={onOpenRun}/>}
     <section role="log" aria-label="助手对话消息">
      {!record?.turns?.length&&!matching&&<PanelEmpty icon={Sparkles} title="与助手一起准备工作流"
       actions={(providers.length>0||canSend)&&<button disabled={busy||running||unknown||!!pending}
        onClick={()=>setText(mode==='team'?'创建 Developer、Tester 和 Reviewer 团队。测试失败返回 Developer，审核通过后结束。':
         mode==='proposal'?'检查当前草稿的节点与交接，并建议一项可以审阅的改动。':
-        mode==='diagnosis'?'为什么这个工作流执行失败了？请根据运行证据定位问题。':
+        mode==='diagnosis'||mode==='native'&&run?'为什么这个工作流执行失败了？请根据运行证据定位问题。':
+        mode==='native'?'建立科研协作工作流：一位 Agent 调研并整理来源，另一位 Agent 汇总发现并指出不确定性。':
         '这个项目有哪些 Agent 和工作流？请结合当前草稿说明运行逻辑。')}>使用示例问题</button>}>
       <p>{providers.length||canSend?'提出问题或准备画布提案。发送前可以核对附件和内容。':
        '可先阅读运行诊断。发送消息前，请在助手模型设置中刷新目录并选择原生 CLI。'}</p>
@@ -226,7 +248,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      {record?.turns?.map(item=><article className="v2-assistant-turn" key={item.id}>
       <p className="assistant-user">{item.text}</p>
       <small>{item.provider} · {labels[item.state]||item.state}</small>
-      {item.reply&&(['proposal','team'].includes(item.mode)?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
+      {item.reply&&(['proposal','team'].includes(item.mode)||item.mode==='native'&&item.reply.startsWith('{')?<details><summary>查看原生提案回复</summary><pre>{item.reply}</pre></details>:
        <Markdown skipHtml remarkPlugins={[remarkGfm]}>{item.reply}</Markdown>)}
       {item.receipt&&<details><summary>Provider 回执</summary><dl>
        <dt>请求模型 / 强度</dt><dd>{item.receipt.requested_model||'原生默认'} / {item.receipt.requested_effort||'原生默认'}</dd>
@@ -242,14 +264,20 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     {turn?.team&&<AssistantTeam key={turn.id} api={api} workspace={workspace.id} conversation={conversation}
      turn={turn} draft={draft} busy={busy} perform={perform} onSaved={onSaveTeam} onOpenDraft={onOpenDraft}/>}
     {turn?.proposal_error&&<p role="alert" className="error-text">{turn.proposal_error}</p>}
+    {turn?.native_saved&&<section className="assistant-proposal">
+     <p>提案已保存为工作流。</p>
+     <button type="button" onClick={()=>onOpenDraft(turn.native_saved)}>打开已保存工作流</button>
+    </section>}
     {turn?.proposal&&<section className="assistant-proposal" aria-label="画布提案">
      <h3>画布提案</h3><p>{turn.proposal.summary}</p>
-     <ProposalDiff before={turn.proposal.before} after={turn.proposal.after}/>
+     {turn.proposal.check?<NativeProposal value={turn.proposal}/>:<ProposalDiff before={turn.proposal.before} after={turn.proposal.after}/>}
      <details><summary>展开变更前后内容</summary><pre>{JSON.stringify({before:turn.proposal.before,after:turn.proposal.after},null,2)}</pre></details>
      <button className="primary" disabled={!draft||busy} onClick={()=>perform(async()=>{
-      await onApply({workspace:workspace.id,conversation,turn:turn.id,draft});
-      if(alive.current)setNotice('已应用到当前草稿，可以撤销。')
-     })}>应用到画布草稿</button>
+      const sha=turn.proposal.sha256;
+      await onApply({workspace:workspace.id,conversation,turn:turn.id,draft,...(sha?{preview_sha256:sha}:{})});
+      if(sha)await read();
+      if(alive.current)setNotice(sha?'已应用并保存。可以从画布撤销，再保存恢复后的版本。':'已应用到当前草稿，可以撤销。')
+     })}>{turn.proposal.sha256?'应用并保存草稿':'应用到画布草稿'}</button>
     </section>}
     {matching&&<section className="assistant-preview" aria-label="本次发送预览">
      <h3>{preview.payload.mode==='probe'?'真实推理测试':'发送预览'}</h3>
@@ -275,10 +303,14 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      </select></label>:<div><small>当前模型</small><br/>
       <button disabled={busy} onClick={()=>setView('settings')}>{providerNames[selection.provider]} · {chosen?.id||'原生默认'}</button>
       {!configuredCatalog?.refreshed_at&&<small> · 待配置</small>}</div>}
-     <label>工作方式<select aria-label="助手工作方式" value={mode} disabled={busy||running} onChange={event=>{
+     {(legacy||mode!=='native')&&<label>工作方式<select aria-label="助手工作方式" value={mode} disabled={busy||running} onChange={event=>{
       setMode(event.target.value);if(event.target.value==='proposal')setAttachDraft(true)
-     }}><option value="chat">对话与项目理解</option><option value="team" disabled={legacy}>创建或修改 Agent 团队</option>
-      <option value="proposal" disabled={!draft}>画布提案</option><option value="diagnosis">运行诊断与授权修复</option></select></label>
+     }}><option value="native" disabled={legacy}>提问或修改工作流</option><option value="chat">对话与项目理解</option><option value="team" disabled={legacy}>创建或修改 Agent 团队</option>
+      <option value="proposal" disabled={!draft}>画布提案</option><option value="diagnosis">运行诊断与授权修复</option></select></label>}
+     {!legacy&&mode==='native'&&<details className="assistant-advanced-modes"><summary>兼容对话方式</summary>
+      <button type="button" onClick={()=>setMode('chat')}>打开高级对话选项</button>
+      {providers.length>0&&<button type="button" onClick={()=>{setLegacy(true);setMode('chat')}}>旧原生会话发送</button>}
+     </details>}
     </div>
     {legacy&&legacyProvider==='codex'&&<div className="assistant-selects">
      <label>模型<select aria-label="助手模型" value={legacyModel} disabled={busy||running} onChange={event=>{setLegacyModel(event.target.value);setLegacyEffort('')}}>
@@ -290,10 +322,11 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      <button disabled={busy||running} onClick={()=>perform(onDiscover)}>刷新模型</button>
     </div>}
     <details open={mode==='diagnosis'?true:undefined}>
-     <summary>本次上下文（{files.length} 个文件{run?'、1 次运行':''}{attachDraft?'、当前草稿':''}）</summary>
-     <label className="assistant-checkbox"><input type="checkbox" disabled={!draft||mode==='proposal'||busy||running}
-      checked={attachDraft} onChange={event=>setAttachDraft(event.target.checked)}/>附加当前草稿</label>
-     {!legacy&&<label className="assistant-checkbox"><input type="checkbox" disabled={busy||running}
+     <summary>本次上下文（{files.length} 个文件{run?'、1 次运行':''}{currentDraft?'、当前草稿':''}）</summary>
+     {mode==='native'?<p className="field-note">{draft?'使用当前画布。修改先提供预览。':'正在查看运行；打开草稿后可请求修改。'}</p>:
+      <label className="assistant-checkbox"><input type="checkbox" disabled={!draft||mode==='proposal'||busy||running}
+       checked={attachDraft} onChange={event=>setAttachDraft(event.target.checked)}/>附加当前草稿</label>}
+     {!legacy&&mode!=='native'&&<label className="assistant-checkbox"><input type="checkbox" disabled={busy||running}
       checked={inventory} onChange={event=>setInventory(event.target.checked)}/>附加工作区 Agent 与工作流概览</label>}
      <label className="assistant-run-choice">运行证据<select aria-label="附加运行证据" value={run||''} disabled={busy||running} onChange={event=>onRun(event.target.value||null)}>
       <option value="">不附加</option>{runs.map(row=><option key={row.id} value={row.id}>{row.name} · {new Date(row.created_at*1000).toLocaleTimeString()}</option>)}
@@ -301,6 +334,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      <AssistantSourcePicker api={api} workspace={workspace.id} files={files} onFiles={onFiles}
       busy={busy||running} perform={perform}/>
     </details>
+    {!canSend&&!legacy&&<button type="button" onClick={()=>setView('settings')}>配置助手模型</button>}
     <textarea aria-label="助手消息" value={text} rows={3} maxLength={8000} disabled={busy||running||unknown||!!pending}
      onChange={event=>setText(event.target.value)} placeholder="输入问题或画布修改要求"/>
     <button className="primary assistant-preview-action" disabled={!valid||busy||running||unknown||!!pending} onClick={()=>perform(()=>showPreview())}>预览本次发送</button>

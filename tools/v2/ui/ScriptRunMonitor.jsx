@@ -60,7 +60,7 @@ function readHandoff(evidence,hasInput){
  }catch{return null}
 }
 
-export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel}) {
+export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExplain}) {
  const {run,script,state}=snapshot;
  const [choice,setChoice]=useState(selected||'');
  const [evidence,setEvidence]=useState(null);
@@ -194,6 +194,7 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel}) {
     tool?'尚无命令调用记录。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div className="script-evidence-detail">
    {trusted&&state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:<p>尚无已核验的最终结果。</p>}
+   {trusted&&onExplain&&<button type="button" onClick={onExplain}>让 AI 解释这次结果</button>}
    {!loop&&!decision&&started.length>0&&<section aria-label="实际执行顺序">
     <h3>实际执行顺序</h3><ol>{started.map((event,index)=><li key={index}>
      <button type="button" onClick={()=>inspectChoice(event.node)}>{nameOf(event.node)}</button>{' · '+outerState(event.node)}

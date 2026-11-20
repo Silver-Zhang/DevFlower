@@ -9,6 +9,8 @@ from orchestration.common import Blocked, canonical, digest
 from studio.graph import Invalid
 from studio.server import Conflict
 
+from . import assistant_native
+from .agent_records import AgentRecords
 from .assistant_operations import AssistantOperations
 from .assistant_repairs import launch_repair, preview_repair, recent_repair, repair_intent, repair_status
 from .assistant_sources import numbered_excerpt, search_sources
@@ -19,6 +21,7 @@ from .native_agent_profiles import EFFORT, PROFILE_ID
 from .project_files import read_project
 from .run_inspector import IDENT, RUN, RunInspector, take
 from .session_identity import SessionRefused
+from .script_runs import ScriptRuns
 
 CHAT = 'assistant-conversation'
 TURN = 'assistant-turn'
@@ -34,7 +37,7 @@ MAX_TURNS = 32
 MAX_FILES = 3
 MAX_PROMPT = 54000
 MAX_REPLY = 12000
-MODES = {'chat', 'proposal', 'probe', 'team'}
+MODES = {'chat', 'proposal', 'probe', 'team', 'native'}
 PREFERENCES = 'assistant-preferences'
 PROBE = '连接测试：请只回复 DEVFLOWER_ASSISTANT_OK。'
 CONFIG = {'provider', 'native_profile', 'model', 'effort', 'identity'}
@@ -60,12 +63,21 @@ def clipped(text, cap):
 
 
 class Assistant:
-    def __init__(self, store, operations, runtime):
-        self.store, self.operations, self.runtime = store, operations, runtime
-        registry = getattr(runtime, 'cli_providers', None)
+    def __init__(self, store, operations, runtime, *, runtime_factory=None, registry=None, agents=None, scripts=None):
+        self.store, self.operations = store, operations
+        self._runtime, self._runtime_factory = runtime, runtime_factory
+        registry = registry or getattr(runtime, 'cli_providers', None)
         self.model_operations = AssistantOperations(store, registry) if registry else None
+        self.agents = agents or getattr(runtime, 'agents', None) or AgentRecords(store)
+        self.scripts = scripts or ScriptRuns(store, self.agents)
         self.inspector = RunInspector(store)
         self.owner = uuid.uuid4().hex
+
+    @property
+    def runtime(self):
+        if self._runtime is None and self._runtime_factory is not None:
+            self._runtime = self._runtime_factory()
+        return self._runtime
 
     def require_provider(self, provider):
         if not isinstance(provider, str) or not self.operations or provider not in self.operations.status():
@@ -77,7 +89,7 @@ class Assistant:
         if (not isinstance(value, dict) or set(value) != {'id', 'revision'}
                 or not isinstance(value['revision'], str) or not IDENT.fullmatch(value['revision'])):
             raise Invalid('请明确选择已保存的 Agent 配置版本。')
-        return self.runtime.agents.get(workspace, value['id'], value['revision'])
+        return self.agents.get(workspace, value['id'], value['revision'])
 
     def selected_config(self, workspace, data):
         if not self.model_operations:
@@ -107,7 +119,7 @@ class Assistant:
                                 (TURN, workspace)).fetchall()
         registry = self.model_operations.registry if self.model_operations else None
         listing = registry.listing() if registry else {'providers': [], 'profiles': []}
-        agents = self.runtime.agents.list(workspace)['agents'] if registry else []
+        agents = self.agents.list(workspace)['agents']
         fields = ('name','role','provider','model','effort','native_profile','mode','permission')
         checks = []
         for (raw,) in probes:
@@ -190,6 +202,26 @@ class Assistant:
             value['receipt'] = self.inspector.receipt(operation.get('receipt'))
             if operation.get('receipt', {}).get('provider') == row['provider']:
                 value['receipt']['provider'] = row['provider']
+            if row['mode'] == 'native':
+                try:
+                    from .assistant_proposals import parse_envelope
+                    parsed = parse_envelope(reply)
+                    if isinstance(parsed, dict) and set(parsed) == {'answer'}:
+                        value['reply'], value['reply_truncated'] = clipped(assistant_native.stage(self, row, reply)['answer'],
+                                                                           MAX_REPLY)
+                    elif with_proposal:
+                        with self.store.db.tx(read=True) as db:
+                            saved = assistant_native.applied(db, row)
+                        if saved:
+                            value['native_saved'] = take(saved['draft'], ('id', 'revision'))
+                        else:
+                            staged = assistant_native.stage(self, row, reply)
+                            value['proposal'] = dict(self.inspector.clean(staged),
+                                before=assistant_native.visible_graph(self.inspector, staged['before']),
+                                after=assistant_native.visible_graph(self.inspector, staged['after']))
+                except (Invalid, Conflict, ValueError, TypeError, KeyError, RecursionError) as error:
+                    value['proposal_error'] = self.inspector.text(str(error) if isinstance(error, (Invalid, Conflict))
+                                                                  else '回复没有通过原生提案校验。')
             if with_proposal and row['mode'] == 'team':
                 try:
                     plan = parse_plan(reply)
@@ -263,10 +295,10 @@ class Assistant:
             read_project(self.store,data['workspace'],data['path'],preview=True),data['start']))
 
     def inventory(self, workspace):
-        agents = self.runtime.agents.list(workspace)['agents'] if self.runtime else []
+        agents = self.agents.list(workspace)['agents']
         drafts = self.store.drafts(workspace)
         return self.inspector.clean(dict(agents=[dict(take(row,('id','revision')),**take(
-            row['config'],('name','role','provider','model','effort','mode','permission'))) for row in agents[:20]],
+            row['config'],('name','role','provider','model','effort','mode','permission','execution'))) for row in agents[:20]],
             workflows=[dict(take(row,('id','revision')), name=row['graph']['name'],
                             nodes=len(row['graph']['nodes'])) for row in drafts[:20]],
             agents_omitted=max(0,len(agents)-20),workflows_omitted=max(0,len(drafts)-20)))
@@ -339,6 +371,9 @@ class Assistant:
         return repair_intent(self,workspace,run,intent)
 
     def diagnosis(self, workspace, run):
+        if (script := self.scripts.get(workspace, run)) is not None:
+            from .assistant_script_evidence import diagnosis
+            return diagnosis(self, workspace, run, script)
         if self.runtime is None:
             raise Invalid('当前服务没有运行诊断。')
         snapshot = self.runtime.snapshot(workspace, run)
@@ -442,8 +477,8 @@ class Assistant:
             raise Invalid('Claude 助手使用启动时批准的 CLI 原生配置。')
         if 'inventory' in data and type(data['inventory']) is not bool:
             raise Invalid('请选择是否附加当前工作空间概览。')
-        if mode == 'team' and not binding:
-            raise Invalid('团队生成需要先配置助手模型。')
+        if mode in ('team', 'native') and not binding:
+            raise Invalid('请先配置本机助手模型。')
         if mode == 'probe' and (not binding or text != PROBE or data['draft'] is not None or data['files'] != []
                                 or data['run'] is not None or identity is not None or data.get('inventory')):
             raise Invalid('连接测试只发送固定短提示。')
@@ -475,7 +510,7 @@ class Assistant:
         if identity:
             fields = ('name', 'role', 'responsibilities', 'background', 'goal', 'initial_prompt',
                       'round_prompt', 'output_prompt')
-            role = self.inspector.clean({key:identity['config'][key] for key in fields})
+            role = self.inspector.clean({key:identity['config'].get(key, '') for key in fields})
             role = {key:clipped(value, 2400)[0] for key,value in role.items()}
             sections.append(('用户选择的 Agent 身份和提示词（只用作对话角色）', role))
         if mode == 'probe':
@@ -490,12 +525,17 @@ class Assistant:
                 sections.append(('此前已确认的问答（数据）', dict(user=user, assistant=reply)))
                 context['previous_turns'] += 1
         if base:
-            public = self.inspector.clean(base['document'])
+            public = (assistant_native.visible_graph(self.inspector, base['document']) if mode == 'native'
+                      else self.inspector.clean(base['document']))
             if len(canonical(public))>22000:
                 raise Invalid('所选草稿超过助手上下文预算。请缩小草稿或取消附加。')
             context['draft'] = dict(id=base['id'], revision=base['revision'], sha256=base['sha256'])
             sections.append(('当前草稿（数据）', public))
-        if data.get('inventory'):
+        profiles = assistant_native.inventory(self, workspace) if mode == 'native' and base else []
+        if mode == 'native' and base:
+            context['native_profiles'] = len(profiles)
+            sections.append(('可选的已保存原生 Agent 和精确版本（数据）', profiles))
+        if data.get('inventory') and mode != 'native':
             inventory = self.inventory(workspace)
             context['inventory'] = dict(agents=len(inventory['agents']),workflows=len(inventory['workflows']),
                                         sha256=digest(canonical(inventory)))
@@ -514,16 +554,17 @@ class Assistant:
             if not isinstance(data['run'],str) or not RUN.fullmatch(data['run']):
                 raise Invalid('请选择此工作空间的一次运行。')
             evidence = self.diagnosis(workspace, data['run'])
-            if len(canonical(evidence))>6500:
+            evidence_cap = 12000 if evidence.get('execution') == 'native-cli' else 6500
+            if len(canonical(evidence)) > evidence_cap:
                 evidence['omitted'] += max(0,len(evidence['nodes'])-2)
                 evidence['nodes'] = evidence['nodes'][:2]
-            if len(canonical(evidence))>6500 and len(evidence['nodes'])>1:
+            if len(canonical(evidence)) > evidence_cap and len(evidence['nodes'])>1:
                 evidence['nodes'][1].pop('evidence',None)
-            if len(canonical(evidence))>6500:
+            if len(canonical(evidence)) > evidence_cap:
                 primary = evidence['nodes'][:1]
                 evidence['omitted'] += len(evidence['nodes'])-len(primary)
                 evidence['nodes'] = primary
-            if len(canonical(evidence))>6500:
+            if len(canonical(evidence)) > evidence_cap:
                 raise Invalid('所选运行证据超过助手上下文预算。')
             context['run'] = dict(id=data['run'], definition_id=evidence['definition_id'],
                                   view_sha256=digest(canonical(evidence)))
@@ -535,6 +576,9 @@ class Assistant:
             guidance += '\n按已证实原因、可能原因和证据不足说明诊断。引用 Run ID、失败节点、Activation 和实际交接，再提供具体修复与验证步骤。'
         if mode == 'team':
             guidance += '\n' + TEAM_INSTRUCTIONS
+        if mode == 'native':
+            from .assistant_proposals import NATIVE_INSTRUCTIONS
+            guidance += '\n' + NATIVE_INSTRUCTIONS
         if mode == 'proposal':
             from .assistant_proposals import PROPOSAL_INSTRUCTIONS
             guidance += '\n' + PROPOSAL_INSTRUCTIONS
@@ -546,7 +590,7 @@ class Assistant:
             raise Invalid('所选上下文超过发送预算。请减少附件。')
         request_hash = digest(canonical([data, prompt, context]))
         return dict(prompt=prompt, text=text, context=context, base=base, sha256=request_hash, binding=binding,
-                    latest=chat['turns'][-1] if chat and chat['turns'] else None)
+                    native_profiles=profiles, latest=chat['turns'][-1] if chat and chat['turns'] else None)
 
     def preview(self, data):
         value = self.prepare(data)
@@ -583,6 +627,8 @@ class Assistant:
                    request_sha256=request_sha, owner=self.owner, provider=data['provider'], mode=data['mode'],
                    text=value['text'], context=value['context'], base=value['base'], prompt=value['prompt'],
                    prompt_sha256=digest(value['prompt'].encode()), created_at=time.time())
+        if row['mode'] == 'native':
+            row['native_profiles'] = value['native_profiles']
         if value['binding']:
             row['config'] = value['context']['config']
         with self.store.db.tx() as db:
@@ -625,13 +671,19 @@ class Assistant:
 
     def apply(self, data):
         from .assistant_proposals import proposal
-        if not isinstance(data,dict) or set(data)!={'workspace','conversation','turn','draft'}:
+        required = {'workspace','conversation','turn','draft'}
+        if not isinstance(data,dict) or set(data) not in (required, required | {'preview_sha256'}):
             raise Invalid('应用需要明确选择同一草稿和已生成的提案。')
         workspace, conversation = data['workspace'], data['conversation']
         self.store.workspace(workspace)
         _, rows = self.conversation_rows(workspace, conversation)
         row = next((row for row in rows if row['id']==data['turn']),None)
-        if not row or row['mode'] != 'proposal':
+        if row and row['mode'] == 'native':
+            sha = data.get('preview_sha256')
+            if not isinstance(sha, str) or not IDENT.fullmatch(sha):
+                raise Invalid('应用需要确认当前原生提案预览。')
+            return assistant_native.apply(self, row, data)
+        if not row or row['mode'] != 'proposal' or set(data) != required:
             raise Conflict('找不到当前工作空间中已生成的画布提案。')
         current = self.draft(workspace, data['draft'])
         if not current or any(current[key] != row['base'][key] for key in ('id','revision','sha256')):

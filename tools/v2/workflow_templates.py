@@ -28,6 +28,20 @@ def reusable(document):
     return validate_draft(graph)
 
 
+def example(name, steps, links=None, *, native=True):
+    nodes = []
+    for index, (ident, label, kind, settings) in enumerate(steps):
+        node = dict(id=ident, name=label, kind=kind,
+                    position=dict(x=80 + 305 * (index % 4), y=130 + 185 * (index // 4)))
+        node.update(settings if kind == 'agent' else dict(config_version=1, config=settings))
+        nodes.append(node)
+    if links is None:
+        links = [(a['id'], b['id'], 'out') for a, b in zip(nodes, nodes[1:])]
+    edges = [dict(id='Edge'+str(index), source=source, target=target, source_port=port, target_port='in')
+             for index, (source, target, port) in enumerate(links, 1)]
+    return validate_draft(dict(version=1, name=name, nodes=nodes, edges=edges, **({'execution':'native-cli'} if native else {})))
+
+
 def starter():
     nodes = [dict(id='Start', name='需求', kind='start', position={'x': 80, 'y': 140},
                   config_version=1, config={}),
@@ -37,6 +51,48 @@ def starter():
     edges = [dict(id='Input', source='Start', target='Agent', source_port='out', target_port='in'),
              dict(id='Result', source='Agent', target='Output', source_port='out', target_port='in')]
     return validate_draft(dict(version=1, name='需求、Agent 与结果', nodes=nodes, edges=edges))
+
+
+def sequential_example():
+    return example('双 Agent 顺序协作', [
+        ('Start', '需求', 'start', {}),
+        ('Agent', '调研', 'agent', dict(task_prompt='调查本次任务，整理可核验的来源和发现。')),
+        ('Analysis', '汇总', 'agent', dict(task_prompt='综合上游发现，回答目标并标出证据不足之处。')),
+        ('Output', '交付结果', 'output', {})])
+
+
+def router_example():
+    path = 'result.data.needs_followup'
+    return example('Router 条件分流', [
+        ('Start', '接收问题', 'start', {}),
+        ('Agent', '分类', 'agent', dict(
+            task_prompt='判断当前问题是否需要跟进。将布尔结果写入 result.data.needs_followup。',
+            native_output=dict(version=1, kind='result'),
+            output_contract=[dict(field=path, type='boolean', required=True)])),
+        ('Router', '是否跟进', 'router', dict(rules=[
+            dict(id='Follow', label='需要跟进', test=dict(field=path, op='equals', value=True))])),
+        ('Followup', '记录待跟进', 'output', {}),
+        ('Done', '直接归档', 'output', {})],
+        [('Start', 'Agent', 'out'), ('Agent', 'Router', 'out'),
+         ('Router', 'Followup', 'Follow'), ('Router', 'Done', 'fallback')])
+
+
+def loop_example():
+    body = example('整理、验证与审核', [
+        ('Start', '接收任务', 'start', {}),
+        ('Agent', '整理产物', 'agent', dict(
+            task_prompt='根据任务整理交付内容，写入 delivery.txt，并在交付中申报该文件。收到反馈时修订原交付。',
+            native_output=dict(version=1, kind='result'), artifact_paths=['delivery.txt'])),
+        ('Verify', '验证产物', 'tool', dict(tool='command', permission='none', cwd='.', timeout=30,
+            argv=['python3', '-c', 'from pathlib import Path; import sys; sys.exit(0 if Path("delivery.txt").read_text().strip() else 1)'])),
+        ('Review', '审核产物', 'agent', dict(task_prompt='依据任务目标审核交付完整性，说明需要修改之处。',
+                                             native_output=dict(version=1, kind='review'))),
+        ('Output', '交付结果', 'output', {})])
+    return example('带验证命令的有界 Loop', [
+        ('Start', '需求', 'start', {}),
+        ('Loop', '最多三轮核验与返工', 'loop', dict(body=body, max_iterations=3,
+            exit_condition=dict(field='result.verdict', op='equals', value='accept'))),
+        ('Output', '经过审核的结果', 'output', {})])
 
 
 class WorkflowTemplates:
@@ -50,7 +106,7 @@ class WorkflowTemplates:
                 SELECT json_remove(data,'$.graph') FROM records WHERE kind=? AND json_extract(data,'$.workspace')=?
                 ORDER BY json_extract(data,'$.updated_at') DESC, id LIMIT ?
             """, (KIND, workspace, LIMIT)).fetchall()
-        return dict(templates=[json.loads(raw) for raw, in rows], examples=[starter()])
+        return dict(templates=[json.loads(raw) for raw, in rows], examples=[sequential_example(), router_example(), loop_example(), starter()])
 
     @staticmethod
     def metadata(row):

@@ -13,7 +13,9 @@ MAX_BYTES = 400000
 def validate_draft(document, *, depth=0):
     if depth > 2:
         raise Invalid('循环子流程最多嵌套两层。')
-    fields(document, {'version', 'name', 'nodes', 'edges', 'viewport'}, {'version', 'name', 'nodes', 'edges'})
+    fields(document, {'version', 'name', 'nodes', 'edges', 'viewport', 'execution'}, {'version', 'name', 'nodes', 'edges'})
+    if 'execution' in document and document['execution'] != 'native-cli':
+        raise Invalid('草稿执行类型无效。')
     if type(document['version']) is not int or document['version'] != 1:
         raise Invalid('请选择 V2 草稿格式 version 1；旧工作流不会自动迁移')
     try:
@@ -52,7 +54,7 @@ def validate_draft(document, *, depth=0):
             config = {'config_version', 'config'}
             required |= config
         if kind == 'agent':
-            config |= {'output_contract','artifact_paths','native_output'}
+            config |= {'output_contract','artifact_paths','native_output','task_prompt'}
         fields(node, {'id', 'name', 'position', 'kind'} | config, required)
         if not isinstance(node['id'], str) or not ID.fullmatch(node['id']) or node['id'] in nodes:
             raise Invalid('节点身份无效或重复')
@@ -66,6 +68,8 @@ def validate_draft(document, *, depth=0):
             if kind == 'loop' and 'body' in node['config']:
                 validate_draft(node['config']['body'], depth=depth + 1)
             continue
+        if 'task_prompt' in node:
+            text(node['task_prompt'], 20000, '节点任务')
         if 'native_output' in node:
             spec = node['native_output']
             fields(spec, {'version', 'kind'}, {'version', 'kind'})
@@ -150,7 +154,7 @@ def check_chain(document):
     for node in doc['nodes']:
         if node.get('kind') == 'agent' and 'agent_id' not in node:
             issues.append(dict(node_id=node['id'], code='AGENT_REFERENCE_REQUIRED',
-                               message=node['name'] + '：请在 Agent 管理选择已保存的配置版本。'))
+                               message=node['name'] + '：请在节点中选择已保存的 Agent 配置版本。'))
         for field, message in config_issues(node):
             issues.append(dict(node_id=node['id'], field=field, message=node['name'] + '：' + message))
     incoming = {n['id']: [] for n in doc['nodes']}

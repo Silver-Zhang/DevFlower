@@ -29,8 +29,8 @@ export function NodeConnections({node,graph,onConnect,Field}){
  </section>;
 }
 
-export function EdgeDraftConfig({edge,source,target,onUpdate,Field}){
- const mode=defaultEdgeMode(source,target);
+export function EdgeDraftConfig({edge,source,target,onUpdate,Field,nativeScript}){
+ const mode=nativeScript?'answer':defaultEdgeMode(source,target);
  const transfer=edge.transfer||{...defaultTransfer,mode};
  const selectedSource=edge.source_port??'out',selectedTarget=edge.target_port??'in';
  return <>

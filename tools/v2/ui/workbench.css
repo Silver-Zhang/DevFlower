@@ -896,3 +896,10 @@
   cursor: pointer;
   padding: 6px 10px;
 }
+
+.canvas-profile-picker, .canvas-profile-form { display: grid; gap: 8px; justify-items: start; }
+.canvas-profile-picker > .field, .canvas-profile-form, .canvas-profile-form > .field { width: 100%; }
+.canvas-profile-form > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.assistant-advanced-modes { max-width: 170px; }
+.proposal-nodes, .proposal-issues { padding-inline-start: 20px; }
+.proposal-nodes > li { margin-block: 8px; overflow-wrap: anywhere; }
