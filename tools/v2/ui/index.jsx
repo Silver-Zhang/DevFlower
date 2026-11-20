@@ -323,9 +323,19 @@ function App(){
   const epoch=providerEpoch.current;
   requestAnimationFrame(()=>{if(providerEpoch.current===epoch)focusNavigation(providerOpener)});
  }
- function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
+ function pendingLaunch(w=workspaceRef.current){
+  if(!w||!environmentRef.current)return null;
+  const savedIntent=localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id);
+  if(savedIntent===null)return null;
+  let value;
+  try{value=JSON.parse(savedIntent)}catch{}
+  if(!value||value.workspace!==w.id||typeof value.intent_key!=='string'||
+     !/^[a-zA-Z0-9_-]{16,128}$/.test(value.intent_key))
+   throw Error('本地启动身份无效。请保留当前工作流，在运行历史中核对上次启动。');
+  return value;
+ }
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){setNotice('');restoreViewport(row,next.viewport);if(['python','continuation'].includes(sideViewRef.current))setSideView('');commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false,attempt=pendingLaunch()){setNotice('');restoreViewport(row,next.viewport);if(['python','continuation'].includes(sideViewRef.current))setSideView('');commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(applyingAssistant.current||same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -712,6 +722,7 @@ function App(){
   closePending(operation.transfer);await operation.action()
  }
  function selectWorkspace(w,rows,row=null){
+  const attempt=pendingLaunch(w);
   clipboard.current=null;setCanvasFocused(false);setAgentVersions(null);
   setDrawer(false);
   workspaceEpoch.current++;
@@ -719,7 +730,7 @@ function App(){
   setSideView('');
   setAgentPanel(null);setAssistantFiles([]);setAssistantRun(null);setRunTerminal(null);setLinkedActivation(null);
   workspaceRef.current=w;setWorkspace(w);setDrafts(rows);setRuns([]);
-  install(row?.graph||blank(),row);
+  install(row?.graph||blank(),row,false,attempt);
  }
  function closeWorkspace(){
   clipboard.current=null;setCanvasFocused(false);setAgentVersions(null);

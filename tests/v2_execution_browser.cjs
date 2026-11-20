@@ -1038,5 +1038,49 @@ with sqlite3.connect(sys.argv[1]) as db:
    await page.unroute(summariesMatcher,summarise);
   }
  });
+ await test('corrupt-launch-identity-keeps-current-draft-and-shows-recovery',async()=>{
+  await page.getByRole('button',{name:'关闭运行记录',exact:true}).click();
+  const {key,workspace}=await page.evaluate(()=>{
+   const last=Object.keys(localStorage).find(key=>key.startsWith('devflower-v2-last:'));
+   const {workspace}=JSON.parse(localStorage.getItem(last));
+   return {key:'devflower-v2-launch:'+last.split(':').at(-1)+':'+workspace,workspace};
+  });
+  const names=['损坏身份夹具 Alpha','损坏身份夹具 Zulu'];
+  const saved=[];
+  for(const name of names){
+   const draft=await api('drafts/save',{workspace,id:null,expected:null,document:{version:1,name,nodes:[],edges:[]}});
+   assert(draft.revision);
+   saved.push(draft);
+  }
+  await page.reload();
+  const list=page.getByLabel('工作流列表',{exact:true});
+  await list.getByRole('button',{name:names[0],exact:true}).click();
+  const title=page.getByLabel('工作流名称',{exact:true});
+  await until(async()=>await title.inputValue()===names[0]);
+  await page.getByLabel('本次运行上下文',{exact:true}).locator('summary').click();
+  const task=page.getByLabel('本次任务',{exact:true});
+  await task.fill('仅本地输入应保留');
+  const before=requests.filter(row=>row.method==='POST').length;
+  try{
+   for(const value of [JSON.stringify({workspace,intent_key:57}),'{broken']){
+    await page.evaluate(({key,value})=>localStorage.setItem(key,value),{key,value});
+    await list.getByRole('button',{name:names[1],exact:true}).click();
+    await page.getByRole('alert').getByText(/本地启动身份无效.*运行历史/).waitFor();
+    assert.equal(await title.inputValue(),names[0]);
+    assert.equal(await task.inputValue(),'仅本地输入应保留');
+    assert.equal(await page.locator('.save-state').textContent(),'已保存');
+    assert.equal(await page.evaluate(key=>localStorage.getItem(key),key),value);
+   }
+   assert.equal(requests.filter(row=>row.method==='POST').length,before);
+   for(const draft of saved){
+    const current=await api('draft?'+new URLSearchParams({workspace,id:draft.id}));
+    assert.equal(current.revision,draft.revision);
+   }
+  }finally{
+   await page.evaluate(key=>localStorage.removeItem(key),key);
+  }
+  await list.getByRole('button',{name:names[1],exact:true}).click();
+  await until(async()=>await title.inputValue()===names[1]);
+ });
  assert.equal(errors.length,0);await context.tracing.stop({path:path.join(out,'trace.zip')});await browser.close();const result={category:'SYNTHETIC execution; real HTTP/SQLite/Chromium',complete:true,tests:rows.length,failures:rows.filter(r=>!r.passed).length,rows,errors,requests};fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({tests:result.tests,failures:result.failures}));process.exitCode=result.failures?1:0;
 })().catch(async e=>{fs.writeFileSync(path.join(out,'fatal.txt'),e.stack);await context?.tracing.stop({path:path.join(out,'trace-failure.zip')}).catch(()=>{});await browser?.close();console.error(e.message);process.exitCode=1});
