@@ -175,6 +175,31 @@ async function main() {
   await button('确认发送').click();
   await assistant.getByText('已收到明确重试的合成回执',{exact:true}).waitFor();
   assert.equal(await button('恢复原请求以重试').count(),0);
+  // Pin the browser 1 ms before the server's actual deadline, with the
+  // status polling interval frozen. Expiry must be local and immediate.
+  const settingsResponse=await page.request.get(service.origin+'/api/v2/assistant/settings?workspace='+workspace,{headers});
+  assert.equal(settingsResponse.status(),200);
+  const {providers}=await settingsResponse.json();
+  const deadline=Math.ceil(providers.find(provider=>provider.provider==='codex').expires_at*1000);
+  assert(Number.isFinite(deadline));
+  const outgoing=[];
+  page.on('request',request=>{if(/\/assistant\/(preview|send)$/.test(request.url()))outgoing.push(request.url())});
+  await page.clock.install({time:new Date(deadline-10000)});
+  await page.reload();
+  await button('AI 助手').click();
+  await message.fill('保留到期前的输入');
+  await page.clock.pauseAt(new Date(deadline-1));
+  const gotPreview=page.waitForResponse(response=>response.url().endsWith('/assistant/preview'));
+  await button('预览本次发送').dispatchEvent('click');
+  assert.equal((await gotPreview).status(),200);
+  await button('确认发送').waitFor();
+  assert(await button('确认发送').isEnabled());
+  await page.clock.runFor(1);
+  await assistant.getByText('当前模型目录需要刷新。',{exact:true}).waitFor();
+  assert(await button('预览本次发送').isDisabled());
+  assert.equal(await button('确认发送').count(),0);
+  assert.equal(await message.inputValue(),'保留到期前的输入');
+  assert.deepEqual(outgoing.map(url=>new URL(url).pathname),['/api/v2/assistant/preview']);
   assert.deepEqual(errors,[]);
   console.log('PASS native proposal, save-response readback, Python preview, version conflict, undo, reload and native check admission');
  } catch(error) {

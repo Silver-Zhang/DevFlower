@@ -15,7 +15,7 @@ from orchestration.common import Blocked
 from studio.graph import Invalid
 from studio.local_claude_adapter import LocalClaude
 from studio.local_codex_adapter import LocalCodex
-from v2.cli_providers import ClaudeCLI, CodexCLI, ProviderRegistry, model_id
+from v2.cli_providers import CATALOG, ClaudeCLI, CodexCLI, ProviderRegistry, model_id
 from v2.session_lease import CODEX_COORDINATION_VERSION
 from v2.store import DraftStore
 
@@ -35,12 +35,22 @@ class CliProviderTests(unittest.TestCase):
         with patch.object(registry.adapter('claude'), 'observe', return_value={'provider': 'claude'}) as observe:
             self.assertEqual([row['provider'] for row in registry.listing()['providers']], ['codex', 'claude'])
             observe.assert_not_called()
-            self.assertEqual(registry.discover('claude')['providers'][1], {'provider': 'claude', 'stale': True})
-            self.assertEqual(registry.listing()['providers'][1], {'provider': 'claude', 'stale': True})
+            self.assertEqual(registry.discover('claude')['providers'][1], {'provider': 'claude', 'stale': True, 'expires_at': None})
+            self.assertEqual(registry.listing()['providers'][1], {'provider': 'claude', 'stale': True, 'expires_at': None})
             observe.assert_called_once_with()
         for unknown in ('copilot', 'dsh', 'zcode', [], None):
             with self.subTest(unknown=unknown), self.assertRaises(Invalid):
                 registry.adapter(unknown)
+
+    def test_catalog_publishes_the_exact_server_expiry_boundary(self):
+        registry = ProviderRegistry(self.store)
+        adapter = registry.adapter('claude')
+        self.store.db.put(CATALOG, 'claude', dict(provider='claude', refreshed_at=100))
+        for now, stale in ((399.999, False), (400, True)):
+            with self.subTest(now=now), patch('v2.cli_providers.time.time', return_value=now):
+                row = registry.catalog_row('claude', adapter)
+                self.assertEqual(row['expires_at'], 400)
+                self.assertIs(row['stale'], stale)
 
     def test_claude_projection_distinguishes_config_alias_and_metadata_only(self):
         home = self.root / 'home'

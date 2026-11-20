@@ -8,7 +8,7 @@ import {PanelEmpty} from './WorkbenchFeedback.jsx';
 import {AssistantTeam} from './AssistantTeam.jsx';
 import {AssistantRepair} from './AssistantRepair.jsx';
 import {AssistantSourcePicker} from './AssistantSourcePicker.jsx';
-import {AssistantModelSettings,choicesFor,emptySelection,providerNames} from './AssistantModelSettings.jsx';
+import {AssistantModelSettings,catalogExpired,choicesFor,emptySelection,providerNames} from './AssistantModelSettings.jsx';
 
 const uid=()=>crypto.randomUUID().replaceAll('-','');
 const active=new Set(['SUBMITTING','RESERVED','RUNNING']);
@@ -76,7 +76,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const [settings,setSettings]=useState(null),[selection,setSelection]=useState(emptySelection);
  const [legacy,setLegacy]=useState(!nativeEntry&&providers.length>0),[legacyProvider,setLegacyProvider]=useState(providers.includes('codex')?'codex':providers[0]||'');
  const [legacyModel,setLegacyModel]=useState(''),[legacyEffort,setLegacyEffort]=useState('');
+ const [,expireCatalog]=useState(0);
  const {catalog:configuredCatalog,chosen,canSend}=choicesFor(settings,selection);
+ const catalogDeadline=configuredCatalog?.expires_at;
  const [mode,setMode]=useState(nativeEntry?'native':run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
  const [inventory,setInventory]=useState(true),[correction,setCorrection]=useState(null);
  const [text,setDraftText]=useState(()=>sessionStorage.getItem(draftKey(storeKey,conversation))||''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
@@ -117,7 +119,21 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   const interval=setInterval(check,15000);
   return()=>{removeEventListener('focus',check);clearInterval(interval)};
  },[hidden,workspace.id,api]);
- const matching=preview&&(preview.payload.mode==='probe'?
+ useEffect(()=>{
+  if(legacy||!Number.isFinite(catalogDeadline))return;
+  let timer;
+  function checkDeadline(){
+   clearTimeout(timer);
+   const remaining=Math.ceil(catalogDeadline*1000-Date.now());
+   if(remaining>0){timer=setTimeout(checkDeadline,remaining);return}
+   expireCatalog(value=>value+1);
+   setPreview(value=>value?.catalogDeadline===catalogDeadline?null:value);
+  }
+  checkDeadline();
+  document.addEventListener('visibilitychange',checkDeadline);
+  return()=>{clearTimeout(timer);document.removeEventListener('visibilitychange',checkDeadline)};
+ },[legacy,catalogDeadline]);
+ const matching=preview&&(legacy||canSend&&!catalogExpired(preview.catalogDeadline))&&(preview.payload.mode==='probe'?
   ['provider','native_profile','model','effort'].every(key=>preview.payload[key]===selection[key]):
   eq(preview.payload,payload));
  const intentStore=pendingKey(storeKey,conversation);
@@ -203,13 +219,15 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   if(alive.current){setHistory(rows=>cursor?[...rows,...result.conversations]:result.conversations);setBefore(result.before)}
  }
  async function showPreview(test=false){
+  if(!legacy&&catalogExpired(catalogDeadline))throw Error('当前模型目录已过期，请刷新目录。');
   const current=structuredClone(test?{workspace:workspace.id,conversation,...selection,identity:null,
    mode:'probe',text:probeText,draft:null,files:[],run:null}:payload);
   let result;
   try{result=await api(route('preview'),current)}
   catch(failure){if(!legacy)refreshModelsStatus();throw failure}
+  if(!legacy&&catalogExpired(catalogDeadline))throw Error('当前模型目录已过期，请刷新后重新预览。');
   if(alive.current&&(test||eq(latest.current,current))){
-   setPreview({...result,payload:current});
+   setPreview({...result,payload:current,catalogDeadline:legacy?null:catalogDeadline});
    if(test)setView('chat');
   }
  }
@@ -239,6 +257,8 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   }
  }
  async function send(){
+  if(!legacy&&(catalogExpired(catalogDeadline)||catalogExpired(preview?.catalogDeadline)))
+   throw Error('当前模型目录已过期，请刷新后重新预览。');
   if(matching)await submit({...preview.payload,intent:uid(),preview_sha256:preview.sha256});
  }
  async function verifyPending(){

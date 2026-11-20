@@ -457,11 +457,12 @@ class ProviderRegistry:
         except Invalid:
             row = empty(provider, adapter.label)
         refreshed = row.get('refreshed_at')
-        stale = bool(not refreshed or row.get('error') or time.time()-refreshed>300)
+        expires_at = refreshed + 300 if refreshed else None
+        stale = bool(expires_at is None or row.get('error') or time.time() >= expires_at)
         if name is not None:
             stale |= row.get('native_home_sha256') != self.homes.get(provider,name)['sha256']
         return dict({key:value for key,value in row.items() if key not in (
-                    'native_home_sha256','account_sha256','executable_sha256')}, stale=stale)
+                    'native_home_sha256','account_sha256','executable_sha256')}, stale=stale, expires_at=expires_at)
 
     def listing(self):
         rows = [self.catalog_row(provider,adapter) for provider,adapter in self.adapters.items()]

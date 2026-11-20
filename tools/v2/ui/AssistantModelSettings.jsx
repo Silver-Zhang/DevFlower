@@ -6,10 +6,15 @@ const modelSources={cli_catalog:'CLI 目录',cli_alias:'原生别名',configured
  native_config:'本机配置',named_profile:'命名配置',native_default:'CLI 默认'};
 export const emptySelection={provider:'codex',native_profile:null,model:null,effort:null,identity:null};
 
+export function catalogExpired(expiresAt){
+ return Number.isFinite(expiresAt)&&Date.now()>=expiresAt*1000;
+}
+
 export function choicesFor(settings,selection){
  const profiles=(settings?.profiles||[]).filter(row=>row.provider===selection.provider);
  const profile=profiles.find(row=>row.id===selection.native_profile);
- const catalog=profile?.kind==='isolated-home'?profile.catalog:settings?.providers?.find(row=>row.provider===selection.provider);
+ const source=profile?.kind==='isolated-home'?profile.catalog:settings?.providers?.find(row=>row.provider===selection.provider);
+ const catalog=source&&catalogExpired(source.expires_at)?{...source,stale:true}:source;
  const models=[...(catalog?.models||[])];
  for(const row of [catalog?.default_model,profile?.model&&{id:profile.model,source:'named_profile'}]){
   if(row?.id&&!models.some(item=>item.id===row.id))models.push(row);
