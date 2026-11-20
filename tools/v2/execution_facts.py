@@ -21,13 +21,44 @@ def process_facts(process):
     return {key:process[key] for key in PROCESS_FIELDS if key in process} if isinstance(process,dict) else {}
 
 
-def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, terminal_failed=False, native_limit=None):
+def provider_error_code(detail):
+    http = re.search(r'\b(?:HTTP(?:/[0-9.]+)?(?: error| status)?|API Error|status(?: code)?)'
+                     r'[: =]+(401|403)\b|\b(401) Unauthorized\b|\b(403) Forbidden\b', detail, re.I)
+    if http:
+        return 'PROVIDER_HTTP_' + next(value for value in http.groups() if value)
+    if re.search(r'model[_ ]not[_ ]found|invalid[_ ]model|model .{0,120}(?:does not exist|not available|not supported)|'
+                 r'(?:invalid|unknown|unsupported) model', detail, re.I):
+        return 'PROVIDER_MODEL'
+    if re.search(r'unauthorized|invalid api key|authentication[_ ]error|not (?:logged in|authenticated)|please log in',
+                 detail, re.I):
+        return 'PROVIDER_AUTHENTICATION'
+    return None
+
+
+def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, terminal_failed=False,
+                 native_limit=None, provider_error=None):
     name = {'codex':'Codex','claude':'Claude'}.get(provider,'原生 CLI')
     process = process_facts(process)
     text = str(error).casefold()
-    if isinstance(error,SessionRefused):
+    source = 'local_process' if process else 'local_preflight'
+    if provider_error in ('PROVIDER_HTTP_401', 'PROVIDER_HTTP_403'):
+        status = provider_error.rsplit('_', 1)[1]
+        code, reason = provider_error, f'{name} 的本次原生错误回执报告 HTTP {status}。'
+        action = ('在原生客户端核对当前账号认证。' if status == '401' else
+                  '在原生客户端核对当前账号对服务或模型的访问权限。')
+        source = 'current_native_error'
+    elif provider_error == 'PROVIDER_AUTHENTICATION':
+        code, reason = provider_error, f'{name} 的本次原生错误回执报告认证或访问失败。'
+        action = '在原生客户端核对当前账号与服务访问权限。'
+        source = 'current_native_error'
+    elif provider_error == 'PROVIDER_MODEL':
+        code, reason = provider_error, f'{name} 的本次原生错误回执报告所请求模型不可用。'
+        action = '刷新模型目录，并核对该原生账号可访问的模型。'
+        source = 'current_native_error'
+    elif isinstance(error,SessionRefused):
         code, reason = error.code, str(error)
         action = '刷新原会话并核对来源、历史和当前占用。'
+        source = 'local_session_source'
     elif isinstance(error, PlanInputRequired):
         code, reason = 'PLAN_INPUT_REQUIRED', 'Codex 原生 Plan 在本次回合中请求补充信息。'
         action = '本次未回答或重发。请核对原会话；如需继续，可补全任务信息后明确启动新 Plan。'
@@ -75,7 +106,7 @@ def failure_fact(provider, error, *, process=None, uncertain=False, sent=False, 
         reason = f'{name} 执行未完成。' if uncertain or terminal_failed else f'{name} 本机预检未通过。'
         action = '查看原生客户端及当前工作区的配置，再核对本次记录。'
     effect = 'terminal-failed' if terminal_failed else 'unknown' if uncertain else 'not-sent'
-    return dict(code=code,reason=reason,action=action,effect=effect,input_recorded=bool(sent),process=process)
+    return dict(code=code,reason=reason,action=action,effect=effect,source=source,input_recorded=bool(sent),process=process)
 
 
 def terminal_correlated(activation, process, binding, terminal_type, session_id, native_turn_id):

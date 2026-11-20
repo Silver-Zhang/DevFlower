@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import re
+import select
 import uuid
 
 
@@ -28,6 +29,14 @@ from workflow_output_contract import (OUTPUT_BYTES, OutputContractError, candida
 
 
 class WorkflowError(RuntimeError):
+    pass
+
+
+class ProcessCleanupUnconfirmed(WorkflowError):
+    pass
+
+
+class ProcessNotStarted(OSError):
     pass
 
 
@@ -188,6 +197,17 @@ def failed_checks(events, tool_ids):
             and row['node'] in tool_ids and row['returncode'] != 0]
 
 
+@contextmanager
+def owner_lease(directory, manifest):
+    if manifest.get('compiler_version', 0) < 15:
+        yield None
+        return
+    import fcntl
+    with (directory / 'owner.lease').open('xb') as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX)
+        yield lease.fileno()
+
+
 def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sha256=None, historical=False):
     """Observe the same artifact, never replay it. Cancellation is cooperative.
 
@@ -216,6 +236,17 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
         snapshot = dict(status='RECOVERY_REQUIRED', active=active, automatic_retry=False,
                         directory=str(directory), script_sha256=expected_sha256 or _script_sha256(), completed_nodes=[])
         try:
+            if manifest.get('compiler_version', 0) >= 15:
+                with _evidence_file(fd, 'owner.lease') as lease:
+                    try:
+                        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        owner_active = True
+                    else:
+                        owner_active = False
+                snapshot.update(owner_active=owner_active, supervisor_active=active and not owner_active)
+            else:
+                owner_active = active
             raw = _evidence_bytes(fd, 'events.jsonl')
             if not raw.endswith(b'\n'):
                 if not active:
@@ -231,6 +262,17 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                 raise PermissionError('Script content differs from the artifact that started this run.')
             if details:
                 snapshot['events'] = events
+            pending_process = None
+            for event in events:
+                if event['kind'] in ('PROCESS_SUPERVISOR', 'PROCESS_STARTED'):
+                    pending_process = {key: event[key] for key in ('node', 'pid', 'supervisor_pid', 'iteration', 'start_ticks', 'boot_id')
+                                       if key in event}
+                    if 'pid' in pending_process:
+                        pending_process['pgid'] = pending_process['pid']
+                elif event['kind'] in ('PROCESS_EXITED', 'NODE_COMPLETED', 'NOT_SENT'):
+                    pending_process = None
+            if pending_process and not owner_active:
+                snapshot['last_process_observation'] = pending_process
             if manifest.get('compiler_version', 0) >= 13:
                 inspect_series(directory, fd, manifest, events, snapshot)
             business_outcomes = manifest.get('compiler_version', 0) >= 14
@@ -239,7 +281,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
             terminal = [row for row in events if row['kind'] in terminal_kinds]
             if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
                 raise WorkflowError('Terminal journal evidence is inconsistent.')
-            if cancel and active and not terminal:
+            if cancel and owner_active and active and not terminal:
                 try:
                     request = os.open('cancel.request', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                       0o600, dir_fd=fd)
@@ -375,16 +417,19 @@ def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sh
                         snapshot['failed_checks'] = failures
                     status = 'CHECK_FAILED' if last['kind'] == 'RUN_CHECK_FAILED' else 'COMPLETED'
                     snapshot.update(status=status, result_file=str(directory / 'result.txt'))
-                elif last.get('status') in ('CANCELLED', 'STOPPED'):
+                elif last.get('status') in ('CANCELLED', 'STOPPED', 'RECOVERY_REQUIRED'):
                     snapshot.update(status=last['status'], reason=last.get('reason', ''))
                     if business_outcomes:
                         snapshot['failed_checks'] = failed_checks(completed, tools)
                 else:
                     raise WorkflowError('Unknown terminal state.')
-            elif active:
+            elif active and owner_active:
                 snapshot['status'] = 'CANCEL_REQUESTED' if snapshot['cancel_requested'] else 'RUNNING'
+            elif active:
+                snapshot['reason'] = 'Script owner is absent; the process supervisor is still active. Wait for cleanup and verify before restarting.'
             else:
-                snapshot['reason'] = 'Script owner is absent without a terminal record; native effects are unknown.'
+                snapshot['reason'] = ('Script owner is absent without a terminal record; native effects are unknown. '
+                                      'Residual processes may require manual verification before restarting.')
         except PermissionError:
             raise
         except (WorkflowError, OSError, ValueError, KeyError, TypeError, RecursionError) as error:
@@ -414,6 +459,37 @@ def native_command(agent, answer_path):
     raise WorkflowError('Unsupported CLI: ' + str(provider))
 
 
+def _group_members(group):
+    members = []
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            state, _, process_group, *_ = (entry / 'stat').read_bytes().rsplit(b') ', 1)[1].split()
+        except (OSError, ValueError, IndexError):
+            continue
+        if process_group == group and state not in (b'Z', b'X'):
+            members.append(entry.name)
+    return members
+
+
+def _guarded_group(process):
+    # Keep the direct child's identity reserved until after the final signal.
+    group = str(process.pid).encode()
+    for signum, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 1)):
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace
+        while _group_members(group) and time.monotonic() < deadline:
+            time.sleep(.05)
+        if not _group_members(group):
+            process.wait()
+            return
+    raise WorkflowError('Launch group may still contain live processes; manual verification required.')
+
+
 def _stop(process):
     # The leader may already have exited while its tools are still running.
     # start_new_session gives only this launch's group this process ID.
@@ -435,6 +511,116 @@ def _stop(process):
     except ProcessLookupError:
         pass
     process.wait()
+
+
+def _supervise_process(argv, cwd, source, stdout, stderr, lifeline, report, directory, tool):
+    process = None
+    try:
+        os.setsid()
+        # Signals sent directly to the supervisor must take the cleanup path.
+        interrupted = False
+
+        def interrupt(_signum, _frame):
+            nonlocal interrupted
+            interrupted = True
+
+        signal.signal(signal.SIGTERM, interrupt)
+        signal.signal(signal.SIGINT, interrupt)
+        if os.read(lifeline, 1) != b'1' or interrupted:
+            return
+        try:
+            process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout, stderr=stderr,
+                                       start_new_session=True, env=workflow_environment())
+        except OSError as error:
+            os.write(report, f'error {error.errno or 0}\n'.encode())
+            return
+        stat_fields = (Path('/proc') / str(process.pid) / 'stat').read_bytes().rsplit(b') ', 1)[1].split()
+        ticks = int(stat_fields[19])
+        boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        os.write(report, f'pid {process.pid} {ticks} {boot_id}\n'.encode())
+        while not interrupted and not select.select([lifeline], [], [], .05)[0]:
+            status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            if status is not None:
+                code = status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
+                if tool:
+                    _guarded_group(process)
+                    process = None
+                    os.write(report, f'exit {code}\n'.encode())
+                    return
+                os.write(report, f'exit {code}\n'.encode())
+                while not interrupted and not select.select([lifeline], [], [], .05)[0]:
+                    pass
+                if not interrupted and os.read(lifeline, 1) == b'A':
+                    process.wait()
+                    process = None
+                return
+    except (OSError, ValueError):
+        pass
+    finally:
+        if process is not None:
+            try:
+                _guarded_group(process)
+                _write(directory / 'process-group-stopped', 'launch group signalled and child reaped\n')
+            except (OSError, WorkflowError):
+                try:
+                    _write(directory / 'process-group-unconfirmed', 'Launch group cleanup could not be verified.\n')
+                except OSError:
+                    pass
+
+
+def _supervised_wait(context, node, argv, cwd, directory, timeout, source, stdout, stderr, tool):
+    control_read, control_write = os.pipe()
+    result_read, result_write = os.pipe()
+    try:
+        supervisor = os.fork()
+    except BaseException:
+        for fd in (control_read, control_write, result_read, result_write):
+            os.close(fd)
+        raise
+    if supervisor == 0:
+        if context.get('owner_lease') is not None:
+            os.close(context['owner_lease'])
+        with open(os.devnull, 'rb+') as silent:
+            for fd in (0, 1, 2):
+                os.dup2(silent.fileno(), fd)
+        os.close(control_write)
+        os.close(result_read)
+        try:
+            _supervise_process(argv, cwd, source, stdout, stderr, control_read, result_write, directory, tool)
+        finally:
+            os._exit(0)
+    os.close(control_read)
+    os.close(result_write)
+    try:
+        _event(context, 'PROCESS_SUPERVISOR', node=node, supervisor_pid=supervisor)
+        os.write(control_write, b'1')
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        with os.fdopen(result_read, 'rb', buffering=0, closefd=False) as channel:
+            while True:
+                _check_cancel(context)
+                if select.select([result_read], [], [], .05)[0]:
+                    result = channel.readline(100).split()
+                    if not result:
+                        raise OSError('Process supervisor ended without an exit receipt; inspect the launch group.')
+                    kind, value, *identity = result
+                    if kind == b'exit':
+                        if not tool:
+                            os.write(control_write, b'A')
+                        return int(value)
+                    if kind == b'error':
+                        raise ProcessNotStarted(int(value), os.strerror(int(value)))
+                    _event(context, 'PROCESS_STARTED', node=node, pid=int(value), supervisor_pid=supervisor,
+                           start_ticks=int(identity[0]), boot_id=identity[1].decode('ascii'))
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+    finally:
+        # EOF also occurs when the workflow owner is killed without executing
+        # this block. The supervisor inherits the run lock through cleanup.
+        os.close(control_write)
+        _, wait_status = os.waitpid(supervisor, 0)
+        os.close(result_read)
+        if wait_status or (directory / 'process-group-unconfirmed').is_file():
+            raise ProcessCleanupUnconfirmed('Process supervisor cleanup could not be verified. Processes may still be running; manually verify the recorded PID, PGID, and start identity before restarting.')
 
 
 def _wait(context, process, timeout):
@@ -838,16 +1024,21 @@ def verify_agent_output(context, directory, spec, answer, candidate):
 def observed_process(context, node, argv, cwd, directory, timeout, *, source=subprocess.DEVNULL, tool=False, request=None):
     _event(context, 'CALL_INTENT', node=node, cwd=str(cwd), argv=argv, **(request or {}))
     process = None
+    supervised = False
     try:
         with (directory / 'stdout.log').open('xb') as stdout, (directory / 'stderr.log').open('xb') as stderr:
             # Keep the assistant credential outside Workflow Agent and Tool processes.
             _check_cancel(context)
-            process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout,
-                                       stderr=stderr, start_new_session=True,
-                                       env=workflow_environment())
-            _event(context, 'PROCESS_STARTED', node=node, pid=process.pid)
-            code = _wait(context, process, timeout)
-        if tool:
+            supervised = context.get('process_supervision') and sys.platform.startswith('linux')
+            if supervised:
+                code = _supervised_wait(context, node, argv, cwd, directory, timeout, source, stdout, stderr, tool)
+            else:
+                process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout,
+                                           stderr=stderr, start_new_session=True,
+                                           env=workflow_environment())
+                _event(context, 'PROCESS_STARTED', node=node, pid=process.pid)
+                code = _wait(context, process, timeout)
+        if tool and process is not None:
             _stop(process)
         _event(context, 'PROCESS_EXITED', node=node, returncode=code)
         yield code
@@ -857,7 +1048,7 @@ def observed_process(context, node, argv, cwd, directory, timeout, *, source=sub
         signum = error.signum if isinstance(error, WorkflowCancelled) else signal.SIGINT
         _event(context, 'CANCELLED', node=node, signal=signal.Signals(signum).name,
                source='request' if getattr(error, 'requested', False) else 'signal',
-               outcome='unknown' if process else 'not_sent', automatic_retry=False)
+               outcome='unknown' if process or supervised else 'not_sent', automatic_retry=False)
         raise WorkflowCancelled(signum, requested=getattr(error, 'requested', False)) from None
     except subprocess.TimeoutExpired:
         if process is not None:
@@ -867,8 +1058,9 @@ def observed_process(context, node, argv, cwd, directory, timeout, *, source=sub
     except OSError as error:
         if process is not None:
             _stop(process)
-        _event(context, 'UNKNOWN' if process else 'NOT_SENT', node=node, reason=str(error),
-               failure_kind='PROCESS_IO' if process else 'PROCESS_START')
+        possible_process = process is not None or supervised and not isinstance(error, ProcessNotStarted)
+        _event(context, 'UNKNOWN' if possible_process else 'NOT_SENT', node=node, reason=str(error),
+               failure_kind='PROCESS_IO' if possible_process else 'PROCESS_START')
         raise WorkflowError('Process launch/observation failed: ' + str(error)) from None
     except WorkflowError:
         if process is not None:
@@ -1248,6 +1440,8 @@ def script_main(manifest, run_workflow):
             snapshot = inspect_run(manifest, args.run_dir, cancel=args.cancel, details=args.details,
                                    historical=args.historical)
             print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+            if args.cancel and manifest.get('compiler_version', 0) >= 15:
+                return 0 if snapshot['status'] in ('CANCEL_REQUESTED', 'CANCELLED') else 1
             return 0
         if args.details:
             raise WorkflowError('--details requires --status or --cancel.')
@@ -1306,10 +1500,11 @@ def script_main(manifest, run_workflow):
                 directory.mkdir(mode=0o700, parents=False, exist_ok=False)
             else:
                 directory = Path(tempfile.mkdtemp(prefix='devflower-script-'))
-            with _run_directory(directory) as owner:
+            with _run_directory(directory) as owner, owner_lease(directory, manifest) as lease:
                 import fcntl
                 fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                context = {'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
+                context = {'directory': directory, 'cancellation': cancellation, 'directory_fd': owner, 'owner_lease': lease}
+                context['process_supervision'] = manifest.get('compiler_version', 0) >= 15
                 if manifest.get('compiler_version', 0) >= 14:
                     context['failed_checks'] = []
                 print('Private run evidence: ' + str(directory), file=sys.stderr)
@@ -1344,7 +1539,8 @@ def script_main(manifest, run_workflow):
                            **outcome)
                 except (WorkflowError, OSError, UnicodeError) as error:
                     _event(context, 'RUN_STOPPED', reason=str(error), automatic_retry=False,
-                           status='CANCELLED' if isinstance(error, WorkflowCancelled) else 'STOPPED')
+                           status=('CANCELLED' if isinstance(error, WorkflowCancelled) else 'RECOVERY_REQUIRED'
+                                   if isinstance(error, ProcessCleanupUnconfirmed) else 'STOPPED'))
                     raise
         print(answer['answer'])
         if failures := context.get('failed_checks'):

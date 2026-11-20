@@ -68,8 +68,8 @@ async function main() {
   const title=page.getByLabel('工作流名称',{exact:true});
   const original=await title.inputValue();
   await title.fill('浏览器手动编辑');
-  await button('应用并保存草稿').click();
-  await assistant.getByRole('alert').getByText(/草稿自生成提案后已变化/).waitFor();
+  await assistant.getByRole('status').getByText(/提案对应的草稿已变化/).waitFor();
+  assert(await button('应用并保存草稿').isDisabled());
   assert.equal(await title.inputValue(),'浏览器手动编辑');
   assert.equal(await graphNode('Version').count(),0);
   await title.fill(original);
@@ -113,7 +113,7 @@ async function main() {
   await page.reload();
   await graphNode('Second').waitFor();
   let release, entered;
-  const hold=new Promise(resolve=>{release=resolve});
+  const hold=new Promise(resolve=>{release=resolve;});
   const sent=new Promise(resolve=>{entered=resolve});
   await page.route('**/api/v2/check',async route=>{
    const posted=route.request().postDataJSON();
@@ -123,8 +123,29 @@ async function main() {
    await hold;
    await route.fulfill({response});
   });
+  let releaseDraft, draftEntered;
+  const draftHold=new Promise(resolve=>{releaseDraft=resolve});
+  const draftRead=new Promise(resolve=>{draftEntered=resolve});
+  let prematureWrites=0;
+  const countWrites=request=>{if(request.url().endsWith('/api/v2/drafts/save'))prematureWrites++};
+  page.on('request',countWrites);
+  await page.route('**/api/v2/draft?*',async route=>{
+   const response=await route.fetch();
+   draftEntered();
+   await draftHold;
+   await route.fulfill({response});
+  },{times:1});
   await page.getByLabel('工作流列表',{exact:true}).getByRole('button',{name:unsupportable,exact:true}).click();
+  await draftRead;
+  assert(await title.isDisabled());
+  assert(await button('保存').isDisabled());
+  await page.keyboard.press('Control+s');
+  assert.equal(prematureWrites,0);
+  assert.equal(await graphNode('Second').count(),1);
+  releaseDraft();
+  page.off('request',countWrites);
   await sent;
+  assert.equal(await graphNode('Merge stage').count(),1);
   await page.getByText('正在检查已保存的原生工作流。',{exact:true}).waitFor();
   const exportPython=button('导出 Python（原生 CLI）');
   assert(await button('启动').isDisabled());

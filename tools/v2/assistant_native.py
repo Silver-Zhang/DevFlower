@@ -38,8 +38,55 @@ def visible_graph(inspector, document):
             view['config']['body'] = visible_graph(inspector, body)
     return public
 
+def correction(assistant, previous, reply):
+    """Retain independently valid operations and record every rejected index."""
+    value = parse_envelope(reply)
+    operations = value.get('operations') if isinstance(value, dict) else None
+    if not isinstance(operations, list) or len(operations) > 20:
+        raise Invalid('原回执没有可核对的操作清单。请重新生成提案。')
+    if len(canonical(value)) > 15000:
+        raise Invalid('原提案超过定向纠正的完整保留预算。请拆分需求后重新生成，当前草稿仍可编辑。')
+    profiles = value.get('profiles', [])
+    if not isinstance(profiles, list):
+        profiles = []
+    retained, rejected = [], []
+    retained_profiles = []
+    unlocked = {key: item for key, item in previous.items() if key != 'correction_lock'}
+    for index, operation in enumerate(operations, 1):
+        trial = retained + [operation]
+        raw_trial = canonical(trial).decode()
+        used = [item for item in profiles if isinstance(item, dict) and isinstance(item.get('id'), str)
+                and json.dumps(item['id'], ensure_ascii=False) in raw_trial]
+        try:
+            stage(assistant, unlocked, canonical(dict(summary='校验可保留的修改', operations=trial,
+                                                     profiles=used)).decode())
+        except (Invalid, Conflict, ValueError, TypeError, KeyError, RecursionError) as error:
+            reason = str(error) if isinstance(error, (Invalid, Conflict)) else '操作依赖或数据未通过校验。'
+            rejected.append(dict(index=index, reason=assistant.inspector.text(reason)[:240]))
+        else:
+            retained = trial
+            retained_profiles = used
+    return dict(operations=retained, profiles=retained_profiles), dict(
+        previous=previous['id'], original=value, retained_count=len(retained), rejected=rejected)
+
+
+def require_correction_lock(value, locked):
+    if not locked:
+        return
+    operations = value.get('operations') if isinstance(value, dict) else None
+    profiles = value.get('profiles', []) if isinstance(value, dict) else []
+    if not isinstance(operations, list) or not isinstance(profiles, list):
+        raise Invalid('纠正回复缺少完整操作或 Agent 配置。')
+    remaining = iter(operations)
+    if any(not any(operation == preserved for operation in remaining) for preserved in locked['operations']):
+        raise Invalid('纠正回复遗漏或改动了已核验的操作。请原样保留这些操作及其顺序。')
+    if any(profile not in profiles for profile in locked['profiles']):
+        raise Invalid('纠正回复改动了已核验操作所绑定的 Agent 配置。')
+
+
 def stage(assistant, turn, reply):
     value = parse_envelope(reply)
+    require_correction_lock(value, turn.get('correction_lock'))
     if isinstance(value, dict) and set(value) == {'answer'}:
         text(value['answer'], 12000, '助手回答')
         if not value['answer'].strip():
@@ -100,9 +147,11 @@ def stage(assistant, turn, reply):
                     current[pair] = row
     current.update({(row['id'], row['revision']): row for row in new})
     checks = assistant.scripts.check(workspace, after, proposed=new)
+    previous_check = assistant.scripts.check(workspace, before)
+    check_regression = previous_check['execution_available'] and not checks['execution_available']
     result = dict(summary=result['summary'], before=before, after=after, agents=new,
                   bindings=[current[pair] for pair in sorted(after_refs) if pair in current],
-                  check=checks, base_sha256=base['sha256'])
+                  check=checks, check_regression=check_regression, base_sha256=base['sha256'])
     return dict(result, sha256=digest(canonical(result)))
 
 
@@ -136,6 +185,8 @@ def apply(assistant, turn, data):
         staged = stage(assistant, turn, assistant.inspector.text(operation['reply']))
         if staged.get('sha256') != data['preview_sha256']:
             raise Conflict('画布或 Agent 配置已变化，请重新生成提案。')
+        if staged['check_regression'] and data.get('accept_design_only') is not True:
+            raise Conflict('此修改会使当前可编译工作流仅能保存为设计。请确认这一变更，或先纠正提案。')
     except (Conflict, Invalid):
         with assistant.store.db.tx(read=True) as db:
             if result := applied(db, turn, request_sha):

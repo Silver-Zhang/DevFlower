@@ -178,6 +178,14 @@ class LocalClaude:
         except Blocked as exc:
             secret = before | claude_secrets(b, self.credential_env)
             detail=safe_text(redact('; '.join(native_errors('claude',out))[:1200],secret))
+            if callable(getattr(store, 'provider_failure_event', None)) and process.get('exit') and not any(
+                    process.get(flag) for flag in ('timeout', 'cancelled', 'overflow')):
+                try:
+                    envelope = json.loads(out)
+                except (ValueError, TypeError):
+                    envelope = {}
+                if isinstance(envelope, dict) and envelope.get('session_id') == requested and envelope.get('is_error') is True:
+                    store.provider_failure_event(process, detail)
             if process.get('timeout'):
                 limit=min(self.limits['step_timeout_seconds'],b.get('timeout_seconds',300))
                 reason=f"Claude 本次请求超时（已用 {process.get('duration','unknown')} 秒，单次上限 {limit} 秒，退出码 {process.get('exit','unknown')}）；所属进程已停止，没有自动重发。请检查中转站连接，或在节点高级设置延长超时后明确提交新任务"

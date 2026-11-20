@@ -16,7 +16,7 @@ from devflower_export import document_agents
 from studio.graph import Invalid
 from studio.server import Conflict
 from v2.assistant import Assistant
-from v2.assistant_native import apply, stage
+from v2.assistant_native import apply, correction, stage
 from v2.assistant_proposals import native_examples
 from v2.store import DraftStore
 from v2.workflow_templates import WorkflowTemplates, loop_example
@@ -66,6 +66,44 @@ class NativeAssistantTests(unittest.TestCase):
                        preview_sha256=proof['sha256'], **changes)
         with patch.object(self.assistant, 'native_status', return_value=dict(state='COMPLETED', reply=reply)):
             return apply(self.assistant, turn, request)
+
+    def test_name_only_and_explicit_compiler_regression_confirmation(self):
+        tool = dict(id='Tool', name='Tool', kind='tool', position=dict(x=0, y=0),
+                    config_version=1, config=dict(tool='command', argv=['true']))
+        draft = self.store.save(self.workspace, None, None, dict(self.document, nodes=[tool], execution='native-cli'))
+        self.turn['base'] = self.assistant.draft(self.workspace,
+            dict(id=draft['id'], revision=draft['revision'], document=draft['graph']))
+        rename = stage(self.assistant, self.turn, json.dumps(
+            dict(summary='Rename the workflow', name='Renamed', operations=[])))
+        self.assertEqual(rename['after']['name'], 'Renamed')
+        self.assertTrue(rename['check']['execution_available'])
+        self.assertEqual(rename['before']['nodes'], rename['after']['nodes'])
+        reply, proof = self.preview([node('Other', 'tool', dict(tool='command', argv=['true']))])
+        self.assertTrue(proof['check_regression'])
+        with self.assertRaisesRegex(Conflict, '仅能保存为设计'):
+            self.confirm(reply, proof)
+        self.assertEqual(self.store.draft(self.workspace, draft['id']), draft)
+        saved = self.confirm(reply, proof, accept_design_only=True)
+        self.assertEqual(len(saved['draft']['graph']['nodes']), 2)
+
+    def test_directed_correction_keeps_independent_operations_after_a_bad_one(self):
+        long_task = '保留的精确任务。' * 400
+        first = node('First', 'agent', dict(task_prompt=long_task))
+        missing = dict(op='remove-node', id='Missing')
+        last = node('Last', 'agent', dict(task_prompt='Independent exact task'))
+        reply = json.dumps(dict(summary='Fix only the broken operation', operations=[first, missing, last]),
+                           ensure_ascii=False)
+        self.assertGreater(len(reply), 2200)
+        locked, proof = correction(self.assistant, self.turn, reply)
+        self.assertEqual(locked['operations'], [first, last])
+        self.assertEqual(proof['original']['operations'][0]['config']['task_prompt'], long_task)
+        self.assertEqual([item['index'] for item in proof['rejected']], [2])
+        fixed = dict(self.turn, correction_lock=locked)
+        with self.assertRaisesRegex(Invalid, '遗漏或改动'):
+            self.preview([first, node('Last', 'agent')], turn=fixed)
+        _, ready = self.preview([first, last], turn=fixed)
+        self.assertEqual([item['id'] for item in ready['after']['nodes']], ['First', 'Last'])
+        self.assertEqual(self.store.drafts(self.workspace), [])
 
     def test_atomic_confirm_idempotent_and_task_composition(self):
         reply, proof = self.preview(self.chain(), [profile('Shared')])

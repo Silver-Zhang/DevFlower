@@ -1,10 +1,12 @@
 """V2 serves and executes the same artifact as the terminal compiler."""
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from hashlib import sha256
 from http.client import HTTPConnection
 import json
 import os
+import signal
+import select
 from pathlib import Path
 import subprocess
 import sys
@@ -232,6 +234,7 @@ else:
                     self.assertEqual(final['script'].get('legacy_tool_outcome', False), version == 13)
                     code, listed = self.http(service, 'script-run/summaries?workspace=' + self.workspace + '&ids=' + run['id'])
                     self.assertEqual(code, 200, listed)
+                    self.assertGreater(listed[0].pop('verified_at'), 0)
                     self.assertEqual(listed, [dict(id=run['id'], state='CHECK_FAILED', task='Check evidence',
                                                   failures=[dict(node='Check', name='Business check', returncode=7)])])
                     code, options = self.http(service, 'script-run/continuation' + params)
@@ -302,6 +305,58 @@ else:
             stopped = self.wait_for_state(service, route, lambda s: s['state'] == 'CANCELLED')
             self.assertEqual(stopped['script']['completed_nodes'], [])
             self.assertEqual(len((self.project/'calls.jsonl').read_text().splitlines()), 1)
+
+    @unittest.skipUnless(sys.platform.startswith('linux') and hasattr(os, 'pidfd_open'), 'Linux pidfd required')
+    def test_export_supervisor_cleans_owned_group_after_hard_owner_death(self):
+        marker = self.project / 'processes'
+        code = (
+            "import os,signal,sys,time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "child=os.fork(); "
+            "time.sleep(30) if child==0 else Path(sys.argv[1]).write_text(f'{os.getpid()} {child}'); "
+            "time.sleep(30)"
+        )
+        graph = dict(version=1, name='Guarded tool', nodes=[
+            dict(id='Clock', name='Timer', kind='tool', config=dict(
+                tool='command', argv=[sys.executable, '-c', code, str(marker)]))], edges=[])
+        filename, source = compile_workflow(graph, workspace=self.project, native_config=True)
+        (self.project / filename).write_text(source)
+        run = self.project / 'evidence'
+        argv = [sys.executable, '-I', str(self.project / filename), '--run-dir', str(run)]
+        owner = subprocess.Popen(argv, cwd=self.project, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']) as unrelated:
+            try:
+                deadline = time.monotonic() + 5
+                while (not marker.is_file() or not marker.read_text() or 'PROCESS_STARTED' not in
+                       (run / 'events.jsonl').read_text()) and time.monotonic() < deadline:
+                    time.sleep(.02)
+                pid, child = map(int, marker.read_text().split())
+                with ExitStack() as descriptors:
+                    leader_handle = os.pidfd_open(pid)
+                    descriptors.callback(os.close, leader_handle)
+                    child_handle = os.pidfd_open(child)
+                    descriptors.callback(os.close, child_handle)
+                    owners = select.poll()
+                    members = select.poll()
+                    owners.register(leader_handle, select.POLLIN)
+                    members.register(child_handle, select.POLLIN)
+                    owner.send_signal(signal.SIGKILL)
+                    self.assertEqual(owner.wait(timeout=5), -signal.SIGKILL)
+                    requested = subprocess.run(argv + ['--cancel'], cwd=self.project,
+                                               capture_output=True, timeout=5)
+                    snapshot = json.loads(requested.stdout)
+                    self.assertEqual(requested.returncode, 1)
+                    self.assertEqual(snapshot['status'], 'RECOVERY_REQUIRED')
+                    self.assertFalse(snapshot['owner_active'])
+                    self.assertEqual(snapshot['last_process_observation']['pgid'], pid)
+                    self.assertTrue(owners.poll(5000))
+                    self.assertTrue(members.poll(5000))
+                    self.assertIsNone(unrelated.poll())
+            finally:
+                if owner.poll() is None:
+                    owner.kill()
+                    owner.wait(5)
+                unrelated.terminate()
 
     def test_invalid_native_route_and_failed_call_leave_no_downstream_dispatch(self):
         data, bin_dir = self.native_fixture()

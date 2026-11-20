@@ -104,10 +104,40 @@ function isEnvironmentMessage(message){
  return /^<environment_context>\s*<cwd>[^<>]+<\/cwd>\s*<shell>[^<>]+<\/shell>\s*(?:<current_date>\d{4}-\d{2}-\d{2}<\/current_date>\s*)?(?:<timezone>[^<>]+<\/timezone>\s*)?(?:<filesystem>[^]*?<\/filesystem>\s*)?<\/environment_context>\s*$/.test(message.text);
 }
 
+function devflowerBody(messages){
+ const boundary='\n\n用户本次明确请求\n';
+ let requestFound=false;
+ return messages.map(message=>{
+  if(!isVisibleMessage(message)||message.note){
+   requestFound=false;
+   return message;
+  }
+  if(message.role==='user'){
+   const cut=message.text.indexOf(boundary);
+   requestFound=message.text.startsWith('你是 DevFlower 的独立助手。')&&cut>=0;
+   return requestFound?{...message,text:message.text.slice(cut+boundary.length),protocol:message.text}:message;
+  }
+  if(!requestFound)return message;
+  requestFound=false;
+  const fence=/^```(?:json)?[ \t]*\r?\n([^]*?)\r?\n```$/i.exec(message.text);
+  try{
+   const result=JSON.parse(fence?.[1]||message.text);
+   if(typeof result?.answer==='string'&&Object.keys(result).length===1){
+    return {...message,text:result.answer,protocol:message.text};
+   }
+   if(Array.isArray(result?.operations)){
+    return {...message,text:typeof result.summary==='string'?result.summary:'助手提交了画布修改提案，请在助手中核对。',
+     protocol:message.text};
+   }
+  }catch{}
+  return message;
+ });
+}
+
 export function NativeMessages({label, messages, format, paged = false, truncated, empty}) {
  const markdown = format === 'markdown';
  const missing = !Array.isArray(messages);
- const display = missing ? [] : markdown && paged ? groupPage(messages) : messages;
+ const display = missing ? [] : markdown ? devflowerBody(paged ? groupPage(messages) : messages) : messages;
  return <div aria-label={label} className="native-messages">
   {display.length === 0 && <p className="muted small">{missing ? paged ? INCOMPLETE : TRUNCATED : empty}</p>}
   {display.map((message, index) => {
@@ -126,6 +156,8 @@ export function NativeMessages({label, messages, format, paged = false, truncate
     <h3>{message.role === 'user' ? '用户' : '助手'}
      {labeledPart && <small className="muted"> · 片段 {message.part_index}/{message.part_count}</small>}</h3>
     {markdown && !note ? <MarkdownBoundary key={text} text={text}/> : <PlainMessage text={text} note={note}/>}
+    {message.protocol&&<details><summary>{message.role==='user'?'展开原始原生请求':'展开原始原生回复'}</summary>
+     <pre>{message.protocol}</pre></details>}
    </article>;
   })}
  </div>;

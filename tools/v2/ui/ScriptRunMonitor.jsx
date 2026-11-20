@@ -4,7 +4,7 @@ import {downloadPython} from './PythonPanel.jsx';
 function EvidenceText({label,value}) {
  if(!value)return null;
  return <section><h3>{label}</h3><pre aria-label={label}>{value.text}</pre>
-  {value.truncated&&<p className="field-note">此处显示部分内容，完整文件在本机证据目录。</p>}
+  {value.truncated&&<p className="field-note">{Number.isInteger(value.omitted_bytes)?'已省略 '+value.omitted_bytes+' 字节。':'此处显示部分内容。'}完整文件在本机证据目录。</p>}
  </section>;
 }
 

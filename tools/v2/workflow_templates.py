@@ -250,7 +250,31 @@ class WorkflowTemplates:
         literals = task_literals()
         raw = canonical(graph).decode()
         if inspector.clean(graph) != graph or redact(raw, literals) != raw:
-            raise Invalid('画布含有受保护内容，请清理后再保存模板。')
+            paths = []
+
+            def locate(value, path):
+                if len(paths) >= 8:
+                    return
+                if isinstance(value, dict):
+                    public = inspector.clean(value)
+                    for key, item in value.items():
+                        location = path + '.' + inspector.text(key)
+                        if key not in public:
+                            paths.append(location)
+                        elif key == 'nodes' and isinstance(item, list):
+                            for node in item:
+                                locate(node, path + '/节点 ' + inspector.text(node['name']) + ' (' + node['id'] + ')')
+                        else:
+                            locate(item, location)
+                elif isinstance(value, list):
+                    for index, item in enumerate(value, 1):
+                        locate(item, f'{path}[{index}]')
+                elif isinstance(value, str) and (inspector.text(value) != value or redact(value, literals) != value):
+                    paths.append(path)
+
+            locate(graph, '画布')
+            fields = '、'.join(paths[:8]) or '画布字段'
+            raise Invalid(f'模板不能包含以下受保护字段：{fields}。请清理这些字段后再保存。')
         name, description = (inspector.text(redact(value, literals)) for value in (name, description))
         graph = validate_draft(dict(graph, name=name))
         now = time.time()

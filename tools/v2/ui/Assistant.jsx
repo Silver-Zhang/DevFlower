@@ -36,6 +36,9 @@ function Diagnosis({value}){
  return <section className="assistant-diagnosis" aria-label="运行只读诊断">
   <h3>运行诊断</h3><p>{value.state} · {value.reason||'无额外运行原因'}</p>
   {value.execution==='native-cli'&&<><p className="field-note">运行 <code>{value.run}</code></p>
+   {value.failure_facts?.map(fact=><p key={fact.event_seq}>{fact.node||'运行级'} ·
+    {fact.http_status?' HTTP '+fact.http_status:' '+fact.code} · {fact.source} #{fact.event_seq}</p>)}
+   {!!value.failure_facts_omitted&&<p className="field-note">省略 {value.failure_facts_omitted} 条结构化错误。</p>}
    {!!value.not_observed_started?.length&&<p>未观察到进程启动的节点 · {value.not_observed_started.join('、')}</p>}
    {!!value.loop_rounds?.length&&<details><summary>循环轮次与审核结果</summary><pre>{JSON.stringify(value.loop_rounds,null,2)}</pre></details>}
   </>}
@@ -74,7 +77,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const [legacyModel,setLegacyModel]=useState(''),[legacyEffort,setLegacyEffort]=useState('');
  const {catalog:configuredCatalog,chosen,canSend}=choicesFor(settings,selection);
  const [mode,setMode]=useState(nativeEntry?'native':run?'diagnosis':'chat'),[attachDraft,setAttachDraft]=useState(false);
- const [inventory,setInventory]=useState(true);
+ const [inventory,setInventory]=useState(true),[correction,setCorrection]=useState(null);
  const [text,setDraftText]=useState(()=>sessionStorage.getItem(draftKey(storeKey,conversation))||''),[preview,setPreview]=useState(null),[pending,setPending]=useState(null);
  const historySelection=useRef(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -85,11 +88,34 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   effort:legacyProvider==='codex'?legacyEffort:null}:selection;
  const currentDraft=mode==='native'?draft:attachDraft?draft:null;
  const payload={workspace:workspace.id,conversation,...config,mode:mode==='diagnosis'?'chat':mode,
-  text,draft:currentDraft,files,run:run||null,...(legacy?{}:{inventory})};
+  text,draft:currentDraft,files,run:run||null,...(legacy?{}:{inventory}),
+  ...(correction&&mode==='native'?{correction}:{})};
  latest.current=payload;
  const turn=record?.turns?.at(-1),running=active.has(turn?.state),unknown=turn?.state==='RECOVERY_REQUIRED';
+ const [proposalStatus,setProposalStatus]=useState(null),[designOnly,setDesignOnly]=useState(null);
+ const proposalDraft=turn?.proposal&&draft?JSON.stringify(draft):null;
+ const proposalKey=proposalDraft&&turn.id+' '+proposalDraft;
+ const proposalCurrent=proposalKey&&proposalStatus?.key===proposalKey&&proposalStatus.current;
+ useEffect(()=>{
+  if(!proposalKey)return;
+  let current=true;
+  api(route('proposal_status'),{workspace:workspace.id,conversation,turn:turn.id,draft:JSON.parse(proposalDraft)})
+   .then(value=>{if(current)setProposalStatus({key:proposalKey,current:value.current})})
+   .catch(()=>{if(current)setProposalStatus({key:proposalKey,current:false})});
+  return()=>{current=false};
+ },[proposalKey,workspace.id,conversation,api]);
  const originalAccount=turn&&choicesFor(settings,turn.config||{provider:turn.provider}).catalog;
  const loginMissing=originalAccount?.authenticated===false;
+ const refreshModelsStatus=()=>{
+  api(route('settings',{workspace:workspace.id})).then(value=>{if(alive.current)setSettings(value)}).catch(()=>{});
+ };
+ useEffect(()=>{
+  if(hidden)return;
+  const check=()=>refreshModelsStatus();
+  addEventListener('focus',check);
+  const interval=setInterval(check,15000);
+  return()=>{removeEventListener('focus',check);clearInterval(interval)};
+ },[hidden,workspace.id,api]);
  const matching=preview&&(preview.payload.mode==='probe'?
   ['provider','native_profile','model','effort'].every(key=>preview.payload[key]===selection[key]):
   eq(preview.payload,payload));
@@ -169,7 +195,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  function switchTo(id,fromHistory=false){
   historySelection.current=fromHistory&&id!==conversation?id:null;
   if(fromHistory&&id===conversation)restoreLegacy(record?.turns.at(-1));
-  setView('chat');setDraftText(sessionStorage.getItem(draftKey(storeKey,id))||'');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
+  setCorrection(null);setView('chat');setDraftText(sessionStorage.getItem(draftKey(storeKey,id))||'');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
  }
  async function loadHistory(cursor=null){
   const result=await api(route('history',{workspace:workspace.id,...(cursor?{before:cursor}:{})}));
@@ -178,7 +204,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  async function showPreview(test=false){
   const current=structuredClone(test?{workspace:workspace.id,conversation,...selection,identity:null,
    mode:'probe',text:probeText,draft:null,files:[],run:null}:payload);
-  const result=await api(route('preview'),current);
+  let result;
+  try{result=await api(route('preview'),current)}
+  catch(failure){if(!legacy)refreshModelsStatus();throw failure}
   if(alive.current&&(test||eq(latest.current,current))){
    setPreview({...result,payload:current});
    if(test)setView('chat');
@@ -200,7 +228,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
   pendingRef.current=submitted;setPending(submitted);
   try{
    await api(route('send'),submitted);
-   if(alive.current){setPreview(null);await read()}
+   if(alive.current){setCorrection(null);setPreview(null);await read()}
   }catch(failure){
    if(!failure.uncertain&&Number.isInteger(failure.status)&&failure.status<500){
     clearPending(intentStore);
@@ -284,7 +312,13 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     </section>
     {turn?.team&&<AssistantTeam key={turn.id} api={api} workspace={workspace.id} conversation={conversation}
      turn={turn} draft={draft} busy={busy} perform={perform} onSaved={onSaveTeam} onOpenDraft={onOpenDraft}/>}
-    {turn?.proposal_error&&<p role="alert" className="error-text">{turn.proposal_error}</p>}
+    {turn?.proposal_error&&<section className="assistant-proposal"><p role="alert" className="error-text">{turn.proposal_error}</p>
+     {turn.mode==='native'&&draft&&<button disabled={busy||running||!!text} onClick={()=>{
+      setMode('native');setCorrection(turn.id);
+      setText('请按当前画布核对并纠正上一条提案。原请求：'+turn.text.slice(0,4500)+
+       '\n校验问题：'+turn.proposal_error.slice(0,700)+'\n只修正被指出的字段和依赖项，保留其余仍有效的操作，并返回完整 JSON。');
+     }}>准备纠正请求</button>}
+    </section>}
     {turn?.native_saved&&<section className="assistant-proposal">
      <p>提案已保存为工作流。</p>
      <button type="button" onClick={()=>onOpenDraft(turn.native_saved)}>打开已保存工作流</button>
@@ -292,9 +326,20 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     {turn?.proposal&&<section className="assistant-proposal" aria-label="画布提案">
      <h3>画布提案</h3><p>{turn.proposal.summary}</p>
      {turn.proposal.check?<NativeProposal value={turn.proposal}/>:<ProposalDiff before={turn.proposal.before} after={turn.proposal.after}/>}
-     <button className="primary" disabled={!draft||busy} onClick={()=>perform(async()=>{
+     <p className="field-note">{workspace.name} · {turn.context?.draft?.name||'当前草稿'} ·
+      {turn.context?.draft?.revision?' 版本 '+turn.context.draft.revision.slice(0,8):' 未保存草稿 '+turn.context?.draft?.sha256?.slice(0,8)}</p>
+     {!proposalCurrent&&<p role="status">{proposalKey&&proposalStatus?.key!==proposalKey?'正在核对提案版本…':
+      '提案对应的草稿已变化或无法核对。请基于当前草稿重新生成。'}</p>}
+     {!proposalCurrent&&proposalKey&&proposalStatus?.key===proposalKey&&
+      <button disabled={busy||running||!!text} onClick={()=>setText(turn.text)}>将原请求填入发送框</button>}
+     {turn.proposal.check_regression&&<label><input type="checkbox" checked={designOnly===turn.id}
+      onChange={event=>setDesignOnly(event.target.checked?turn.id:null)}/>
+      确认此变更后工作流暂时仅可作为设计草稿保存</label>}
+     <button className="primary" disabled={!proposalCurrent||busy||turn.proposal.check_regression&&designOnly!==turn.id}
+      onClick={()=>perform(async()=>{
       const sha=turn.proposal.sha256;
-      await onApply({workspace:workspace.id,conversation,turn:turn.id,draft,...(sha?{preview_sha256:sha}:{})});
+      await onApply({workspace:workspace.id,conversation,turn:turn.id,draft,...(sha?{preview_sha256:sha}:{}),
+       ...(turn.proposal.check_regression?{accept_design_only:true}:{})});
       if(sha)await read();
       if(alive.current)setNotice(sha?'已应用并保存。可以从画布撤销，再保存恢复后的版本。':'已应用到当前草稿，可以撤销。')
      })}>{turn.proposal.sha256?'应用并保存草稿':'应用到画布草稿'}</button>
@@ -307,9 +352,19 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
       <dt>接收方</dt><dd>{providerNames[preview.payload.provider]} ·
        {' '+(preview.context.config?.requested_model||'原生默认模型')}
        {preview.payload.mode==='probe'&&' · 测试可能计费'}</dd>
+      {preview.context.correction&&<>
+       <dt>原提案纠正</dt><dd>已锁定 {preview.context.correction.retained_count} 条可保留操作。
+        {preview.context.correction.rejected.length>0&&<ul>{preview.context.correction.rejected.map(item=>
+         <li key={item.index}>第 {item.index} 条 · {item.reason}</li>)}</ul>}
+       </dd>
+      </>}
       <dt>附带内容</dt><dd>{preview.context.draft?'当前草稿 · ':''}
        {preview.context.run?'运行证据 · ':''}{preview.context.files.length} 个文件
        {preview.context.previous_turns>0&&' · '+preview.context.previous_turns+' 轮历史'}
+       {preview.context.run?.failure_facts?.map(fact=><p key={fact.event_seq}>{fact.node||'运行级'} ·
+        {fact.http_status?' HTTP '+fact.http_status:' '+fact.code} · {fact.source} #{fact.event_seq}</p>)}
+       {!!preview.context.run?.omitted_nodes&&<p>省略 {preview.context.run.omitted_nodes} 个节点详情。</p>}
+       {!!preview.context.run?.failure_facts_omitted&&<p>省略 {preview.context.run.failure_facts_omitted} 条结构化错误。</p>}
        {preview.context.files.length>0&&<ul>{preview.context.files.map(file=><li key={file.path}>{file.path}</li>)}</ul>}</dd>
      </dl>
      <button className="primary" disabled={busy||!!pending} onClick={()=>perform(send)}>确认发送</button>
@@ -380,7 +435,14 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
      <AssistantSourcePicker api={api} workspace={workspace.id} files={files} onFiles={onFiles}
       busy={busy||running} perform={perform}/>
     </details>
+    {!legacy&&settings&&(!configuredCatalog||configuredCatalog.stale||!configuredCatalog.modes?.Ask?.enabled)&&
+     <div className="assistant-model-readiness" role="status">
+      <p>{!configuredCatalog||configuredCatalog.stale?'当前模型目录需要刷新。':'当前 CLI 未核验无工具调用能力。'}</p>
+      <button type="button" disabled={busy||running} onClick={()=>perform(refreshModels)}>就地刷新模型目录</button>
+     </div>}
     {!canSend&&!legacy&&<button type="button" onClick={()=>setView('settings')}>配置助手模型</button>}
+    {correction&&mode==='native'&&<p role="status">本次预览将核对原提案及草稿版本。
+     <button type="button" disabled={busy} onClick={()=>setCorrection(null)}>取消定向纠正</button></p>}
     <textarea aria-label="助手消息" value={text} rows={3} maxLength={8000} disabled={busy||running||unknown||!!pending}
      onChange={event=>setText(event.target.value)} placeholder="输入问题或画布修改要求"/>
     <button className="primary assistant-preview-action" disabled={!valid||busy||running||unknown||!!pending} onClick={()=>perform(()=>showPreview())}>预览本次发送</button>

@@ -37,7 +37,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
 CONTROL_KINDS = ('condition', 'router')
-COMPILER_VERSION = 14
+COMPILER_VERSION = 15
 
 
 def canonical(value):

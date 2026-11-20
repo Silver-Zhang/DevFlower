@@ -102,6 +102,16 @@ class DraftStore:
             db.execute('INSERT INTO records VALUES(?,?,?)', ('workspace', identity, canonical(result).decode()))
         return result
 
+    def workspace_move_hint(self, current):
+        path, meta = self.directory(current['path'])
+        for old in self.db.list('workspace'):
+            prior_path = old['path']
+            if (prior_path != str(path) and
+                    digest(canonical([prior_path, meta.st_dev, meta.st_ino])) == old['id'] and
+                    not Path(prior_path).exists()):
+                return {'previous_path': prior_path}
+        return None
+
     def workspace(self, key, *, existing_only=False):
         if not isinstance(key, str) or not re.fullmatch(r'[0-9a-f]{64}', key):
             raise Invalid('工作空间身份无效；请重新打开工作空间')

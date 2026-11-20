@@ -57,7 +57,9 @@ def native_examples():
 NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若用户问答或询问运行原因，返回 {"answer":"Markdown 回答"}，
 运行事实引用所给 Run ID、节点、轮次和真实事件。证据未覆盖之处明确说明；绝不发起执行或重放。
 若用户明确要求创建或修改当前原生工作流，返回 summary、operations，可选 name（画布名称）与 profiles（拟新增的原生 Agent）。
-只使用本次当前草稿身份；以前问答仅用于理解指代。遵循下面的操作、ID 与端口规则，但原生模式允许下列额外配置：
+只使用本次当前草稿身份；以前问答仅用于理解指代。summary 为不超过 1000 字符的单个字符串，
+禁止数组、对象或 Markdown 分段。仅改工作流名称时用 name 和空的 operations 数组。
+单 Tool 可以编译，无通用 Start 要求。以提供的实际编译检查为准；修改后是否可编译由新检查确定。遵循下面的操作、ID 与端口规则，但原生模式允许下列额外配置：
 - Agent 的 config 可含 task_prompt、native_output、output_contract、artifact_paths，以及一个 profile。
 - 优先复用列表中职责合适的原生 Agent，profile 为其 Agent ID。需要新配置时，profiles 提供 id（别名）、
   name、role、provider（codex 或 claude），profile 引用别名。优先遵循用户指定的 Provider，否则使用默认 Codex。
@@ -107,10 +109,12 @@ def _parse(reply, native=False):
     result = parse_envelope(reply)
     required = {'summary', 'operations'}
     fields(result, required | ({'profiles', 'name'} if native else set()), required)
-    text(result['summary'], 1000, '提案说明')
-    if not result['summary'].strip() or not isinstance(result['operations'], list) or not (
-            1 <= len(result['operations']) <= MAX_OPERATIONS):
-        raise Invalid('提案需要简短说明和 1–20 条修改。')
+    if not isinstance(result['summary'], str) or not 0 < len(result['summary'].strip()) <= 1000:
+        raise Invalid('summary：请用一个简短字符串说明修改（最多 1000 字符）。')
+    text(result['summary'], 1000, 'summary')
+    minimum = 0 if native and 'name' in result and not result.get('profiles') else 1
+    if not isinstance(result['operations'], list) or not minimum <= len(result['operations']) <= MAX_OPERATIONS:
+        raise Invalid(f'operations：请提供 {minimum}–20 条有序修改；仅改工作流名称时使用 name。')
     return result
 
 
@@ -164,78 +168,87 @@ def proposal(base_document, reply_text, *, native_profiles=None):
         candidate['name'] = _name(value['name'])
     used_nodes = {node['id'] for node in candidate['nodes']}
     used_edges = {edge['id'] for edge in candidate['edges']}
-    for operation in value['operations']:
-        op = operation.get('op') if isinstance(operation, dict) else None
-        if not isinstance(op, str) or op not in OP_FIELDS:
-            raise Invalid('助手提案包含不支持的修改操作。')
-        allowed, required = OP_FIELDS[op]
-        fields(operation, {'op', 'id'} | allowed, {'op', 'id'} | required)
-        ident = operation['id']
-        if not isinstance(ident, str) or not ID.fullmatch(ident):
-            raise Invalid('提案节点或连线身份无效。')
-        if protected and (op != 'update-node' or 'config' in operation):
-            raise Invalid('已有人工审批或受保护交付 Gate 的流程只允许助手改名。请在画布中明确调整结构或配置。')
+    for index, operation in enumerate(value['operations'], 1):
+        try:
+            op = operation.get('op') if isinstance(operation, dict) else None
+            if not isinstance(op, str) or op not in OP_FIELDS:
+                raise Invalid('助手提案包含不支持的修改操作。')
+            allowed, required = OP_FIELDS[op]
+            fields(operation, {'op', 'id'} | allowed, {'op', 'id'} | required)
+            ident = operation['id']
+            if not isinstance(ident, str) or not ID.fullmatch(ident):
+                raise Invalid('提案节点或连线身份无效。')
+            if protected and (op != 'update-node' or 'config' in operation):
+                raise Invalid('已有人工审批或受保护交付 Gate 的流程只允许助手改名。请在画布中明确调整结构或配置。')
 
-        nodes, edges = candidate['nodes'], candidate['edges']
-        if op == 'add-node':
-            kind = operation['kind']
-            if ident in used_nodes or not isinstance(kind, str) or kind not in NODE_KINDS | ({'tool'} if native else set()):
-                raise Invalid('新增节点的身份已使用，或其类型需要在画布中明确配置。')
-            config = _config(operation, kind, native)
-            node = dict(id=ident, name=_name(operation['name']), kind=kind, position=_position(nodes))
-            if kind != 'agent':
-                if kind == 'tool' and config.get('tool') != 'command':
-                    raise Invalid('原生助手可提议命令 Tool。其他工具可在画布中编辑。')
-                node.update(config_version=1, config=config)
-            elif native:
-                node.update(native_agent_fields(config, native_profiles))
-            nodes.append(node)
-            used_nodes.add(ident)
-        elif op in ('update-node', 'remove-node'):
-            node = next((row for row in nodes if row['id'] == ident), None)
-            if node is None:
-                raise Invalid('提案引用了当前草稿中不存在的节点。')
-            kind = node_kind(node)
-            if op == 'remove-node':
-                if kind == 'approval' or kind == 'tool' and (not native or node['config'].get('tool') != 'command'):
-                    raise Invalid('工具与人工审批节点需要在画布中明确调整。')
-                nodes.remove(node)
-                candidate['edges'] = [edge for edge in edges if ident not in (edge['source'], edge['target'])]
-            else:
-                if 'name' in operation:
-                    node['name'] = _name(operation['name'])
+            nodes, edges = candidate['nodes'], candidate['edges']
+            if op == 'add-node':
+                kind = operation['kind']
+                if ident in used_nodes or not isinstance(kind, str) or kind not in NODE_KINDS | ({'tool'} if native else set()):
+                    raise Invalid('新增节点的身份已使用，或其类型需要在画布中明确配置。')
                 config = _config(operation, kind, native)
-                if config:
-                    if kind == 'approval':
-                        raise Invalid('人工审批配置需要在画布中明确调整。')
-                    if native and kind == 'agent':
-                        bind = native_agent_fields(config, native_profiles)
-                        if 'agent_id' in bind:
-                            for key in ('provider', 'model', 'effort', 'initial_prompt', 'round_prompt',
-                                        'output_prompt', 'permission', 'timeout'):
-                                node.pop(key, None)
-                        node.update(bind)
-                    else:
-                        if kind == 'tool' and (node['config'].get('tool') != 'command' or config.get('tool', 'command') != 'command'):
-                            raise Invalid('已有非命令 Tool 需要在画布中调整。')
-                        node['config'].update(config)
-        elif op == 'connect':
-            if ident in used_edges:
-                raise Invalid('新增连线身份已使用。')
-            edge = {key: value for key, value in operation.items() if key != 'op'}
-            edge.setdefault('source_port', 'out')
-            edge.setdefault('target_port', 'in')
-            edges.append(edge)
-            used_edges.add(ident)
-        else:
-            edge = next((row for row in edges if row['id'] == ident), None)
-            if edge is None:
-                raise Invalid('提案引用了当前草稿中不存在的连线。')
-            edges.remove(edge)
+                node = dict(id=ident, name=_name(operation['name']), kind=kind, position=_position(nodes))
+                if kind != 'agent':
+                    if kind == 'tool' and config.get('tool') != 'command':
+                        raise Invalid('原生助手可提议命令 Tool。其他工具可在画布中编辑。')
+                    node.update(config_version=1, config=config)
+                elif native:
+                    node.update(native_agent_fields(config, native_profiles))
+                nodes.append(node)
+                used_nodes.add(ident)
+            elif op in ('update-node', 'remove-node'):
+                node = next((row for row in nodes if row['id'] == ident), None)
+                if node is None:
+                    raise Invalid('提案引用了当前草稿中不存在的节点。')
+                kind = node_kind(node)
+                if op == 'remove-node':
+                    if kind == 'approval' or kind == 'tool' and (not native or node['config'].get('tool') != 'command'):
+                        raise Invalid('工具与人工审批节点需要在画布中明确调整。')
+                    nodes.remove(node)
+                    candidate['edges'] = [edge for edge in edges if ident not in (edge['source'], edge['target'])]
+                else:
+                    if 'name' in operation:
+                        node['name'] = _name(operation['name'])
+                    config = _config(operation, kind, native)
+                    if config:
+                        if kind == 'approval':
+                            raise Invalid('人工审批配置需要在画布中明确调整。')
+                        if native and kind == 'agent':
+                            bind = native_agent_fields(config, native_profiles)
+                            if 'agent_id' in bind:
+                                for key in ('provider', 'model', 'effort', 'initial_prompt', 'round_prompt',
+                                            'output_prompt', 'permission', 'timeout'):
+                                    node.pop(key, None)
+                            node.update(bind)
+                        else:
+                            if kind == 'tool' and (node['config'].get('tool') != 'command' or config.get('tool', 'command') != 'command'):
+                                raise Invalid('已有非命令 Tool 需要在画布中调整。')
+                            node['config'].update(config)
+            elif op == 'connect':
+                if ident in used_edges:
+                    raise Invalid('新增连线身份已使用。')
+                edge = {key: value for key, value in operation.items() if key != 'op'}
+                edge.setdefault('source_port', 'out')
+                edge.setdefault('target_port', 'in')
+                edges.append(edge)
+                used_edges.add(ident)
+            else:
+                edge = next((row for row in edges if row['id'] == ident), None)
+                if edge is None:
+                    raise Invalid('提案引用了当前草稿中不存在的连线。')
+                edges.remove(edge)
+
+        except Invalid as error:
+            ident = operation.get('id') if isinstance(operation, dict) else None
+            label = ' · ' + ident if isinstance(ident, str) and ID.fullmatch(ident) else ''
+            raise Invalid(f'operations[{index}]{label}：{error}') from None
 
     if native:
         resolve_loop_profiles(candidate, native_profiles)
-    document = validate_draft(candidate)
+    try:
+        document = validate_draft(candidate)
+    except Invalid as error:
+        raise Invalid(f'operations 应用后的结构无效：{error}。请修正相关节点与连线并保留其余有效操作。') from None
     if document == base_document:
         raise Invalid('提案没有产生可预览的草稿变更。')
     return {'summary': safe_text(value['summary']).strip(), 'document': document}

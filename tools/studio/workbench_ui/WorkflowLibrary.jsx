@@ -30,10 +30,28 @@ function ClassicTemplate({item,busy,onUse,onFavorite}){
  </article>;
 }
 
+function withoutTemplateCommands(graph){
+ const commands=[];
+ function clean(document){
+  return {...document,nodes:document.nodes.map(node=>{
+   if(node.config?.tool==='command'&&Object.hasOwn(node.config,'argv')){
+    const {argv,...config}=node.config;
+    commands.push(node.name+' ('+node.id+')');
+    return {...node,config};
+   }
+   if(node.config?.body)return {...node,config:{...node.config,body:clean(node.config.body)}};
+   return node;
+  })};
+ }
+ const document=clean(graph);
+ return {document,commands};
+}
+
 export function WorkflowLibrary({api,workspace,examples,graph,onUse,onClose,startSaving=false,onUseTemplate,searchable=false,autoFocusClose=false}){
  const [library,setLibrary]=useState(null);
  const [query,setQuery]=useState(''),[view,setView]=useState('all'),[saving,setSaving]=useState(startSaving);
  const [name,setName]=useState(graph?.name||''),[description,setDescription]=useState('');
+ const [cleanPreview,setCleanPreview]=useState(null);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false);
  const live=useRef(true);
 
@@ -77,6 +95,15 @@ export function WorkflowLibrary({api,workspace,examples,graph,onUse,onClose,star
    <label>说明<textarea aria-label="模板说明" value={description} onChange={event=>setDescription(event.target.value)} maxLength={1000}/></label>
    <small>{onUseTemplate?'保存画布与节点配置。新草稿需要重新绑定已保存的 Agent。':'保存流程和提示词；不复制原生会话、任务、附件权限或运行批准。'}</small>
    <button disabled={busy||!name.trim()||!graph?.nodes?.length}><Save size={13}/>保存模板</button>
+   {onUseTemplate&&error.includes('.config.argv')&&graph?.nodes?.length>0&&
+    <button type="button" disabled={busy} onClick={()=>setCleanPreview({graph,...withoutTemplateCommands(graph)})}>预览移除命令参数的模板</button>}
+   {cleanPreview?.graph===graph&&cleanPreview.commands.length>0&&<section aria-label="模板清理预览">
+    <p>下面节点的命令参数将从模板移除。使用模板后，可以为这些节点填写新参数。</p>
+    <ul>{cleanPreview.commands.map((name,index)=><li key={index}>{name} · config.argv</li>)}</ul>
+    <button type="button" disabled={busy||!name.trim()} onClick={()=>perform(async()=>{
+     await storeTemplate(cleanPreview.document,name,description);setCleanPreview(null);setSaving(false);setView('favorites');
+    })}>确认保存清理后的模板</button>
+   </section>}
   </form>}
   {error&&<p role="alert">{error}</p>}
   <div className="library-scroll">

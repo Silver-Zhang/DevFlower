@@ -244,7 +244,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     lengths = self.headers.get_all('Content-Length', [])
                     if self.headers.get_all('Transfer-Encoding', []):
                         raise Invalid('助手请求需要有界正文。')
-                    if post and route in ('preview', 'send', 'apply', 'configure', 'refresh_models', 'sources', 'source_excerpt',
+                    if post and route in ('preview', 'send', 'apply', 'proposal_status', 'configure', 'refresh_models', 'sources', 'source_excerpt',
                                               'team_preview', 'team_confirm', 'preview_repair', 'launch_repair'):
                         size = int(lengths[0]) if len(lengths) == 1 else 0
                         if (query or not 0 < size <= 440000 or
@@ -364,6 +364,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                             raise Conflict('最近工作空间与登记文件夹不一致；请重新选择')
                     else:
                         result = store.open_workspace(data['path'])
+                        if moved := store.workspace_move_hint(result):
+                            result = dict(result, moved_from=moved['previous_path'])
                 elif not post and path in ('/api/v2/project-files', '/api/v2/project-file', '/api/v2/task-file'):
                     params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict')
                     if 'workspace' not in params or set(params) - {'workspace', 'path'} or any(

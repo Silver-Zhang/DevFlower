@@ -80,6 +80,7 @@ def diagnosis(assistant, workspace, run, record):
     script = snapshot['script']
     events = script.get('events', [])
     grouped = defaultdict(list)
+    failure_facts = []
     preceding = {}
     completed = {}
     recent = []
@@ -92,10 +93,22 @@ def diagnosis(assistant, workspace, run, record):
                 preceding[iteration, node] = completed.get(iteration) or completed.get(None)
             elif kind == 'NODE_COMPLETED':
                 completed[iteration] = event
+        failure_code = event.get('failure_kind')
+        if not failure_code and kind in PROBLEMS - {'RUN_STOPPED'}:
+            failure_code = kind
+        if not failure_code and kind in {'NODE_COMPLETED', 'VALIDATION_COMPLETED'} and event.get('returncode'):
+            failure_code = 'NONZERO_EXIT'
+        if failure_code:
+            code = failure_code
+            fact = dict(code=code, source='events.jsonl', event_seq=index, event_kind=kind,
+                        **take(event, ('node', 'iteration', 'loop_node', 'returncode')))
+            if code == 'HTTP_401':
+                fact['http_status'] = 401
+            failure_facts.append(fact)
         if kind in PROBLEMS or kind in ('ROUTER_EVALUATED', 'CONDITION_EVALUATED', 'LOOP_ACCEPTED',
                                         'LOOP_CONTINUED') or event.get('returncode'):
             recent.append(dict(seq=index, **take(event, ('kind', 'node', 'iteration', 'loop_node',
-                'reason', 'returncode', 'verdict', 'validation_failed', 'selected_port', 'matched_rule',
+                'reason', 'returncode', 'failure_kind', 'verdict', 'validation_failed', 'selected_port', 'matched_rule',
                 'input_verdict', 'source_node'))))
     rows = []
     for (iteration, node), group in grouped.items():
@@ -156,5 +169,6 @@ def diagnosis(assistant, workspace, run, record):
     return assistant.inspector.clean(dict(workspace=workspace, run=run, state=snapshot['state'],
         execution='native-cli', reason=script.get('reason'), definition_id=record['artifact']['sha256'],
         draft_id=record['run']['draft_id'], draft_revision=record['run']['draft_revision'],
-        recent_error_events=recent[-8:], not_observed_started=[node for node in actors if node not in started],
+        failure_facts=failure_facts[-8:], failure_facts_omitted=max(0, len(failure_facts)-8),
+        recent_error_events=recent[-8:], recent_events_omitted=max(0, len(recent)-8), not_observed_started=[node for node in actors if node not in started],
         nodes=rows[:6], omitted=max(0,len(rows)-6), loop_rounds=rounds, output=output))

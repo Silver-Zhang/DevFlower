@@ -77,6 +77,14 @@ class OperationJournal:
     """Provider transport callbacks backed by the reserved V2 effect row."""
     process_started = False
 
+    def provider_failure_event(self, process, detail):
+        if self.operations.authority != 'explicit-assistant-send':
+            return
+        from .execution_facts import provider_error_code
+        if category := provider_error_code(detail):
+            self.operations.store.db.change(KIND, self.row['id'], dict(
+                provider_error=dict(code=category, operation=process['operation_id'])))
+
     def __init__(self, operations, row, check):
         self.operations, self.row, self.check_before_spawn = operations, row, check
         self.db = operations.store.db
@@ -563,8 +571,12 @@ class SessionOperations:
                 and process.get('operation_id')==step_key and process.get('process')==current.get('process')
                 and not any(process.get(key) for key in ('timeout','cancelled','overflow'))
                 and not group_alive(current['process']))
+            observed = current.get('provider_error') or {}
+            provider_error = observed.get('code') if (sent and observed.get('operation') == step_key
+                and process.get('operation_id') == step_key and process.get('process') == current.get('process')) else None
             fact = failure_fact(provider,exc,process=process,uncertain=uncertain,sent=sent,
-                                terminal_failed=failed,native_limit=current.get('native_limit'))
+                                terminal_failed=failed,native_limit=current.get('native_limit'),
+                                provider_error=provider_error)
             state = 'FAILED' if failed else 'RECOVERY_REQUIRED' if uncertain else 'NOT_SENT'
             self.store.db.change(KIND,row['id'],dict(state=state,reason=fact['reason'],execution_failure=fact,
                                                     effect_uncertain=uncertain and not failed))

@@ -1,10 +1,12 @@
 """Publish and observe standalone Python artifacts from explicitly native drafts."""
+import codecs
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 from threading import Thread
@@ -301,7 +303,7 @@ class ScriptRuns:
                         task = raw.decode('utf-8')[:360]
             except (OSError, UnicodeError, WorkflowError):
                 pass
-        return dict(id=run['id'], state=snapshot['state'], failures=[dict(row, name=names.get(row['node'], row['node']))
+        return dict(id=run['id'], state=snapshot['state'], verified_at=snapshot['run'].get('last_verified_at'), failures=[dict(row, name=names.get(row['node'], row['node']))
                     for row in failures], task=task)
 
 
@@ -321,12 +323,25 @@ class ScriptRuns:
         try:
             with _evidence_file(fd, name) as stream:
                 size = os.fstat(stream.fileno()).st_size
-                if tail:
-                    stream.seek(max(0, size - 32000))
+                offset = max(0, size - 32000) if tail else 0
+                stream.seek(offset)
                 value = stream.read(32000)
         except FileNotFoundError:
             return None
-        return dict(text=value.decode('utf-8', errors='replace'), truncated=size > 32000)
+        if offset:
+            # A UTF-8 tail can begin in a continuation byte. Keep invalid
+            # bytes inside the retained log visible as replacement characters.
+            continuation = 0
+            while continuation < min(3, len(value)) and value[continuation] & 0xC0 == 0x80:
+                continuation += 1
+            value = value[continuation:]
+        else:
+            continuation = 0
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+        text = decoder.decode(value, final=tail or size <= 32000)
+        retained = len(value) - len(decoder.getstate()[0])
+        return dict(text=text, truncated=size > retained,
+                    omitted_bytes=max(0, size - retained), retained_from=offset + continuation)
 
     def source(self, record):
         artifact = record['artifact']
@@ -339,8 +354,13 @@ class ScriptRuns:
     def read_script(self, folder, artifact, *arguments, with_run_dir=True):
         self.artifact(folder, artifact)
         result = subprocess.run(self.command(folder, artifact['filename'], *arguments, with_run_dir=with_run_dir),
-                                cwd=folder, stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=10,
+                                cwd=folder, stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
                                 env=workflow_environment())
+        if '--cancel' in arguments and result.returncode == 1 and result.stdout:
+            snapshot = json.loads(result.stdout)
+            if snapshot.get('status') in ('RECOVERY_REQUIRED', 'COMPLETED', 'STOPPED', 'CHECK_FAILED'):
+                return snapshot
+        result.check_returncode()
         return json.loads(result.stdout)
 
     def verified_continuation(self, record, root):
@@ -484,6 +504,17 @@ class ScriptRuns:
             elif isinstance(error, subprocess.CalledProcessError) and (folder / 'evidence').is_dir():
                 reason = error.stderr.decode('utf-8', errors='replace').strip() or reason
             evidence = dict(status='RECOVERY_REQUIRED', reason=reason)
+        verified = 'COMPLETED' if evidence.get('historical_completion') else evidence['status']
+        if not evidence.get('active') and verified in {'COMPLETED', 'CHECK_FAILED', 'STOPPED', 'CANCELLED'}:
+            now = time.time()
+            if run.get('last_verified_state') != verified or now - run.get('last_verified_at', 0) > 1:
+                run = dict(run, last_verified_state=verified, last_verified_at=now)
+                try:
+                    self.store.db.change(KIND, run_id, {'run': run}, timeout=.5)
+                except sqlite3.OperationalError:
+                    # Cache writes are optional. The current read has already
+                    # checked the frozen script and its terminal evidence.
+                    pass
         return dict(run=run, state=evidence['status'], script=dict(
             artifact=artifact, document=record['document'], agents=record['agents'],
             loop_agents=record.get('loop_agents', record['agents']), **evidence))
