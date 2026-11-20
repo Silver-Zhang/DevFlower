@@ -17,7 +17,7 @@ from studio.graph import Invalid
 from studio.server import Conflict
 from v2.assistant import Assistant
 from v2.assistant_native import apply, correction, stage
-from v2.assistant_proposals import native_examples
+from v2.assistant_proposals import NATIVE_INSTRUCTIONS, native_examples
 from v2.assistant_script_evidence import excerpt
 from v2.execution_facts import failure_fact, provider_error_code
 from v2.store import DraftStore
@@ -70,6 +70,8 @@ class NativeAssistantTests(unittest.TestCase):
             return apply(self.assistant, turn, request)
 
     def test_condition_expression_requires_object_and_duplicate_node_reports_id(self):
+        self.assertIn('"artifact_paths":["report.txt"]', NATIVE_INSTRUCTIONS)
+        self.assertIn('禁止再编码为字符串', NATIVE_INSTRUCTIONS)
         expression = dict(field='result.verdict', op='equals', value='accept')
         with self.assertRaisesRegex(Invalid, r'config\.expression 需要 JSON 对象.*result\.verdict'):
             self.preview([node('Condition', 'condition', dict(expression=json.dumps(expression)))])

@@ -74,9 +74,12 @@ summary 为不超过 1000 字符的单个字符串，
   Router 直接接收结构化结果 Agent 的 result.* 已声明字段，
   每条规则为 {"id":"High","label":"…","test":{"field":"result.data.score","op":"equals","value":true}}，
   每规则和 fallback 各连接至独立 Output。output_contract 必须是数组，例如 [{"field":"result.data.score","type":"boolean","required":true}]。
-- Condition 使用 config.expression；候选审核使用 config 中 native_output={ "version":1,"kind":"review" }，
-  审核直接接收声明 artifact_paths 的 result Agent；原生 Condition 判定 result.verdict equals accept。
-  Condition 的 true 和 false 端口都要连接，每条分支都要到达不同的 Output。禁止用同一个 Output 汇合这两条分支。
+- 候选审核 Condition 的编译形状为 Start → 产物 Agent → 审核 Agent → Condition。
+  当用户的任务明确指定交付 report.txt 时，产物 Agent 的 config 为 {"native_output":{"version":1,"kind":"result"},
+  "artifact_paths":["report.txt"],"task_prompt":"生成并申报 report.txt"}；产物列表必须非空，路径应来自实际任务要求。
+  产物 Agent 用普通数据交接直接连接到 config 含 {"native_output":{"version":1,"kind":"review"}} 的审核 Agent。
+  审核 Agent 直接连到 Condition；config.expression 直接嵌入对象 {"field":"result.verdict","op":"equals","value":"accept"}，
+  禁止再编码为字符串。true 和 false 端口都要连接，每条分支都要到达不同的 Output。
 - Loop config 可含 max_iterations、exit_condition 与完整的 version 1 body（name/nodes/edges）。body 节点使用
   id/name/kind/position，Agent 的 config 同上；其他节点使用 config_version=1 和 config。
   原生 Loop 为 Start → 产物 Agent → 可选命令 Tool → 审核 Agent → Output，exit_condition 是
