@@ -61,7 +61,7 @@ function Diagnosis({value}){
 }
 
 export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover,draft,files,onFiles,
- run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose,nativeEntry,onEditRunDraft}){
+ run,onRun,runs,onApply,onSaveTeam,onOpenDraft,onOpenRun,onClose,nativeEntry,onEditRunDraft,hidden}){
  const storeKey='devflower-v2-assistant:'+storageKey+':'+workspace.id;
  const [conversation,setConversation]=useState(()=>localStorage.getItem(storeKey)||uid());
  const [view,setView]=useState('chat'),[record,setRecord]=useState(null),[history,setHistory]=useState([]);
@@ -76,7 +76,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  const [retry,setRetry]=useState(false);
  const historySelection=useRef(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
- const alive=useRef(false),sequence=useRef(0),loadFlight=useRef(false),loaded=useRef(null);
+ const alive=useRef(false),sequence=useRef(0),loadFlight=useRef(null);
  const operation=useRef(false),closing=useRef(null),latest=useRef(null),pendingRef=useRef(null);
  const selectedModel=catalog?.models?.find(item=>item.id===legacyModel);
  const config=legacy?{provider:legacyProvider,model:legacyProvider==='codex'?legacyModel:null,
@@ -103,7 +103,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  useEffect(()=>{
   localStorage.setItem(storeKey,conversation);
   const stored=loadPending(intentStore);
-  sequence.current++;loaded.current=null;setRecord(null);pendingRef.current=stored;setPending(stored);setRetry(false);loadFlight.current=false;
+  sequence.current++;setRecord(null);pendingRef.current=stored;setPending(stored);setRetry(false);loadFlight.current=null;
   read(conversation).catch(failure=>alive.current&&setError(failure.message));
  },[conversation]);
  useEffect(()=>{
@@ -123,13 +123,12 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  useEffect(()=>{
   if(!draft&&attachDraft){setAttachDraft(false);if(mode==='proposal')setMode('chat')}
  },[Boolean(draft)]);
- async function read(id=conversation){
-  if(loadFlight.current)return loaded.current;
-  const ticket=sequence.current;loadFlight.current=true;
-  try{
-   const value=await api(route('conversation',{workspace:workspace.id,conversation:id}));
+ function read(id=conversation){
+  if(loadFlight.current)return loadFlight.current;
+  const ticket=sequence.current;
+  const request=api(route('conversation',{workspace:workspace.id,conversation:id})).then(value=>{
    if(alive.current&&ticket===sequence.current){
-    loaded.current=value;setRecord(value);
+    setRecord(value);
     if(historySelection.current===id){
      historySelection.current=null;restoreLegacy(value.turns.at(-1));
     }
@@ -138,7 +137,9 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
     }
    }
    return value;
-  }finally{if(ticket===sequence.current)loadFlight.current=false}
+  }).finally(()=>{if(loadFlight.current===request)loadFlight.current=null});
+  loadFlight.current=request;
+  return request;
  }
  async function perform(fn){
   if(operation.current)return;
@@ -154,7 +155,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  }
  function switchTo(id,fromHistory=false){
   historySelection.current=fromHistory&&id!==conversation?id:null;
-  if(fromHistory&&id===conversation)restoreLegacy(loaded.current?.turns.at(-1));
+  if(fromHistory&&id===conversation)restoreLegacy(record?.turns.at(-1));
   setView('chat');setText('');setPreview(null);setPending(null);setError('');setNotice('');setConversation(id);
  }
  async function loadHistory(cursor=null){
@@ -207,7 +208,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
  }
  const valid=(legacy?!!legacyProvider&&(legacyProvider!=='codex'||(legacyModel&&legacyEffort)):canSend)
   &&text.trim()&&(!attachDraft||draft)&&(mode!=='proposal'||attachDraft)&&(mode!=='diagnosis'||run);
- return <aside className="project-panel v2-assistant" aria-label="AI 助手" onKeyDown={event=>{
+ return <aside className="project-panel v2-assistant" aria-label="AI 助手" hidden={hidden} onKeyDown={event=>{
   if(event.key==='Escape'){event.stopPropagation();onClose()}
  }}>
   <header className="project-panel-header">

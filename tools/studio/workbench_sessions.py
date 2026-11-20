@@ -248,10 +248,11 @@ class WorkbenchSessions:
             try:meta=self.db.get('session-meta',handle)
             except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')
             if meta['workspace']!=workspace:raise Blocked('会话元数据不属于当前工作区')
-            hidden=bool(meta.get('hidden'))
+            collection=meta.get('collection','active')
+            hidden=collection=='hidden' or bool(meta.get('hidden'))
             if view=='hidden':
                 if not hidden:continue
-            elif hidden or meta.get('collection','active')!=view:continue
+            elif hidden or collection!=view:continue
             internal=None
             try:internal=self.rt.db.get('session-handle',handle)
             except Invalid:pass
@@ -293,7 +294,8 @@ class WorkbenchSessions:
                     busy=self.busy(probe,row['session_id'])
                 except (Invalid,Blocked):busy=True
             latest=max(actual,key=lambda a:a.get('started_at',0)) if actual else None
-            named=dict(row,title=title,collection=meta.get('collection','active'),alias_only=bool(meta.get('alias')),hidden=hidden,
+            named=dict(row,title=title,collection='active' if collection=='hidden' else collection,
+                alias_only=bool(meta.get('alias')),hidden=hidden,
                 display_state=running['state'] if running else 'BUSY' if busy else latest_operation['state'] if latest_operation else '状态待确认',busy=busy,
                 node=latest['node'] if latest else related[0]['node'] if related else None,
                 choices={'resume':bool(row.get('resume')) and not busy and not meta.get('native_archived'),
@@ -542,6 +544,8 @@ class WorkbenchSessions:
         try:meta=self.db.get('session-meta',handle)
         except Invalid:meta=dict(id=handle,workspace=workspace,collection='active')
         if meta['workspace']!=workspace:raise Blocked('会话不属于当前工作区')
+        if meta.get('collection')=='hidden':
+            meta.update(collection='active',hidden=True)
         if action in ('hide','unhide'):
             # DevFlower-only metadata; the native session, children, source and
             # worktree are never touched. Hidden rows keep their other collection.

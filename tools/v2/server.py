@@ -413,15 +413,15 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = archives.read(query['workspace'], query['id'])
                 elif not post and path == '/api/v2/tool-artifact' and set(query) == {'workspace', 'run', 'activation'}:
                     result = read_tool_artifact(store, **query)
-                elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document', 'execution'}:
-                    if data['execution'] != EXECUTION:
+                elif post and path == '/api/v2/check' and set(data) in (
+                        {'workspace', 'document'}, {'workspace', 'document', 'execution'}):
+                    if 'execution' in data and data['execution'] != EXECUTION:
                         raise Invalid('执行方式无效。')
-                    result = scripts.check(data['workspace'], data['document'])
-                elif post and path == '/api/v2/check' and set(data) == {'workspace', 'document'}:
-                    store.workspace(data['workspace'])
-                    if isinstance(data['document'], dict) and data['document'].get('execution') == EXECUTION:
+                    document = data['document']
+                    if 'execution' in data or isinstance(document, dict) and document.get('execution') == EXECUTION:
                         result = scripts.check(data['workspace'], data['document'])
                     else:
+                        store.workspace(data['workspace'])
                         legacy = managed_runtime()
                         result = legacy.inspect(data['workspace'],data['document']) if legacy else check_chain(data['document'])
                         if not legacy:
@@ -470,6 +470,8 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                     result = scripts.list(workspace)
                     if managed_available:
                         result.extend(inspector.clean(history.runs(workspace)))
+                elif not post and path == '/api/v2/script-run/continuation' and set(query.keys()) == {'workspace', 'id'}:
+                    result = scripts.continuation_options(query['workspace'], query['id'])
                 elif not post and path in ('/api/v2/script-run/evidence', '/api/v2/script-run/source'):
                     required = {'workspace', 'id'}
                     extra = {'node', 'iteration'} if path.endswith('/evidence') else set()
@@ -508,7 +510,7 @@ def create_server(store, port=0, *, runtime=None, native_sessions=None, copilot_
                         raise Invalid('找不到此运行。')
                 elif post and path == '/api/v2/launch' and 'execution' in data:
                     required = {'workspace', 'draft_id', 'revision', 'intent_key', 'task', 'execution'}
-                    if (not required <= set(data) <= required | {'task_files'} or data['execution'] != EXECUTION):
+                    if (not required <= set(data) <= required | {'task_files', 'continue_from'} or data['execution'] != EXECUTION):
                         raise Invalid('脚本启动需要明确的工作空间、草稿版本、任务和原生执行意图。')
                     result = scripts.launch(**{key: value for key, value in data.items() if key != 'execution'})
                 elif post and path == '/api/v2/launch' and managed_available:

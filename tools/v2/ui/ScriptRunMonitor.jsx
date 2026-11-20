@@ -1,29 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {downloadFile} from './HistoryArchives.jsx';
-import {sha256} from './draftTransfer.js';
-
-export async function downloadPython(artifact, current=()=>true) {
- const {filename,source}=artifact;
- if(typeof source!=='string'||typeof filename!=='string'||!filename.endsWith('.py')||/[\/\\\0]/.test(filename))
-  throw Error('脚本文件身份无效。');
- const bytes=new TextEncoder().encode(source);
- if(await sha256(bytes)!==artifact.sha256)throw Error('脚本字节校验失败。');
- if(current())downloadFile(bytes,filename,'text/x-python;charset=utf-8');
-}
-
-export function PythonPreview({artifact,onClose}) {
- const dialog=useRef(null);
- const [error,setError]=useState('');
- useEffect(()=>{dialog.current.showModal()},[]);
- return <dialog ref={dialog} className="run-summary-file" aria-label="Python 脚本预览"
-  onCancel={event=>{event.preventDefault();onClose()}} onKeyDown={event=>{if(event.key==='Escape')event.stopPropagation()}}>
-  <header><h2>{artifact.filename}</h2><button onClick={onClose}>关闭预览</button></header>
-  <p>SHA-256 <code>{artifact.sha256}</code></p>
-  <pre>{artifact.source}</pre>
-  {error&&<p role="alert">{error}</p>}
-  <footer><button onClick={()=>downloadPython(artifact).catch(failure=>setError(failure.message))}>下载 Python</button></footer>
- </dialog>;
-}
+import {downloadPython} from './PythonPanel.jsx';
 
 function EvidenceText({label,value}) {
  if(!value)return null;
@@ -60,13 +36,13 @@ function readHandoff(evidence,hasInput){
  }catch{return null}
 }
 
-export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExplain}) {
+export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExplain,eventIndex}) {
  const {run,script,state}=snapshot;
  const [choice,setChoice]=useState(selected||'');
  const [evidence,setEvidence]=useState(null);
  const [error,setError]=useState('');
  const evidencePicker=useRef(null);
- const events=script.events||[];
+ const {events,started,forNode}=eventIndex;
  const loop=script.loop;
  const [iteration,selectedNode]=choice.includes('/')?choice.split('/'):[null,choice];
  const round=loop?.iterations.find(item=>String(item.iteration)===iteration);
@@ -76,7 +52,7 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
  const agent=(iteration?script.loop_agents:script.agents)?.[selectedNode];
  const node=(tool||agent)?selectedNode:'';
  const completed=(iteration?round?.completed_nodes:script.completed_nodes)||[];
- const nodeEvents=id=>events.filter(event=>event.node===id&&(iteration?String(event.iteration)===iteration:!event.iteration));
+ const nodeEvents=id=>forNode(id,iteration);
  const facts=nodeEvents(node);
  const command=facts.find(event=>event.kind==='CALL_INTENT');
  const exit=facts.find(event=>event.kind==='PROCESS_EXITED');
@@ -87,7 +63,6 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
  const decision=script.condition||router;
  const skippedPorts=Object.keys(decision?.branches||{}).filter(port=>port!==decision.selected_port);
  const skipped=skippedPorts.flatMap(port=>decision.branches[port]);
- const started=events.filter(event=>event.kind==='PROCESS_STARTED');
  const body=script.document.nodes.find(item=>item.id===loop?.node)?.config.body;
  const nameOf=id=>script.document.nodes.find(item=>item.id===id)?.name||id;
  const roundName=id=>body?.nodes.find(item=>item.id===id)?.name||id;
@@ -193,7 +168,13 @@ export function ScriptRunMonitor({api,snapshot,trusted,selected,stateLabel,onExp
    {!command&&<p>{skipped.includes(node)?(tool?'此命令所在分支未选中。':'此 Agent 所在分支未选中。'):
     tool?'尚无命令调用记录。':'尚无 CLI 调用记录。'}</p>}
   </div>:<div className="script-evidence-detail">
-   {trusted&&state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:<p>尚无已核验的最终结果。</p>}
+   {trusted&&state==='COMPLETED'?<EvidenceText label="工作流最终回答" value={shown?.result}/>:
+    <>
+     <p>尚无已核验的最终结果。</p>
+     {trusted&&script.historical_completion&&<details><summary>查看已核验的历史结果</summary>
+      <EvidenceText label="冻结最终结果" value={shown?.result}/>
+     </details>}
+    </>}
    {trusted&&onExplain&&<button type="button" onClick={onExplain}>让 AI 解释这次结果</button>}
    {!loop&&!decision&&started.length>0&&<section aria-label="实际执行顺序">
     <h3>实际执行顺序</h3><ol>{started.map((event,index)=><li key={index}>

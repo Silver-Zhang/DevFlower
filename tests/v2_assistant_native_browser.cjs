@@ -46,6 +46,9 @@ async function main() {
   const source=await preview.locator('pre').textContent();
   assert.match(source,/'task_prompt': 'FIRST_BROWSER_TASK'/);
   assert.match(source,/'task_prompt': 'SECOND_BROWSER_TASK'/);
+  const beforeResize=await preview.evaluate(panel=>panel.offsetWidth);
+  await preview.getByRole('separator',{name:'调整 Python 面板宽度'}).press('ArrowLeft');
+  await page.waitForFunction(width=>document.querySelector('.python-panel').offsetWidth>width,beforeResize);
   await button('关闭预览').click();
   await send('把第二个改为 Claude 并在前面插入版本检查');
   await proposal.getByLabel('Version 命令参数',{exact:true}).waitFor();

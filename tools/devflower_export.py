@@ -37,7 +37,7 @@ LEGACY_AGENT_FIELDS = {'name', 'role', 'responsibilities', 'background', 'goal',
 NODE_FIELDS = {'id', 'name', 'kind', 'position'}
 REVIEW_CONDITION = {'field': 'result.verdict', 'op': 'equals', 'value': 'accept'}
 CONTROL_KINDS = ('condition', 'router')
-COMPILER_VERSION = 12
+COMPILER_VERSION = 13
 
 
 def canonical(value):
@@ -343,6 +343,8 @@ def compile_agent(node, records, root, transfer, producer):
                  round_prompt=text(config.get('round_prompt',''), 'Node prompt'),
                  output_prompt=text(config.get('output_prompt',''), 'Delivery prompt'),
                  timeout=timeout, max_budget_usd=budget)
+    if 'agent_id' in node:
+        agent.update(profile_id=node['agent_id'], profile_revision=node['agent_revision'])
     if 'task_prompt' in node:
         task_prompt = text(node['task_prompt'], ident + ': node task')
         if len(task_prompt) > 20000:

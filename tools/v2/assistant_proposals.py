@@ -63,8 +63,10 @@ NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若�
   name、role、provider（codex 或 claude），profile 引用别名。优先遵循用户指定的 Provider，否则使用默认 Codex。
   用节点 task_prompt 写具体任务；勿创建强制的开发/测试/审核团队。
 - Tool 支持 config={"tool":"command","argv":["python3","-m","unittest"],"cwd":".","timeout":300,"permission":"none"}。
+  add-node 的 config 只填写这些节点参数。编辑器自动添加 config_version，不要在操作或 config 中填写它。
   只有用户要求的命令或验证步骤才提议命令；命令作为数据供用户审核，不会立即执行。
-- 普通边使用默认交接。Router 直接接收结构化结果 Agent 的 result.* 已声明字段，
+- 普通边省略 transfer，使用默认交接。不能填写 transfer:"default"。自定义交接请提供支持的 transfer 对象。
+  Router 直接接收结构化结果 Agent 的 result.* 已声明字段，
   每条规则为 {"id":"High","label":"…","test":{"field":"result.data.score","op":"equals","value":true}}，
   每规则和 fallback 各连接至独立 Output。output_contract 必须是数组，例如 [{"field":"result.data.score","type":"boolean","required":true}]。
 - Condition 使用 config.expression；候选审核使用 config 中 native_output={ "version":1,"kind":"review" }，
@@ -74,7 +76,8 @@ NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若�
   原生 Loop 为 Start → 产物 Agent → 可选命令 Tool → 审核 Agent → Output，exit_condition 是
   {"field":"result.verdict","op":"equals","value":"accept"}。产物 Agent 要声明真实工作区相对路径和 native_output
   kind=result，并在 task_prompt 要求生成该产物。审核 Agent 使用 native_output kind=review。
-- 用户若明确要求暂不受编译器支持的混合结构，保留所要求的节点和连线，由编译器报告限制。
+- 当前原生脚本编译器不支持并行 Agent、Merge / 分支汇合、嵌套控制节点，以及同一图里串联或混用多个 Condition、Router、Loop。
+  这些结构可保存为设计草稿。若用户要求其中之一，明确说明当前原生 Python 不可编译或执行；保留其设计，由编译器报告限制。
 - 没有当前草稿时只回答，提示可返回来源草稿后再请求修改。
 原有 Agent 权限、已有人工审批和受保护 Gate 继续保留。
 """ + OPERATION_INSTRUCTIONS + '\n可用节点端口（输入 → 输出）：\n' + PORTS + (

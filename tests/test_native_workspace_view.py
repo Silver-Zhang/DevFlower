@@ -84,7 +84,7 @@ class NativeWorkspaceViewTests(unittest.TestCase):
   hidden=rt.storage/'hidden-test';hidden.write_text('synthetic private')
   self.assertFalse(rt.attachments(str(root),[str(hidden)])[0]['accessible'])
   self.assertTrue(rt.attachments(str(root),['ordinary.txt'])[0]['accessible'])
-  graph=examples(rt.operator['profiles'])[4]
+  graph=examples({'default-codex':rt.operator['profiles']['default-codex']})[4]
   server,token=create_server(rt);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   self.addCleanup(thread.join);self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
   base='http://127.0.0.1:'+str(server.server_port)

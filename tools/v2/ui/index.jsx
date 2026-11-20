@@ -1,7 +1,7 @@
 import React,{lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReactFlow,ReactFlowProvider,Background,Controls,MarkerType,MiniMap,SelectionMode,useNodesInitialized,useReactFlow,useStore,useUpdateNodeInternals} from '@xyflow/react';
-import {Archive,Bot,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal,History,RefreshCw} from 'lucide-react';
+import {Archive,Bot,Code,FileText,FolderOpen,GitBranch,LibraryBig,MessageSquare,Plus,Save,Sparkles,X,Play,Check,Workflow,ArrowRight,Trash2,PanelRightClose,ChevronDown,Download,Upload,Paperclip,SlidersHorizontal,History,RefreshCw} from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '../../studio/static/theme.css';
 import './style.css';
@@ -12,7 +12,10 @@ import {NativeSessions} from './NativeSessions.jsx';
 import {NativePty} from './NativePty.jsx';
 import {AgentManager,nativeProfileDefaults} from './AgentManager.jsx';
 import {downloadDraftArchive, makeDraftArchive, readDraftArchive} from './draftTransfer.js';
-import {downloadPython,PythonPreview,ScriptRunMonitor} from './ScriptRunMonitor.jsx';
+import {ScriptRunMonitor} from './ScriptRunMonitor.jsx';
+import {downloadPython,PythonPanel} from './PythonPanel.jsx';
+import {RunContinuation} from './RunContinuation.jsx';
+import {scriptRunEvents} from './scriptRunEvents.mjs';
 import {downloadRunSummary, openRunSummary, readRunSummary, RunSummaryFile, selectedRunMetadata} from './RunSummary.jsx';
 
 import {arrangeSelection, cloneDocument as copy, removeSelection} from '../../studio/workbench_ui/canvas_editing.mjs';
@@ -163,6 +166,8 @@ function App(){
  const [status,setStatus]=useState(null),[workspace,setWorkspace]=useState(null),[drafts,setDrafts]=useState([]);
  const [doc,setDoc]=useState(blank),[saved,setSaved]=useState(null),[selected,setSelectedNode]=useState(null),[edge,setEdge]=useState(null);
  const [runInspectorOpen,setRunInspectorOpen]=useState(false),[pythonPreview,setPythonPreview]=useState(null);
+ const [pythonWidth,setPythonWidth]=useState(480);
+ const pythonRead=useRef(null),pythonOpener=useRef(null),continuationOpener=useRef(null);
  const runViewToggle=useRef(null),nativeEscape=useRef(null),runsOpener=useRef(null);
  const [nodeSelection,setNodeSelection]=useState([]),[edgeSelection,setEdgeSelection]=useState([]);
  const [canvasMode,setCanvasMode]=useState('select'),[canvasFocused,setCanvasFocused]=useState(false),[minimap,setMinimap]=useState(false);
@@ -200,9 +205,11 @@ function App(){
  const workspaceEpoch=useRef(0),workspacePicker=useRef(null),filesOpener=useRef(null),nativeOpener=useRef(null);
  const navigationToggle=useRef(null),navigationPane=useRef(null),templatesOpener=useRef(null),archivesOpener=useRef(null),taskContext=useRef(null),workflowMore=useRef(null);
  const [compact,setCompact]=useState(()=>matchMedia('(max-width: 760px)').matches);
+ const [narrowDock,setNarrowDock]=useState(()=>matchMedia('(max-width: 900px)').matches);
  const [drawer,setDrawer]=useState(false);
  const [sidebarHidden,setSidebarHidden]=useState(()=>localStorage.getItem('devflower-v2-sidebar-hidden')==='true');
- const navigationOpen=!canvasFocused&&(compact?drawer:!sidebarHidden);
+ const navigationOverlay=compact||narrowDock&&(sideView==='python'||sideView==='assistant');
+ const navigationOpen=!canvasFocused&&(navigationOverlay?drawer:!sidebarHidden);
  const [theme,setTheme]=useState(()=>{
   const choice=localStorage.getItem('devflower-v2-theme');
   return ['light','dark'].includes(choice)?choice:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
@@ -243,20 +250,23 @@ function App(){
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('devflower-v2-theme',theme)},[theme]);
  useEffect(()=>{
   const query=matchMedia('(max-width: 760px)');
-  const resize=()=>{setCompact(query.matches);setDrawer(false)};
+  const dock=matchMedia('(max-width: 900px)');
+  const resize=()=>{setCompact(query.matches);setNarrowDock(dock.matches);setDrawer(false)};
   query.addEventListener('change',resize);
-  return ()=>query.removeEventListener('change',resize);
+  dock.addEventListener('change',resize);
+  return ()=>{query.removeEventListener('change',resize);dock.removeEventListener('change',resize)};
  },[]);
  useEffect(()=>{const warn=e=>{if(workspaceRef.current&&dirtyRef.current){e.preventDefault();e.returnValue=''}};addEventListener('beforeunload',warn);return()=>removeEventListener('beforeunload',warn)},[]);
  function invalidateProviderView(){setProviderGeneration(++providerEpoch.current)}
  function setSideView(view){
   if(providerOpen||view==='providers')invalidateProviderView();
+  if(view!=='python')pythonRead.current=null;
   if(view)setDrawer(false);
   setSidePanel(view);
  }
  function toggleNavigation(){
-  if(canvasFocused){setCanvasFocused(false);if(compact)setDrawer(true);else setSidebarHidden(false);return}
-  if(compact){setDrawer(open=>!open);return}
+  if(canvasFocused){setCanvasFocused(false);if(navigationOverlay)setDrawer(true);else setSidebarHidden(false);return}
+  if(navigationOverlay){setDrawer(open=>!open);return}
   localStorage.setItem('devflower-v2-sidebar-hidden',String(!sidebarHidden));
   setSidebarHidden(!sidebarHidden);
  }
@@ -265,8 +275,8 @@ function App(){
   (button?.getClientRects().length?button:navigationToggle.current)?.focus();
  }
  useEffect(()=>{
-  if(compact&&navigationOpen)navigationPane.current?.querySelector('button:not(:disabled)')?.focus();
- },[compact,navigationOpen]);
+  if(navigationOverlay&&navigationOpen)navigationPane.current?.querySelector('button:not(:disabled)')?.focus();
+ },[navigationOverlay,navigationOpen]);
  function closeSideView(opener){
   setSideView('');
   requestAnimationFrame(()=>focusNavigation(opener));
@@ -279,7 +289,7 @@ function App(){
  }
  function pendingLaunch(w=workspaceRef.current){if(!w||!environmentRef.current)return null;const value=JSON.parse(localStorage.getItem('devflower-v2-launch:'+environmentRef.current+':'+w.id)||'null');if(value&&(value.workspace!==w.id||typeof value.intent_key!=='string'))throw Error('本地启动身份无效，请保留本页并核对运行历史；未创建新运行');return value}
  function keepLaunch(value,w=workspaceRef.current){const key='devflower-v2-launch:'+environmentRef.current+':'+w.id;if(value)localStorage.setItem(key,JSON.stringify(value));else localStorage.removeItem(key);launchRef.current=value;setLaunchAttempt(value)}
- function install(next,row=null,fromArchive=false){commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
+ function install(next,row=null,fromArchive=false){if(['python','continuation'].includes(sideViewRef.current))setSideView('');commandDrafts.current.clear();setRunInspectorOpen(false);setTaskFiles([]);setTaskText('');cancelTransfer();clearRunSummary();summarySource.current=null;setTransferred(fromArchive);generation.current++;saveAttempt.current=null;const attempt=pendingLaunch();launchRef.current=attempt;setLaunchAttempt(attempt);runRef.current=null;runEpoch.current++;setActiveRun(null);setRunSnapshot(null);setRunError('');setViewMode('draft');docRef.current=copy(next);savedRef.current=row;setDoc(copy(next));setSaved(row);setSelected(null);setEdge(null);setPast([]);setFuture([]);setMeasurements(new Map());setChecks(null);setError('');resetCanvasSelection()}
  function edit(next,history=true){if(applyingAssistant.current||same(next,docRef.current))return;cancelTransfer();if(history){const previous=copy(docRef.current);setPast(p=>[...p.slice(-49),previous]);setFuture([])}docRef.current=next;setDoc(next);setChecks(null)}
  function change(fn){const next=copy(docRef.current);fn(next);edit(next)}
  function updateNode(id,patch){change(d=>{const n=d.nodes.find(n=>n.id===id);if(n)Object.assign(n,patch)})}
@@ -324,8 +334,8 @@ function App(){
   if(value)localStorage.setItem(key,JSON.stringify({...value,mode}));
   else localStorage.removeItem(key);
  }
- function showRun(id,w=workspaceRef.current,environment){if(primaryView)setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment);refreshDrafts(w).catch(()=>{})}
- function returnToDraft(){if(primaryView)setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
+ function showRun(id,w=workspaceRef.current,environment){if(primaryView||['python','continuation'].includes(sideViewRef.current))setSideView('');setDrawer(false);setRunInspectorOpen(false);setLinkedActivation(null);cancelTransfer();clearRunSummary();summarySource.current=null;const value={id,workspace:w.id,epoch:++runEpoch.current};runRef.current=value;setActiveRun(value);setRunSnapshot(null);setRunTrusted(false);setRunError('');setViewMode('run');resetCanvasSelection();setCanvasFocused(false);setChecks(null);setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(value,'run',environment);refreshDrafts(w).catch(()=>{})}
+ function returnToDraft(){if(primaryView||['python','continuation'].includes(sideViewRef.current))setSideView('');setRunInspectorOpen(false);clearRunSummary();setViewMode('draft');resetCanvasSelection();setSelected(null);setEdge(null);setMeasurements(new Map());rememberRun(activeRun,'draft')}
  function editRunDraft(){
   const run=runRef.current,source=runSourceDraft;
   if(!source||run!==activeRun||viewModeRef.current!=='run')return;
@@ -389,10 +399,18 @@ function App(){
    }
   }finally{if(cancelBusy.current===value){cancelBusy.current=null;setCancelling(false)}}
  }
- async function start(){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
-  try{if(!attempt){const unchanged=await save();if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');const row=savedRef.current;attempt={workspace:w.id,draft_id:row.id,revision:row.revision,intent_key:crypto.randomUUID().replaceAll('-',''),task:taskText};
-    if(nativeScript)attempt.execution='native-cli';
-    if(taskFiles.length)attempt.task_files=taskFiles.map(({path,sha256})=>({path,sha256}));
+ async function start(continuation){if(launchBusy.current)return;const w=workspaceRef.current;if(!w)throw Error('请先打开工作空间');const epoch=workspaceEpoch.current;let attempt=launchRef.current;cancelTransfer();launchBusy.current=true;setLaunching(true);setError('');
+  try{if(!attempt){
+    const identity={workspace:w.id,intent_key:crypto.randomUUID().replaceAll('-','')};
+    if(continuation)attempt={...identity,...continuation};
+    else{
+     const unchanged=await save();
+     if(!unchanged)throw Error('保存期间草稿已变化，未启动；请先保存当前修改');
+     const row=savedRef.current;
+     attempt={...identity,draft_id:row.id,revision:row.revision,task:taskText};
+     if(nativeScript)attempt.execution='native-cli';
+     if(taskFiles.length)attempt.task_files=taskFiles.map(({path,sha256})=>({path,sha256}));
+    }
     keepLaunch(attempt,w)}
    const result=await api('launch',attempt);if(workspaceRef.current?.id!==w.id)return;keepLaunch(null,w);setTaskFiles([]);setTaskText('');showRun(result.run.id,w);summarySource.current=result;setRunSnapshot(result);setRunTrusted(true);if(result.script)setRunInspectorOpen(true);refreshRuns(w);setNotice('本次运行使用冻结版本。编辑草稿不会改变已启动运行。');
   }catch(e){if(!e.uncertain&&e.status&&e.status<500&&inWorkspace(w,epoch)){
@@ -523,24 +541,52 @@ function App(){
    if(currentTransfer(ticket))cancelTransfer();
   }
  }
- async function exportPython(preview=false){
+ async function savedPython(w,selected){
+  const result=await api('drafts/export-python',{workspace:w.id,id:selected.id,
+   revision:selected.revision,native_config:true});
+  if(result.workspace!==w.id||result.id!==selected.id||result.revision!==selected.revision)
+   throw Error('导出文件身份无效，请重新读取工作流。');
+  return result;
+ }
+ function closePython(){
+  setSideView(pythonPreview?.returnToAssistant?'assistant':'');
+  requestAnimationFrame(()=>focusNavigation(pythonOpener));
+ }
+ async function openPython(frozen){
+  if(sideView==='python'){closePython();return}
+  const w=workspaceRef.current, selected=frozen?runRef.current:savedRef.current;
+  if(!w||!selected)return;
+  const ticket={w,selected,frozen,returnToAssistant:sideView==='assistant'};
+  pythonRead.current=ticket;
+  setCanvasFocused(false);
+  setSideView('python');
+  setPythonPreview({...ticket,loading:true});
+  if(narrowDock)requestAnimationFrame(()=>requestAnimationFrame(()=>{
+   if(pythonRead.current!==ticket)return;
+   checkMove.current=true;
+   flow.fitView(frozenFit).then(moved=>{if(!moved)checkMove.current=false});
+  }));
+  const current=()=>pythonRead.current===ticket&&workspaceRef.current===w&&
+   (frozen?runRef.current===selected:savedRef.current===selected);
+  try{
+   const artifact=frozen?await api('script-run/source?'+new URLSearchParams({workspace:w.id,id:selected.id})):
+    await savedPython(w,selected);
+   if(current())setPythonPreview({...ticket,artifact});
+  }catch(failure){
+   if(current())setPythonPreview({...ticket,error:failure.message});
+  }
+ }
+ async function exportPython(){
   const selected=savedRef.current;
   if(!selected||dirtyRef.current)return;
   const ticket=beginTransfer();
   if(!ticket)return;
   setError('');setNotice('');
   try{
-   const result=await api('drafts/export-python',{workspace:ticket.workspace.id,id:selected.id,
-    revision:selected.revision,native_config:true});
-   if(!currentTransfer(ticket))return;
-   if(result.workspace!==ticket.workspace.id||result.id!==selected.id||result.revision!==selected.revision)
-    throw Error('导出文件身份无效，请重新读取工作流。');
+   const result=await savedPython(ticket.workspace,selected);
    if(currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected){
-    if(preview)setPythonPreview(result);
-    else{
-     await downloadPython(result,()=>currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected);
-     if(currentTransfer(ticket))setNotice('已导出 '+result.filename+'。');
-    }
+    await downloadPython(result,()=>currentTransfer(ticket)&&!dirtyRef.current&&savedRef.current===selected);
+    if(currentTransfer(ticket))setNotice('已导出 '+result.filename+'。');
    }
   }catch(failure){
    if(currentTransfer(ticket))setError(failure.message);
@@ -906,6 +952,7 @@ function App(){
  function clearSelection(){setSelected(null);setEdge(null);setEdgeSelection([]);setCanvasMenu(null);setArrangeOpen(false)}
  function closeInspector(){clearSelection();setTimeout(()=>canvasRef.current?.focus(),0)}
  function toggleRunEvidence(){
+  if(sideView==='python'){closePython();return}
   if(runInspectorOpen){
    setRunInspectorOpen(false);
    requestAnimationFrame(()=>runViewToggle.current?.focus());
@@ -1030,7 +1077,7 @@ function App(){
  useEffect(()=>{
   function key(event){
    if(event.defaultPrevented)return;
-   if(event.key==='Tab'&&compact&&navigationOpen&&!folder&&!pending&&!summaryFile&&!planApproval){
+   if(event.key==='Tab'&&navigationOverlay&&navigationOpen&&!folder&&!pending&&!summaryFile&&!planApproval){
     const items=[navigationToggle.current,...(navigationPane.current?.querySelectorAll('button:not(:disabled)')||[])];
     const current=items.indexOf(document.activeElement);
     event.preventDefault();
@@ -1043,7 +1090,7 @@ function App(){
     if(canvasMenu||nodePicker||arrangeOpen){setCanvasMenu(null);setNodePicker(null);setArrangeOpen(false);canvasRef.current?.focus();return}
     if(pendingRef.current){closePending();return}
     if(folder){hideFolder();return}
-    if(compact&&drawer){setDrawer(false);focusNavigation();return}
+    if(navigationOverlay&&drawer){setDrawer(false);focusNavigation();return}
     if(providerOpen){closeProviderCatalog();return}
     if(filesOpen){closeFiles();return}
     if(nativeOpen){event.preventDefault();if(!nativeEscape.current?.())closeNative();return}
@@ -1053,6 +1100,8 @@ function App(){
     if(sideView==='agents'){closeAgents();return}
     if(sideView==='templates'){closeSideView(templatesOpener);return}
     if(sideView==='archives'){closeSideView(archivesOpener);return}
+    if(sideView==='python'){closePython();return}
+    if(sideView==='continuation'){closeSideView(continuationOpener);return}
     if(workflowMore.current?.open){workflowMore.current.open=false;workflowMore.current.querySelector('summary')?.focus();return}
     if(taskContext.current?.open){taskContext.current.open=false;taskContext.current.querySelector('summary')?.focus();return}
     if(runInspectorOpen){toggleRunEvidence();return}
@@ -1064,7 +1113,7 @@ function App(){
     if(workspaceRef.current&&viewMode==='draft'&&!primaryView&&!launchBusy.current)guard(save)();
     return;
    }
-   if(!editable||folder||pending||planApproval||sideView||event.target.closest?.('input,textarea,select,[contenteditable]'))return;
+   if(!editable||folder||pending||planApproval||(sideView&&sideView!=='python')||event.target.closest?.('input,textarea,select,[contenteditable]'))return;
    if(modifier&&['z','y'].includes(letter)){event.preventDefault();letter==='y'||event.shiftKey?redo():undo();return}
    if(!canvasRef.current?.contains(event.target)&&event.target!==document.body)return;
    if(modifier&&['c','v','d','a'].includes(letter)){
@@ -1155,7 +1204,12 @@ function App(){
   return()=>{alive=false};
  },[workspace?.id,viewMode,agentRefresh,needsProfileOptions]);
  const readOnly=viewMode==='run',editable=Boolean(workspace&&!readOnly&&!busy&&!launching);
+ const runEvidenceVisible=readOnly&&runInspectorOpen&&sideView!=='python';
+ useEffect(()=>{
+  if(sideView==='python'&&pythonPreview&&pythonPreview.selected!==(readOnly?activeRun:saved))setSideView('');
+ },[sideView,pythonPreview,readOnly,activeRun,saved]);
  const scriptRun=runSnapshot?.script;
+ const runEventIndex=useMemo(()=>scriptRunEvents(scriptRun?.events),[scriptRun?.events]);
  const frozenGraph=readOnly?(scriptRun?.document||runSnapshot?.definition?.draft_document):null;
  const shown=readOnly?(frozenGraph||blank()):doc;
  const canExportRunSummary=readOnly&&!scriptRun&&runTrusted&&selectedRunMetadata(runSnapshot,workspace?.id,activeRun?.id);
@@ -1166,7 +1220,6 @@ function App(){
  const runSourceDraft=runDraftId&&drafts.find(row=>row.workspace===workspace?.id&&row.id===runDraftId);
  const activation=id=>{
   if(!scriptRun)return runSnapshot?.nodes?.find(a=>a.node===id);
-  const events=scriptRun.events||[];
   const decision=scriptRun.condition||scriptRun.router;
   if(decision){
    if(id===decision.node)return {state:'COMPLETED'};
@@ -1183,7 +1236,7 @@ function App(){
     runSnapshot.state==='CANCELLED'?'CANCELLED':'UNKNOWN'};
   }
   if(!tool&&!Object.hasOwn(scriptRun.agents,id))return null;
-  const facts=events.filter(event=>!event.iteration&&event.node===id);
+  const facts=runEventIndex.forNode(id);
   const process=facts.findLast(event=>['CALL_INTENT','PROCESS_STARTED','PROCESS_EXITED','UNKNOWN'].includes(event.kind));
   const failed=facts.some(event=>event.kind==='CLI_FAILED'||event.kind==='NOT_SENT'||
    event.kind==='OUTPUT_CONTRACT_FAILED'||
@@ -1252,14 +1305,15 @@ function App(){
       setSideView('');setRunInspectorOpen(false);setDrawer(false);return;
      }
      showRun(row.id)
-    }}><span>{row.name}<small>{stateLabel((activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)||(row.execution==='native-cli'?'原生脚本':'UNKNOWN'))} · {new Date(row.created_at*1000).toLocaleTimeString()}</small></span></button>)}
+    }}><span>{row.name}<small>{stateLabel((activeRun?.id===row.id?(runTrusted?(runSnapshot?.state||row.state):'UNKNOWN'):row.state)||(row.execution==='native-cli'?'原生脚本':'UNKNOWN'))} · {new Date(row.created_at*1000).toLocaleTimeString()}</small>
+     {row.series&&<small className="series-history">系列 {row.series.id.slice(0,8)} · 第 {row.series.round} 轮</small>}</span></button>)}
   function renderRunInspector(wide){
-   return <aside id={wide?'v2-run-evidence':undefined} tabIndex={wide?-1:undefined}
+   return <aside id={wide?'v2-run-evidence':undefined} tabIndex={wide?-1:undefined} hidden={wide&&!runEvidenceVisible}
     className={wide?'inspector run-inspector run-evidence-workspace':'inspector run-inspector'} aria-label={wide?'运行检查器':n?(nodeKind(n)==='agent'?'Agent 配置':'节点配置'):e?'连线配置':'运行检查器'}>
    <header><div>{!wide&&<small>运行检查器</small>}<h2>{wide?'运行证据':n?.name||(e?'交接记录':'运行详情')}</h2></div>
     {!wide&&<button aria-label="关闭检查器" onClick={closeInspector}><PanelRightClose size={18}/></button>}</header>
    {scriptRun?<ScriptRunMonitor key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api}
-    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target} stateLabel={stateLabel}
+    snapshot={runSnapshot} trusted={runTrusted} selected={n?.id||e?.target} stateLabel={stateLabel} eventIndex={runEventIndex}
     onExplain={()=>openAssistant({run:activeRun.id,native:true})}/>:
    <RunInspector key={activeRun?.id+':'+(n?.id||e?.id||'run')} api={api} snapshot={runSnapshot} trusted={runTrusted} wide={wide}
     selection={n?{node:n.id,activation:linkedActivation}:e?{edge:e.id,node:e.target}:null} onSelect={path=>{setEdge(null);setSelected(path.split('/')[0])}}>
@@ -1300,11 +1354,13 @@ function App(){
    </aside>;
   }
  return <div className={'v2-app'+(canvasFocused?' canvas-focused':'')+(!navigationOpen?' navigation-closed':'')+
+  (navigationOverlay?' navigation-overlay':'')+
   (sideView?' side-tool-open':'')+(primaryView?' primary-workspace-open':'')}
+  style={sideView==='python'?{'--python-panel-width':pythonWidth+'px'}:undefined}
   onKeyDown={event=>{if(event.key===' '&&event.target.closest('summary'))event.stopPropagation()}}>
   <button type="button" className="skip-workbench" onClick={()=>document.getElementById(
-   primaryView?.[0]||(runInspectorOpen&&readOnly?'v2-run-evidence':'v2-editor'))?.focus()}>
-   {primaryView?'跳至'+primaryView[1]:runInspectorOpen&&readOnly?'跳至运行证据':'跳至工作流画布'}
+   primaryView?.[0]||(runEvidenceVisible?'v2-run-evidence':'v2-editor'))?.focus()}>
+   {primaryView?'跳至'+primaryView[1]:runEvidenceVisible?'跳至运行证据':'跳至工作流画布'}
   </button>
   <SidebarToggle collapsed={!navigationOpen} onClick={toggleNavigation} ref={navigationToggle}
    aria-controls="v2-navigation" aria-expanded={navigationOpen}/>
@@ -1316,7 +1372,7 @@ function App(){
    <span className="service-location">{status?'本机工作台':'等待读取本机服务'}</span>
    <label className="theme"><SlidersHorizontal size={14} aria-hidden="true"/><select aria-label="外观主题" value={theme} onChange={e=>setTheme(e.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
   </header>
-  {compact&&navigationOpen&&<div className="navigation-shade" onClick={()=>{setDrawer(false);focusNavigation()}}/>}
+  {navigationOverlay&&navigationOpen&&<div className="navigation-shade" onClick={()=>{setDrawer(false);focusNavigation()}}/>}
   <aside ref={navigationPane} id="v2-navigation" className="navigation" aria-label="工作台导航" hidden={!navigationOpen}>
    {workspace&&<><div className="workspace-heading">
     <div><strong>{workspace.name}</strong><div className="workspace-line" title={workspace.path}>{workspace.path}</div></div>
@@ -1400,17 +1456,26 @@ function App(){
      setChecks(result);
      if(admissionKey)setNativeAdmission({key:admissionKey,result});
     })}>检查</Button>
-    {nativeScript&&<Button disabled={!saved||dirty||!!busy||launching||compileBlock} onClick={()=>exportPython(true)}>预览 Python</Button>}
+    {nativeScript&&<Button ref={pythonOpener} icon={Code} title="查看已保存版本的完整 Python"
+     aria-expanded={sideView==='python'} disabled={!saved||dirty||!!busy||launching} onClick={()=>openPython(false)}>预览 Python</Button>}
     <Button icon={Download} aria-label="导出 Python（原生 CLI）" disabled={!saved||dirty||!!busy||launching||compileBlock} onClick={()=>exportPython()}
      title="导出已保存版本；脚本沿用原生 CLI 配置与权限，不启动模型">导出 Python</Button>
     <Button className="primary" icon={Play} disabled={!workspace||!!busy||launching||(!launchAttempt&&(launchBlock||!doc.nodes.length||!nativeScript&&!status?.provider_available&&inlineAgent))}
      title={startHint||(nativeScript?'启动将使用原生 CLI 配置和权限。':'明确启动将调用所选模型；不自动重试')} aria-describedby={workspace&&doc.nodes.length>0&&startHint&&!launchAttempt?'v2-start-hint':undefined}
-     onClick={guard(start)}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
+     onClick={guard(()=>start())}>{launching?'核验启动中…':launchAttempt?'核验本次启动':dirty?'保存并启动':'启动'}</Button>
    </div>}
    {readOnly&&<section className="run-summary" aria-label="运行状态"><div className="run-command-bar">
-   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动进程 '+(scriptRun.events?.filter(event=>event.kind==='PROCESS_STARTED').length??'未知')+' 次':
+   <strong className="workbench-state" data-state={runState}>{stateLabel(runState)}</strong><span className="run-calls">{scriptRun?'已启动进程 '+(scriptRun.events?runEventIndex.started.length:'未知')+' 次':
     '实际调用 '+(runSnapshot?.run?.actual_calls??'未知')+' 次'}{!runTrusted?'（上次读取）':''}</span>
-   <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runInspectorOpen?'返回运行图':'运行检查器'}</Button>
+   <Button ref={runViewToggle} className="inspect-run" onClick={toggleRunEvidence}>{runEvidenceVisible?'返回运行图':'运行检查器'}</Button>
+   {scriptRun&&<Button ref={pythonOpener} icon={Code} onClick={()=>openPython(true)}
+    aria-expanded={sideView==='python'}>查看本次 Python</Button>}
+   {scriptRun&&runTrusted&&(runState==='COMPLETED'||scriptRun.historical_completion)&&scriptRun.series&&!launchAttempt&&
+    <Button ref={continuationOpener} className="primary" icon={ArrowRight} disabled={launching} onClick={()=>{
+     setCanvasFocused(false);setSideView('continuation');
+    }}>以此结果继续下一轮</Button>}
+   {launchAttempt?.continue_from&&sideView!=='continuation'&&<Button className="primary" disabled={launching}
+    onClick={guard(()=>start())}>{launching?'核验启动中…':'核验本次启动'}</Button>}
    <Button disabled={!runSnapshot||cancelling||(scriptRun?(!runTrusted||!scriptRun.active||scriptRun.cancel_requested||ended(runSnapshot.state)):
     (runSnapshot?.run?.cancel_requested&&runSnapshot?.worker_observation!=='dead')||ended(runSnapshot?.state))} onClick={guard(cancelRun)}>{cancelling?'正在核验取消…':scriptRun?.cancel_requested?'取消已请求':runSnapshot?.run?.cancel_requested?(runSnapshot?.worker_observation==='dead'?'停止残留自有进程':'取消已请求'):'取消本次运行'}</Button>{runTrusted&&runSnapshot?.run?.resume_available&&<Button className="primary" disabled={cancelling} onClick={guard(()=>controlRun('resume'))}>恢复运行</Button>}
    <Button disabled={!activeRun?.id||!runSnapshot} onClick={()=>openAssistant({run:activeRun.id,native:Boolean(scriptRun)})}>诊断本次运行</Button>
@@ -1428,6 +1493,9 @@ function App(){
    {typedActive&&<Button disabled={cancelling} onClick={guard(()=>controlRun('pause',{paused:!runSnapshot.run.paused}))}>{runSnapshot.run.paused?'继续运行':'暂停运行'}</Button>}
    {completedPlans.length===1&&!n&&<Button onClick={guard(()=>openPlanApproval(completedPlans[0]))}>转入 Agent</Button>}</div>
    {!scriptRun&&<p>{runTrusted?'Provider：':'上次读取 Provider：'}{outcomeLabel(runSnapshot?.provider_outcome)}。</p>}
+   {runSnapshot?.run?.series&&<p className="run-series">系列 <code>{runSnapshot.run.series.id.slice(0,8)}</code>
+    {' · 第 '+runSnapshot.run.series.round+' 轮'}{runSnapshot.run.series.previous_run_id&&
+     <Button onClick={()=>showRun(runSnapshot.run.series.previous_run_id)}>查看前轮 Run</Button>}</p>}
    {(scriptRun?.reason||runSnapshot?.run?.reason)&&<p className="error-text">{scriptRun?.reason||runSnapshot.run.reason}</p>}
    {!!runSnapshot?.run?.partial_failures?.length&&<details><summary>{runSnapshot.run.partial_failures.length} 个分支失败，保留成功输出</summary>
     {runSnapshot.nodes.filter(row=>runSnapshot.run.partial_failures.includes(row.id)).map(row=><p key={row.id}>{row.name} · {row.reason}</p>)}</details>}
@@ -1448,9 +1516,9 @@ function App(){
    {readOnly&&runError&&<div className="message error" role="alert"><span>{runError}</span></div>}
    {error&&<div className="message error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
    {notice&&<div className="notice" role="status">{notice}</div>}
-   <div className={'editor-view'+(readOnly&&runInspectorOpen?' showing-run-evidence':'')}>
+   <div className={'editor-view'+(runEvidenceVisible?' showing-run-evidence':'')}>
    <div ref={canvasRef} className={'canvas-region'+(!workspace?' showing-workspace-home':'')+
-    (!readOnly&&shown.nodes.length&&outside?' nodes-outside':'')} inert={readOnly&&runInspectorOpen} aria-label="工作流画布" tabIndex={0}
+    (!readOnly&&shown.nodes.length&&outside?' nodes-outside':'')} inert={runEvidenceVisible} aria-label="工作流画布" tabIndex={0}
     onPointerDownCapture={event=>{
      if(taskContext.current?.open)taskContext.current.open=false;
      if(workflowMore.current?.open&&!workflowMore.current.contains(event.target))workflowMore.current.open=false;
@@ -1628,7 +1696,8 @@ function App(){
   {workspace&&sideView==='archives'&&<HistoryArchives key={workspace.id} api={api} workspace={workspace} onClose={()=>closeSideView(archivesOpener)}/>}
   {workspace&&sideView==='git'&&<Suspense><GitWorkspace key={workspace.id+':'+panelEpoch}
    api={api} workspace={workspace} onClose={closeGit}/></Suspense>}
-  {workspace&&sideView==='assistant'&&<Suspense><Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace}
+  {workspace&&(sideView==='assistant'||sideView==='python'&&pythonPreview?.returnToAssistant)&&
+   <Suspense><Assistant key={workspace.id+':'+panelEpoch} api={api} workspace={workspace} hidden={sideView!=='assistant'}
    nativeEntry={assistantNative} onEditRunDraft={readOnly?(runSourceDraft?editRunDraft:returnToDraft):undefined}
    storageKey={environmentRef.current} providers={status?.native_session_writes||[]} catalog={catalog} onDiscover={discover}
    draft={readOnly?null:{id:saved?.id??null,revision:saved?.revision??null,document:doc}}
@@ -1657,7 +1726,10 @@ function App(){
   {workspace&&agentPanel&&<AgentManager key={'agents:'+workspace.id} api={api} workspace={workspace} visible={sideView==='agents'}
    writeProviders={status?.native_session_writes} selectedNode={agentPanel.node} onBind={bindAgent} onClose={closeAgents} onChanged={()=>setAgentRefresh(value=>value+1)}
    onRun={id=>{showRun(id,workspace);refreshRuns(workspace);closeAgents();}}/>}
-  {pythonPreview&&<PythonPreview artifact={pythonPreview} onClose={()=>setPythonPreview(null)}/>}
+  {sideView==='python'&&pythonPreview&&<PythonPanel value={{...pythonPreview,dirty}} width={pythonWidth}
+   onResize={width=>setPythonWidth(Math.min(860,Math.max(300,width)))} onClose={closePython}/>}
+  {sideView==='continuation'&&runSnapshot?.run&&<RunContinuation key={runSnapshot.run.id} api={api}
+   run={runSnapshot.run} busy={launching} attempt={launchAttempt} onStart={start} onClose={()=>closeSideView(continuationOpener)}/>}
   {summaryFile&&<RunSummaryFile snapshot={summaryFile.snapshot} onClose={closeRunSummary}/>}
   {planApproval&&planApproval.workspace===workspace?.id&&<PlanApproval value={planApproval} busy={planBusy}
    error={planError} onClose={()=>setPlanApproval(null)} onConfirm={confirmPlan}/>}

@@ -825,6 +825,11 @@ with sqlite3.connect(sys.argv[1]) as db:
   if(composed)assert.match(await actualRequest.textContent(),/Plan from upstream/);
   const evidencePath=new URLSearchParams({workspace,id:run.id,node:'Developer',iteration:'3'});
   assert.match((await api('script-run/evidence?'+evidencePath)).error,/有效轮次/);
+  await button('查看本次 Python').click();
+  const frozenPreview=page.getByRole('dialog',{name:'Python 脚本预览'});
+  assert.equal(await frozenPreview.locator('pre').textContent(),source);
+  await frozenPreview.getByRole('button',{name:'关闭预览'}).click();
+  assert.equal(await monitor.getByLabel('查看证据').inputValue(),'1/Developer');
   const [download]=await Promise.all([page.waitForEvent('download'),button('下载本次运行脚本').click()]);
   const file=path.join(out,run.id+'.py');await download.saveAs(file);
   assert.equal(fs.readFileSync(file,'utf8'),source);
@@ -834,6 +839,17 @@ with sqlite3.connect(sys.argv[1]) as db:
   await page.getByLabel('运行状态',{exact:true}).getByText('待核验',{exact:true}).waitFor();
   await rounds.getByText(/最终候选已变化/).waitFor();
   assert.equal(await monitor.getByLabel('工作流最终回答',{exact:true}).count(),0);
+  await monitor.getByText('查看已核验的历史结果',{exact:true}).click();
+  assert.equal(await monitor.getByLabel('冻结最终结果',{exact:true}).textContent(),finalAnswer);
+  const runQuery=new URLSearchParams({workspace,id:run.id});
+  const observed=await api('run?'+runQuery);
+  assert.equal(observed.script.historical_completion,true);
+  assert((await api('script-run/continuation?'+runQuery)).options.some(option=>option.kind==='artifact'));
+  fs.writeFileSync(path.join(observed.script.directory,'iterations','2','candidate-files','a.py'),'changed frozen copy');
+  const damaged=await api('run?'+runQuery);
+  assert.equal(damaged.state,'RECOVERY_REQUIRED');
+  assert.notEqual(damaged.script.historical_completion,true);
+  assert.match((await api('script-run/continuation?'+runQuery)).error,/not a verified completion/);
  });
  await test('ordinary-command-add-connect-reopen-and-failed-result-handoff',async()=>{
   const button=name=>page.getByRole('button',{name,exact:true});

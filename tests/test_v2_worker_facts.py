@@ -110,7 +110,8 @@ def replace_worker(popen, argv, mode, kwargs):
     # arguments in force. The child script invokes the production worker entry.
     assert Path(argv[2]).name == 'worker.py'
     args = [*argv[:2], str(FIXTURE), *argv[3:]]
-    return popen(args, **kwargs, env=dict(os.environ, DEVFLOWER_WORKER_FIXTURE_MODE=mode))
+    kwargs['env'] = dict(kwargs.get('env', os.environ), DEVFLOWER_WORKER_FIXTURE_MODE=mode)
+    return popen(args, **kwargs)
 
 
 def stopped_parent(state, projects, sender):

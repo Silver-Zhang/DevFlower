@@ -498,8 +498,10 @@ class V2Runtime(ManagedRunHistory):
                 argv += ['--codex-cli', codex['executable']]
             for root in self.store.roots: argv += ['--allow-root', str(root)]
             argv += self.cli_providers.homes.worker_arguments(definition['bindings'].values())
+            from workflow_script_runtime import workflow_environment
             child = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True, pass_fds=(read_fd,))
+                                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True, pass_fds=(read_fd,),
+                                     env=workflow_environment())
             stage = 'identity'
             os.close(read_fd); read_fd = None
             identity = process_identity(child.pid)

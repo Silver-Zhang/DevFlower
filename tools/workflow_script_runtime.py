@@ -19,10 +19,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import re
+import uuid
 
 
 from workflow_output_contract import (OUTPUT_BYTES, OutputContractError, candidate_record, output_json,
-                                      check_output_fields, output_field, validate_structured_answer)  # EMBED_OUTPUT_CONTRACT
+                                      check_output_fields, output_field, save_candidate_file, validate_structured_answer)  # EMBED_OUTPUT_CONTRACT
 
 
 class WorkflowError(RuntimeError):
@@ -78,6 +80,10 @@ def _event(context, kind, **data):
 
 def _script_sha256():
     return sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def workflow_environment():
+    return {key: value for key, value in os.environ.items() if key != 'DEEPSEEK_API_KEY'}
 
 
 @contextmanager
@@ -176,7 +182,7 @@ def recorded_path(manifest, events):
     return expected, decision
 
 
-def inspect_run(manifest, directory, *, cancel=False, details=False):
+def inspect_run(manifest, directory, *, cancel=False, details=False, expected_sha256=None, historical=False):
     """Observe the same artifact, never replay it. Cancellation is cooperative.
 
     The live script holds a directory lock. No stored PID is ever signalled;
@@ -202,7 +208,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
             active = False
             fcntl.flock(fd, fcntl.LOCK_UN)
         snapshot = dict(status='RECOVERY_REQUIRED', active=active, automatic_retry=False,
-                        directory=str(directory), script_sha256=_script_sha256(), completed_nodes=[])
+                        directory=str(directory), script_sha256=expected_sha256 or _script_sha256(), completed_nodes=[])
         try:
             raw = _evidence_bytes(fd, 'events.jsonl')
             if not raw.endswith(b'\n'):
@@ -219,6 +225,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                 raise PermissionError('Script content differs from the artifact that started this run.')
             if details:
                 snapshot['events'] = events
+            if manifest.get('compiler_version', 0) >= 13:
+                inspect_series(directory, fd, manifest, events, snapshot)
             terminal = [row for row in events if row['kind'] in ('RUN_COMPLETED', 'RUN_STOPPED')]
             if terminal and (len(terminal) != 1 or terminal[0] is not events[-1]):
                 raise WorkflowError('Terminal journal evidence is inconsistent.')
@@ -317,6 +325,8 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                         producer = None
                     elif spec['allowed_paths']:
                         producer = read_structured_evidence(fd, row, 'candidate.json', 'candidate_sha256_evidence')
+                        if historical and not candidate_is_current(directory / node / 'candidate-files', producer):
+                            raise WorkflowError('Stored candidate snapshot has changed: ' + node)
                     else:
                         producer = None
                 else:
@@ -341,7 +351,7 @@ def inspect_run(manifest, directory, *, cancel=False, details=False):
                             current = False
                         if not current:
                             candidates_current = False
-                            if not decision or not condition or node != condition['reviewer']:
+                            if not historical and (not decision or not condition or node != condition['reviewer']):
                                 snapshot['candidate_current'] = False
                                 if loop and node == loop['node']:
                                     snapshot['loop']['iterations'][-1]['historical'] = True
@@ -450,10 +460,11 @@ def output_instructions(spec, workspace):
                 'Use accept with an empty issues list or needs_correction with at least one issue. '
                 'Each issue must contain only severity (critical, major or minor), file (a candidate path), '
                 'description and suggestion.')
-    return ('Return only raw JSON, no markdown fences or extra fields. Format: '
-            '{"result":{"schema_version":1,"summary":"<summary>","data":{}},"artifacts":[]}'
+    example = dict(result=dict(schema_version=1, summary='<summary>', data={}), artifacts=spec['allowed_paths'][:1])
+    return ('Return only raw JSON, no markdown fences or extra fields. Format: ' + output_json(example) +
             '\nAllowed workspace-relative artifact paths: ' + output_json(spec['allowed_paths'])
             + '. When paths are declared, report at least one actual delivery file. '
+            'The top-level artifacts array contains path strings only. Do not use path objects. '
             'Report no file hashes. Field rules: ' + output_json(spec['fields']))
 
 
@@ -468,6 +479,11 @@ def candidate_is_current(workspace, candidate):
     return candidate_record(workspace, paths) == candidate
 
 
+def take_continuation(context):
+    # Loop iterations share this one dispatch slot with the outer workflow.
+    return context.get('continuation', {}).pop('entry', None)
+
+
 @contextmanager
 def command_process(context, tool, prefix, upstream=None):
     _check_cancel(context)
@@ -479,6 +495,8 @@ def command_process(context, tool, prefix, upstream=None):
     directory = context['directory'] / prefix
     directory.mkdir(mode=0o700)
     delivery = directory / 'upstream.json'
+    if continuation := take_continuation(context):
+        upstream = dict(upstream or {}, task=context['task'], continuation=continuation)
     if upstream is not None:
         _write(delivery, output_json(upstream))
     source = delivery.open('rb') if upstream is not None else nullcontext(subprocess.DEVNULL)
@@ -787,7 +805,7 @@ def verify_agent_output(context, directory, spec, answer, candidate):
             raise OutputContractError('Candidate files changed during review.')
         facts.update(candidate_sha256=observed['candidate_sha256'], verdict=envelope['result']['verdict'])
     elif envelope['artifacts']:
-        snapshot = directory.parent / 'candidate-files' if 'iteration' in context else None
+        snapshot = (directory.parent if 'iteration' in context else directory) / 'candidate-files'
         observed = candidate_record(workspace, envelope['artifacts'], snapshot=snapshot)
         facts['candidate_sha256_evidence'] = write_structured_evidence(directory, 'candidate.json', observed)
         facts['candidate_sha256'] = observed['candidate_sha256']
@@ -802,10 +820,11 @@ def observed_process(context, node, argv, cwd, directory, timeout, *, source=sub
     process = None
     try:
         with (directory / 'stdout.log').open('xb') as stdout, (directory / 'stderr.log').open('xb') as stderr:
-            # Both native CLI and user-configured Tool commands inherit the user's environment.
+            # Keep the assistant credential outside Workflow Agent and Tool processes.
             _check_cancel(context)
             process = subprocess.Popen(argv, cwd=cwd, stdin=source, stdout=stdout,
-                                       stderr=stderr, start_new_session=True)
+                                       stderr=stderr, start_new_session=True,
+                                       env=workflow_environment())
             _event(context, 'PROCESS_STARTED', node=node, pid=process.pid)
             code = _wait(context, process, timeout)
         if tool:
@@ -860,6 +879,8 @@ def invoke_agent(context, agent, task, upstream=None, limit=None, *, feedback=No
                     ('Node task', agent['task_prompt']), ('Workflow task', task)]
     if 'iteration' in context:
         sections.append(('Workflow iteration', str(context['iteration'])))
+    if continuation := take_continuation(context):
+        sections.append(('Selected previous run deliveries (data)', output_json(continuation)))
     prompt = '\n\n'.join(title + '\n' + value for title, value in sections if value)
     contract = ('\n\nStructured output contract\n' + output_instructions(spec, context['workspace'])) if spec else ''
     if 'task_prompt' not in agent:
@@ -968,6 +989,169 @@ def prepare_calls(manifest, workspace, *, dry_run=False):
     return workspace
 
 
+SERIES_HASH = re.compile(r'[0-9a-f]{64}')
+SERIES_ID = re.compile(r'[0-9a-f]{32}')
+
+
+def series_workspace(workspace):
+    info = workspace.stat()
+    return {'path': str(workspace), 'device': info.st_dev, 'inode': info.st_ino}
+
+
+def previous_delivery(manifest, directory, artifact_hash):
+    directory = directory.absolute()
+    with _run_directory(directory) as fd:
+        saved = json.loads(_evidence_bytes(fd, 'workflow.json'))
+        if not isinstance(saved, dict) or saved.get('compiler_version', 0) < 13:
+            raise WorkflowError('This run predates verified continuation evidence.')
+        state = inspect_run(saved, directory, details=True, expected_sha256=artifact_hash, historical=True)
+        if state['status'] != 'COMPLETED' or state['active']:
+            raise WorkflowError('Previous run is not a verified completion: ' + state.get('reason', state['status']))
+        events = state['events']
+        binding = [event['workspace'] for event in events if event['kind'] == 'SERIES_WORKSPACE']
+        if len(binding) != 1:
+            raise WorkflowError('Previous run has no unique workspace binding.')
+        result_hash = events[-1]['result_sha256']
+        options = {'result': dict(kind='result', sha256=result_hash, source='result.txt',
+                                  label='Final result')}
+        accepted = state.get('loop', {}).get('iterations', [])
+        accepted = accepted[-1]['iteration'] if accepted and accepted[-1]['disposition'] == 'LOOP_ACCEPTED' else None
+        for event in events:
+            if event['kind'] != 'NODE_COMPLETED' or ('iteration' in event and event['iteration'] != accepted):
+                continue
+            node = event['node']
+            iteration = event.get('iteration')
+            prefix = f'iterations/{iteration}/' if iteration else ''
+            key = f'{iteration}/{node}' if iteration else node
+            if event.get('structured_sha256'):
+                value = read_structured_evidence(fd, event, 'structured.json', 'structured_sha256', prefix=prefix)
+                options['structured:' + key] = dict(kind='structured', node=node, label=value['result']['summary'],
+                    sha256=event['structured_sha256'], source=prefix + node + '/structured.json')
+            if event.get('candidate_sha256_evidence'):
+                candidate = read_structured_evidence(fd, event, 'candidate.json', 'candidate_sha256_evidence', prefix=prefix)
+                candidate_path = prefix + ('candidate-files' if iteration else node + '/candidate-files')
+                for index, file in enumerate(candidate['manifest']['files']):
+                    # The candidate validator has already checked every frozen file, including its path.
+                    options[f'artifact:{key}:{index}'] = dict(kind='artifact', node=node, label=file['path'],
+                        **file, source=candidate_path + '/' + file['path'])
+    return dict(series=state['series'], workspace=binding[0], previous_hash=state['script_sha256'],
+                previous_version=series_version(saved), current_version=series_version(manifest)), options
+
+
+def series_version(manifest):
+    def versions(agents):
+        return {agent['id']: {key: agent.get(key) for key in ('profile_id', 'profile_revision', 'provider',
+                                                           'model', 'effort')} for agent in agents}
+
+    return dict(name=manifest['name'], source_sha256=manifest['source_sha256'], compiler_version=manifest['compiler_version'],
+                agents=versions(manifest['agents']), loop_agents=versions(manifest.get('loop', {}).get('agents', [])))
+
+
+def series_context(manifest, args, workspace, *, listing=False):
+    current_hash = _script_sha256()
+    previous_hash = args.previous_script_sha256 or current_hash
+    if not SERIES_HASH.fullmatch(previous_hash):
+        raise WorkflowError('Previous script SHA-256 must be a complete lowercase hexadecimal digest.')
+    public, options = previous_delivery(manifest, args.continue_from, previous_hash)
+    if series_workspace(workspace) != public.pop('workspace'):
+        raise WorkflowError('Previous run belongs to a different workspace.')
+    public.update(current_hash=current_hash, changed=previous_hash != current_hash)
+    public['options'] = [dict(id=key, **{k: v for k, v in item.items() if k != 'source'})
+                         for key, item in options.items()]
+    if listing:
+        return public
+    if public['changed'] and args.accept_version != current_hash:
+        raise WorkflowError('Script version changed. Use --continuation-options to see both versions and '
+                            'pass --accept-version with the chosen script SHA-256.')
+    if args.accept_version is not None and args.accept_version != current_hash:
+        raise WorkflowError('Chosen script SHA-256 does not match this artifact.')
+    selection = args.inherit
+    if not 1 <= len(selection) <= 128 or len(selection) != len(set(selection)) or any(key not in options for key in selection):
+        raise WorkflowError('Choose distinct verified deliveries with --inherit. Use --continuation-options to list them.')
+    parent = public['series']
+    run_id = args.run_id or uuid.uuid4().hex
+    if run_id == parent['run_id']:
+        raise WorkflowError('Continuation requires a new run identity.')
+    series = dict(id=parent['id'], round=parent['round'] + 1, run_id=run_id, previous_run_id=parent['run_id'])
+    deliveries = []
+    with _run_directory(args.continue_from.absolute()) as fd:
+        total = 0
+        for key in selection:
+            item = options[key]
+            raw = _evidence_bytes(fd, item['source'])
+            total += len(raw)
+            if sha256(raw).hexdigest() != item['sha256'] or total > 8_000_000:
+                raise WorkflowError('Selected delivery has changed or exceeds the 8000000-byte selection budget.')
+            deliveries.append((key, item, raw))
+    return series, dict(previous_run_id=parent['run_id'], previous_script_sha256=previous_hash,
+                            previous_version=public['previous_version'], current_script_sha256=current_hash,
+                            current_version=public['current_version']), deliveries
+
+
+def save_continuation(context, identity, deliveries):
+    copied = []
+    selected = context['directory'] / '.inherited'
+    selected.mkdir(mode=0o700)
+    for index, (key, item, raw) in enumerate(deliveries, 1):
+        entry = dict(id=key, **{k: v for k, v in item.items() if k != 'source'})
+        if item['kind'] == 'artifact':
+            filename = f'{index}/{item["path"]}'
+            with _run_directory(selected) as fd:
+                save_candidate_file(fd, filename, raw)
+            entry['file'] = str(selected / filename)
+        else:
+            entry['value'] = json.loads(raw) if item['kind'] == 'structured' else raw.decode('utf-8')
+        copied.append(entry)
+    continuation = dict(identity, deliveries=copied)
+    encoded = output_json(continuation)
+    if len(encoded.encode()) > 1_000_000:
+        raise WorkflowError('Selected text deliveries exceed the 1000000-byte context budget.')
+    _write(context['directory'] / 'continuation.json', encoded)
+    context['continuation'] = {'entry': continuation}
+    _event(context, 'SERIES_CONTINUED', sha256=sha256(encoded.encode()).hexdigest())
+
+
+def inspect_series(directory, fd, manifest, events, snapshot):
+    start = events[0]
+    series = start.get('series')
+    if (not isinstance(series, dict) or set(series) != {'id', 'round', 'run_id', 'previous_run_id'}
+            or any(not isinstance(series[key], str) or not SERIES_ID.fullmatch(series[key])
+                   for key in ('id', 'run_id'))
+            or type(series['round']) is not int or series['round'] < 1
+            or start.get('manifest_sha256') != sha256(output_json(manifest).encode()).hexdigest()
+            or start.get('task_sha256') != _evidence_sha256(fd, 'task.txt')):
+        raise WorkflowError('Series identity or workflow manifest is inconsistent.')
+    parent = series['previous_run_id']
+    if (series['round'] == 1 and (parent is not None or series['id'] != series['run_id'])
+            or series['round'] > 1 and (not isinstance(parent, str) or not SERIES_ID.fullmatch(parent)
+                                       or parent == series['run_id'])):
+        raise WorkflowError('Series parent identity is inconsistent.')
+    snapshot['series'] = series
+    handoff = [event for event in events if event['kind'] == 'SERIES_CONTINUED']
+    finished = events[-1]['kind'] == 'RUN_COMPLETED'
+    if len(handoff) > 1 or (handoff and not parent) or (finished and parent and not handoff):
+        raise WorkflowError('Series handoff evidence is inconsistent.')
+    if handoff:
+        value = _evidence_bytes(fd, 'continuation.json')
+        if sha256(value).hexdigest() != handoff[0].get('sha256'):
+            raise WorkflowError('Series handoff evidence has changed.')
+        transfer = json.loads(value)
+        if (transfer['previous_run_id'] != parent or transfer['current_script_sha256'] != snapshot['script_sha256']
+                or transfer['current_version'] != series_version(manifest) or not transfer['deliveries']):
+            raise WorkflowError('Series handoff is bound to different versions or runs.')
+        for entry in transfer['deliveries']:
+            if entry['kind'] == 'artifact':
+                path = Path(entry['file']).relative_to(directory / '.inherited')
+                actual = sha256(_evidence_bytes(fd, '.inherited/' + path.as_posix())).hexdigest()
+                if actual != entry['sha256']:
+                    raise WorkflowError('Inherited file has changed.')
+        snapshot['continuation'] = dict(previous_run_id=parent, previous_version=transfer['previous_version'],
+                                        current_version=transfer['current_version'],
+                                        deliveries=[{k: v for k, v in entry.items() if k != 'value'}
+                                                    for entry in transfer['deliveries']])
+
+
+
 def script_main(manifest, run_workflow):
     parser = argparse.ArgumentParser(description=manifest['name'] + ' (native CLI workflow)')
     parser.add_argument('--workspace', type=Path, help='project root; defaults to current directory')
@@ -978,22 +1162,45 @@ def script_main(manifest, run_workflow):
     mode.add_argument('--dry-run', action='store_true', help='show commands; no CLI, model or file changes')
     mode.add_argument('--status', action='store_true', help='read this artifact\'s existing run as JSON; never execute')
     mode.add_argument('--cancel', action='store_true', help='request cancellation of an active run; never replay')
+    mode.add_argument('--continuation-options', action='store_true', help='list verified predecessor deliveries and versions')
     parser.add_argument('--details', action='store_true', help='include the actual journal in --status/--cancel JSON')
+    parser.add_argument('--historical', action='store_true', help='verify completed evidence against frozen files in --status')
+    parser.add_argument('--continue-from', type=Path, help='private evidence directory of the completed previous run')
+    parser.add_argument('--previous-script-sha256', help='previous full script digest when versions differ')
+    parser.add_argument('--accept-version', help='chosen script full digest when versions differ')
+    parser.add_argument('--inherit', action='append', default=[], help='verified delivery ID to carry over; repeat to select more')
+    parser.add_argument('--run-id', help='explicit independent run identity (32 lowercase hexadecimal characters)')
     args = parser.parse_args()
     try:
         if os.name != 'posix':
             raise WorkflowError('This first export driver is validated for POSIX/Linux only.')
+        continuation_args = bool(args.continue_from or args.inherit or args.previous_script_sha256 or args.accept_version)
+        if args.run_id is not None and not SERIES_ID.fullmatch(args.run_id):
+            raise WorkflowError('Run ID must be 32 lowercase hexadecimal characters.')
+        if args.historical and not args.status:
+            raise WorkflowError('--historical requires --status.')
         if args.status or args.cancel:
-            if not args.run_dir or args.workspace is not None or args.task or args.task_file:
+            if not args.run_dir or args.workspace is not None or args.task or args.task_file or continuation_args or args.run_id:
                 raise WorkflowError('--status/--cancel require --run-dir and accept no execution inputs.')
-            snapshot = inspect_run(manifest, args.run_dir, cancel=args.cancel, details=args.details)
+            snapshot = inspect_run(manifest, args.run_dir, cancel=args.cancel, details=args.details,
+                                   historical=args.historical)
             print(json.dumps(snapshot, ensure_ascii=False, indent=2))
             return 0
         if args.details:
             raise WorkflowError('--details requires --status or --cancel.')
         if args.task and args.task_file:
             raise WorkflowError('Choose --task or --task-file, not both.')
+        if continuation_args and not args.continue_from:
+            raise WorkflowError('Continuation inputs require --continue-from.')
+        if args.continuation_options:
+            if not args.continue_from or args.task or args.task_file or args.run_dir or args.inherit or args.accept_version or args.run_id:
+                raise WorkflowError('--continuation-options accepts only previous run, script digest and workspace.')
+            workspace = (args.workspace or Path.cwd()).resolve(strict=True)
+            print(json.dumps(series_context(manifest, args, workspace, listing=True), ensure_ascii=False, indent=2))
+            return 0
         if args.dry_run:
+            if continuation_args or args.run_id:
+                raise WorkflowError('Use --continuation-options to verify a previous run without execution.')
             workspace = prepare_calls(manifest, args.workspace, dry_run=True)
             deferred = branch_node_ids(manifest.get('condition') or manifest.get('router'))
 
@@ -1020,6 +1227,16 @@ def script_main(manifest, run_workflow):
                 plan['calls'] = [call for node in manifest['steps'] for call in by_node[node]]
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
+        task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
+        prior = None
+        if args.continue_from:
+            if not task.strip():
+                raise WorkflowError('Continuation requires an explicit new task.')
+            workspace = (args.workspace or Path.cwd()).resolve(strict=True)
+            expected_workspace = series_workspace(workspace)
+            prior = series_context(manifest, args, workspace)
+        run_id = args.run_id or uuid.uuid4().hex
+        series = prior[0] if prior else dict(id=run_id, round=1, run_id=run_id, previous_run_id=None)
         with _cancellation_signals() as cancellation:
             if args.run_dir:
                 directory = args.run_dir.absolute()
@@ -1032,15 +1249,24 @@ def script_main(manifest, run_workflow):
                 context = {'directory': directory, 'cancellation': cancellation, 'directory_fd': owner}
                 print('Private run evidence: ' + str(directory), file=sys.stderr)
                 _write(directory / 'workflow.json', json.dumps(manifest, ensure_ascii=False, indent=2))
-                _event(context, 'RUN_STARTED', workflow=manifest['name'], script_sha256=_script_sha256())
+                _write(directory / 'task.txt', task)
+                _event(context, 'RUN_STARTED', workflow=manifest['name'], script_sha256=_script_sha256(),
+                       manifest_sha256=sha256(output_json(manifest).encode()).hexdigest(),
+                       task_sha256=sha256(task.encode()).hexdigest(), series=series)
                 try:
                     _check_cancel(context)
                     context['workspace'] = prepare_calls(manifest, args.workspace)
+                    workspace_identity = series_workspace(context['workspace'])
+                    _event(context, 'SERIES_WORKSPACE', workspace=workspace_identity)
+                    if prior:
+                        if workspace_identity != expected_workspace:
+                            raise WorkflowError('Workspace changed between continuation validation and launch.')
+                        save_continuation(context, prior[1], prior[2])
                     if 'loop' in manifest or any(agent.get('native_output', {}).get('kind') == 'review'
                                                  for agent in manifest['agents']):
                         _event(context, 'CANDIDATE_WORKSPACE', workspace=str(context['workspace']))
-                    task = args.task_file.read_text(encoding='utf-8') if args.task_file else args.task
                     task = '\n\n'.join(part for part in (manifest['input'], task) if part)
+                    context['task'] = task
                     answer = run_workflow(context, task)
                     _check_cancel(context)
                     _write(directory / 'result.txt', answer['answer'])
@@ -1053,6 +1279,6 @@ def script_main(manifest, run_workflow):
                     raise
         print(answer['answer'])
         return 0
-    except (WorkflowError, OSError, UnicodeError) as error:
+    except (WorkflowError, OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         print('Workflow stopped: ' + str(error), file=sys.stderr)
         return 128 + error.signum if isinstance(error, WorkflowCancelled) else 1
