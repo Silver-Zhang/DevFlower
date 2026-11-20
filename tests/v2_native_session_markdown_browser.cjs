@@ -234,7 +234,21 @@ async function main() {
    });
    await read('Claude Code');
    assert.equal(await (await useFormat()).inputValue(), 'text');
-   assert.deepEqual(await plainTexts(recent), [expected.claude, expected.exactLimit]);
+   const claudeText=[expected.claude, expected.exactLimit, expected.assistantQuestion, expected.assistantBody];
+   assert.deepEqual(await plainTexts(recent), claudeText);
+   for(const [title,raw] of [['展开原始原生请求',expected.assistantProtocol],['展开原始原生回复',expected.assistantJson]]){
+    const disclosure=recent.locator('article details').filter({hasText:title});
+    assert.equal(await disclosure.locator('pre').isVisible(),false);
+    await disclosure.locator('summary').click();
+    assert.equal(await disclosure.locator('pre').textContent(),raw);
+    await disclosure.locator('summary').click();
+   }
+   await action('浏览更早消息').click();
+   await verified();
+   assert((await plainTexts(parts)).includes(expected.assistantQuestion));
+   assert((await plainTexts(parts)).includes(expected.assistantBody));
+   assert.equal(await parts.getByText('展开原始原生请求',{exact:true}).count(),1);
+   await action('返回默认窗口').click();
    await noRequests('second-provider-complete-16000', async () => {
     await (await useFormat()).selectOption('markdown');
     await recent.locator('h2').getByText('Claude fixture heading', {exact: true}).waitFor();
@@ -249,8 +263,8 @@ async function main() {
    await read('Claude Code');
    await noRequests('unknown-window-shape-falls-back', async () => {
     await (await useFormat()).selectOption('markdown');
-    assert.equal(await recent.getByText(TRUNCATED, {exact: true}).count(), 2);
-    assert.deepEqual(await plainTexts(recent), [expected.claude, expected.exactLimit]);
+    assert.equal(await recent.getByText(TRUNCATED, {exact: true}).count(), 4);
+    assert.deepEqual(await plainTexts(recent), claudeText);
    });
    await restore();
    await read();

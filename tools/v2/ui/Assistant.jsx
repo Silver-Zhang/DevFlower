@@ -39,6 +39,7 @@ function Diagnosis({value}){
    {value.failure_facts?.map(fact=><p key={fact.event_seq}>{fact.node||'运行级'} ·
     {fact.http_status?' HTTP '+fact.http_status:' '+fact.code} · {fact.source} #{fact.event_seq}</p>)}
    {!!value.failure_facts_omitted&&<p className="field-note">省略 {value.failure_facts_omitted} 条结构化错误。</p>}
+   {value.evidence_insufficient&&<p className="field-note">本次冻结运行证据不足，仍需核验最终状态和原因。</p>}
    {!!value.not_observed_started?.length&&<p>未观察到进程启动的节点 · {value.not_observed_started.join('、')}</p>}
    {!!value.loop_rounds?.length&&<details><summary>循环轮次与审核结果</summary><pre>{JSON.stringify(value.loop_rounds,null,2)}</pre></details>}
   </>}
@@ -365,6 +366,7 @@ export function Assistant({api,workspace,storageKey,providers,catalog,onDiscover
         {fact.http_status?' HTTP '+fact.http_status:' '+fact.code} · {fact.source} #{fact.event_seq}</p>)}
        {!!preview.context.run?.omitted_nodes&&<p>省略 {preview.context.run.omitted_nodes} 个节点详情。</p>}
        {!!preview.context.run?.failure_facts_omitted&&<p>省略 {preview.context.run.failure_facts_omitted} 条结构化错误。</p>}
+       {preview.context.run?.evidence_insufficient&&<p>本次冻结运行证据不足，发送内容会注明仍需核验。</p>}
        {preview.context.files.length>0&&<ul>{preview.context.files.map(file=><li key={file.path}>{file.path}</li>)}</ul>}</dd>
      </dl>
      <button className="primary" disabled={busy||!!pending} onClick={()=>perform(send)}>确认发送</button>

@@ -88,7 +88,7 @@ function groupPage(parts) {
    const group = parts.slice(index, index + count);
    if (group.every((part, offset) => isVisibleMessage(part) && part.role === first.role
        && part.part_count === count && part.part_index === offset + 1)) {
-    messages.push({role: first.role, text: group.map(part => part.text).join('')});
+    messages.push({role: first.role, text: group.map(part => part.text).join(''), sourceParts: group});
     index += count;
     continue;
    }
@@ -137,7 +137,9 @@ function devflowerBody(messages){
 export function NativeMessages({label, messages, format, paged = false, truncated, empty}) {
  const markdown = format === 'markdown';
  const missing = !Array.isArray(messages);
- const display = missing ? [] : markdown ? devflowerBody(paged ? groupPage(messages) : messages) : messages;
+ const projected = missing ? [] : devflowerBody(paged ? groupPage(messages) : messages);
+ const display = paged && !markdown ? projected.flatMap(message =>
+  message.protocol ? [message] : message.sourceParts || [message]) : projected;
  return <div aria-label={label} className="native-messages">
   {display.length === 0 && <p className="muted small">{missing ? paged ? INCOMPLETE : TRUNCATED : empty}</p>}
   {display.map((message, index) => {

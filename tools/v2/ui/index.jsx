@@ -1513,12 +1513,13 @@ function App(){
      navigate(async()=>{await openDraft(row);if(primaryView)setSideView('');setDrawer(false)},'打开其他工作流')
     }}><Workflow size={16}/><span>{row.graph.name}{drafts.some(other=>other.id!==row.id&&other.graph.name===row.graph.name)&&
      <small className="muted"> · {row.id.slice(0,8)}</small>}</span></button>)}
-    {!drafts.length&&<div className="muted small empty-list">
-     <p>尚无已保存的工作流。工作空间按路径登记，复制或移动文件夹后可以导入已导出的草稿。</p>
-     {workspace.moved_from&&<p>此文件夹原位于 {workspace.moved_from}。要取回原草稿，可以先恢复文件夹的原路径并导出。</p>}
-     <button type="button" disabled={!!busy} onClick={chooseArchive}>导入已导出的工作流</button>
-    </div>}
+    {!drafts.length&&<p className="muted small empty-list">尚无已保存的工作流</p>}
    </nav>
+   {!drafts.length&&<div className="muted small empty-list">
+    <p>工作空间按路径登记，复制或移动文件夹后可以导入已导出的草稿。</p>
+    {workspace.moved_from&&<p>此文件夹原位于 {workspace.moved_from}。要取回原草稿，可以先恢复文件夹的原路径并导出。</p>}
+    <button type="button" disabled={!!busy} onClick={chooseArchive}>导入已导出的工作流</button>
+   </div>}
    <div className="section-heading">工作空间工具</div>
    <nav className="workspace-actions supplementary-navigation" aria-label="工作空间工具">
     <Button ref={filesOpener} icon={FolderOpen} aria-expanded={filesOpen} onClick={()=>filesOpen?closeFiles():setSideView('files')}>文件</Button>

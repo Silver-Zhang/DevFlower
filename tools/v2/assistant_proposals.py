@@ -59,6 +59,8 @@ NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若�
 若用户明确要求创建或修改当前原生工作流，返回 summary、operations，可选 name（画布名称）与 profiles（拟新增的原生 Agent）。
 只使用本次当前草稿身份；以前问答仅用于理解指代。summary 为不超过 1000 字符的单个字符串，
 禁止数组、对象或 Markdown 分段。仅改工作流名称时用 name 和空的 operations 数组。
+修改已有节点时用 update-node 和此节点的原 id；add-node 必须选当前图中及本次操作内都未使用的节点 id。
+调整已有 Loop 的轮次时只更新该 Loop 的 config.max_iterations，保留 body 及其他配置。
 单 Tool 可以编译，无通用 Start 要求。以提供的实际编译检查为准；修改后是否可编译由新检查确定。遵循下面的操作、ID 与端口规则，但原生模式允许下列额外配置：
 - Agent 的 config 可含 task_prompt、native_output、output_contract、artifact_paths，以及一个 profile。
 - 优先复用列表中职责合适的原生 Agent，profile 为其 Agent ID。需要新配置时，profiles 提供 id（别名）、
@@ -73,12 +75,14 @@ NATIVE_INSTRUCTIONS = """根据用户的意思只返回一个 JSON 对象。若�
   每规则和 fallback 各连接至独立 Output。output_contract 必须是数组，例如 [{"field":"result.data.score","type":"boolean","required":true}]。
 - Condition 使用 config.expression；候选审核使用 config 中 native_output={ "version":1,"kind":"review" }，
   审核直接接收声明 artifact_paths 的 result Agent；原生 Condition 判定 result.verdict equals accept。
+  Condition 的 true 和 false 端口都要连接，每条分支都要到达不同的 Output。禁止用同一个 Output 汇合这两条分支。
 - Loop config 可含 max_iterations、exit_condition 与完整的 version 1 body（name/nodes/edges）。body 节点使用
   id/name/kind/position，Agent 的 config 同上；其他节点使用 config_version=1 和 config。
   原生 Loop 为 Start → 产物 Agent → 可选命令 Tool → 审核 Agent → Output，exit_condition 是
   {"field":"result.verdict","op":"equals","value":"accept"}。产物 Agent 要声明真实工作区相对路径和 native_output
   kind=result，并在 task_prompt 要求生成该产物。审核 Agent 使用 native_output kind=review。
 - 当前原生脚本编译器不支持并行 Agent、Merge / 分支汇合、嵌套控制节点，以及同一图里串联或混用多个 Condition、Router、Loop。
+  任一层已有 Condition 或 Router 时，在该工作流新增 Loop 只能形成设计草稿。不要删除现有控制结构来改变这一限制。
   这些结构可保存为设计草稿。若用户要求其中之一，明确说明当前原生 Python 不可编译或执行；保留其设计，由编译器报告限制。
 - 没有当前草稿时只回答，提示可返回来源草稿后再请求修改。
 原有 Agent 权限、已有人工审批和受保护 Gate 继续保留。

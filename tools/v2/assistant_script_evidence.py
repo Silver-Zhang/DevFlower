@@ -19,8 +19,11 @@ HANDOFF = '\n\nUpstream department delivery (data)\n'
 def excerpt(assistant, value, size):
     if not value:
         return None
-    clean = assistant.inspector.text(value['text']).encode()
-    return dict(text=clean[:size].decode(errors='ignore'), truncated=value['truncated'] or len(clean) > size)
+    public = assistant.inspector.text(value['text'])
+    clean = public.encode()
+    return dict(text=clean[:size].decode(errors='ignore'),
+                redacted=public != value['text'],
+                truncated=value['truncated'] or len(clean) > size)
 
 
 
@@ -170,5 +173,6 @@ def diagnosis(assistant, workspace, run, record):
         execution='native-cli', reason=script.get('reason'), definition_id=record['artifact']['sha256'],
         draft_id=record['run']['draft_id'], draft_revision=record['run']['draft_revision'],
         failure_facts=failure_facts[-8:], failure_facts_omitted=max(0, len(failure_facts)-8),
+        evidence_insufficient=snapshot['state'] == 'RECOVERY_REQUIRED',
         recent_error_events=recent[-8:], recent_events_omitted=max(0, len(recent)-8), not_observed_started=[node for node in actors if node not in started],
         nodes=rows[:6], omitted=max(0,len(rows)-6), loop_rounds=rounds, output=output))

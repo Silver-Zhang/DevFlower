@@ -18,6 +18,7 @@ from studio.server import Conflict
 from v2.assistant import Assistant
 from v2.assistant_native import apply, correction, stage
 from v2.assistant_proposals import native_examples
+from v2.assistant_script_evidence import excerpt
 from v2.execution_facts import failure_fact, provider_error_code
 from v2.store import DraftStore
 from v2.workflow_templates import WorkflowTemplates, loop_example
@@ -296,6 +297,90 @@ answer.write_text('first native answer' if 'TASK_FIRST' in prompt else 'second n
                     actor.update(agent_id=record['id'],agent_revision=record['revision'])
                 self.assertEqual(self.assistant.scripts.check(self.workspace, graph)['status'], 'compilable')
 
+    def test_selected_run_preview_keeps_all_diagnostic_failure_categories(self):
+        bin_dir = self.project / 'bin'
+        bin_dir.mkdir()
+        cli = bin_dir / 'codex'
+        cli.write_text('#!' + sys.executable + '\n' + """
+import json, os, sys, time
+from pathlib import Path
+sys.stdin.read()
+case = os.environ['DIAGNOSTIC_CASE']
+if case == 'loop':
+    Path('delivery.txt').write_text('candidate')
+    answer = Path(sys.argv[sys.argv.index('--output-last-message') + 1])
+    answer.write_text(json.dumps(dict(result=dict(schema_version=1, summary='candidate ready', data={}),
+                                     artifacts=['delivery.txt'])))
+elif case == 'cancel':
+    Path('cancel-ready').touch()
+    time.sleep(30)
+else:
+    print({'auth': 'HTTP 401 Unauthorized', 'trust': 'workspace is not trusted'}[case], file=sys.stderr)
+    sys.exit(1)
+""")
+        cli.chmod(0o700)
+        profile_row = self.assistant.agents.save(self.workspace, None, None, dict(
+            execution='native-cli', name='Fixture', provider='codex', cwd=str(self.project),
+            role='Fixture', round_prompt='', output_prompt=''))
+        bound = dict(agent_id=profile_row['id'], agent_revision=profile_row['revision'])
+        agent_graph = dict(self.document, execution='native-cli', nodes=[
+            dict(id='Agent', name='Agent', kind='agent', position=dict(x=0, y=0), **bound)])
+        loop_graph = loop_example()
+        body = loop_graph['nodes'][1]['config']['body']
+        for actor in document_agents(loop_graph):
+            actor.update(bound)
+        body['nodes'][2]['config']['argv'] = [sys.executable, '-c', 'raise SystemExit(7)']
+        tool = dict(id='Tool', name='Tool', kind='tool', position=dict(x=0, y=0), config_version=1,
+                    config=dict(tool='command', argv=[sys.executable, '-c', 'raise SystemExit(7)']))
+        tool_graph = dict(self.document, execution='native-cli', nodes=[tool])
+        good_tool = deepcopy(tool_graph)
+        good_tool['nodes'][0]['config']['argv'][-1] = 'pass'
+        cases = [
+            ('auth', agent_graph, 'STOPPED', 'HTTP_401'),
+            ('trust', agent_graph, 'STOPPED', 'WORKSPACE_TRUST'),
+            ('tool', tool_graph, 'CHECK_FAILED', 'NONZERO_EXIT'),
+            ('loop', loop_graph, 'STOPPED', 'LOOP_LIMIT_REACHED'),
+            ('cancel', agent_graph, 'CANCELLED', 'CANCELLED'),
+            ('unreadable', good_tool, 'COMPLETED', None),
+        ]
+        for case, graph, terminal, failure in cases:
+            with self.subTest(case=case), patch.dict(os.environ, PATH=str(bin_dir), DIAGNOSTIC_CASE=case):
+                draft = self.store.save(self.workspace, None, None, graph)
+                launched = self.assistant.scripts.launch(
+                    self.workspace, draft['id'], draft['revision'], 'diagnosis-exact-'+case, '')
+                run = launched['run']['id']
+                deadline = time.monotonic() + 5
+                if case == 'cancel':
+                    while not (self.project / 'cancel-ready').exists() and time.monotonic() < deadline:
+                        time.sleep(.02)
+                    cancelled = self.assistant.scripts.snapshot(self.workspace, run, cancel=True)
+                    self.assertTrue(cancelled['script']['cancel_accepted'])
+                while time.monotonic() < deadline:
+                    verified = self.assistant.scripts.snapshot(self.workspace, run)
+                    if verified['state'] == terminal and not verified['script']['active']:
+                        break
+                    time.sleep(.02)
+                self.assertEqual(verified['state'], terminal, verified['script'].get('reason'))
+                if case == 'unreadable':
+                    (self.assistant.scripts.folder(run) / 'evidence' / 'result.txt').unlink()
+                with patch.object(self.assistant, 'require_provider'):
+                    preview = self.assistant.preview(dict(workspace=self.workspace, conversation='b'*32,
+                        provider='claude', mode='chat', model=None, effort=None, text='Locate the failure',
+                        draft=None, files=[], run=run))
+                context = preview['context']['run']
+                self.assertEqual(context['id'], run)
+                if failure is None:
+                    self.assertTrue(context['evidence_insufficient'])
+                    self.assertFalse(context['failure_facts'])
+                else:
+                    fact = next(row for row in context['failure_facts'] if row['code'] == failure)
+                    self.assertEqual(fact['source'], 'events.jsonl')
+                    self.assertIn(f'"code":"{failure}"', preview['prompt'])
+                    self.assertEqual(verified['script']['events'][fact['event_seq']-1]['kind'], fact['event_kind'])
+                    if case == 'auth':
+                        self.assertEqual(fact['http_status'], 401)
+        self.factory.assert_not_called()
+
     def test_actual_tool_exit_redacted_selected_run_evidence(self):
         marker = 'FIXTURE_CREDENTIAL_8342139'
         tool = node('Check','tool',dict(tool='command', argv=[sys.executable,'-c',
@@ -308,7 +393,7 @@ answer.write_text('first native answer' if 'TASK_FIRST' in prompt else 'second n
             run = result['run']['id']
             for _ in range(100):
                 evidence = reader.diagnosis(self.workspace,run)
-                if evidence['state'] == 'COMPLETED':
+                if evidence['state'] == 'CHECK_FAILED':
                     break
                 time.sleep(.02)
             self.assertEqual(evidence['state'], 'CHECK_FAILED', evidence)
@@ -316,7 +401,13 @@ answer.write_text('first native answer' if 'TASK_FIRST' in prompt else 'second n
             output = evidence['nodes'][0]['evidence']['failure']
             self.assertIn('verified fixture reason', output['command_output']['text'])
             self.assertIn('[已隐藏]', output['error_output']['text'])
+            self.assertTrue(output['error_output']['redacted'])
+            self.assertEqual(evidence['failure_facts'][0]['code'], 'NONZERO_EXIT')
             self.assertNotIn(marker, json.dumps(evidence))
+            clipped = excerpt(reader, dict(text='X'*410 + marker, truncated=False), 400)
+            self.assertTrue(clipped['truncated'])
+            self.assertTrue(clipped['redacted'])
+            self.assertNotIn('[已隐藏]', clipped['text'])
             with self.assertRaises(Conflict):
                 reader.diagnosis(self.other,run)
         self.assertEqual(len(reader.scripts.list(self.workspace)), 1)
