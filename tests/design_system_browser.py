@@ -7,6 +7,7 @@ from test_workbench_runtime import fixture
 from studio.workbench_server import create_server
 from studio.workbench_sessions import WorkbenchSessions
 from studio.canvas_assistant import CanvasAssistant
+from studio.devflower_agent import AgentConnection
 from test_canvas_assistant import SyntheticBackend
 
 def main():
@@ -14,6 +15,7 @@ def main():
     out=Path(a.artifacts).resolve();root=Path(__file__).resolve().parents[1]
     if out.is_relative_to(root) or root.is_relative_to(out):p.error('Artifacts must stay outside source')
     out.mkdir(parents=True,mode=0o700);owner=unittest.TestCase();base,rt=fixture(owner,admission=True)
+    AgentConnection(rt).save(dict(expected=None,protocol='openai',base_url='http://127.0.0.1:1',model='auto',effort='medium',api_key=''))
     original=WorkbenchSessions.rpc
     def metadata(manager,binding,cwd,method,params):
         if method=='cli/probe':return dict(available=True,machine_output=True,version='synthetic design fixture',resume=True)

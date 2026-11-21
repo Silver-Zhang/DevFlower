@@ -84,7 +84,15 @@ await test('canvas-theme-follows-choice-and-live-system-preference',async p=>{
  await p.emulateMedia({colorScheme:'dark'});await until(async()=>await flow.evaluate(e=>e.classList.contains('dark')));
 });
 await test('guide-check-and-send-issues-preserves-assistant-draft',async p=>{
- await openWorkspace(p);const guide=p.getByLabel('工作流使用指南');assert(await guide.isVisible());await p.getByLabel('关闭使用指南').click();assert.equal(await guide.count(),0);await p.getByRole('button',{name:'使用指南',exact:true}).click();assert(await guide.isVisible());await p.getByLabel('关闭使用指南').click();
+ await openWorkspace(p);
+ const guide=p.getByLabel('工作流使用指南'),openGuide=p.getByRole('button',{name:'使用指南',exact:true});
+ assert.equal(await guide.count(),0,'The initial canvas does not open the optional guide');
+ await openGuide.click();await guide.waitFor({state:'visible'});
+ await guide.getByRole('button',{name:'查看步骤',exact:true}).click();
+ await guide.getByLabel('向导：添加节点',{exact:true}).waitFor({state:'visible'});
+ await guide.getByLabel('关闭使用指南').click();assert.equal(await guide.count(),0);
+ await openGuide.click();await guide.waitFor({state:'visible'});
+ await guide.getByLabel('关闭使用指南').click();assert.equal(await guide.count(),0);
  await p.getByRole('button',{name:'AI 助手',exact:true}).click();const input=p.getByLabel('配置需求',{exact:true});await input.fill('保留我的草稿');
  await p.getByRole('button',{name:'检查工作流',exact:true}).click();const results=p.getByLabel('工作流检查结果',{exact:true});await results.waitFor();assert((await results.innerText()).includes('本次任务'));await results.getByRole('button',{name:'发给 DevFlower 助手'}).click();await until(async()=>(await input.inputValue()).includes('本次任务'));assert((await input.inputValue()).startsWith('保留我的草稿'));
 });
@@ -665,9 +673,15 @@ await test('admission-late-preview-cannot-authorize-a-different-profile',async p
  let selections=0;p.on('request',r=>{if(r.url().endsWith('/api/model-selection'))selections++});
  await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('Agent 工具',{exact:true}).selectOption('default-claude');await delay(250);assert.equal(await p.getByLabel('Agent 工具',{exact:true}).inputValue(),'default-claude');assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model');assert.equal(await p.getByLabel('本次授权确认意见').count(),0);assert.equal(selections,0)
 });
+async function openCodexModelPicker(p,node){
+ await p.locator('.react-flow__node[data-id="'+node+'"]').click();
+ const tool=p.getByLabel('执行工具',{exact:true}),model=p.getByLabel('模型',{exact:true});
+ if(await tool.inputValue()!=='default-codex')await tool.selectOption('default-codex');
+ await until(async()=>await model.isEnabled()&&await model.locator('option[value="synthetic-configurable-model"]').count()===1);
+ assert.equal(await tool.inputValue(),'default-codex');
+}
 await test('model-draft-effort-survives-close-and-start-without-selection-request',async p=>{
- await p.route('**/api/models',async route=>{const response=await route.fetch(),value=await response.json();for(const row of value.models||[])if(row.id==='synthetic-configurable-model')row.selectable_efforts=['xhigh','high','low'];await route.fulfill({response,json:value})});
- await openWorkspace(p);await example(p,4);await p.locator('.react-flow__node[data-id="agent"]').click();await until(async()=>await p.getByLabel('模型',{exact:true}).isEnabled());
+ await openWorkspace(p);await example(p,4);await openCodexModelPicker(p,'agent');
  let selections=0,prepared;p.on('request',r=>{if(r.url().endsWith('/api/model-selection'))selections++});
  await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('推理强度',{exact:true}).selectOption('xhigh');await p.getByLabel('推理强度',{exact:true}).selectOption('high');await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();await p.getByLabel('本次任务',{exact:true}).fill('验证本次模型强度');
  await p.route('**/api/prepare',async route=>{const response=await route.fetch(),body=await response.json();assert.equal(response.status(),200,JSON.stringify(body));prepared=body.data;await route.fulfill({response,json:body})});
@@ -675,15 +689,28 @@ await test('model-draft-effort-survives-close-and-start-without-selection-reques
  await p.locator('.react-flow__node[data-id="agent"]').click();await until(async()=>await p.getByLabel('推理强度',{exact:true}).isEnabled());await p.getByLabel('推理强度',{exact:true}).selectOption('low');await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();prepared=null;await p.getByRole('button',{name:'开始运行',exact:true}).click();await until(()=>!!prepared);assert.equal(prepared.graph.nodes.find(n=>n.id==='agent').effort,'low');await confirmNativePreview(p);await until(()=>starts===2);
 });
 await test('model-draft-selection-remains-bound-to-original-node',async p=>{
- await openWorkspace(p);await p.locator('.react-flow__node[data-id="analyze"]').click();await until(async()=>await p.getByLabel('模型',{exact:true}).isEnabled());await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('推理强度',{exact:true}).selectOption('low');
- await p.locator('.react-flow__node[data-id="review"]').click();await until(async()=>await p.getByLabel('执行工具',{exact:true}).inputValue()==='default-claude');assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model');
+ await openWorkspace(p);await openCodexModelPicker(p,'analyze');
+ await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('推理强度',{exact:true}).selectOption('low');
+ await openCodexModelPicker(p,'review');
+ assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model','The same catalog in another node does not inherit the first node selection');
+ const reviewTool=p.getByLabel('执行工具',{exact:true});
+ await reviewTool.selectOption('default-claude');
+ await until(async()=>await reviewTool.inputValue()==='default-claude'&&await p.getByLabel('模型',{exact:true}).isEnabled());
+ assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model');
  await p.locator('.react-flow__node[data-id="analyze"]').click();await until(async()=>await p.getByLabel('模型',{exact:true}).inputValue()==='synthetic-configurable-model');assert.equal(await p.getByLabel('推理强度',{exact:true}).inputValue(),'low');
 });
 await test('model-draft-selection-does-not-cross-workspace',async p=>{
- await openWorkspace(p);await p.locator('.react-flow__node[data-id="analyze"]').click();await until(async()=>await p.getByLabel('模型',{exact:true}).isEnabled());await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('推理强度',{exact:true}).selectOption('low');await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();
- const saved=p.waitForResponse(r=>r.url().endsWith('/api/draft')&&r.request().method()==='POST');await p.getByRole('button',{name:'保存',exact:true}).click();assert.equal((await saved).status(),200);
+ await openWorkspace(p);await openCodexModelPicker(p,'analyze');
+ await p.getByLabel('模型',{exact:true}).selectOption('synthetic-configurable-model');await p.getByLabel('推理强度',{exact:true}).selectOption('low');await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();
+ const saved=p.waitForResponse(r=>r.url().endsWith('/api/draft')&&r.request().method()==='POST');
+ await p.getByRole('button',{name:'保存',exact:true}).click();
+ const receipt=await saved;assert.equal(receipt.status(),200);
+ const savedGraph=receipt.request().postDataJSON().graph;
+ const analyze=savedGraph.nodes.find(node=>node.id==='analyze');
+ assert.deepEqual([analyze.profile,analyze.model,analyze.effort],['default-codex','synthetic-configurable-model','low']);
  const path=require('node:path'),other=path.join(access.path,'synthetic-model-workspace-b');fs.mkdirSync(other,{recursive:true});fs.writeFileSync(path.join(other,'README.md'),'synthetic workspace');
- await p.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).click();await p.getByLabel('目录路径',{exact:true}).fill(other);await p.getByRole('button',{name:'前往',exact:true}).click();await until(async()=>(await p.locator('.folder-breadcrumb').innerText()).includes('synthetic-model-workspace-b'));await p.getByRole('button',{name:'选择此文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor({state:'hidden'});await example(p,4);await p.locator('.react-flow__node[data-id="agent"]').click();await until(async()=>await p.getByLabel('模型',{exact:true}).isEnabled());assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model');
+ await p.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).click();await p.getByLabel('目录路径',{exact:true}).fill(other);await p.getByRole('button',{name:'前往',exact:true}).click();await until(async()=>(await p.locator('.folder-breadcrumb').innerText()).includes('synthetic-model-workspace-b'));await p.getByRole('button',{name:'选择此文件夹',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor({state:'hidden'});await example(p,0);await openCodexModelPicker(p,'analyze');
+ assert.notEqual(await p.getByLabel('模型',{exact:true}).inputValue(),'synthetic-configurable-model','A fresh workspace has its own draft even with the same node ID and model catalog');
 });
 await test('admission-classifier-has-its-own-exact-timeout-and-workspace-verification',async p=>{
  await openWorkspace(p);await example(p,3);await p.locator('.react-flow__node[data-id="route"]').click();await p.getByLabel('启用语义分类',{exact:true}).check();await p.getByRole('button',{name:'关闭节点配置',exact:true}).click();
@@ -984,14 +1011,32 @@ await test('assistant-disclosure-shows-scope-and-current-connection',async p=>{
  await p.screenshot({path:out+'/assistant-disclosure.png'});
 });
 await test('assistant-disclosure-blocks-unidentified-connection',async p=>{
- await openWorkspace(p);let sends=0;
- await p.route('**/api/devflower-agent/config',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'SYNTHETIC config unavailable'})}));
- await p.route('**/api/assistant/models*',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({models:[{id:'synthetic-model'}],default_model:'synthetic-model'})}));
- p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))sends++});
- await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');
- await until(async()=>await dock.getByLabel('助手模型',{exact:true}).inputValue()==='synthetic-model');
- await dock.getByLabel('配置需求').fill('Synthetic only');assert(await dock.getByRole('button',{name:'发送',exact:true}).isDisabled());
- const note=dock.getByRole('note').filter({hasText:'无法确认助手模型服务的接收方'});assert(await note.isVisible());assert((await note.innerText()).includes('助手模型设置'));assert.equal(sends,0);
+ await openWorkspace(p);
+ let denied=true,sends=0,catalogReads=0;
+ await p.route('**/api/devflower-agent/config',route=>denied?route.fulfill({status:503,json:{error:'SYNTHETIC config unavailable'}}):route.continue());
+ p.on('request',r=>{
+  if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))sends++;
+  if(new URL(r.url()).pathname==='/api/assistant/models')catalogReads++;
+ });
+ await p.getByRole('button',{name:'AI 助手',exact:true}).click();
+ const dock=p.getByTestId('assistant-dock'),input=dock.getByLabel('配置需求',{exact:true});
+ const send=dock.getByRole('button',{name:'发送',exact:true});
+ const refresh=dock.getByRole('button',{name:'刷新助手模型',exact:true});
+ const note=dock.getByRole('note').filter({hasText:'无法确认助手模型服务的接收方'});
+ const unavailable=dock.locator('details.assistant-catalog-note');
+ await unavailable.waitFor({state:'visible'});await unavailable.locator('summary').click();
+ assert((await unavailable.innerText()).includes('SYNTHETIC config unavailable'));
+ await input.fill('Synthetic unsent draft');assert(await send.isDisabled());
+ assert(await note.isVisible());assert((await note.innerText()).includes('助手模型设置'));
+ assert.equal(catalogReads,0,'An unknown connection must not trigger even a catalog request');
+ denied=false;await refresh.click();
+ await until(async()=>catalogReads===1&&await send.isEnabled()&&await refresh.isEnabled());
+ assert.equal(await input.inputValue(),'Synthetic unsent draft');
+ denied=true;await refresh.click();
+ await note.waitFor({state:'visible'});await until(async()=>await refresh.isEnabled());
+ assert(await send.isDisabled(),'A failed refresh invalidates the previous recipient');
+ assert.equal(await input.inputValue(),'Synthetic unsent draft');
+ assert.equal(catalogReads,1);assert.equal(sends,0);
 });
 await test('polish-saved-assistant-model-is-ready-before-slow-catalog-and-omitted-default',async p=>{
  let release;const hold=new Promise(r=>release=r);
@@ -1138,14 +1183,41 @@ await test('model-catalog-expiry-refreshes-before-restoring-effort-options',asyn
 });
 await test('snapshot-chat-and-history-layout-readonly-assistant-keeps-run-frozen',async p=>{
  await openWorkspace(p);await p.getByLabel('历史运行',{exact:true}).selectOption('A');
- await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');
- await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');
+ await p.locator('.react-flow__node[data-id="analyze"]').getByText('分析 A',{exact:true}).waitFor();
+ async function readFrozenRun(){
+  const reply=await p.request.get(access.url+'/api/run?run=A',{headers:{Authorization:'Bearer '+access.token}});
+  assert.equal(reply.status(),200);
+  return reply.json();
+ }
+ const before=await readFrozenRun();
+ assert.equal(before.run.id,'A');assert.equal(before.state,'COMPLETED');
+ await p.getByRole('button',{name:'AI 助手',exact:true}).click();
+ const dock=p.getByTestId('assistant-dock'),log=dock.getByRole('log');
+ const intent=dock.getByLabel('助手工作方式',{exact:true}),input=dock.getByLabel('配置需求',{exact:true});
+ const send=dock.getByRole('button',{name:'发送',exact:true});
+ await intent.selectOption('chat');await dock.getByLabel('助手模型',{exact:true}).selectOption('auto');
  const calls=[];
- p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|config-assistant\/apply)$/.test(r.url()))calls.push(r.url())});
- await dock.getByLabel('配置需求',{exact:true}).fill('解释运行问题，不修改流程也不启动任务');
- await dock.getByRole('button',{name:'发送',exact:true}).click();await until(async()=>(await dock.getByRole('log').innerText()).includes('普通回答 · 未修改画布'));
+ p.on('request',r=>{if(r.method()==='POST'&&/\/api\/(start|control|config-assistant\/apply)$/.test(r.url()))calls.push(new URL(r.url()).pathname)});
+ await input.fill('解释运行问题，不修改流程也不启动任务');await send.click();
+ await log.getByText('普通回答 · 未修改画布',{exact:true}).waitFor();
  assert.equal(await p.getByLabel('历史运行',{exact:true}).inputValue(),'A');assert.deepEqual(calls,[]);
- await dock.getByLabel('助手工作方式',{exact:true}).selectOption('workflow');assert(await dock.getByLabel('配置需求',{exact:true}).isDisabled());
+ assert.deepEqual(await readFrozenRun(),before);
+ await intent.selectOption('workflow');
+ assert(await input.isEnabled(),'A frozen snapshot can request a proposal for the next draft');
+ await input.fill('为下一次运行准备复核草稿');await send.click();
+ const proposal=dock.locator('details.assistant-change');
+ await proposal.locator('summary').click();
+ assert.deepEqual(calls,[],'A proposed draft requires an explicit apply');
+ const apply=proposal.getByRole('button',{name:/^应用到下一份草稿/});
+ const applied=p.waitForResponse(r=>r.url().endsWith('/api/config-assistant/apply')&&r.request().method()==='POST');
+ await apply.click();const reply=await applied;assert.equal(reply.status(),200);
+ const result=await reply.json();assert.equal(result.graph.name,'Synthetic 为下一次运行准备复核草稿');
+ assert.deepEqual(calls,['/api/config-assistant/apply']);
+ assert.equal(await p.getByLabel('历史运行',{exact:true}).inputValue(),'A');
+ await p.locator('.react-flow__node[data-id="analyze"]').getByText('分析 A',{exact:true}).waitFor();
+ assert.deepEqual(await readFrozenRun(),before,'Applying a proposal must preserve the recorded graph, activations and events');
+ await p.getByRole('button',{name:'编辑草稿',exact:true}).click();
+ await until(async()=>await p.getByLabel('工作流名称',{exact:true}).inputValue()===result.graph.name);
 });
 await test('snapshot-chat-and-history-layout-long-titles-stay-in-navigation',async p=>{
  const long='这是一个包含很多中文和很长无空格标识符的工作流任务标题'.repeat(20);

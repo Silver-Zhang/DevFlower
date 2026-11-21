@@ -20,13 +20,44 @@ for(const [width,height] of [[1512,900],[1280,800],[952,756],[700,900],[560,800]
  await p.screenshot({path:out+`/assistant-${width}-${theme}.png`});
 });
 await test('assistant-reading-preserved-during-stream-and-empty-reset',async p=>{
- await p.getByRole('button',{name:'AI 助手',exact:true}).click();const dock=p.getByTestId('assistant-dock');let revision=1;
- await p.route('**/api/canvas-assistant/conversation?*',async route=>{const response=await route.fetch(),value=await response.json();await route.fulfill({response,status:200,json:{...value,id:new URL(route.request().url()).searchParams.get('id'),workspace:access.workspace,revision,messages:Array.from({length:30},(_,i)=>({turn:'synthetic-'+i,role:i%2?'assistant':'user',text:'消息 '+i+'\n\n'+('可读内容与代码示例。'.repeat(20))})),turn:{id:'synthetic-stream',state:'RUNNING',visible_text:'新增输出 '+revision,visible_summary:null}}})});
- // Reopen triggers a real GET; synthetic history is clearly labelled fixture data.
- await p.getByLabel('收起工作台侧栏',{exact:true}).click();await p.getByRole('button',{name:'AI 助手',exact:true}).click();
- const log=dock.getByRole('log');await until(async()=>await log.locator('article').count()>20);await log.evaluate(e=>{e.scrollTop=100;e.dispatchEvent(new Event('scroll'))});const before=await log.evaluate(e=>e.scrollTop);revision++;
- await p.getByRole('button',{name:'查看新消息',exact:true}).waitFor();assert(Math.abs(await log.evaluate(e=>e.scrollTop)-before)<2,'Incoming output preserves history reading');await p.getByRole('button',{name:'查看新消息',exact:true}).click();assert(await log.evaluate(e=>e.scrollHeight-e.clientHeight-e.scrollTop<64));
- await p.unrouteAll({behavior:'wait'});await dock.getByLabel('新建助手对话',{exact:true}).click();await until(async()=>await log.locator('.assistant-welcome').count()===1);assert.equal(await log.evaluate(e=>e.scrollTop),0);
+ const open=p.getByRole('button',{name:'AI 助手',exact:true});
+ await open.click();
+ const dock=p.getByTestId('assistant-dock'),log=dock.getByRole('log');
+ await dock.getByLabel('助手工作方式',{exact:true}).selectOption('chat');
+ await dock.getByLabel('配置需求',{exact:true}).fill('SYNTHETIC reading history');
+ const sent=p.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'));
+ await dock.getByRole('button',{name:'发送',exact:true}).click();
+ const conversation=(await sent).postDataJSON().conversation;
+ await log.getByText('普通回答 · 未修改画布',{exact:true}).waitFor();
+ let revision=1,polls=0,replayed=0;
+ p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/canvas-assistant/messages'))replayed++});
+ await p.route('**/api/canvas-assistant/conversation?*',async route=>{
+  if(new URL(route.request().url()).searchParams.get('id')!==conversation)return route.continue();
+  const response=await route.fetch();assert.equal(response.status(),200);
+  const value=await response.json();assert.equal(value.id,conversation);assert.equal(value.workspace,access.workspace);
+  polls++;
+  await route.fulfill({response,json:{...value,messages:Array.from({length:30},(_,i)=>({turn:'synthetic-'+i,role:i%2?'assistant':'user',text:'消息 '+i+'\n\n'+('可读内容与代码示例。'.repeat(20))})),turn:{id:'synthetic-stream',state:'RUNNING',visible_text:'新增输出 '+revision,visible_summary:null}}});
+ });
+ // Reopen the existing conversation, then expose controlled streaming updates.
+ await p.getByLabel('收起工作台侧栏',{exact:true}).click();await open.click();
+ await log.getByText('新增输出 1',{exact:true}).waitFor();
+ const articles=log.locator('article.assistant-bubble');
+ assert.equal(await articles.count(),31,'Keep all 30 history messages and the partial reply');
+ assert(await articles.last().getByText('DevFlower · 部分回复（未完成）',{exact:true}).isVisible());
+ const before=await log.evaluate(e=>{
+  e.scrollTop=100;e.dispatchEvent(new Event('scroll'));
+  return e.scrollTop;
+ });
+ assert.equal(before,100);
+ const initialPolls=polls;revision++;
+ await log.getByText('新增输出 2',{exact:true}).waitFor();assert(polls>initialPolls);
+ const latest=p.getByRole('button',{name:'查看新消息',exact:true});
+ await latest.waitFor();assert(Math.abs(await log.evaluate(e=>e.scrollTop)-before)<2,'Incoming output preserves history reading');
+ await latest.click();assert(await log.evaluate(e=>e.scrollHeight-e.clientHeight-e.scrollTop<64));
+ await latest.waitFor({state:'hidden'});
+ await p.unrouteAll({behavior:'wait'});await dock.getByLabel('新建助手对话',{exact:true}).click();
+ await until(async()=>await log.locator('.assistant-welcome').count()===1);
+ assert.equal(await log.evaluate(e=>e.scrollTop),0);assert.equal(await latest.count(),0);assert.equal(replayed,0);
 });
 await test('compact-navigation-escape-restores-focus-and-draft',async p=>{
  await p.setViewportSize({width:700,height:900});await until(async()=>await p.locator('.workbench').evaluate(e=>e.classList.contains('sidebar-collapsed')));for(const selector of ['.sidebar-title','.session-search','.collection-tabs','.session-grouping','.session-filters','.session-list'])assert.equal(await p.locator(selector).isVisible(),false,'Collapsed rail hides '+selector);await p.getByLabel('本次任务',{exact:true}).fill('保留任务草稿');await p.getByRole('button',{name:'AI 助手',exact:true}).click();await p.getByTestId('assistant-dock').waitFor();await p.getByLabel('展开导航栏',{exact:true}).click();assert(await p.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).isVisible());await p.getByRole('navigation',{name:'工作区导航'}).getByRole('button',{name:'打开工作区',exact:true}).click();await p.getByRole('heading',{name:'打开文件夹',exact:true}).waitFor();await p.keyboard.press('Escape');assert.equal(await p.getByRole('heading',{name:'打开文件夹',exact:true}).count(),0);assert(await p.locator('.workbench').evaluate(e=>e.classList.contains('navigation-drawer-open')),'Modal closes before its parent navigation');assert(await p.getByTestId('assistant-dock').isVisible());await p.keyboard.press('Escape');await until(async()=>await p.getByLabel('展开导航栏',{exact:true}).evaluate(e=>e===document.activeElement));assert.equal(await p.getByLabel('本次任务',{exact:true}).inputValue(),'保留任务草稿');assert(await p.getByTestId('assistant-dock').isVisible(),'Escape dismisses navigation before the underlying assistant');await p.getByLabel('切换工作台侧栏',{exact:true}).click();assert.equal(await p.locator('.studio-tools').isVisible(),false,'Toolbar toggle closes the actual assistant drawer');
