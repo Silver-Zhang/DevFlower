@@ -15,7 +15,8 @@ concurrency:
 
 jobs:
   contracts:
-    runs-on: ubuntu-latest
+    # Match the validated Noble userspace used for the Chromium regression.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       PYTHONDONTWRITEBYTECODE: '1'
