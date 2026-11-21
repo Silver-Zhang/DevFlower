@@ -5,7 +5,7 @@
 ## 使用
 
 ```sh
-python3 -B tools/devflower_v2.py --state-dir /absolute/new/private/v2-state --allow-root /absolute/disposable/workspaces
+python3 -B tools/devflower_workbench_service.py --state-dir /absolute/new/private/v2-state --allow-root /absolute/disposable/workspaces
 ```
 
 需要 Python 3.11+、现代 Chromium，以及真实执行所需的 Linux 原生隔离支持。状态目录在源码和工作空间之外，由服务以 0700 创建。重启使用同一目录。可重复 `--allow-root`；`--no-browser` 打印含私人访问能力的本机 URL，不应分享。服务仅监听 `127.0.0.1`。可用 `--codex-cli /absolute/installed/launcher` 明确选择现有 CLI，不复制认证或更改账户配置。缺少 CLI 或账户配置不符时仍能编辑与保存。
@@ -54,10 +54,10 @@ python3 -B tools/devflower_v2.py --state-dir /absolute/new/private/v2-state --al
 复用现有工作台 lockfile/dependencies；没有第二套依赖版本。生成物沿用其许可证，bundle 保留法律注释。
 
 ```sh
-node tools/v2/ui/build.mjs
+node tools/workbench/ui/build.mjs
 python3 -B -m unittest discover -s tests -p 'test_v2*.py' -v
-python3 -B tests/v2_browser.py --artifacts /absolute/new/editor-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
-python3 -B tests/v2_execution_browser.py --artifacts /absolute/new/synthetic-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
+python3 -B tests/workbench_editor_browser.py --artifacts /absolute/new/editor-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
+python3 -B tests/workbench_execution_browser.py --artifacts /absolute/new/synthetic-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
 ```
 
 `DEVFLOWER_UI_DEPS` 可指向现有相同 lockfile 的依赖根。原编辑 Chromium 与新 HTTP/合成执行故障用例不调用真实模型；它们不能替代真实调用或 C 独立验收。真实调用的固定候选、指令、原生终结/请求/交接和调用计数保存在外部交付证据中。所有失败、日志与截图保留；trace 确定性脱敏 Bearer/初始 fragment，保留原文件 hash 与脱敏说明。V2 CI 仅触发 integration 分支或手动运行，严格使用合成执行，不读取真实账户或调用模型；旧 V1 断言与门禁未删除。
@@ -75,4 +75,4 @@ python3 -B tests/v2_execution_browser.py --artifacts /absolute/new/synthetic-evi
 
 重开只读核验冻结 definition、原请求/发送/进程/终结关联，以及有界、无符号链接的 completion 文件与 hash。若已完成文件写入但 activation/run 提交前 worker 崩溃，只有 completion 文件、原 request/process/terminal 与已存 hash 全部一致才在只读投影中恢复为已完成。若 activation hash 尚未提交，还必须存在独立的 completion-proof.json；两个文件均经临时文件 fsync、原子替换和至 state 的目录 fsync 后才发布 activation。缺 proof 的中间窗口保持未知，不补写 proof。该证据检查同一受信 state 内的损坏/一致性，不宣称抵抗拥有 state 写权限并同时改两文件的攻击者。保留原始日志，不运行调度器。文件缺失、损坏、关联矛盾、额外未知进程或异常恢复提示则继续待核验；不以其他节点的完成掩盖未知。没有“继续执行”或自动重放功能，需要新任务时必须由用户另行明确启动。
 
-新增测试：`test_v2_recovery.py`（身份/回执负例）、`test_v2_process_recovery.py`（真实本地服务/worker/子进程、合成 Provider）、`test_v2_handoff_privacy.py`（非功能合成秘密的已知格式过滤，保留非秘密 marker 正对照）与 `tests/v2_recovery_browser.py`（真实 Chromium/进程故障，零真实模型）。这些不能替代最终候选的真实 UI 单/双节点调用。V2 CI 的原生 namespace 探针在单独 Ubuntu host job 完整运行，浏览器 job 使用固定容器；两 job 都必须通过，历史失败保留。
+新增测试：`test_workbench_recovery.py`（身份/回执负例）、`test_workbench_process_recovery.py`（真实本地服务/worker/子进程、合成 Provider）、`test_workbench_handoff_privacy.py`（非功能合成秘密的已知格式过滤，保留非秘密 marker 正对照）与 `tests/workbench_recovery_browser.py`（真实 Chromium/进程故障，零真实模型）。这些不能替代最终候选的真实 UI 单/双节点调用。V2 CI 的原生 namespace 探针在单独 Ubuntu host job 完整运行，浏览器 job 使用固定容器；两 job 都必须通过，历史失败保留。

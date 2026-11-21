@@ -1,0 +1,152 @@
+name: DevFlower workbench regression
+on:
+  push:
+    branches: ['v2/mvp-integration', 'v2/parity-integration', 'v2/parity-workspaces', 'v2/parity-session-foundation', 'v2/parity-session-reader', 'v2/parity-session-views', 'v2/parity-session-pages', 'v2/parity-session-list', 'v2/parity-session-markdown', 'v2/parity-session-activity', 'v2/parity-draft-transfer', 'v2/parity-run-list-order', 'v2/parity-run-summary', 'v2/parity-launch-event', 'v2/parity-provider-catalog', 'v2/parity-worker-facts', 'v2/parity-workspaces-pass1']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: tools
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Record exact candidate and install locked UI dependencies outside source
+        shell: bash
+        run: |
+          set -euo pipefail
+          # checkout's temporary HOME does not carry its trust into shell steps.
+          # Trust this checkout only; the runner remains disposable.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p "$RUNNER_TEMP/workbench-evidence" "$RUNNER_TEMP/workbench-ui"
+          git rev-parse HEAD > "$RUNNER_TEMP/workbench-evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/workbench-evidence/tree.txt"
+          git status --porcelain=v1 --untracked-files=all > "$RUNNER_TEMP/workbench-evidence/dirty.txt"
+          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/workbench-evidence/source.tar.gz"
+          cp tools/studio/workbench_ui/package.json tools/studio/workbench_ui/package-lock.json "$RUNNER_TEMP/workbench-ui/"
+          npm ci --prefix "$RUNNER_TEMP/workbench-ui" --ignore-scripts --no-audit --no-fund
+      - name: Resolve existing locked native test images (synthetic transport only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/workbench-evidence/native-cli-identity.json"
+      - name: V2 domain and reused native primitives (synthetic; no accounts or inference)
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for suite in native_workflow_export workflow_script_cancellation workflow_script_monitor workflow_script_acceptance workflow_script_contract workflow_series workbench_native_agent_contract workbench_script_export workbench_lazy_runtime workbench_drafts workbench_run_inspector workbench_assistant workbench_assistant_native workbench_assistant_proposals workbench_assistant_repairs workbench_git_platform_adapters workbench_git_platform workbench_data_handoff workbench_workflow_portability workbench_development_evidence workbench_development_runtime workbench_canvas_structure workbench_designer_runtime workbench_designer_recovery workbench_project_files workbench_execution workbench_execution_http workbench_recovery workbench_process_recovery workbench_handoff_privacy provider_effort_activity native_capability_cache issue167_vendor_binary workbench_graph native_ordinary native_probe_lock native_metadata_coordination workbench_session_identity workbench_session_lease workbench_native_writer_state workbench_native_controls workbench_native_agent_homes workbench_session_operations workbench_codex_terminals workbench_cli_providers workbench_claude_native_catalog workbench_agent_records workbench_codex_agent_scope workbench_codex_agent_plan workbench_claude_agent_scope workbench_native_sessions workbench_native_session_views workbench_native_session_pages workbench_native_session_activity workbench_draft_transfer workbench_run_summary workbench_launch_event workbench_provider_catalog workbench_worker_facts; do
+            if python3 -B -m unittest discover -s tests -p "test_$suite.py" -v > "$RUNNER_TEMP/workbench-evidence/$suite.log" 2>&1; then
+              printf '%s exit=0\n' "$suite"
+            else
+              code=$?
+              printf '%s exit=%s\n' "$suite" "$code"
+              cat "$RUNNER_TEMP/workbench-evidence/$suite.log"
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Bundle matches committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVFLOWER_UI_DEPS="$RUNNER_TEMP/workbench-ui" node tools/workbench/ui/build.mjs
+          git diff --exit-code -- tools/workbench/static/ > "$RUNNER_TEMP/workbench-evidence/bundle.diff"
+          node --input-type=module --check < tools/workbench/static/app.js
+      - name: Install existing pinned browser driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/pw" --ignore-scripts --no-audit --no-fund playwright@1.56.1
+          echo "PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_MODULE=$GITHUB_WORKSPACE/tests/browser_driver.cjs" >> "$GITHUB_ENV"
+          echo "CHROMIUM=$(node -e "process.stdout.write(require('$RUNNER_TEMP/pw/node_modules/playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Real Chromium editing and synthetic execution faults (never real models)
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for suite in workbench_editor_browser workbench_run_inspector_browser workbench_assistant_browser workbench_assistant_native_browser workbench_git_platform_browser workbench_designer_runtime_browser workbench_execution_browser workbench_recovery_browser workbench_native_sessions_browser workbench_native_session_views_browser workbench_native_session_pages_browser workbench_native_session_list_browser workbench_native_session_markdown_browser workbench_native_session_activity_browser workbench_native_session_send_browser workbench_draft_transfer_browser workbench_run_summary_browser workbench_provider_catalog_browser; do
+            if python3 -B "tests/$suite.py" --artifacts "$RUNNER_TEMP/workbench-evidence/$suite" --chromium "$CHROMIUM" --playwright-module "$PLAYWRIGHT_MODULE"; then
+              :
+            else
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Preserve sanitized evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: workbench-synthetic-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/workbench-evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+  native-capabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: tools
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare host namespace support and exact native evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/v2-native-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/v2-native-evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/v2-native-evidence/tree.txt"
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap gcc libc6-dev desktop-file-utils
+          if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Resolve locked supported and legacy native images
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in supported legacy; do
+            mkdir -p "$RUNNER_TEMP/native-fixtures/$kind"
+            cp "tests/ci_native/$kind/package.json" "tests/ci_native/$kind/package-lock.json" "$RUNNER_TEMP/native-fixtures/$kind/"
+            npm ci --prefix "$RUNNER_TEMP/native-fixtures/$kind" --ignore-scripts --no-audit --no-fund
+          done
+          python3 -B tests/ci_native/resolve.py "$RUNNER_TEMP/native-fixtures" "$GITHUB_ENV" "$RUNNER_TEMP/v2-native-evidence/native-cli-identity.json"
+      - name: Entire native exec contract including ordinary slow-resume probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_native_codex_exec.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/native-codex-exec.log"
+          DEVFLOWER_REQUIRE_CLAUDE_SCOPE_TEST=1 python3 -B -m unittest discover -s tests -p test_workbench_claude_agent_scope.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-claude-agent-scope.log"
+          DEVFLOWER_REQUIRE_BWRAP_VERIFIER=1 python3 -B -m unittest discover -s tests -p test_workbench_development_evidence.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-development-evidence.log"
+          DEVFLOWER_REQUIRE_BWRAP_VERIFIER=1 python3 -B -m unittest discover -s tests -p test_workbench_workflow_portability.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-workflow-portability.log"
+          python3 -B -m unittest discover -s tests -p test_workbench_linux_desktop.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-linux-desktop.log"
+          test -x /usr/bin/cc
+          python3 -B -m unittest discover -s tests -p test_workbench_codex_agent_scope.py -v 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-codex-agent-scope.log"
+          unshare -Ur -m --propagation private python3 -B tests/workbench_session_bind_mount.py 2>&1 | tee "$RUNNER_TEMP/v2-native-evidence/v2-session-bind-mount.log"
+      - name: Preserve native synthetic evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v2-native-synthetic-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/v2-native-evidence/
+          retention-days: 7
+          if-no-files-found: error

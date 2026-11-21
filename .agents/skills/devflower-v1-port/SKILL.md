@@ -7,7 +7,7 @@ description: Use when restoring V1 features in DevFlower V2; examine working V1 
 
 Goal: recover user-visible features quickly and correctly. Reuse before rewrite; do not overengineer abstractions.
 
-1. Read the matching row in `docs/v2/FEATURE_PARITY.md`; capture the exact V1 file, old behavior and V2 target. If missing, add a row before coding.
+1. Read the matching row in `docs/workbench/FEATURE_PARITY.md`; capture the exact V1 file, old behavior and V2 target. If missing, add a row before coding.
 2. Inspect actual V1 source and its tests, not just README. Identify the smallest reusable pure function, parser, component or adapter. Preserve already-working logic unless evidence shows incorrect behavior.
 3. Choose the **least invasive** option in this order: DIRECT_PORT (standalone utility) → THIN_ADAPTER (old logic behind V2 interface) → LOCAL_REFACTOR (change ownership/data model) → REWRITE (only with documented architectural conflict).
 4. Prevent accidental multiple authorities: V2 owns draft, frozen definition, run, activation, event store, permissions and session identities. Imported V1 code cannot create its own parallel authoritative runtime or database.

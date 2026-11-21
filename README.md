@@ -4,9 +4,11 @@
 
 DevFlower 同时保留最初的研发记录能力：工作区内保存工作流与历史，`project/*` 分支保存可以随 Git 追溯的任务、决策和验证摘要。业务源码仍放在各自的仓库中。
 
-## V2 Linux 工作台
+## Linux 工作台
 
-在 `v2/parity-integration` 源码目录中运行 `./launcher/linux/install-v2.sh --allow-root /absolute/path/to/project`，再从应用菜单打开 **DevFlower V2**。首次安装、原生 CLI 会话配置、停止与升级步骤见 [V2 Linux 桌面入口](docs/v2/LINUX_DESKTOP.md)。
+在 `v2/parity-integration` 源码目录中运行 `./launcher/linux/install-workbench.sh --allow-root /absolute/path/to/project`，再从应用菜单打开 **DevFlower**。首次安装、原生 CLI 会话配置、停止与升级步骤见 [Linux 桌面入口](docs/workbench/LINUX_DESKTOP.md)。
+
+工作台代码位于 `tools/workbench/`。后端按工作区、画布、Agent、会话、运行、助手和集成拆分，前端位于 `tools/workbench/ui/`。
 
 ## 快速启动
 
@@ -92,7 +94,7 @@ Windows 的入口文件（`launcher/windows/`）只是占位：启动器会明�
 
 V1 内置助手使用独立模型 API。在右侧“AI 助手”的模型连接中设置服务、模型和密钥后，连接会保存在本机。已有 DeepSeek 设置在重启或切换工作区后继续保留。软件不附带付费 API 密钥或本地模型权重。
 
-V2 助手使用本机的 Codex CLI 或 Claude Code，在助手模型设置中选择连接，认证由所选 CLI 管理。参见 [V2 助手使用指南](docs/v2/ASSISTANT.md)。
+V2 助手使用本机的 Codex CLI 或 Claude Code，在助手模型设置中选择连接，认证由所选 CLI 管理。参见 [V2 助手使用指南](docs/workbench/ASSISTANT.md)。
 
 目录发现、操作者登记和实际执行成功是不同证据。过期目录不能证明当前模型或强度不可用；真实调用失败会保留错误。提示词与上游输出不能扩大下游权限或批准交付。
 

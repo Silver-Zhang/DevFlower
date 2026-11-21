@@ -55,7 +55,7 @@ class LocalCodex:
         if not isinstance(executable,(str,Path)) or not str(executable).strip():
             raise Blocked('原生 CLI 绑定不完整，无法核验读取边界；未启动程序。')
         if self.b.get('v2_agent_scope'):
-            from v2.codex_agent_scope import prepare_agent_scope
+            from workbench.agents.codex_agent_scope import prepare_agent_scope
             started=time.monotonic()
             budget=min(self.limits['step_timeout_seconds'],self.b.get('timeout_seconds',300))
             with prepare_agent_scope(self.b,str(cwd)) as scope:
@@ -425,7 +425,7 @@ class LocalCodex:
         if agent_scope:
             argv[0]=agent_scope.executable
         if 'v2_agent_skills' in b:
-            from v2.codex_agent_scope import agent_skill_options
+            from workbench.agents.codex_agent_scope import agent_skill_options
             argv[-1:-1]=agent_skill_options(b,cwd,inventory)
         observe_stderr=writer_conflict_observer()
         child_managed=False

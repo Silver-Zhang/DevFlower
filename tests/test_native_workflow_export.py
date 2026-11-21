@@ -88,6 +88,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(Path(first[0]).name,first[0])
         self.assertIn('代码审核',first[0])
         self.assertNotIn('from v2',first[1])
+        self.assertNotIn('from workbench',first[1])
         self.assertIn("results['Developer'] = invoke_agent",first[1])
         self.assertIn("results['Reviewer'] = invoke_agent",first[1])
 

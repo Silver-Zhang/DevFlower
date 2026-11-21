@@ -150,7 +150,7 @@ class LocalClaude:
                 env_extra=env,context={'provider':'claude','agent_role':b['role'],'transport':transport}, **options)
 
         if scoped:
-            from v2.claude_agent_scope import prepare_scope
+            from workbench.agents.claude_agent_scope import prepare_scope
             with prepare_scope(b, cwd, requested, bool(sid), self.credential_env) as scope:
                 process,out,err=launch([*scope.prefix, *args[1:]], scope.environment,
                                       pass_fds=scope.fds, process_attest=scope.attest)

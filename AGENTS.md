@@ -1,10 +1,10 @@
 # DevFlower：所有 Agent 的共同入口
 
-## 当前 V2 产品方向（2026-11-13）
+## 当前产品方向
 
 用户已明确收敛目标：画布由固定编译器生成独立 Python 脚本，脚本编排原生 CLI Agent
 之间的任务与成果交接；Agent 内部工具、MCP、Skills 和子 Agent 优先沿用原生配置。
-暂停平台功能扩展和 UI 美化，不发起 V3 或全量目录搬迁。先读 `docs/v2/SCRIPT_FIRST.md`。
+工作台源码按职责组织在 `tools/workbench`，桌面安装入口为 `launcher/linux/install-workbench.sh`。先读 `docs/workbench/SCRIPT_FIRST.md`。
 该文档是唯一产品方向基准；FEATURE_PARITY.md 继续作为已有 V2 功能的兼容回归清单，
 不再要求为旧 Phase 0–7 / V1 矩阵继续堆叠新功能。主路径减重不等于功能下线：保留已有
 会话中心、Agent 配置、模板、历史、助手、Git 集成及受管执行入口。未经用户单独授权，

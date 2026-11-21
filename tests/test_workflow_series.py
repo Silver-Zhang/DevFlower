@@ -12,10 +12,10 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from devflower_export import compile_workflow, document_agents
-from v2.agent_records import AgentRecords
-from v2.script_runs import ScriptRuns
-from v2.store import DraftStore
-from v2.workflow_templates import classic_templates
+from workbench.agents.agent_records import AgentRecords
+from workbench.runs.script_runs import ScriptRuns
+from workbench.workspace.store import DraftStore
+from workbench.workspace.workflow_templates import classic_templates
 
 
 CLI = """#!/usr/bin/env python3

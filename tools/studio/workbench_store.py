@@ -109,6 +109,9 @@ class WorkbenchStore:
         if workspace is not None: value['workspace'] = workspace
         old = db.execute("SELECT data FROM records WHERE kind='draft' AND id=?", (key,)).fetchone()
         prior = json.loads(old[0]) if old else None
+        if self.scoped_drafts and not prior and db.execute(
+                "SELECT 1 FROM records WHERE kind='deleted-draft' AND id=?", (key,)).fetchone():
+            raise Conflict('此工作流已移除，请使用新身份保存副本。')
         if (prior['revision'] if prior else None) != expected:
             raise Conflict('工作流已由另一处保存；请重新加载后比较')
         if prior and prior.get('workspace') != workspace:
