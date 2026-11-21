@@ -14,7 +14,7 @@ import stat
 import threading
 import time
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from .graph import Invalid
 from .session_sources import opened
 from .workbench_store import WorkbenchStore
@@ -149,7 +149,6 @@ class ProjectFiles:
             try: deleted = store.get('deleted-draft', key).get('deleted')
             except Invalid: deleted = False
             if deleted:
-                from .server import Conflict
                 raise Conflict('此工作流已删除，请使用新身份保存副本；旧请求不能复活原件')
             value = store.save(key, graph, expected, self.workspace)
         # Compatibility cache only. Runtime checks the project-local design.
@@ -162,7 +161,6 @@ class ProjectFiles:
     def delete_draft(self, key, expected):
         # The local store has no authoritative runs: check the host BEFORE
         # deleting. Unknown/recovery-required operations remain blocking.
-        from .server import Conflict
         for run in self.rt.flow.list('run'):
             if (run.get('workspace') == self.workspace and
                     (run.get('draft_id') == key or not run.get('draft_id') and run.get('graph_sha256') == expected) and

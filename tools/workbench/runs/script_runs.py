@@ -13,9 +13,8 @@ import time
 
 from devflower_export import (ExportError, UnsupportedGraph, agent_record, bound_record, compile_agent, compile_start, compile_workflow,
                               document_agents, read_saved, reference_key, workflow_paths)
-from orchestration.common import canonical
+from orchestration.common import Conflict, canonical
 from studio.graph import Invalid
-from studio.server import Conflict
 from workflow_script_runtime import (SERIES_HASH, WorkflowError, _evidence_bytes, _evidence_file, _run_directory,
                                      agent_prompt, failed_checks, log_excerpt, workflow_environment)
 

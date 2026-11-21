@@ -9,10 +9,9 @@ import subprocess
 from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
-from orchestration.common import Blocked, canonical, clean_env, digest, git
+from orchestration.common import Blocked, Conflict, canonical, clean_env, digest, git
 from orchestration.delivery import committed_manifest_hash, make_tree
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.session_sources import opened
 
 from workbench.integrations.git_workspace import OID, bind_workspace, git_read

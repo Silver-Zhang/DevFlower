@@ -5,9 +5,8 @@ from pathlib import Path
 import sqlite3
 import stat
 import time
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from .graph import Invalid
-from .server import Conflict
 
 
 class WorkbenchStore:

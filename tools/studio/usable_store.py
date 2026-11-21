@@ -8,7 +8,7 @@ import threading
 import time
 
 from .graph import canonical, digest, Invalid
-from .server import Conflict
+from orchestration.common import Conflict
 from .usable_graph import draft
 
 

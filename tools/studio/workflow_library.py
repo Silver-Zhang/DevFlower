@@ -1,9 +1,8 @@
 """Local, versioned reusable designs; no session, receipt or run authority."""
 import copy,secrets,time
 from pathlib import Path
-from orchestration.common import canonical,digest,Blocked
+from orchestration.common import Conflict, canonical,digest,Blocked
 from .graph import Invalid
-from .server import Conflict
 from .workbench_graph import validate_graph
 
 

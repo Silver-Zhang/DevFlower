@@ -5,9 +5,8 @@ import os
 from functools import lru_cache
 import time
 import tomllib
-from orchestration.common import canonical, digest, Blocked
+from orchestration.common import Conflict, canonical, digest, Blocked
 from .graph import Invalid
-from .server import Conflict
 from .session_sources import opened
 
 

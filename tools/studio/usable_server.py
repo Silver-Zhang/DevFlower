@@ -6,10 +6,9 @@ from pathlib import Path
 import secrets
 from urllib.parse import parse_qs, urlsplit
 
-from orchestration.common import Blocked
+from orchestration.common import Blocked, Conflict
 from .graph import canonical, Invalid
 from .projection import Reader, Unavailable
-from .server import Conflict
 from .usable_graph import template, node, compile_plan, upgrade_draft
 
 STATIC = Path(__file__).parent / "static"

@@ -4,9 +4,8 @@ import json
 import re
 import time
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.sessions.native_history_config import unique_pairs
 from workbench.runs.run_inspector import (EVENT_FIELDS, EXPORT_BYTES, IDENT, INPUT_FIELDS, NODE_FIELDS, RUN, RUN_FIELDS,

@@ -5,9 +5,8 @@ import sqlite3
 import time
 import uuid
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.assistant import native as assistant_native
 from workbench.agents.agent_records import AgentRecords

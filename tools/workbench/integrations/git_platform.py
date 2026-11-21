@@ -5,9 +5,8 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.integrations.git_platform_adapters import SHA, checked_ref
 from workbench.integrations.git_workspace import bind_workspace

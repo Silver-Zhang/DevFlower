@@ -4,12 +4,11 @@ import os
 import re
 from pathlib import Path
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.privacy import redact
 from studio.data_contracts import check, normalize
 from studio.graph import Invalid
 from studio.local_claude_adapter import claude_secrets
-from studio.server import Conflict
 from studio.workbench_data import public_data
 from studio.workbench_graph import field, transfer
 

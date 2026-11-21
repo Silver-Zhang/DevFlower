@@ -8,12 +8,11 @@ import re
 import shlex
 import sys
 import time
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.process import execute
 from orchestration.store import lease, process_identity
 from .agent_sessions import _visible, safe_text
 from .graph import Invalid
-from .server import Conflict
 from .session_sources import opened
 
 

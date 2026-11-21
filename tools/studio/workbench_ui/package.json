@@ -13,6 +13,6 @@
   "name": "devflower-workbench-ui",
   "private": true,
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node ../../build_ui.mjs studio"
   }
 }

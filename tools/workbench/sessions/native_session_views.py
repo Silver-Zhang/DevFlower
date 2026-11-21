@@ -7,9 +7,8 @@ import sqlite3
 from threading import Lock
 import unicodedata
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.agent_sessions import safe_text
-from studio.server import Conflict
 
 from workbench.sessions.native_history_config import unique_pairs
 from workbench.sessions.native_sessions import (

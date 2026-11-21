@@ -5,10 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.privacy import redact
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.runs import tool_output_link
 from workbench.runs.data_handoff import task_literals

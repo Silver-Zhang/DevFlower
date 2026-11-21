@@ -8,12 +8,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from orchestration.common import Blocked
+from orchestration.common import Blocked, Conflict
 from orchestration.github_delivery import GitHub
 from orchestration.process import execute
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
-from studio.server import Conflict
 
 HOSTS = {'github.com': 'github', 'gitlab.com': 'gitlab'}
 REMOTE = re.compile(r'(?:https://(?P<https>[^/]+)/|ssh://git@(?P<ssh>[^/]+)/|git@(?P<scp>[^:]+):)(?P<path>[^?#\s]+)')

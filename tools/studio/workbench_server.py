@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 import secrets
 from urllib.parse import urlsplit,parse_qs
-from orchestration.common import Blocked,canonical
+from orchestration.common import Blocked,Conflict,canonical
 from .graph import Invalid
-from .server import Conflict
 from .workbench_graph import validate_graph
 from .workbench_examples import examples
 from .workbench_sessions import WorkbenchSessions

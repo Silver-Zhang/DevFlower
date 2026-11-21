@@ -15,14 +15,13 @@ import sys
 import time
 
 from orchestration.adapters import CLI
-from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash, workspace_hash
+from orchestration.common import Blocked, Conflict, canonical, clean_env, digest, identity, tree_hash, workspace_hash
 from orchestration.contracts import validate
 from orchestration.privacy import credentials, redact
 from orchestration.process import group_alive, stop
 from orchestration.store import alive, lease, process_identity
 from .agent_sessions import capabilities, conversation, nested_profiles, safe_text, session_identity
 from .graph import Invalid
-from .server import Conflict
 from .session_sources import clean_path, opened, Refused, scan, UUID
 from .workspace_sessions import WorkspaceSessions, display
 from .native_local import profile_key, session_lease

@@ -3,7 +3,7 @@ import json
 import re
 
 from studio.graph import Invalid
-from studio.server import Conflict
+from orchestration.common import Conflict
 
 from workbench.runs.recovery import project
 from workbench.runs.worker_facts import INTERNAL_FIELDS

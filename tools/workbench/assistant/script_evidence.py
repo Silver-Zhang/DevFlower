@@ -3,7 +3,7 @@ from collections import defaultdict
 from hashlib import sha256
 import json
 
-from studio.server import Conflict
+from orchestration.common import Conflict
 
 from workbench.runs.run_inspector import take
 

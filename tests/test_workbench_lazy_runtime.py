@@ -32,7 +32,7 @@ import importlib.abc, json, sys
 class NoManagedImports(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path=None, target=None):
         if name in {'workbench.runs.runtime', 'workbench.agents.provider', 'workbench.agents.cli_providers', 'workbench.agents.agent_execution',
-                    'workbench.sessions.codex_terminals', 'workbench.sessions.session_operations', 'studio.workbench_scheduler'}:
+                    'workbench.sessions.codex_terminals', 'workbench.sessions.session_operations', 'studio.server', 'studio.workbench_scheduler'}:
             raise ImportError('UNEXPECTED_MANAGED_IMPORT: ' + name)
 sys.meta_path.insert(0, NoManagedImports())
 import devflower_workbench_service

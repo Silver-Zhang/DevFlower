@@ -4,9 +4,8 @@ import re
 import secrets
 import time
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.workflow_library import TEMPLATE_OPERATIONS, template_labels
 
 from workbench.canvas.documents import validate_draft

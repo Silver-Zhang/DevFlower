@@ -2,10 +2,9 @@
 from contextlib import ExitStack
 from pathlib import Path
 import json,time
-from orchestration.common import canonical,digest,Blocked
+from orchestration.common import Conflict, canonical,digest,Blocked
 from orchestration.store import lease
 from .graph import Invalid
-from .server import Conflict
 
 
 class SessionBatch:

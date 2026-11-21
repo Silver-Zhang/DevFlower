@@ -14,10 +14,9 @@ import time
 import tomllib
 import unicodedata
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.privacy import redact
 from studio.agent_sessions import _visible, safe_text
-from studio.server import Conflict
 from studio.session_sources import read_session
 
 from workbench.sessions.native_history_config import PROVIDERS, SourceSpec, load_history_config, startup_seed, unique_pairs

@@ -7,8 +7,7 @@ import sqlite3
 import time
 from urllib.parse import parse_qs
 
-from orchestration.common import Blocked, canonical
-from studio.server import Conflict
+from orchestration.common import Blocked, Conflict, canonical
 
 from workbench.canvas.documents import validate_draft
 from workbench.canvas.draft_transfer import canonical_json

@@ -8,7 +8,7 @@ from threading import BoundedSemaphore, Lock, Thread
 import time
 import uuid
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.process import group_alive
 from orchestration.store import process_identity
 from studio.agent_sessions import safe_text
@@ -19,7 +19,6 @@ from studio.model_registration import profile_identity
 from studio.native_codex_image import binary_digest
 from studio.native_codex_rpc import CodexRPC, metadata, metadata_guard
 from studio.native_local import native_busy
-from studio.server import Conflict
 from studio.session_sources import UUID
 from studio.usage import public_usage
 

@@ -1,12 +1,11 @@
 """AI-generated configuration is a bounded draft, never permission or execution."""
 from pathlib import Path
 import copy,json,secrets,sqlite3,subprocess,sys,time
-from orchestration.common import canonical,digest,tree_hash,clean_env,Blocked, workspace_hash
+from orchestration.common import Conflict, canonical,digest,tree_hash,clean_env,Blocked, workspace_hash
 from orchestration.adapters import CLI
 from orchestration.contracts import validate
 from orchestration.store import lease,process_identity
 from .graph import Invalid
-from .server import Conflict
 from .session_center import SessionJournal
 from .model_admission import ModelAdmission
 from .agent_sessions import safe_text

@@ -1,4 +1,6 @@
-# DevFlower V2：顺序 Agent 工作流
+# 工作台早期设计记录
+
+本文保留顺序受管工作流的历史设计。当前安装与使用以 [Linux 桌面入口](LINUX_DESKTOP.md) 和 [Script-First](SCRIPT_FIRST.md) 为准。
 
 这是隔离的 Development 入口，首期为 Linux 与本用户已安装、已登录的 Codex CLI。V2 草稿唯一权威存储是私有 state 目录的 `v2.sqlite`，不读取旧工作台数据库。原生历史浏览默认关闭，可由本机操作员单独启用。空白、不连通和未配置的草稿可以保存；保存不会调用模型。
 
@@ -54,8 +56,8 @@ python3 -B tools/devflower_workbench_service.py --state-dir /absolute/new/privat
 复用现有工作台 lockfile/dependencies；没有第二套依赖版本。生成物沿用其许可证，bundle 保留法律注释。
 
 ```sh
-node tools/workbench/ui/build.mjs
-python3 -B -m unittest discover -s tests -p 'test_v2*.py' -v
+node tools/build_ui.mjs workbench
+python3 -B -m unittest discover -s tests -p 'test_workbench*.py' -v
 python3 -B tests/workbench_editor_browser.py --artifacts /absolute/new/editor-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
 python3 -B tests/workbench_execution_browser.py --artifacts /absolute/new/synthetic-evidence --chromium /absolute/chromium --playwright-module /absolute/playwright
 ```

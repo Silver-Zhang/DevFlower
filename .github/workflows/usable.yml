@@ -66,7 +66,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/workbench-ui"
           cp tools/studio/workbench_ui/package.json tools/studio/workbench_ui/package-lock.json "$RUNNER_TEMP/workbench-ui/"
           npm ci --prefix "$RUNNER_TEMP/workbench-ui" --ignore-scripts --no-audit --no-fund
-          DEVFLOWER_UI_DEPS="$RUNNER_TEMP/workbench-ui" node tools/studio/workbench_ui/build.mjs
+          DEVFLOWER_UI_DEPS="$RUNNER_TEMP/workbench-ui" node tools/build_ui.mjs studio
           git diff --exit-code -- tools/studio/static/workbench.js tools/studio/static/workbench.css tools/studio/workbench_ui/THIRD_PARTY_LICENSES.txt
       - name: Baseline and all frontend syntax
         shell: bash

@@ -7,9 +7,8 @@ import secrets
 import stat
 import time
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.workbench_store import WorkbenchStore
 from workbench.canvas.documents import validate_draft
 from workbench.workspace.workspace_select import select_existing_workspace, state_file_allowed

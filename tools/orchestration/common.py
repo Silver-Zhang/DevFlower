@@ -13,6 +13,10 @@ class Blocked(Exception):
     """A required precondition has not been proved."""
 
 
+class Conflict(ValueError):
+    """The requested change conflicts with the current state."""
+
+
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
 

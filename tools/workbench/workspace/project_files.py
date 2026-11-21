@@ -5,10 +5,9 @@ from pathlib import Path
 import stat
 import unicodedata
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.session_sources import Refused, opened
 from studio.workspace_read_policy import IgnoreRules, safe_parts, stamp
 

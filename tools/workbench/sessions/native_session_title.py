@@ -3,13 +3,12 @@ from contextlib import contextmanager
 from pathlib import Path
 import re
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from orchestration.privacy import credentials, redact
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
 from studio.native_codex_image import NativeImage
 from studio.native_codex_rpc import CodexRPC, metadata_guard
-from studio.server import Conflict
 
 from workbench.sessions.native_session_links import claim_key, verified_workflow
 from workbench.sessions.native_session_views import safe_alias, verify_bytes

@@ -19,7 +19,7 @@ from threading import Event, Thread, current_thread
 import time
 from types import SimpleNamespace
 
-from orchestration.common import Blocked, canonical, clean_env, digest
+from orchestration.common import Blocked, Conflict, canonical, clean_env, digest
 from orchestration.privacy import credentials
 from orchestration.process import stop
 from orchestration.sandbox import runtime_paths
@@ -29,7 +29,6 @@ from studio.native_codex_exec import FEATURES, provider_overrides, untrusted_pro
 from studio.native_codex_image import NativeImage, binary_digest
 from studio.native_codex_rpc import CodexRPC, metadata_guard
 from studio.native_terminals import NativeTerminals, dimensions
-from studio.server import Conflict
 from studio.session_sources import opened
 from studio.terminal_text import TerminalText
 

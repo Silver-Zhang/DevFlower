@@ -6,10 +6,9 @@ process is involved. Credentials belong to the host, never the model/tools.
 from pathlib import Path
 import hashlib,http.client,json,os,secrets,socket,threading,time
 from urllib.parse import urlsplit
-from orchestration.common import Blocked,canonical,digest
+from orchestration.common import Blocked,Conflict,canonical,digest
 from .agent_sessions import safe_text
 from .graph import Invalid
-from .server import Conflict
 from .session_sources import opened
 
 def status_hint(status):

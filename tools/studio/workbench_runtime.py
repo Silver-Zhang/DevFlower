@@ -9,13 +9,12 @@ import subprocess
 import sys
 import time
 from contextvars import ContextVar
-from orchestration.common import Blocked, canonical, clean_env, digest, identity, tree_hash, workspace_hash
+from orchestration.common import Blocked, Conflict, canonical, clean_env, digest, identity, tree_hash, workspace_hash
 from orchestration.process import execute, group_alive, stop
 from orchestration.store import alive, process_identity, lease
 from orchestration.trust import TrustedRelease, overlap
 from .agent_sessions import safe_text
 from .graph import Invalid
-from .server import Conflict
 from .session_runtime import SessionRuntime
 from .session_sources import opened, clean_path
 from .workbench_graph import validate_graph

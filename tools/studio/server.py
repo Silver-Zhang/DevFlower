@@ -22,6 +22,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 import uuid
+from orchestration.common import Conflict
 from .graph import Invalid, canonical, compile_task, digest, from_task, template, validate
 from .projection import Reader, Unavailable
 from .workspace_sessions import WorkspaceSessions
@@ -29,10 +30,6 @@ from .workspace_sessions import WorkspaceSessions
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / 'static'
 MAX_BODY = 262144
-
-
-class Conflict(ValueError):
-    pass
 
 
 def overlap(a, b):

@@ -1,9 +1,8 @@
 """Stage native canvas proposals and commit their explicit application as one transaction."""
 import json
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from devflower_export import agent_record, document_agents
 from workbench.assistant.proposals import MAX_OPERATIONS, parse_envelope, proposal, validate_proposal_envelope

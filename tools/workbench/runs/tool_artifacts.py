@@ -2,10 +2,9 @@
 import json
 import os
 
-from orchestration.common import canonical, digest, save
+from orchestration.common import Conflict, canonical, digest, save
 from orchestration.privacy import redact
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.session_sources import opened
 
 from workbench.runs.data_handoff import task_literals

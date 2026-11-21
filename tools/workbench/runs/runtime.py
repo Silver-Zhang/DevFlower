@@ -9,11 +9,10 @@ import subprocess
 import sys
 import time
 
-from orchestration.common import Blocked, canonical, digest, save
+from orchestration.common import Blocked, Conflict, canonical, digest, save
 from orchestration.process import group_alive
 from orchestration.store import alive, process_identity
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.workbench_data import public_data
 from studio.workbench_graph import request_sections
 from studio.workbench_scheduler import Scheduler, Journal

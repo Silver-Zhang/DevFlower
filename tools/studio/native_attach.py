@@ -16,9 +16,8 @@ import struct
 import threading
 import time
 
-from orchestration.common import Blocked, canonical
+from orchestration.common import Blocked, Conflict, canonical
 from .graph import Invalid
-from .server import Conflict
 from .native_terminals import CONTROL_BUDGET
 from .session_sources import opened
 

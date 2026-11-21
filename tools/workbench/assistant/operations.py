@@ -1,9 +1,8 @@
 """New no-tool assistant turns over the native session operation journal."""
 from pathlib import Path
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.agents.agent_execution import history_source
 from workbench.sessions.session_identity import SessionRefused, StorageRootIdentity

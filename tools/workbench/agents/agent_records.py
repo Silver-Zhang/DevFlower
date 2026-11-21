@@ -6,9 +6,8 @@ import secrets
 
 from devflower_export import (AGENT_HISTORY, AGENT_RECORD, ExportError, agent_record, document_agents,
                               validate_native_agent)
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 
 KIND = AGENT_RECORD

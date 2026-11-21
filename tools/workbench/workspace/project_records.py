@@ -4,8 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 
-from orchestration.common import Blocked
-from studio.server import Conflict
+from orchestration.common import Blocked, Conflict
 
 from workbench.canvas.draft_transfer import FORMAT, MAX_ARCHIVE_BYTES, canonical_json
 from workbench.workspace.project_files import ProjectFiles

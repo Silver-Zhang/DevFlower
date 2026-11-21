@@ -4,9 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.workspace_read_policy import SENSITIVE
 
 from workbench.runs.data_handoff import task_literals

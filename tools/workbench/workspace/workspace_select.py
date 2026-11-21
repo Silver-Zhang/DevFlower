@@ -7,9 +7,8 @@ import re
 import sqlite3
 import stat
 
-from orchestration.common import Blocked
+from orchestration.common import Blocked, Conflict
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.sessions.native_history_config import SEED_FILE
 from workbench.workspace.project_files import FileView, mount_id

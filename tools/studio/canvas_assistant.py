@@ -6,10 +6,9 @@ is replaceable, while proposal validation and permission boundaries stay local.
 """
 from pathlib import Path
 import copy, json, os, secrets, sqlite3, threading, time
-from orchestration.common import Blocked,canonical,digest
+from orchestration.common import Blocked,Conflict,canonical,digest
 from orchestration.store import alive,process_identity
 from .graph import Invalid
-from .server import Conflict
 from .agent_sessions import safe_text
 from .configuration_assistant import ConfigurationAssistant,plan_graph,schema
 from .devflower_agent import AGENT_ID,DevFlowerAgent

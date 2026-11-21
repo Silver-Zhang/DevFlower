@@ -6,8 +6,7 @@ import math
 import re
 from urllib.parse import parse_qs
 
-from orchestration.common import Blocked
-from studio.server import Conflict
+from orchestration.common import Blocked, Conflict
 
 from workbench.canvas.documents import validate_draft
 from workbench.workspace.workspace_select import capture_workspace_proof, require_current

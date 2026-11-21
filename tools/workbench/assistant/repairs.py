@@ -1,9 +1,8 @@
 """Explicit assistant repair authorization over the existing Agent runtime."""
 import re
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.integrations.git_workspace import bind_workspace
 from workbench.workspace.project_files import read_project

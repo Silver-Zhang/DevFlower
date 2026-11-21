@@ -2,9 +2,8 @@
 from copy import deepcopy
 import json
 
-from orchestration.common import Blocked, canonical, digest
+from orchestration.common import Blocked, Conflict, canonical, digest
 from studio.graph import Invalid
-from studio.server import Conflict
 
 from workbench.agents.agent_records import KIND as AGENTS
 from workbench.assistant.proposals import _has_approval, parse_envelope, proposal

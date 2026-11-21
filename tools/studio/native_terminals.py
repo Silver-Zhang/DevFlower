@@ -19,12 +19,11 @@ import termios
 import threading
 import time
 
-from orchestration.common import Blocked, canonical, clean_env, digest, tree_hash, workspace_hash
+from orchestration.common import Blocked, Conflict, canonical, clean_env, digest, tree_hash, workspace_hash
 from orchestration.privacy import credentials
 from orchestration.process import group_alive, stop
 from orchestration.store import process_identity
 from .graph import Invalid
-from .server import Conflict
 from .terminal_text import TerminalText
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'}

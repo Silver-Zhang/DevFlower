@@ -5,10 +5,9 @@ from pathlib import Path
 import re
 from urllib.parse import parse_qs
 
-from orchestration.common import canonical, digest
+from orchestration.common import Conflict, canonical, digest
 from studio.agent_sessions import safe_text
 from studio.graph import Invalid
-from studio.server import Conflict
 from studio.workbench_data import PRIVATE_FIELDS
 
 RUN = re.compile(r'[0-9a-f]{32}')
