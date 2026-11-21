@@ -7,7 +7,7 @@ DevFlower 是一个可视化工作台。你在画布上安排 Agent、命令和�
 需要 Linux 和 Python 3.11+。安装工作台无需 Node.js 或模型账户。运行 Agent 节点时，需要相应的原生 CLI 和可用的账户，DevFlower 沿用该 CLI 的配置和权限。
 
 ```bash
-git clone --branch v2/parity-integration https://github.com/Silver-Zhang/DevFlower.git
+git clone --branch develop https://github.com/Silver-Zhang/DevFlower.git
 cd DevFlower
 ./launcher/linux/install-workbench.sh --allow-root /absolute/path/to/project
 ```
@@ -49,4 +49,4 @@ DEVFLOWER_UI_DEPS="$ui_deps" node tools/build_ui.mjs workbench
 
 构建 Studio 前端时使用同一命令的 `studio` 目标。Python 回归可用 `PYTHONPATH=tools python3 -B -m unittest discover -s tests -v`。Chromium 与原生 CLI 测试夹具的完整运行方式见[工作台 CI](.github/workflows/workbench.yml)。
 
-当前候选在 `v2/parity-integration`。正式源码、开发分支和项目记录的关系见[分支与历史保留](docs/BRANCHING.md)，执行和兼容边界见 [Script-First](docs/workbench/SCRIPT_FIRST.md)。
+日常开发在 `develop`。正式源码、开发分支和项目记录的关系见[分支与历史保留](docs/BRANCHING.md)，执行和兼容边界见 [Script-First](docs/workbench/SCRIPT_FIRST.md)。

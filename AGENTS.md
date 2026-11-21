@@ -13,7 +13,7 @@
 新建 Agent 使用显式 `execution: native-cli` 简化合同，GUI 导出与终端共用固定编译器。
 旧记录保留原合同；原生配置禁止进入旧受管执行器。GUI 已接同一生成脚本，真实验收记录见 SCRIPT_FIRST。
 默认启动不构造旧 Runtime；仅实际使用兼容路径时加载，不新增第二套调度逻辑。
-本阶段仅在 `v2/parity-integration` 形成小步候选；不改 main/develop/Stable、不删旧实现。
+日常源码开发统一在 `develop`；`main` 集成与 Stable 发布须另获授权。旧执行功能保留兼容。
 新的原生脚本合同必须明确 opt-in，不能悄悄放宽旧受管运行的权限，也不能凭模拟测试
 宣称真实 CLI 验收或 Stable 发布完成。以下历史研发规则及安全底线继续保留。
 
